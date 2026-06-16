@@ -4,16 +4,16 @@ Ordered by leverage. Each has my recommended default (what I built toward or wil
 build toward). Veto any and I'll adjust — most are cheap to change because the
 frontend, protocol, and verification harness are all backend-agnostic.
 
-## OQ1 — Backend language: TS-embed (what I built) vs Rust-spawn-RPC ⚠️ highest stakes
-The handoff leaned Rust (KellerComm reuse). I went **TS-embed** (see D2) because
-type reuse + the existing pi-sdk-driver + no framing footgun + in-process tool
-labels for extension visibility outweigh it, and KellerComm's *patterns* port
-without its language. **If you'd rather have Rust**: we lose only the server
-skeleton (~a few hundred lines). The Svelte client, the protocol types, the
-mock-fixture concept, and the screenshot harness all carry over. My honest take:
-TS is the better fit *specifically because* you want extensions visible and want
-to dogfood fast — but it's your call and I want it confirmed before M5 (real SDK
-wiring) compounds the investment.
+## OQ1 — Backend language: TS-embed (built) vs Rust-spawn-RPC ⚠️ confirm
+The handoff leaned Rust (KellerComm reuse). I went **TS-embed** (see D2) and have
+now built it out: the WS server, the multi-client hub, AND the real pi driver
+(event mapping + ExtensionUIContext bridge), all typechecked against the SDK with
+the SDK-under-Bun risk retired. **If you still want Rust**, the cost has grown —
+you'd lose the server + the driver (~the bulk of `server/`), though the Svelte
+client, protocol, mock, and Playwright harness all still carry over. My honest
+take remains: TS is the better fit because you want extensions visible (needs
+in-process tool access) and fast dogfooding. I proceeded because you said "keep
+going on obvious steps" — but flag it if you'd have chosen differently.
 
 ## OQ2 — Concurrency: one in-process session, or process-per-session?
 **Default: start single in-process `AgentSession`; design the WS schema (done) to
