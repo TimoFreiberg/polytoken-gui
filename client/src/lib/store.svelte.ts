@@ -10,6 +10,7 @@ import {
   type SessionState,
 } from "@pilot/protocol";
 import { setToken } from "./auth.js";
+import { ensurePermission } from "./notify.js";
 import {
   connect,
   type ConnectionState,
@@ -73,6 +74,7 @@ class PilotStore {
   prompt(text: string, deliverAs?: "steer" | "followUp"): void {
     const t = text.trim();
     if (!t) return;
+    ensurePermission(); // this call is a user gesture — good time to ask
     send({ type: "prompt", text: t, deliverAs });
     this.composerDraft = "";
   }

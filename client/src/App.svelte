@@ -7,6 +7,7 @@
   import Composer from "./components/Composer.svelte";
   import ApprovalLayer from "./components/ApprovalLayer.svelte";
   import TokenGate from "./components/TokenGate.svelte";
+  import { notifyIfHidden } from "./lib/notify.js";
 
   // Dev affordance: ?dev shows buttons that drive the mock to any UI state, so the
   // screenshot harness can reach approval/ambient/error states deterministically.
@@ -14,6 +15,24 @@
   const scripts = ["reply", "confirm", "trust", "input", "ambient"];
 
   onMount(() => store.start());
+
+  // Buzz the user (when backgrounded) on run-complete and new approvals.
+  let prevStatus = "idle";
+  let prevPending = 0;
+  $effect(() => {
+    const status = store.session.status;
+    const pending = store.session.pendingApprovals.length;
+    if (prevStatus === "running" && status === "idle") {
+      notifyIfHidden("pilot", "Agent finished its turn");
+    }
+    if (pending > prevPending && pending > 0) {
+      const top = store.session.pendingApprovals[0];
+      const title = top && "title" in top ? top.title : "Waiting on you";
+      notifyIfHidden("Approval needed", title);
+    }
+    prevStatus = status;
+    prevPending = pending;
+  });
 </script>
 
 {#if store.unauthorized}
