@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+  <rect width="512" height="512" rx="112" fill="#c15f3c"/>
+  <!-- pi glyph -->
+  <g fill="#fff">
+    <rect x="120" y="150" width="272" height="44" rx="22"/>
+    <rect x="168" y="186" width="44" height="200" rx="22"/>
+    <path d="M300 186 h44 v150 a26 26 0 0 0 44 19 l6 -6 v52 l-6 5 a70 70 0 0 1 -88 -65 z"/>
+  </g>
+</svg>

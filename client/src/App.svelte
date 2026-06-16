@@ -2,6 +2,7 @@
   import { onMount } from "svelte";
   import { store } from "./lib/store.svelte.js";
   import StatusHeader from "./components/StatusHeader.svelte";
+  import ConnectionBanner from "./components/ConnectionBanner.svelte";
   import Transcript from "./components/Transcript.svelte";
   import Composer from "./components/Composer.svelte";
   import ApprovalLayer from "./components/ApprovalLayer.svelte";
@@ -16,6 +17,7 @@
 
 <div class="app">
   <StatusHeader />
+  <ConnectionBanner />
   <Transcript />
   {#if dev}
     <div class="devbar">

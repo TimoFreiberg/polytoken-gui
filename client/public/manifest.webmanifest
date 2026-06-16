@@ -1,0 +1,17 @@
+{
+  "name": "pilot",
+  "short_name": "pilot",
+  "description": "Remote control for the pi coding agent",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#f7f6f2",
+  "theme_color": "#f7f6f2",
+  "icons": [
+    {
+      "src": "/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
