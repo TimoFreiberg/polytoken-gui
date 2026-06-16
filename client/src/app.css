@@ -1,0 +1,113 @@
+/* Pilot theme — mirrors the Claude app's warm-paper palette and quiet typography.
+   Light by default (Claude's default), with a warm-charcoal dark via media query. */
+
+:root {
+  --bg: #f7f6f2;
+  --bg-elevated: #ffffff;
+  --surface: #ffffff;
+  --surface-sunken: #efece4;
+  --text: #1f1e1d;
+  --text-muted: #73706b;
+  --text-faint: #9a968f;
+  --border: #e7e3da;
+  --border-strong: #d8d3c8;
+  --accent: #c15f3c;
+  --accent-hover: #a84e2f;
+  --accent-soft: #f6e7e0;
+  --accent-text: #ffffff;
+  --danger: #b4413a;
+  --danger-soft: #f6e0de;
+  --warning: #9a6a1f;
+  --warning-soft: #f7ecd6;
+  --ok: #4f7a4a;
+
+  --font-sans: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial,
+    sans-serif;
+  --font-mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+
+  --radius: 14px;
+  --radius-sm: 9px;
+  --radius-xs: 6px;
+
+  --shadow-card: 0 1px 2px rgba(31, 30, 29, 0.04), 0 4px 14px rgba(31, 30, 29, 0.05);
+  --shadow-pop: 0 8px 30px rgba(31, 30, 29, 0.14);
+
+  --maxw: 740px;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #1f1e1d;
+    --bg-elevated: #262624;
+    --surface: #2a2927;
+    --surface-sunken: #1a1917;
+    --text: #f3f1ec;
+    --text-muted: #a6a29a;
+    --text-faint: #79756d;
+    --border: #383735;
+    --border-strong: #46443f;
+    --accent: #d97757;
+    --accent-hover: #e08a6d;
+    --accent-soft: #3a2b24;
+    --accent-text: #1f1e1d;
+    --danger: #e0786f;
+    --danger-soft: #3a2422;
+    --warning: #d4a857;
+    --warning-soft: #332a18;
+    --ok: #8fb787;
+    --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.2), 0 4px 14px rgba(0, 0, 0, 0.25);
+    --shadow-pop: 0 10px 34px rgba(0, 0, 0, 0.5);
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  height: 100%;
+}
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-sans);
+  font-size: 15.5px;
+  line-height: 1.62;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+#app {
+  height: 100%;
+}
+
+button {
+  font-family: inherit;
+  font-size: inherit;
+  cursor: pointer;
+}
+
+a {
+  color: var(--accent);
+}
+
+::selection {
+  background: var(--accent-soft);
+}
+
+/* thin, unobtrusive scrollbars */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-strong) transparent;
+}
+*::-webkit-scrollbar {
+  width: 9px;
+  height: 9px;
+}
+*::-webkit-scrollbar-thumb {
+  background: var(--border-strong);
+  border-radius: 99px;
+}

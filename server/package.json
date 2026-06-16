@@ -1,0 +1,13 @@
+{
+  "name": "@pilot/server",
+  "private": true,
+  "type": "module",
+  "version": "0.0.0",
+  "scripts": {
+    "dev": "bun run --hot src/index.ts",
+    "start": "bun run src/index.ts"
+  },
+  "dependencies": {
+    "@pilot/protocol": "workspace:*"
+  }
+}
