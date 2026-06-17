@@ -28,6 +28,7 @@ import type {
 import type { PilotDriver } from "../driver.js";
 import { mapPiEvent } from "./event-map.js";
 import { type HistoryMessage, historyToEvents } from "./history-map.js";
+import { makeTrustResolver } from "./trust.js";
 import { PiUiBridge } from "./ui-bridge.js";
 
 export interface PiDriverOptions {
@@ -38,6 +39,9 @@ export async function createPiDriver(
   opts: PiDriverOptions = {},
 ): Promise<PilotDriver> {
   const cwd = opts.cwd ?? process.cwd();
+  // The operator-launched cwd is implicitly trusted; sessions switched to other
+  // cwds at runtime are gated by the trust resolver below (D12).
+  const launchCwd = cwd;
 
   // The documented runtime factory: recreate cwd-bound services and a session.
   const createRuntime: CreateAgentSessionRuntimeFactory = async ({
@@ -45,7 +49,15 @@ export async function createPiDriver(
     sessionManager,
     sessionStartEvent,
   }) => {
-    const services = await createAgentSessionServices({ cwd });
+    const services = await createAgentSessionServices({
+      cwd,
+      // Without this, pi leaves projectTrusted=true and auto-loads every project's
+      // .pi resources — the D12 gap. Resolve trust per cwd instead (non-interactive
+      // MVP; honors trust.json, trusts launchCwd, denies other untrusted paths).
+      resourceLoaderReloadOptions: {
+        resolveProjectTrust: makeTrustResolver(cwd, cwd === launchCwd),
+      },
+    });
     return {
       ...(await createAgentSessionFromServices({
         services,

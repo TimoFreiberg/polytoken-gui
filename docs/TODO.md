@@ -11,10 +11,13 @@ See `docs/` siblings for context: `STATUS.md` (what's built), `DECISIONS.md`
 - [ ] **Multi-session hub** (D8) — hub keyed per session;
       `sessionRef` on client→server messages; session list/picker drives N
       live sessions.
-- [ ] **Wire real project-trust card** (D12) — register a `project_trust`
-      event handler on the SDK path that surfaces a `hostUiRequest` trust card
-      (replaces the mock-only fixture). Required: it's the safety net for
-      arbitrary-path opening (D12) given no tool gating (D9).
+- [ ] **Interactive project-trust card** (D12) — surface a `hostUiRequest` trust
+      card to connected clients and let them grant/deny (replaces the mock-only
+      fixture). Blocked on the hub swap-guard rework: trust resolves inside
+      `switchSession`, suppressed by `switching`. NOTE: the auto-trust security
+      hole is already closed by a non-interactive resolver
+      (`server/src/pi/trust.ts` — honors trust.json, trusts the launch cwd, denies
+      other untrusted paths), so this is now UX, not a safety blocker.
 
 ## 🟡 Important
 

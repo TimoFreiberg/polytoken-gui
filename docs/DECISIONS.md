@@ -111,8 +111,8 @@ out early is the point. Not a hard blocker if it fails.
 
 ### D12. Workspace = arbitrary GUI-controlled paths, no allowlist (OQ6)
 Drop the fixed allowlist; the owner opens any path from the UI. The safety net
-is the project-trust prompt, which MUST be wired (see corrections) — it gates
-auto-loading/execution of a repo's `.pi/extensions`, `.pi/settings.json`,
+is the project-trust gate, now wired as a non-interactive MVP (see corrections) —
+it gates auto-loading/execution of a repo's `.pi/extensions`, `.pi/settings.json`,
 project packages, etc. No file explorer for MVP.
 
 ### D13. Persistence = pi session files are authoritative (OQ7)
@@ -136,11 +136,20 @@ inspectable-but-unobtrusive tool cards, jump-to-last-prompt hotkey, maybe a
 right-side minimap. Diverge from Claude where dogfooding suggests better.
 
 ### Corrections discovered during review (pi behavior, verified in pi source)
-- **The trust prompt is interactive-TUI-only.** It does NOT fire on the SDK path
-  pilot uses (`docs/security.md`: non-interactive modes show no prompt). pilot
-  must register a `project_trust` event handler that surfaces a `hostUiRequest`
-  card. pilot's current trust card is mock-only (`server/src/fixtures.ts`), not
-  wired to pi.
+- **Trust on the SDK path AUTO-TRUSTS unless the host resolves it** (corrected
+  2026-06-17 — the earlier note here, "SDK path shows no prompt so resources are
+  ignored," was backwards). pi only gates project resources when the host hands
+  the ResourceLoader a `resolveProjectTrust` callback; pass none and
+  `SettingsManager.projectTrusted` defaults to TRUE, so every project's
+  `.pi/extensions|settings.json`/packages load unconditionally (verified: an
+  untrusted repo's `.pi/extensions` loaded with no prompt and no saved decision).
+  The fix is the host-level `resolveProjectTrust` callback — NOT the `project_trust`
+  *event* (that's for extensions to participate in the decision). Status:
+  non-interactive MVP wired (`server/src/pi/trust.ts`) — honors trust.json
+  (parent-aware via `ProjectTrustStore`), trusts the operator-launched cwd, denies
+  other untrusted paths. An in-app trust *card* is deferred: trust resolves inside
+  `runtime.switchSession`, which the hub runs under `switching=true`, so surfacing
+  an interactive `hostUiRequest` mid-switch needs the swap-guard reworked first.
 - **Trust does NOT gate `AGENTS.md`/`CLAUDE.md`** — those load regardless. Trust
   gates `.pi/settings.json`, `.pi/extensions|skills|prompts|themes`,
   `.pi/SYSTEM.md`, and project packages. Because the agent does nothing until the
