@@ -20,20 +20,49 @@ _(clear — pull the next item up from Polish)_
       notifications while the browser tab/window has focus
       _(done: client toast now gates on `document.hasFocus()`, not visibility — fires
       whenever pilot isn't the focused window. Committed in worktree, not yet merged.)_
-- [ ] **Project sidebar hierarchy polish** — larger expand/collapse arrows for
+- [x] **Project sidebar hierarchy polish** — larger expand/collapse arrows for
       project groups; indent sessions under their project header to make the
       parent-child relationship visually obvious
-- [ ] **Session status indicators** — icons/dots to the left of session titles
+      _(done: bigger carets, indented rows, indicator gutter — shipped with the
+      status indicators below.)_
+- [x] **Session status indicators** — icons/dots to the left of session titles
       distinguishing running (active turn), unread (new messages since last viewed),
       and read (idle). Unread/read is GUI-only state; can be in-memory only with
       old sessions defaulting to read on restore
-- [ ] **Local session inventory + active/archived filter** — maintain a
-      pilot-local store enumerating known projects and sessions (an allowlist).
-      Auto-discovered sessions default to archived. Add a filter toggle to show
-      only active (unarchived) sessions. Hide projects whose only sessions are
-      archived and whose last activity (max of its sessions' latest edit timestamp)
-      is >1 week old. For projects with many sessions, make the list internally
-      scrollable with a visible limit of ~10, scroll within the project group
+      _(done: new `sessionStatus` server msg broadcasts the per-session running set
+      across ALL sessions — the hub only streams the focused one, so this is what
+      makes a background row's running/done legible; pi driver unchanged. Client
+      tracks `runningIds` + in-memory `unread` (running→done on a non-focused session
+      marks it unread, viewing clears it; active session treated as read). Three CSS
+      states: pulsing dots / amber filled dot / hollow ring, with reduced-motion
+      fallback + a collapsed-group running dot. `bgrun` dev script + hub unit tests +
+      `e2e/status-indicators.spec.ts`.)_
+- [ ] **Active session unread when new text lands below the viewport** — builds on
+      the status indicators above. Today the active (focused) session is always
+      "read". Refine: if the agent appends content while you're scrolled up (content
+      exists below the visible transcript), mark the active session unread too;
+      clear it when you scroll to the bottom. Needs the transcript scroll container
+      to report "not at bottom + grew" back to the store (the classic "new messages ↓"
+      pill signal), and an exception to the active-session-is-read rule in
+      `store.svelte.ts`'s `sessionStatus`/`markRead` paths. Low priority.
+- [ ] **Session archive + staleness filter** — store an archived flag via pi's
+      `SessionManager.appendCustomEntry("pilot.archived", true)` so it lives next
+      to the transcript. Sessions are hidden when archived OR last-modified >7 days
+      ago (client-side: `Date.now() - updatedAt > 7d`). Add a filter toggle (active
+      only / all). Hide project groups whose sessions are all hidden + newest is
+      >1 week old. Expose `SessionManager.getEntries()` through the `PilotDriver`
+      so the archived flag is readable at list time.
+
+      ⚠️ **Perf concern:** `listAll()` would need to call `getEntries()` + scan for
+      the custom entry on *every* session to determine archived state. For N sessions,
+      that's N file reads, each scanning the session from disk. Consider caching the
+      archive flag in a pilot-side index (e.g. a single JSON file mapping sessionId →
+      archived) and invalidating on write, rather than a full entry scan per list.
+- [ ] **Session search bar** — filter-as-you-type search over session display name,
+      preview, and path in the sidebar
+- [ ] **Session list scroll cap** — for projects with many sessions, make the list
+      internally scrollable with a visible limit of ~10, scroll within the project
+      group
 - [ ] **Tool call results popup: drop description, add hover tooltip** — the tool
       description doesn't need to be listed inline in the popup; move it to a
       mouseover tooltip on the tool name instead
@@ -62,6 +91,33 @@ _(clear — pull the next item up from Polish)_
 - [ ] **Stray caret span in agent text** — a naked `<span class="caret svelte-1rd1h7a"></span>`
       is appended to the end of agent output, looks like a client rendering bug.
       Needs investigation and fix
+- [ ] **Model list search bar** — filter-as-you-type search in the model picker (top bar)
+      and the model list in the Settings panel; model lists grow quickly, and the
+      current flat menus become unwieldy with many providers connected
+- [ ] **Autofocus after tapping `+` in the sidebar** — when creating a new session,
+      focus the cwd input field immediately so you can type a path without an extra
+      click. (An `autofocus` attribute exists already but is unreliable with Svelte's
+      `{#if}` conditional mount — needs a `tick()` + `input.focus()` approach.)
+- [ ] **PWA update prompt** — when a new service worker is available, show a
+      toast/banner asking the user to refresh for the latest version (standard PWA
+      lifecycle UX)
+- [ ] **Tab title mirrors session title** — update `document.title` from the ambient
+      `title` so the browser tab reflects the session name instead of always showing
+      "pilot" (DESIGN.md SHOULD)
+- [ ] **Warm-session eviction cap** — `pi-driver.ts` currently keeps every session
+      warm forever with no upper bound; add a configurable cap with LRU eviction
+- [ ] **Keyboard shortcut for Settings (⌘+,)** — open the settings panel with the
+      standard web app keyboard shortcut
+- [ ] **(discussion needed) Auto session titling via cheapest model** — run a
+      lightweight model on session start to generate a title from the first user
+      prompt, instead of showing "New Session" indefinitely
+- [ ] **Enter/Alt+Enter hint for steer vs follow-up** — add an inline hint near the
+      composer or a tooltip explaining that pressing Enter while the agent is running
+      steers, and Alt+Enter queues a follow-up message (and implement both hotkeys)
+- [ ] **Hotkey + tooltip audit for every UI action** — go through every clickable
+      element (sidebar toggle, header buttons, stop, send, approval actions, trust
+      options, settings controls, model picker items, etc.) and add a keyboard
+      shortcut or a `title` tooltip naming the action + its hotkey if one exists
 
 - [ ] **Jump-to-last-prompt hotkey** (OP8)
 - [ ] **Type-to-focus prompt field** — basic typable characters focus the
