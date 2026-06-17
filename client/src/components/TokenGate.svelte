@@ -15,7 +15,7 @@
       }}
     >
       <input bind:value type="password" placeholder="Access token" autocomplete="current-password" />
-      <button type="submit" disabled={!value.trim()}>Connect</button>
+      <button type="submit" title="Connect with this access token" disabled={!value.trim()}>Connect</button>
     </form>
     <p class="hint">Tip: open <code>https://&lt;host&gt;/?token=…</code> once and it's remembered.</p>
   </div>

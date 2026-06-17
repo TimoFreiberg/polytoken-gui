@@ -233,7 +233,7 @@
 </script>
 
 <div class="tool {item.status}">
-  <button class="head" onclick={() => (open = !open)} aria-expanded={open}>
+  <button class="head" title={open ? "Collapse tool details" : "Expand tool details"} onclick={() => (open = !open)} aria-expanded={open}>
     <span class="status">{statusIcon[item.status]}</span>
     <span class="name" title={item.description || undefined}>{item.label ?? item.name}</span>
     <span class="arg">{preview(item.input)}</span>

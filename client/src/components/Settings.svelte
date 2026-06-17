@@ -165,6 +165,7 @@
                 role="radio"
                 aria-checked={store.themeMode === t.mode}
                 data-testid="theme-{t.mode}"
+                title={`Use ${t.label} theme`}
                 onclick={() => store.setTheme(t.mode)}>{t.label}</button
               >
             {/each}
@@ -185,6 +186,7 @@
               <button
                 class="btn"
                 disabled={push === "working" || push === "subscribed"}
+                title="Enable push notifications on this device"
                 onclick={() => store.enablePush()}
               >
                 {push === "subscribed" ? "Enabled" : "Enable"}
@@ -192,6 +194,7 @@
               <button
                 class="btn ghost"
                 disabled={push === "working"}
+                title="Send a test push notification to this device"
                 onclick={() => store.testPush()}>Test</button
               >
             </div>
@@ -222,12 +225,22 @@
                 </div>
                 <div class="actions">
                   {#if p.apiKeySetupSupported}
-                    <button class="btn ghost" onclick={() => openKeyField(p.id)}>
+                    <button
+                      class="btn ghost"
+                      title={p.authSource === "auth_file"
+                        ? `Replace the API key for ${p.name}`
+                        : `Set an API key for ${p.name}`}
+                      onclick={() => openKeyField(p.id)}
+                    >
                       {p.authSource === "auth_file" ? "Replace key" : "Set key"}
                     </button>
                   {/if}
                   {#if p.authSource === "auth_file"}
-                    <button class="btn danger" onclick={() => store.removeProviderApiKey(p.id)}>
+                    <button
+                      class="btn danger"
+                      title={`Remove the saved API key for ${p.name}`}
+                      onclick={() => store.removeProviderApiKey(p.id)}
+                    >
                       Remove
                     </button>
                   {/if}
@@ -248,8 +261,8 @@
                     autocomplete="off"
                     data-testid="provider-key-input"
                   />
-                  <button class="btn" type="submit" disabled={!keyDraft.trim()}>Save</button>
-                  <button class="btn ghost" type="button" onclick={cancelKeyField}>Cancel</button>
+                  <button class="btn" type="submit" title="Save this API key" disabled={!keyDraft.trim()}>Save</button>
+                  <button class="btn ghost" type="button" title="Cancel without saving the key" onclick={cancelKeyField}>Cancel</button>
                 </form>
               {/if}
             {/each}
@@ -359,7 +372,7 @@
             </div>
           </div>
           {#if store.hasToken}
-            <button class="btn danger" onclick={() => store.signOut()}>Forget</button>
+            <button class="btn danger" title="Forget the access token saved on this device" onclick={() => store.signOut()}>Forget</button>
           {/if}
         </div>
         <form
@@ -375,7 +388,7 @@
             placeholder={store.hasToken ? "Replace token…" : "Enter token…"}
             autocomplete="off"
           />
-          <button class="btn" type="submit" disabled={!tokenDraft.trim()}>Save</button>
+          <button class="btn" type="submit" title="Save this access token on this device" disabled={!tokenDraft.trim()}>Save</button>
         </form>
       </section>
     </div>

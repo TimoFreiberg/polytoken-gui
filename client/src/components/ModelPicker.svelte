@@ -110,6 +110,7 @@
               <button
                 class="item"
                 class:active
+                title={active ? `${opt.label} (current model)` : `Switch to ${opt.label}`}
                 onclick={() => pickModel(opt.provider, opt.modelId)}
               >
                 <span class="item-label">{opt.label}</span>
@@ -146,6 +147,7 @@
             <button
               class="item"
               class:active={lvl === thinking}
+              title={lvl === thinking ? `Thinking: ${lvl} (current)` : `Set thinking level to ${lvl}`}
               onclick={() => pickThinking(lvl)}
             >
               <span class="item-label">{lvl}</span>

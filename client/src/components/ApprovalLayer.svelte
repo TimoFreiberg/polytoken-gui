@@ -118,39 +118,39 @@
       <h2>{current.title}</h2>
       <p class="msg">{current.message}</p>
       <div class="actions two">
-        <button class="ghost" onclick={() => confirm(false)}>Deny</button>
-        <button class="primary" onclick={() => confirm(true)}>Allow</button>
+        <button class="ghost" title="Deny this request" onclick={() => confirm(false)}>Deny</button>
+        <button class="primary" title="Allow this request" onclick={() => confirm(true)}>Allow</button>
       </div>
     {:else if current.kind === "select"}
       <h2>{current.title}</h2>
       {#if binarySelect}
         <div class="actions two">
-          <button class="ghost" onclick={() => submitValue(binarySelect.negative)}>{binarySelect.negative}</button>
-          <button class="primary" onclick={() => submitValue(binarySelect.affirmative)}
+          <button class="ghost" title={binarySelect.negative} onclick={() => submitValue(binarySelect.negative)}>{binarySelect.negative}</button>
+          <button class="primary" title={binarySelect.affirmative} onclick={() => submitValue(binarySelect.affirmative)}
             >{binarySelect.affirmative}</button
           >
         </div>
       {:else}
         <div class="options">
           {#each current.options as opt (opt)}
-            <button class="opt" class:sel={selectedOption === opt} onclick={() => submitValue(opt)}>{opt}</button>
+            <button class="opt" class:sel={selectedOption === opt} title={`Choose: ${opt}`} onclick={() => submitValue(opt)}>{opt}</button>
           {/each}
         </div>
-        <div class="actions"><button class="ghost wide" onclick={cancel}>Cancel</button></div>
+        <div class="actions"><button class="ghost wide" title="Cancel this request" onclick={cancel}>Cancel</button></div>
       {/if}
     {:else if current.kind === "input"}
       <h2>{current.title}</h2>
       <input class="field" bind:value={inputValue} placeholder={current.placeholder ?? ""} />
       <div class="actions two">
-        <button class="ghost" onclick={cancel}>Cancel</button>
-        <button class="primary" onclick={() => submitValue(inputValue)}>Submit</button>
+        <button class="ghost" title="Cancel this request" onclick={cancel}>Cancel</button>
+        <button class="primary" title="Submit your input" onclick={() => submitValue(inputValue)}>Submit</button>
       </div>
     {:else if current.kind === "editor"}
       <h2>{current.title}</h2>
       <textarea class="editor" bind:value={inputValue} rows="6"></textarea>
       <div class="actions two">
-        <button class="ghost" onclick={cancel}>Cancel</button>
-        <button class="primary" onclick={() => submitValue(inputValue)}>Save</button>
+        <button class="ghost" title="Cancel this request" onclick={cancel}>Cancel</button>
+        <button class="primary" title="Save your edits" onclick={() => submitValue(inputValue)}>Save</button>
       </div>
     {:else if isDialogRequest(current)}
       <!-- unreachable: all dialog kinds handled above -->
@@ -158,7 +158,7 @@
       <!-- generic fallback for any unknown/unhandled method -->
       <h2>Agent request: {current.kind}</h2>
       <pre class="raw">{JSON.stringify(current, null, 2)}</pre>
-      <div class="actions"><button class="ghost wide" onclick={cancel}>Dismiss</button></div>
+      <div class="actions"><button class="ghost wide" title="Dismiss this request" onclick={cancel}>Dismiss</button></div>
     {/if}
 
     {#if timeoutMs}

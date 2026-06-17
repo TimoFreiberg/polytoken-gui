@@ -29,6 +29,7 @@
         <button
           class="opt"
           class:deny={!opt.trusted}
+          title={opt.trusted ? `Trust this folder: ${opt.label}` : `Don't trust this folder: ${opt.label}`}
           onclick={() => choose(i)}>{opt.label}</button
         >
       {/each}

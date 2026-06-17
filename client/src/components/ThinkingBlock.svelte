@@ -4,7 +4,7 @@
 </script>
 
 <div class="think" class:open>
-  <button class="head" onclick={() => (open = !open)}>
+  <button class="head" title={open ? "Collapse thinking" : "Expand thinking"} onclick={() => (open = !open)}>
     <span class="chev">{open ? "▾" : "▸"}</span>
     <span class="label">{streaming ? "Thinking…" : "Thought process"}</span>
     {#if streaming}<span class="shimmer"></span>{/if}

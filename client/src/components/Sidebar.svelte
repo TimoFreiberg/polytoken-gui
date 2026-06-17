@@ -163,23 +163,23 @@
           <span>Isolate in a worktree</span>
         </label>
         <div class="dir-actions">
-          <button class="ghost" type="button" onclick={closeNewDir}>
+          <button class="ghost" type="button" title="Cancel and close this form (Esc)" onclick={closeNewDir}>
             Cancel
           </button>
-          <button class="primary" type="submit" disabled={!newDir.trim()}>
+          <button class="primary" type="submit" title="Start a new session in this directory" disabled={!newDir.trim()}>
             Start
           </button>
         </div>
       </form>
     {:else}
-      <button class="new-btn" onclick={openNewDir}>
+      <button class="new-btn" title="Start a new session in a directory you choose" onclick={openNewDir}>
         <span class="plus">+</span> New session in a directory…
       </button>
     {/if}
     {#if store.lastError}
       <div class="err" role="alert">
         {store.lastError}
-        <button class="err-x" aria-label="Dismiss" onclick={() => store.clearError()}
+        <button class="err-x" title="Dismiss this error" aria-label="Dismiss" onclick={() => store.clearError()}
           >×</button
         >
       </div>
@@ -238,6 +238,7 @@
                   <button
                     class="row"
                     class:active={s.sessionId === store.activeSessionId}
+                    title={`Open session: ${s.displayName || s.preview || "(untitled)"}`}
                     onclick={() => pick(s)}
                   >
                     <span

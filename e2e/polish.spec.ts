@@ -16,6 +16,12 @@ test("edit-tool card: collapsed +N/−M badge, expands to a @pierre/diffs render
   await expect(counts).toContainText("+1");
   await expect(counts).toContainText("1");
 
+  // The collapse/expand toggle carries a descriptive tooltip (title audit).
+  await expect(card.locator(".head")).toHaveAttribute(
+    "title",
+    "Expand tool details",
+  );
+
   // Expanding mounts the pierre diff into a shadow root (self-contained HTML).
   await card.locator(".head").click();
   await expect
