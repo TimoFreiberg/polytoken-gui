@@ -94,6 +94,32 @@ test("a project group's session list is height-capped and scrolls within it", as
   expect(Number.parseFloat(styles.maxHeight)).toBeGreaterThan(0);
 });
 
+test("the session search filters by name, preview, and path", async ({
+  page,
+}) => {
+  await openSidebar(page);
+  const sidebar = page.getByTestId("sidebar");
+  const search = sidebar.getByPlaceholder("Search sessions…");
+
+  // name match: "fold" → only "Explore the fold reducer"
+  await search.fill("fold");
+  await expect(sidebar.getByText("Explore the fold reducer")).toBeVisible();
+  await expect(sidebar.getByText("Wire up the WebSocket bridge")).toHaveCount(
+    0,
+  );
+  await expect(sidebar.getByText("quick scratch session")).toHaveCount(0);
+
+  // path match: "scratch" → the session whose cwd ends in /scratch
+  await search.fill("scratch");
+  await expect(sidebar.getByText("quick scratch session")).toBeVisible();
+  await expect(sidebar.getByText("Explore the fold reducer")).toHaveCount(0);
+
+  // clearing restores every session
+  await search.fill("");
+  await expect(sidebar.getByText("Explore the fold reducer")).toBeVisible();
+  await expect(sidebar.getByText("quick scratch session")).toBeVisible();
+});
+
 test("opening the new-session form focuses the directory input", async ({
   page,
 }) => {

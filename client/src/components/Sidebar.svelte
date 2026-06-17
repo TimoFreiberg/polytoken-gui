@@ -38,6 +38,25 @@
     return out;
   });
 
+  // Filter-as-you-type search over the session list (name, preview, path). Empty =
+  // show everything; groups with no matching session are dropped entirely.
+  let query = $state("");
+  const q = $derived(query.trim().toLowerCase());
+  const filteredGroups = $derived.by(() => {
+    if (!q) return groups;
+    const out: { cwd: string; items: SessionListEntry[] }[] = [];
+    for (const g of groups) {
+      const items = g.items.filter(
+        (s) =>
+          (s.displayName ?? "").toLowerCase().includes(q) ||
+          (s.preview ?? "").toLowerCase().includes(q) ||
+          s.cwd.toLowerCase().includes(q),
+      );
+      if (items.length > 0) out.push({ ...g, items });
+    }
+    return out;
+  });
+
   // Per-project collapse state, keyed by cwd. Empty = everything expanded.
   let collapsed = $state<Record<string, boolean>>({});
   function toggleGroup(cwd: string): void {
@@ -155,11 +174,29 @@
     {/if}
   </div>
 
+  {#if store.sessions.length > 0}
+    <div class="search">
+      <input
+        class="search-input"
+        type="text"
+        placeholder="Search sessions…"
+        title="Search sessions by name, preview, or path"
+        aria-label="Search sessions"
+        spellcheck="false"
+        autocapitalize="off"
+        autocorrect="off"
+        bind:value={query}
+      />
+    </div>
+  {/if}
+
   <nav class="list">
-    {#if groups.length === 0}
-      <div class="empty">No sessions yet.</div>
+    {#if filteredGroups.length === 0}
+      <div class="empty">
+        {q ? "No sessions match your search." : "No sessions yet."}
+      </div>
     {:else}
-      {#each groups as g (g.cwd)}
+      {#each filteredGroups as g (g.cwd)}
         <section class="group">
           <div class="group-head">
             <button
@@ -353,6 +390,26 @@
     color: var(--danger);
     font-size: 14px;
     line-height: 1;
+  }
+
+  .search {
+    padding: 0 10px 8px;
+  }
+  .search-input {
+    width: 100%;
+    font-size: 13px;
+    color: var(--text);
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    padding: 7px 10px;
+  }
+  .search-input:focus {
+    outline: none;
+    border-color: var(--accent);
+  }
+  .search-input::placeholder {
+    color: var(--text-faint);
   }
 
   .list {
