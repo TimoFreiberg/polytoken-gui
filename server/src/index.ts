@@ -12,6 +12,27 @@ import { MockDriver } from "./mock-driver.js";
 import { PushService } from "./push.js";
 import { serveStatic } from "./static.js";
 
+// A pilot host outlives the sessions it drives, so a stray async error from
+// third-party pi extension code must not take the whole process down with every
+// other session and client. Concretely (D13): an extension's fire-and-forget
+// work — e.g. prompt-editor loading prompt history on session_start — can touch
+// a `ctx` that went stale mid-await when we swap sessions; pi's ctx getters then
+// throw "stale after session replacement", and the unawaited rejection would
+// otherwise exit the process.
+//
+// This is NOT a silent swallow: we log loudly, and a line that recurs is a
+// signal to fix the extension or stop loading it in pilot, not noise to ignore.
+// uncaughtException is deliberately left to crash — a synchronous uncaught throw
+// on the main path is far more likely our own bug, and crashing loud beats
+// limping on with corrupted state.
+process.on("unhandledRejection", (reason) => {
+  console.error(
+    "[pilot] survived an unhandled promise rejection (likely third-party " +
+      "extension async); investigate if this recurs:\n",
+    reason instanceof Error ? (reason.stack ?? reason.message) : reason,
+  );
+});
+
 interface WsData {
   authed: boolean;
   unsub: (() => void) | null;
