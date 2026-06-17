@@ -123,3 +123,28 @@ test("timeout-bearing dialog shows a countdown and auto-resolves deny-safe", asy
   await expect(page.getByRole("dialog")).toBeHidden({ timeout: 8000 });
   await expect(page.getByText("Denied — skipping that step.")).toBeVisible();
 });
+
+test("Ctrl/Cmd+Up jumps to the most recent user prompt", async ({ page }) => {
+  // Wait for the greeting to finish, then add several turns so the transcript is
+  // tall enough to scroll (otherwise everything fits and nothing leaves the view).
+  await expect(
+    page.getByText("add a Bun test", { exact: false }),
+  ).toBeVisible();
+  for (let i = 0; i < 3; i++) {
+    await drive(page, "reply");
+    await expect(
+      page.getByText("That confirms it", { exact: false }).last(),
+    ).toBeVisible();
+  }
+  const lastPrompt = page
+    .getByText("Show me the streamed reply script.")
+    .last();
+  // Scroll to the top so the last prompt is out of view…
+  await page
+    .locator(".scroller")
+    .evaluate((el) => ((el as HTMLElement).scrollTop = 0));
+  await expect(lastPrompt).not.toBeInViewport();
+  // …then the hotkey brings it back into view.
+  await page.keyboard.press("Control+ArrowUp");
+  await expect(lastPrompt).toBeInViewport();
+});

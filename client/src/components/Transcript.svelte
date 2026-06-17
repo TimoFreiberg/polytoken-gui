@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { onMount } from "svelte";
   import type { TranscriptItem } from "@pilot/protocol";
   import { store } from "../lib/store.svelte.js";
   import { renderMarkdown } from "../lib/markdown.js";
@@ -78,6 +79,30 @@
   function isToolItem(i: TranscriptItem) {
     return i.kind === "tool";
   }
+
+  /** Scroll so the most recent user prompt sits at the top of the viewport (your
+   *  message + the response below it) — for re-reading what you last asked after
+   *  scrolling through a long turn. Bound to Cmd/Ctrl+↑. */
+  function jumpToLastPrompt(): void {
+    if (!scroller) return;
+    const prompts = scroller.querySelectorAll<HTMLElement>(".row.user");
+    const last = prompts[prompts.length - 1];
+    last?.scrollIntoView({ block: "start", behavior: "smooth" });
+  }
+
+  // Global hotkey. Cmd/Ctrl modifier keeps it clear of the composer's type-to-focus
+  // (which only grabs unmodified printable keys). Fires regardless of focus so it
+  // works while reading scrollback.
+  onMount(() => {
+    function onKey(e: KeyboardEvent): void {
+      if ((e.metaKey || e.ctrlKey) && e.key === "ArrowUp") {
+        e.preventDefault();
+        jumpToLastPrompt();
+      }
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  });
 </script>
 
 <div class="scroller" bind:this={scroller} onscroll={onScroll}>
