@@ -59,7 +59,7 @@ test("favorites filter the header model picker, keeping the active model visible
 
   await page
     .locator(".mp .badge")
-    .filter({ hasText: "claude-opus-4-8" })
+    .filter({ hasText: "Claude Opus 4.8" })
     .click();
   const panel = page.locator(".mp .panel");
   // Favorited model + the active (non-favorite) model both show; the rest are hidden.
@@ -99,6 +99,17 @@ test("theme toggle drives the data-theme override and persists it", async ({
   await page.getByTestId("settings-toggle").click();
   await page.getByTestId("theme-system").click();
   await expect(html).toHaveAttribute("data-theme", "light");
+});
+
+test("Cmd/Ctrl+, toggles the settings panel", async ({ page }) => {
+  const panel = page.getByTestId("settings-panel");
+  await expect(panel).toBeHidden();
+  // Open with the standard preferences shortcut…
+  await page.keyboard.press("Control+Comma");
+  await expect(panel).toBeVisible();
+  // …and the same shortcut closes it again.
+  await page.keyboard.press("Control+Comma");
+  await expect(panel).toBeHidden();
 });
 
 test("settings panel closes via Escape and the close button", async ({

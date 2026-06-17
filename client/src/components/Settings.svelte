@@ -72,7 +72,17 @@
     store.closeSettings();
   }
   function onKey(e: KeyboardEvent): void {
-    if (e.key === "Escape" && open) close();
+    if (e.key === "Escape" && open) {
+      close();
+      return;
+    }
+    // ⌘+, / Ctrl+, — the standard "open preferences" shortcut. Toggles the panel
+    // so the keyboard can both summon and dismiss it.
+    if ((e.metaKey || e.ctrlKey) && e.key === "," && !e.altKey && !e.shiftKey) {
+      e.preventDefault();
+      if (open) close();
+      else store.openSettings();
+    }
   }
   function saveToken(): void {
     const t = tokenDraft.trim();

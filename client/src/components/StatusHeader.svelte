@@ -83,7 +83,7 @@
     <button
       class="gear"
       data-testid="settings-toggle"
-      title="Settings"
+      title="Settings (⌘,)"
       aria-label="Settings"
       onclick={() => store.openSettings()}
     >
