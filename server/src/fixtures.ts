@@ -486,6 +486,23 @@ export function editDiff(): ScriptStep[] {
   ];
 }
 
+/** A turn that goes running and STAYS running (no completion) so the composer's
+ *  steer/follow-up controls + Enter/Alt+Enter hotkeys can be exercised
+ *  deterministically — the running state otherwise lasts only ~1s. */
+export function streamHold(): ScriptStep[] {
+  return [
+    {
+      wait: 0,
+      event: {
+        ...base(),
+        type: "sessionUpdated",
+        snapshot: snapshot({ status: "running" }),
+      },
+    },
+    ...deltas("Working on it — this turn stays open for the test.", "text"),
+  ];
+}
+
 /** A turn that streams an assistant line and then goes idle via `sessionUpdated`
  *  ONLY (no runCompleted) — the original "stray caret" repro. With the fold fix the
  *  caret must NOT linger after the idle transition. */

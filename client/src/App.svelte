@@ -15,7 +15,7 @@
   // Dev affordance: ?dev shows buttons that drive the mock to any UI state, so the
   // screenshot harness can reach approval/ambient/error states deterministically.
   const dev = new URLSearchParams(location.search).has("dev");
-  const scripts = ["reply", "confirm", "trust", "input", "ambient", "bgrun", "editdiff", "idle", "timeout", "yesno"];
+  const scripts = ["reply", "confirm", "trust", "input", "ambient", "bgrun", "editdiff", "idle", "streamhold", "timeout", "yesno"];
 
   onMount(() => store.start());
 

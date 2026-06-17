@@ -29,10 +29,12 @@
   }
 
   function onKeydown(e: KeyboardEvent) {
-    if (e.key === "Enter" && !e.shiftKey) {
-      e.preventDefault();
-      submit();
-    }
+    if (e.key !== "Enter" || e.shiftKey) return;
+    e.preventDefault();
+    // While the agent runs, Enter steers (deliver after the current step) and
+    // Alt+Enter queues a follow-up (deliver when it stops); the toggle reflects it.
+    if (streaming) deliverAs = e.altKey ? "followUp" : "steer";
+    submit();
   }
 
   function toggleEdit() {
@@ -79,10 +81,10 @@
     {#if streaming}
       <div class="streamrow">
         <div class="modes">
-          <button class:active={deliverAs === "steer"} onclick={() => (deliverAs = "steer")} title="Deliver after the current step">steer</button>
-          <button class:active={deliverAs === "followUp"} onclick={() => (deliverAs = "followUp")} title="Deliver when the agent stops">follow-up</button>
+          <button class:active={deliverAs === "steer"} onclick={() => (deliverAs = "steer")} title="Steer — deliver after the current step (Enter)">steer</button>
+          <button class:active={deliverAs === "followUp"} onclick={() => (deliverAs = "followUp")} title="Follow-up — deliver when the agent stops (Alt+Enter)">follow-up</button>
         </div>
-        <button class="stop" onclick={() => store.abort()}>■ Stop</button>
+        <button class="stop" onclick={() => store.abort()} title="Stop the agent">■ Stop</button>
       </div>
     {/if}
 
@@ -111,11 +113,16 @@
             {showPreview ? "Edit" : "Preview"}
           </button>
         {/if}
-        <button class="send" disabled={!store.composerDraft.trim()} onclick={submit} aria-label="Send">
+        <button class="send" disabled={!store.composerDraft.trim()} onclick={submit} aria-label="Send" title="Send (Enter)">
           ↑
         </button>
       </div>
     </div>
+    {#if streaming}
+      <div class="hint">
+        <kbd>Enter</kbd> steers · <kbd>Alt</kbd>+<kbd>Enter</kbd> queues a follow-up
+      </div>
+    {/if}
   </div>
 </div>
 
@@ -292,5 +299,20 @@
   }
   .send:not(:disabled):active {
     transform: scale(0.92);
+  }
+  .hint {
+    font-size: 11.5px;
+    color: var(--text-faint);
+    text-align: center;
+    padding: 0 2px;
+  }
+  .hint kbd {
+    font-family: var(--font-mono);
+    font-size: 10.5px;
+    color: var(--text-muted);
+    background: var(--surface-sunken);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-xs);
+    padding: 0 4px;
   }
 </style>

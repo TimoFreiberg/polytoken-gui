@@ -38,3 +38,31 @@ test("typing a prompt then sending clears the composer", async ({ page }) => {
   await expect(page.getByText("hello there")).toBeVisible();
   await expect(box).toHaveValue("");
 });
+
+test("Enter steers and Alt+Enter queues a follow-up while streaming", async ({
+  page,
+}) => {
+  await drive(page, "streamhold"); // a turn that stays running
+  const modes = page.locator(".composer-wrap .modes");
+  await expect(modes).toBeVisible();
+  // The hotkey hint is shown alongside the steer/follow-up toggle.
+  await expect(
+    page.getByText("queues a follow-up", { exact: false }),
+  ).toBeVisible();
+
+  const box = page.getByPlaceholder("Queue a message…");
+  // Alt+Enter queues a follow-up — the toggle reflects the choice and the draft clears.
+  await box.fill("do this after");
+  await box.press("Alt+Enter");
+  await expect(modes.getByRole("button", { name: "follow-up" })).toHaveClass(
+    /active/,
+  );
+  await expect(box).toHaveValue("");
+
+  // Plain Enter steers.
+  await box.fill("actually now");
+  await box.press("Enter");
+  await expect(
+    modes.getByRole("button", { name: "steer", exact: true }),
+  ).toHaveClass(/active/);
+});

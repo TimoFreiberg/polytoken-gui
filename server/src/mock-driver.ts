@@ -33,6 +33,7 @@ import {
   SESSION_LIST,
   SESSION_REF,
   snapshot,
+  streamHold,
   timeoutConfirm,
   yesNoSelect,
 } from "./fixtures.js";
@@ -316,6 +317,7 @@ export class MockDriver implements PilotDriver {
       reply: () => promptReply("Show me the streamed reply script."),
       editdiff: editDiff,
       idle: idleNoComplete,
+      streamhold: streamHold,
       timeout: timeoutConfirm,
       yesno: yesNoSelect,
     };
