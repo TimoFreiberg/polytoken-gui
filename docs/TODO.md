@@ -14,6 +14,8 @@ _(clear — nothing blocking; pull the next item up from Important)_
 
 _(clear — pull the next item up from Polish)_
 
+- [ ] desktop app packaging. i know nothing about running a web app like a desktop app, so proposals welcome. i'd like to have a .app in macos that i can click in my dock. so far only macos necessary
+
 ## 🟢 Polish / fast-follow
 
 - [x] **Suppress notifications when app focused** — if feasible, silence push/toast
