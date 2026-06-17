@@ -17,12 +17,20 @@ PWA. Real pi wiring (M5) and remote deploy (M7) are next. See `docs/`.
 
 ```bash
 bun install
-bun run dev      # Bun WS server :8787 + Vite client :5173
+PILOT_DRIVER=mock bun run dev   # mock driver (no pi running, use with ?dev bar)
+# or if you have pi running:  bun run dev
 open http://localhost:5173
 ```
 
+The server defaults to the real pi SDK driver. Set `PILOT_DRIVER=mock` to use the
+deterministic mock — you want this for UI development without a running pi instance
+and for the dev bar (`http://localhost:5173/?dev`).
+
 `http://localhost:5173/?dev` adds a dev bar to drive the mock to any UI state.
 `http://localhost:8787/debug/state` dumps the authoritative session state as JSON.
+
+**Tests:** `bun test` (unit) needs no mock; `bun run test:e2e` (Playwright) sets
+`PILOT_DRIVER=mock` automatically.
 
 ## Architecture (one paragraph)
 

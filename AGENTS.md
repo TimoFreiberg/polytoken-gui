@@ -32,12 +32,19 @@ Monorepo, Bun workspaces.
 
 ```bash
 bun install
-bun run dev            # server (8787) + vite client (5173, proxies /ws + /debug)
-bun test               # protocol + server (fold reducer etc.)
+PILOT_DRIVER=mock bun run dev   # server + client, using mock driver (no pi needed)
+bun run dev                     # same, but uses real pi driver (needs pi running)
+bun test                        # unit tests — no driver needed, no mock required
+bun run test:e2e                # Playwright — sets PILOT_DRIVER=mock automatically
 bunx tsc --noEmit -p protocol/tsconfig.json   # typecheck server/protocol the same way
 bun run --cwd client check                    # svelte-check
 bun run --cwd client build                    # prod bundle
 ```
+
+**Driver note:** the server defaults to the real pi SDK driver. Set `PILOT_DRIVER=mock`
+to use the deterministic mock instead — you want this for UI dev without a running
+pi instance and for the dev-bar (`/?dev`). The e2e suite sets it automatically;
+unit tests don't touch the driver at all.
 
 ## Verifying the UI (agent-legible introspection)
 
@@ -68,3 +75,7 @@ This is set up so you can verify autonomously — use it.
 - Keep `protocol/` free of runtime/DOM deps — it's imported by both halves.
 - The `PilotDriver` interface is the contract for swapping mock ↔ real pi. Add
   capabilities there, implement in both drivers.
+- **Every UI action needs a hotkey and a tooltip.** Any clickable element — buttons,
+  toggles, menu items, approval actions, settings controls — must have a `title`
+  attribute naming the action (and its keyboard shortcut if one exists). Reviewers:
+  flag missing tooltips/hotkeys the same way you'd flag missing error handling.
