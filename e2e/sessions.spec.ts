@@ -77,6 +77,23 @@ test("a session can be started in an arbitrary typed directory", async ({
   ).toBeVisible();
 });
 
+test("a project group's session list is height-capped and scrolls within it", async ({
+  page,
+}) => {
+  await openSidebar(page);
+  const ul = page.getByTestId("sidebar").locator(".group ul").first();
+  await expect(ul).toBeVisible();
+  // The list caps at ~10 rows (max-height) and scrolls internally rather than letting
+  // one big project shove the rest off-screen.
+  const styles = await ul.evaluate((el) => {
+    const cs = getComputedStyle(el);
+    return { overflowY: cs.overflowY, maxHeight: cs.maxHeight };
+  });
+  expect(styles.overflowY).toBe("auto");
+  expect(styles.maxHeight).not.toBe("none");
+  expect(Number.parseFloat(styles.maxHeight)).toBeGreaterThan(0);
+});
+
 test("opening the new-session form focuses the directory input", async ({
   page,
 }) => {
