@@ -54,6 +54,10 @@ export type ServerMessage =
       sessions: readonly SessionListEntry[];
       activeSessionId: SessionId | null;
     }
+  /** Which sessions currently have a live turn (D8 multi-session). Pushed whenever
+   *  the running set changes, so background rows can show a running/done indicator
+   *  without the client folding their (un-broadcast) event streams. */
+  | { type: "sessionStatus"; runningIds: readonly SessionId[] }
   /** The models available to switch to (server-authoritative, like `sessionList`).
    *  The current selection rides each session's snapshot `config`, not this. */
   | { type: "modelList"; models: readonly ModelOption[] }

@@ -47,6 +47,13 @@ class PilotStore {
   // Session picker — server-authoritative: the sessions on disk + which is active.
   sessions = $state<SessionListEntry[]>([]);
   activeSessionId = $state<string | null>(null);
+  // Session ids with a live turn right now (server-pushed via `sessionStatus`).
+  runningIds = $state<Set<string>>(new Set());
+  // Sessions with new content since last viewed. GUI-only, in-memory: a session is
+  // marked unread when a *background* turn of it finishes (running→done while it's
+  // not the active session); cleared when it becomes active. Everything starts read
+  // on page load (no persistence) — matches the TODO's "old sessions default to read".
+  unread = $state<Set<string>>(new Set());
   // Model picker — the models available to switch to (current selection lives in
   // session.config). Server-authoritative, delivered like `sessions`.
   models = $state<ModelOption[]>([]);
@@ -117,7 +124,26 @@ class PilotStore {
       case "sessionList":
         this.sessions = [...msg.sessions];
         this.activeSessionId = msg.activeSessionId;
+        // The session you're now viewing can't be unread.
+        if (msg.activeSessionId) this.markRead(msg.activeSessionId);
         break;
+      case "sessionStatus": {
+        // A session leaving the running set = a turn just finished. If it's a
+        // background session (not the one you're looking at), flag it unread.
+        // Exclude the focused session two ways: `activeSessionId` (from the session
+        // list) AND the snapshot's `ref` (which always lands before live events) —
+        // so a focused turn that completes before the list arrives never self-marks.
+        const next = new Set(msg.runningIds);
+        const viewing = this.session.ref?.sessionId;
+        const newlyUnread = [...this.runningIds].filter(
+          (id) =>
+            !next.has(id) && id !== this.activeSessionId && id !== viewing,
+        );
+        this.runningIds = next;
+        if (newlyUnread.length > 0)
+          this.unread = new Set([...this.unread, ...newlyUnread]);
+        break;
+      }
       case "modelList":
         this.models = [...msg.models];
         break;
@@ -189,7 +215,27 @@ class PilotStore {
   }
   openSession(path: string): void {
     if (path === this.activeSessionPath) return;
+    // Optimistic: opening a session reads it (the authoritative clear also rides the
+    // next `sessionList`, but this avoids a flicker of the unread dot mid-switch).
+    const id = this.sessions.find((s) => s.path === path)?.sessionId;
+    if (id) this.markRead(id);
     send({ type: "openSession", path });
+  }
+  private markRead(sessionId: string): void {
+    if (!this.unread.has(sessionId)) return;
+    const next = new Set(this.unread);
+    next.delete(sessionId);
+    this.unread = next;
+  }
+  /** The sidebar indicator for a session: a live turn, new-since-viewed, or idle. */
+  sessionStatus(sessionId: string): "running" | "unread" | "read" {
+    if (this.runningIds.has(sessionId)) return "running";
+    if (this.unread.has(sessionId)) return "unread";
+    return "read";
+  }
+  /** True if any session in a project group is running (collapsed-group indicator). */
+  groupRunning(sessionIds: readonly string[]): boolean {
+    return sessionIds.some((id) => this.runningIds.has(id));
   }
   newSession(cwd?: string): void {
     send({ type: "newSession", cwd: cwd?.trim() || undefined });

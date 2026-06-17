@@ -14,6 +14,7 @@ import type {
 import type { PilotDriver, TrustEvent } from "./driver.js";
 import {
   ambient,
+  bgRun,
   confirmDialog,
   greeting,
   inputDialog,
@@ -302,6 +303,7 @@ export class MockDriver implements PilotDriver {
       confirm: confirmDialog,
       input: inputDialog,
       ambient,
+      bgrun: bgRun,
       reply: () => promptReply("Show me the streamed reply script."),
     };
     const make = map[name];

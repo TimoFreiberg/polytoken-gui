@@ -29,6 +29,11 @@ export class SessionHub {
   // only so a finished background turn can still notify a closed phone.
   private state: SessionState = initialSessionState();
   private focusedId: SessionId | null = null;
+  // Session ids with a live turn right now — tracked across ALL sessions, not just
+  // the focused one (a background turn never folds into `state`/broadcasts events,
+  // but the client still needs its running/done indicator). Pushed as `sessionStatus`
+  // when the set changes. In-memory only: a session on disk is never "running".
+  private running = new Set<SessionId>();
   private clients = new Set<Send>();
   private serverId = `pilot-${Math.floor(Date.now() / 1000)}`;
   // Whether any client has connected since startup. Gates push so replayed history
@@ -66,6 +71,9 @@ export class SessionHub {
   private onEvent(ev: SessionDriverEvent): void {
     if (this.switching) return; // the swap orchestrates its own reset + re-fold
     const sid = ev.sessionRef.sessionId;
+    // Track the running set across every session (incl. background ones whose events
+    // are never broadcast), before the focus check below.
+    this.trackRunning(sid, ev);
     // The first session to surface becomes the focus (e.g. the resumed session at
     // startup). Only the focused session folds into `state` and broadcasts; other
     // (warm, background) sessions reach maybeNotify but not the focused transcript.
@@ -75,6 +83,41 @@ export class SessionHub {
       this.broadcast({ type: "event", event: ev });
     }
     this.maybeNotify(ev);
+  }
+
+  /** Update the running set from one event and push `sessionStatus` if it changed.
+   *  Snapshot-bearing events carry an authoritative status; mid-turn events
+   *  (deltas, tool/user/queued) imply a live turn; failure/close end it. */
+  private trackRunning(sid: SessionId, ev: SessionDriverEvent): void {
+    const before = this.running.has(sid);
+    switch (ev.type) {
+      case "sessionOpened":
+      case "sessionUpdated":
+      case "runCompleted":
+        this.setRunning(sid, ev.snapshot.status === "running");
+        break;
+      case "assistantDelta":
+      case "toolStarted":
+      case "toolUpdated":
+      case "userMessage":
+      case "queuedMessageStarted":
+        this.setRunning(sid, true);
+        break;
+      case "runFailed":
+      case "sessionClosed":
+        this.setRunning(sid, false);
+        break;
+    }
+    if (this.running.has(sid) !== before) this.broadcastSessionStatus();
+  }
+
+  private setRunning(sid: SessionId, on: boolean): void {
+    if (on) this.running.add(sid);
+    else this.running.delete(sid);
+  }
+
+  private broadcastSessionStatus(): void {
+    this.broadcast({ type: "sessionStatus", runningIds: [...this.running] });
   }
 
   // Mirror of the client's tab-open notify rules (App.svelte), but server-side and
@@ -239,6 +282,14 @@ export class SessionHub {
       // Focus follows the swapped-to session; its id rides the seed's sessionOpened.
       this.focusedId = this.state.ref?.sessionId ?? this.focusedId;
       this.switching = false;
+      // The seed folded directly (not via onEvent), so reconcile the running set
+      // from the swapped-to session's resolved status.
+      const focusId = this.state.ref?.sessionId;
+      if (focusId) {
+        const before = this.running.has(focusId);
+        this.setRunning(focusId, this.state.status === "running");
+        if (this.running.has(focusId) !== before) this.broadcastSessionStatus();
+      }
       this.broadcast({ type: "snapshot", state: this.snapshot() });
       await this.broadcastSessionList();
     } finally {
@@ -256,6 +307,8 @@ export class SessionHub {
       serverId: this.serverId,
     });
     send({ type: "snapshot", state: this.snapshot() });
+    // Tell the fresh client what's already running (in-memory, synchronous).
+    send({ type: "sessionStatus", runningIds: [...this.running] });
     // Fire the session + model + provider lists asynchronously (driver disk/registry
     // reads); they arrive as follow-up messages, keeping hello+snapshot synchronous +
     // first.
@@ -365,8 +418,10 @@ export class SessionHub {
   reset(): void {
     this.state = initialSessionState();
     this.focusedId = null;
+    this.running.clear();
     this.driver.reset?.();
     this.broadcast({ type: "snapshot", state: this.snapshot() });
+    this.broadcastSessionStatus();
   }
 
   /** A JSON-safe deep copy of current state (foldEvent mutates in place). */

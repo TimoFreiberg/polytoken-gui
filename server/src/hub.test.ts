@@ -363,6 +363,57 @@ describe("SessionHub", () => {
     expect(notes.some((n) => n.tag === "pilot-run")).toBe(true);
   });
 
+  test("running state is tracked + broadcast for background sessions too", () => {
+    const d = new FakeDriver();
+    const hub = new SessionHub(d);
+    const a = client();
+    hub.addClient(a.send);
+    d.emit(ev({ type: "assistantDelta", text: "focus", channel: "text" })); // focus "s", running
+    a.received.length = 0;
+
+    // A background session runs — not folded into the transcript (see the focus
+    // test above), but its running state IS broadcast.
+    d.emit(
+      evFor("s2", { type: "assistantDelta", text: "bg", channel: "text" }),
+    );
+    const st = a.received.filter((m) => m.type === "sessionStatus").at(-1);
+    expect(st?.type).toBe("sessionStatus");
+    if (st?.type === "sessionStatus") {
+      expect(st.runningIds).toContain("s2");
+      expect(st.runningIds).toContain("s"); // the focused session is running too
+    }
+
+    // A further delta for an already-running session changes nothing → no re-broadcast.
+    a.received.length = 0;
+    d.emit(
+      evFor("s2", { type: "assistantDelta", text: "more", channel: "text" }),
+    );
+    expect(a.received.some((m) => m.type === "sessionStatus")).toBe(false);
+
+    // s2 finishes (idle snapshot) → leaves the set; the focused "s" stays.
+    d.emit(evFor("s2", { type: "runCompleted", snapshot: snap("s2") }));
+    const after = a.received.filter((m) => m.type === "sessionStatus").at(-1);
+    expect(after?.type).toBe("sessionStatus");
+    if (after?.type === "sessionStatus") {
+      expect(after.runningIds).not.toContain("s2");
+      expect(after.runningIds).toContain("s");
+    }
+  });
+
+  test("a fresh client is told what's already running on connect", () => {
+    const d = new FakeDriver();
+    const hub = new SessionHub(d);
+    const a = client();
+    hub.addClient(a.send);
+    d.emit(ev({ type: "assistantDelta", text: "x", channel: "text" })); // "s" running
+
+    const b = client();
+    hub.addClient(b.send);
+    const st = b.received.find((m) => m.type === "sessionStatus");
+    expect(st?.type).toBe("sessionStatus");
+    if (st?.type === "sessionStatus") expect(st.runningIds).toContain("s");
+  });
+
   test("a connecting client eventually receives the model list", async () => {
     const hub = new SessionHub(new FakeDriver());
     const a = client();

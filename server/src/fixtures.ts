@@ -409,12 +409,49 @@ export function errorRun(): ScriptStep[] {
   ];
 }
 
+/** Drive a BACKGROUND session (the non-focused `older-session`) through a
+ *  running → done turn. The events carry that session's ref, so the hub tracks its
+ *  running state + broadcasts `sessionStatus` without folding it into the focused
+ *  transcript — exercising the sidebar's running-dots → unread-dot transition
+ *  deterministically (dev bar `bgrun`, e2e). */
+export function bgRun(): ScriptStep[] {
+  const ref = sessionRefFor("older-session");
+  const b = () => ({ sessionRef: ref, timestamp: ts() });
+  const snap = (status: SessionSnapshot["status"]): SessionSnapshot => ({
+    ref,
+    workspace: WORKSPACE,
+    title: "Explore the fold reducer",
+    status,
+    updatedAt: ts(),
+  });
+  return [
+    {
+      wait: 0,
+      event: { ...b(), type: "sessionUpdated", snapshot: snap("running") },
+    },
+    {
+      wait: 300,
+      event: {
+        ...b(),
+        type: "assistantDelta",
+        text: "(background turn)",
+        channel: "text",
+      },
+    },
+    {
+      wait: 1500,
+      event: { ...b(), type: "runCompleted", snapshot: snap("idle") },
+    },
+  ];
+}
+
 export const SCRIPTS: Record<string, () => ScriptStep[]> = {
   greeting,
   confirm: confirmDialog,
   input: inputDialog,
   ambient,
   error: errorRun,
+  bgrun: bgRun,
 };
 
 // --- Session listing + switching (Increment 2) ------------------------------

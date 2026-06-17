@@ -164,6 +164,9 @@
               <span class="caret" class:collapsed={collapsed[g.cwd]}>▾</span>
               <span class="proj">{basename(g.cwd)}</span>
               <span class="count">{g.items.length}</span>
+              {#if collapsed[g.cwd] && store.groupRunning(g.items.map((i) => i.sessionId))}
+                <span class="group-running" aria-label="a session is running"></span>
+              {/if}
             </button>
             <button
               class="icon add"
@@ -175,16 +178,32 @@
           {#if !collapsed[g.cwd]}
             <ul>
               {#each g.items as s (s.path)}
+                {@const st = store.sessionStatus(s.sessionId)}
                 <li>
                   <button
                     class="row"
                     class:active={s.sessionId === store.activeSessionId}
                     onclick={() => pick(s)}
                   >
-                    <span class="name"
-                      >{s.displayName || s.preview || "(untitled)"}</span
+                    <span
+                      class="status"
+                      data-state={st}
+                      data-testid="session-status"
+                      title={st}
+                      aria-label={`status: ${st}`}
                     >
-                    <span class="meta">{s.messageCount} msg</span>
+                      {#if st === "running"}
+                        <i class="dot"></i><i class="dot"></i><i class="dot"></i>
+                      {:else}
+                        <i class="dot"></i>
+                      {/if}
+                    </span>
+                    <span class="row-body">
+                      <span class="name"
+                        >{s.displayName || s.preview || "(untitled)"}</span
+                      >
+                      <span class="meta">{s.messageCount} msg</span>
+                    </span>
                   </button>
                 </li>
               {/each}
@@ -365,12 +384,22 @@
     letter-spacing: 0.05em;
   }
   .caret {
-    font-size: 10px;
-    color: var(--text-faint);
+    font-size: 13px;
+    width: 13px;
+    text-align: center;
+    color: var(--text-muted);
     transition: transform 0.12s ease;
   }
   .caret.collapsed {
     transform: rotate(-90deg);
+  }
+  /* A single pulsing dot beside a collapsed project that has a running session. */
+  .group-running {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--text-muted);
+    animation: dotPulse 1.1s ease-in-out infinite;
   }
   .proj {
     font-weight: 600;
@@ -394,25 +423,90 @@
   }
   ul {
     list-style: none;
+    /* Indent the whole session list under its project header so the parent-child
+       relationship reads at a glance (no tree rail — indentation only). */
     margin: 0 0 2px;
-    padding: 0;
+    padding: 0 0 0 12px;
   }
   .row {
     display: flex;
-    flex-direction: column;
-    gap: 1px;
+    flex-direction: row;
+    align-items: center;
+    gap: 8px;
     width: 100%;
     text-align: left;
     background: transparent;
     border: none;
     border-radius: var(--radius-sm);
-    padding: 7px 10px 7px 18px;
+    padding: 6px 10px;
   }
   .row:hover {
     background: var(--surface);
   }
   .row.active {
     background: color-mix(in srgb, var(--accent) 15%, transparent);
+  }
+  .row-body {
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+    flex: 1;
+    min-width: 0;
+  }
+  /* Status indicator gutter (running / unread / read), left of the title. */
+  .status {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 2px;
+    width: 18px;
+    flex-shrink: 0;
+  }
+  .status .dot {
+    border-radius: 50%;
+  }
+  /* read / idle — a hollow ring. */
+  .status[data-state="read"] .dot {
+    width: 7px;
+    height: 7px;
+    background: transparent;
+    border: 1.5px solid var(--text-faint);
+  }
+  /* unread — a filled dot (new content since last viewed). */
+  .status[data-state="unread"] .dot {
+    width: 8px;
+    height: 8px;
+    background: var(--unread);
+  }
+  /* running — three dots in a left-to-right pulse, echoing the mockup's "···". */
+  .status[data-state="running"] .dot {
+    width: 4px;
+    height: 4px;
+    background: var(--text-muted);
+    animation: dotPulse 1.1s ease-in-out infinite;
+  }
+  .status[data-state="running"] .dot:nth-child(2) {
+    animation-delay: 0.18s;
+  }
+  .status[data-state="running"] .dot:nth-child(3) {
+    animation-delay: 0.36s;
+  }
+  @keyframes dotPulse {
+    0%,
+    75%,
+    100% {
+      opacity: 0.3;
+    }
+    35% {
+      opacity: 1;
+    }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .status[data-state="running"] .dot,
+    .group-running {
+      animation: none;
+      opacity: 0.7;
+    }
   }
   .name {
     font-size: 13px;
