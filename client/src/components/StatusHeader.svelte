@@ -80,8 +80,20 @@
       <span class="working"><span class="pulse"></span>working</span>
     {/if}
     <ModelPicker />
+    <button
+      class="gear"
+      data-testid="settings-toggle"
+      title="Settings"
+      aria-label="Settings"
+      onclick={() => store.openSettings()}
+    >
+      <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <circle cx="12" cy="12" r="3" />
+        <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
+      </svg>
+    </button>
     <span class="conn {conn}" title={conn}>
-      <span class="led"></span>{connLabel[conn]}
+      <span class="led"></span><span class="conn-label">{connLabel[conn]}</span>
     </span>
   </div>
 </header>
@@ -201,6 +213,24 @@
     color: var(--warning);
     border-color: color-mix(in srgb, var(--warning) 40%, var(--border));
   }
+  .gear {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 30px;
+    height: 30px;
+    flex-shrink: 0;
+    color: var(--text-muted);
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: var(--radius-xs);
+    cursor: pointer;
+  }
+  .gear:hover {
+    background: var(--surface-sunken);
+    border-color: var(--border);
+    color: var(--text);
+  }
   .working {
     display: inline-flex;
     align-items: center;
@@ -214,6 +244,22 @@
     border-radius: 50%;
     background: var(--accent);
     animation: pulse 1.1s ease-in-out infinite;
+  }
+  /* On a phone the header gets crowded (sidebar toggle + title + bell + model +
+     thinking + gear + connection). Drop the text labels whose icon/LED already
+     conveys their state, so the row fits the viewport instead of overflowing
+     horizontally (which also shifts fixed overlays like the approval sheet). */
+  @media (max-width: 480px) {
+    .right {
+      gap: 8px;
+    }
+    .bell {
+      padding: 4px 7px;
+    }
+    .bell-label,
+    .conn-label {
+      display: none;
+    }
   }
   @keyframes pulse {
     0%,

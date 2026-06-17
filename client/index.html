@@ -11,6 +11,17 @@
     <link rel="icon" type="image/svg+xml" href="/icon.svg" />
     <link rel="apple-touch-icon" href="/icon.svg" />
     <title>pilot</title>
+    <script>
+      // Pre-paint theme: resolve the persisted mode (lib/theme.ts owns the key) to a
+      // concrete data-theme on <html> before the bundle loads, so an explicit override
+      // — or OS dark for a "system" user — paints with no flash.
+      try {
+        var m = localStorage.getItem("pilot.theme");
+        if (m !== "light" && m !== "dark")
+          m = matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+        document.documentElement.setAttribute("data-theme", m);
+      } catch (e) {}
+    </script>
   </head>
   <body>
     <div id="app"></div>

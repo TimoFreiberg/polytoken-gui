@@ -20,6 +20,27 @@ _(clear — nothing blocking; pull the next item up from Important)_
 
 - [ ] **Suppress notifications when app focused** — if feasible, silence push/toast
       notifications while the browser tab/window has focus
+- [ ] **Project sidebar hierarchy polish** — larger expand/collapse arrows for
+      project groups; indent sessions under their project header to make the
+      parent-child relationship visually obvious
+- [ ] **Session status indicators** — icons/dots to the left of session titles
+      distinguishing running (active turn), unread (new messages since last viewed),
+      and read (idle). Unread/read is GUI-only state; can be in-memory only with
+      old sessions defaulting to read on restore
+- [ ] **Local session inventory + active/archived filter** — maintain a
+      pilot-local store enumerating known projects and sessions (an allowlist).
+      Auto-discovered sessions default to archived. Add a filter toggle to show
+      only active (unarchived) sessions. Hide projects whose only sessions are
+      archived and whose last activity (max of its sessions' latest edit timestamp)
+      is >1 week old. For projects with many sessions, make the list internally
+      scrollable with a visible limit of ~10, scroll within the project group
+- [ ] **Tool call results popup: drop description, add hover tooltip** — the tool
+      description doesn't need to be listed inline in the popup; move it to a
+      mouseover tooltip on the tool name instead
+- [ ] **Edit tool output: collapsed diff counts + expanded diff view** — instead of
+      "Successfully replaced N block(s) in /path", show a collapsed view with
+      `+N, -M` line counts, expandable to a nice side-by-side or unified diff.
+      Use `bun i @pierre/diffs` for the diff rendering
 - [ ] **Desktop notifications conflict with terminal pi extension** — on desktop
       browser, pilot's notification triggers the user's terminal pi notification
       extension (which links back to the terminal). Needs investigation: either

@@ -9,6 +9,7 @@
   import ApprovalLayer from "./components/ApprovalLayer.svelte";
   import TrustCard from "./components/TrustCard.svelte";
   import TokenGate from "./components/TokenGate.svelte";
+  import Settings from "./components/Settings.svelte";
   import { notifyIfHidden } from "./lib/notify.js";
 
   // Dev affordance: ?dev shows buttons that drive the mock to any UI state, so the
@@ -59,6 +60,7 @@
 </div>
 <ApprovalLayer />
 <TrustCard />
+<Settings />
 {/if}
 
 <style>

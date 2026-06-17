@@ -1,5 +1,9 @@
 /* Pilot theme — mirrors the Claude app's warm-paper palette and quiet typography.
-   Light by default (Claude's default), with a warm-charcoal dark via media query. */
+   Light by default (Claude's default); the warm-charcoal dark palette lives in the
+   single `[data-theme="dark"]` block below. The theme mode (system/light/dark) is
+   resolved to a concrete `data-theme` attribute on <html> — pre-paint by an inline
+   script in index.html, then by lib/theme.ts — so there's no FOUC and no second
+   copy of the dark tokens to keep in sync. */
 
 :root {
   --bg: #f7f6f2;
@@ -35,8 +39,7 @@
   --maxw: 740px;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
+:root[data-theme="dark"] {
     --bg: #1f1e1d;
     --bg-elevated: #262624;
     --surface: #2a2927;
@@ -57,7 +60,6 @@
     --ok: #8fb787;
     --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.2), 0 4px 14px rgba(0, 0, 0, 0.25);
     --shadow-pop: 0 10px 34px rgba(0, 0, 0, 0.5);
-  }
 }
 
 * {

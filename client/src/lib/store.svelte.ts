@@ -12,8 +12,15 @@ import {
   type SessionState,
   type TrustRequest,
 } from "@pilot/protocol";
-import { setToken } from "./auth.js";
+import { clearToken, getToken, setToken } from "./auth.js";
 import { ensurePermission } from "./notify.js";
+import {
+  applyThemeMode,
+  getThemeMode,
+  setThemeMode,
+  type ThemeMode,
+  watchSystemTheme,
+} from "./theme.js";
 import {
   currentPushState,
   ensurePushSubscription,
@@ -55,6 +62,10 @@ class PilotStore {
   lastError = $state<string | null>(null);
   // Push subscription status for this device. "working" while a subscribe is in flight.
   pushState = $state<PushState | "working">("idle");
+  // Settings panel open/closed — per-client view state, never sent upstream.
+  settingsOpen = $state(false);
+  // Theme override (system/light/dark), persisted per-device in localStorage.
+  themeMode = $state<ThemeMode>(getThemeMode());
 
   get connection(): ConnectionState {
     return connectionState();
@@ -67,6 +78,10 @@ class PilotStore {
     onMessage((msg) => this.onServer(msg));
     connect();
     void this.refreshPushState();
+    // The inline script in index.html already applied the theme pre-paint; re-apply
+    // (cheap, idempotent) in case it was blocked, and track live OS changes.
+    applyThemeMode(this.themeMode);
+    watchSystemTheme();
   }
 
   async refreshPushState(): Promise<void> {
@@ -166,6 +181,33 @@ class PilotStore {
   }
   newSession(cwd?: string): void {
     send({ type: "newSession", cwd: cwd?.trim() || undefined });
+  }
+  openSettings(): void {
+    this.settingsOpen = true;
+  }
+  closeSettings(): void {
+    this.settingsOpen = false;
+  }
+  /** Change the theme override (system/light/dark); persisted + applied immediately. */
+  setTheme(mode: ThemeMode): void {
+    this.themeMode = mode;
+    setThemeMode(mode);
+  }
+  /** True if an access token is saved on this device (we never reveal its value). */
+  get hasToken(): boolean {
+    return !!getToken();
+  }
+  /** Save a new token and reconnect with it (from the settings panel). */
+  changeToken(token: string): void {
+    const t = token.trim();
+    if (t) this.authenticate(t);
+  }
+  /** Forget the saved token and drop back to the auth gate. */
+  signOut(): void {
+    clearToken();
+    this.settingsOpen = false;
+    this.unauthorized = true;
+    disconnect();
   }
   toggleSidebar(): void {
     this.sidebarOpen = !this.sidebarOpen;
