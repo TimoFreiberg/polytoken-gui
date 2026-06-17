@@ -103,7 +103,7 @@ Tiers: **MUST** (MVP) · **SHOULD** (fast-follow) · **LATER**.
 - Ambient maps: `status`→strip, `widget`→above/below composer, `notify`→toast — MUST
 - `title`→tab title; `editorText`→prefill composer — SHOULD
 - Notification API when tab open + approval pending / run done — SHOULD
-- Web Push (SW + VAPID + subscription store) for backgrounded phone — NEXT (D11; spike on a real iPhone first)
+- Web Push (SW + VAPID + subscription store) for backgrounded phone — DONE ✓ (verified on iPhone 2026-06-17; requires a real `PILOT_VAPID_SUBJECT`, else Apple 403s with BadJwtToken)
 
 ### Sessions & history
 - Bootstrap snapshot via `get_state` + `get_messages` — MUST
@@ -147,6 +147,7 @@ Tiers: **MUST** (MVP) · **SHOULD** (fast-follow) · **LATER**.
 - PWA bundle (manifest, SW, wakelock) — MUST
 - Mobile-first approval cards + composer (thumb-reachable) — MUST
 - Install-to-home-screen (prereq for iOS Web Push) — SHOULD
+- Stop iOS focus-zoom + horizontal scroll: composer input `font-size: ≥16px` (iOS auto-zooms smaller inputs on focus); clamp content to viewport width (`overflow-x: hidden` on root / no element wider than the viewport). Prefer the font-size fix over `user-scalable=no` (keeps pinch-zoom). — polish (D14)
 
 ### Diffs (deferred)
 - Inline tool-diff rendering — LATER
@@ -180,10 +181,11 @@ Tiers: **MUST** (MVP) · **SHOULD** (fast-follow) · **LATER**.
 M0–M5 are largely built (see `STATUS.md`). The owner's review re-prioritized the
 remaining work. New ordering:
 
-1. **iOS Web Push spike** (D11) — SW `push`/`notificationclick` handlers, VAPID
-   keys, subscription endpoint + store, server push sender, a test trigger. The
-   real test is *on the owner's iPhone* (installed PWA). Validate early because
-   it's the most-differentiating + most-likely-to-fail feature.
+1. ~~**iOS Web Push spike** (D11)~~ — **DONE ✓** (2026-06-17). SW push/click
+   handlers, VAPID keypair + file-backed subscription store, server fan-out gated
+   on no-connected-client, a header bell with status feedback. Verified buzzing a
+   closed iPhone. Gotcha banked: `PILOT_VAPID_SUBJECT` must be a real https/mailto
+   (Apple 403s placeholders); auth is Bearer-header (no token in URLs).
 2. **Persistence rework** (D13) — swap the driver onto a persistent
    `SessionManager.create(cwd)`; discover existing sessions
    (`list`/`listAll`); resume (`open`/`switchSession`); rebuild pilot's
