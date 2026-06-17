@@ -40,6 +40,29 @@
   const hasModels = $derived(store.models.length > 0);
   const filtering = $derived(store.modelDefaults.favorites.length > 0);
 
+  // Filter-as-you-type search within the model menu (label / id / provider), since the
+  // list grows quickly with many providers connected.
+  let modelQuery = $state("");
+  const mq = $derived(modelQuery.trim().toLowerCase());
+  const filteredGroups = $derived.by(() => {
+    if (!mq) return groups;
+    const out: { provider: string; items: ModelOption[] }[] = [];
+    for (const g of groups) {
+      const items = g.items.filter(
+        (m) =>
+          m.label.toLowerCase().includes(mq) ||
+          m.modelId.toLowerCase().includes(mq) ||
+          m.provider.toLowerCase().includes(mq),
+      );
+      if (items.length > 0) out.push({ provider: g.provider, items });
+    }
+    return out;
+  });
+  // Clear the query whenever the model menu closes, so it's fresh on next open.
+  $effect(() => {
+    if (open !== "model") modelQuery = "";
+  });
+
   function toggle(which: "model" | "thinking"): void {
     open = open === which ? "none" : which;
   }
@@ -68,7 +91,18 @@
       </button>
       {#if open === "model"}
         <div class="panel">
-          {#each groups as g (g.provider)}
+          <input
+            class="model-search"
+            type="text"
+            placeholder="Search models…"
+            title="Filter models by name, id, or provider"
+            aria-label="Search models"
+            spellcheck="false"
+            autocapitalize="off"
+            autocorrect="off"
+            bind:value={modelQuery}
+          />
+          {#each filteredGroups as g (g.provider)}
             <div class="group-title">{g.provider}</div>
             {#each g.items as opt (opt.modelId)}
               {@const active =
@@ -91,6 +125,9 @@
               </button>
             {/each}
           {/each}
+          {#if filteredGroups.length === 0}
+            <div class="model-empty">No models match</div>
+          {/if}
         </div>
       {/if}
     </div>
@@ -189,6 +226,27 @@
     border-radius: var(--radius);
     box-shadow: var(--shadow-card);
     padding: 4px;
+  }
+  .model-search {
+    width: 100%;
+    box-sizing: border-box;
+    font-size: 12.5px;
+    color: var(--text);
+    background: var(--surface-sunken);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    padding: 6px 8px;
+    margin-bottom: 4px;
+  }
+  .model-search:focus {
+    outline: none;
+    border-color: var(--accent);
+  }
+  .model-empty {
+    padding: 8px;
+    font-size: 12px;
+    color: var(--text-faint);
+    text-align: center;
   }
   .group-title {
     padding: 6px 8px 3px;

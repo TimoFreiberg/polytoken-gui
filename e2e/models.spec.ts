@@ -38,3 +38,22 @@ test("the thinking picker switches the level", async ({ page }) => {
     page.locator(".mp .badge").filter({ hasText: "high" }),
   ).toBeVisible();
 });
+
+test("the model menu has a search that filters the list", async ({ page }) => {
+  await page
+    .locator(".mp .badge")
+    .filter({ hasText: "Claude Opus 4.8" })
+    .click();
+  const panel = page.locator(".mp .panel");
+  await expect(panel).toBeVisible();
+  const search = panel.getByPlaceholder("Search models…");
+
+  await search.fill("deep");
+  await expect(panel.getByText("DeepSeek V4 Flash")).toBeVisible();
+  await expect(panel.getByText("Claude Opus 4.8")).toHaveCount(0);
+  await expect(panel.getByText("GPT-5")).toHaveCount(0);
+
+  // no-match state
+  await search.fill("zzzz");
+  await expect(panel.getByText("No models match")).toBeVisible();
+});

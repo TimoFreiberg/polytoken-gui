@@ -70,6 +70,23 @@ test("favorites filter the header model picker, keeping the active model visible
   await expect(panel.getByText("GPT-5")).toHaveCount(0);
 });
 
+test("the favorites list has a search that filters models", async ({
+  page,
+}) => {
+  await page.getByTestId("settings-toggle").click();
+  const settings = page.getByTestId("settings-panel");
+  const search = settings.getByPlaceholder("Search models…");
+
+  await search.fill("gpt");
+  await expect(settings.getByTestId("fav-openai-gpt-5")).toBeVisible();
+  await expect(
+    settings.getByTestId("fav-deepseek-deepseek-v4-flash"),
+  ).toHaveCount(0);
+
+  await search.fill("zzzz");
+  await expect(settings.getByText("No models match")).toBeVisible();
+});
+
 test("theme toggle drives the data-theme override and persists it", async ({
   page,
 }) => {

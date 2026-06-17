@@ -43,6 +43,24 @@
     return [...m.entries()].map(([provider, items]) => ({ provider, items }));
   });
 
+  // Filter-as-you-type search for the favorites list (it grows with every provider).
+  let favQuery = $state("");
+  const fq = $derived(favQuery.trim().toLowerCase());
+  const favGroups = $derived.by(() => {
+    if (!fq) return groups;
+    const out: { provider: string; items: ModelOption[] }[] = [];
+    for (const g of groups) {
+      const items = g.items.filter(
+        (m) =>
+          m.label.toLowerCase().includes(fq) ||
+          m.modelId.toLowerCase().includes(fq) ||
+          m.provider.toLowerCase().includes(fq),
+      );
+      if (items.length > 0) out.push({ provider: g.provider, items });
+    }
+    return out;
+  });
+
   // pi's setDefaultThinkingLevel accepts this fixed union (independent of the current
   // model's supported levels — it's the default for whatever new session is created).
   const DEFAULT_THINKING_LEVELS = [
@@ -297,8 +315,19 @@
         {#if groups.length === 0}
           <p class="note">No models available — connect a provider above.</p>
         {:else}
+          <input
+            class="fav-search"
+            type="text"
+            placeholder="Search models…"
+            title="Filter the model list by name, id, or provider"
+            aria-label="Search models"
+            spellcheck="false"
+            autocapitalize="off"
+            autocorrect="off"
+            bind:value={favQuery}
+          />
           <div class="models">
-            {#each groups as g (g.provider)}
+            {#each favGroups as g (g.provider)}
               <div class="mprovider">{g.provider}</div>
               {#each g.items as opt (opt.modelId)}
                 <label class="mitem fav" data-testid="fav-{opt.provider}-{opt.modelId}">
@@ -311,6 +340,9 @@
                 </label>
               {/each}
             {/each}
+            {#if favGroups.length === 0}
+              <div class="mempty">No models match</div>
+            {/if}
           </div>
         {/if}
       </section>
@@ -527,6 +559,27 @@
   }
   .available {
     margin: 12px 0 6px;
+  }
+  .fav-search {
+    width: 100%;
+    box-sizing: border-box;
+    font-size: 12.5px;
+    color: var(--text);
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    padding: 7px 9px;
+    margin-bottom: 6px;
+  }
+  .fav-search:focus {
+    outline: none;
+    border-color: var(--accent);
+  }
+  .mempty {
+    padding: 8px;
+    font-size: 12px;
+    color: var(--text-faint);
+    text-align: center;
   }
   .models {
     background: var(--surface);
