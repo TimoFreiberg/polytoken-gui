@@ -38,16 +38,18 @@ interface WsData {
   unsub: (() => void) | null;
 }
 
-// Driver selection. Default is the deterministic mock; PILOT_DRIVER=pi embeds a
-// live pi AgentSession (dynamic import so the SDK never loads in mock mode).
+// Driver selection. Default is the live pi driver; PILOT_DRIVER=mock forces the
+// deterministic mock (used by e2e tests and local UI dev without a running pi).
+// The MockDriver import is static so types stay available; the pi SDK is
+// dynamic so it never loads in mock mode.
 let driver: PilotDriver;
 let mock: MockDriver | null = null;
-if (process.env.PILOT_DRIVER === "pi") {
-  const { createPiDriver } = await import("./pi/pi-driver.js");
-  driver = await createPiDriver({ cwd: process.env.PILOT_CWD });
-} else {
+if (process.env.PILOT_DRIVER === "mock") {
   mock = new MockDriver();
   driver = mock;
+} else {
+  const { createPiDriver } = await import("./pi/pi-driver.js");
+  driver = await createPiDriver({ cwd: process.env.PILOT_CWD });
 }
 const push = new PushService();
 const hub = new SessionHub(driver, (n) => {
@@ -166,5 +168,5 @@ const server = Bun.serve<WsData>({
 });
 
 console.log(
-  `[pilot] http://${config.host}:${server.port}  driver=${process.env.PILOT_DRIVER === "pi" ? "pi" : "mock"}  token=${config.token ? "required" : "off"}  debug=${config.debug}`,
+  `[pilot] http://${config.host}:${server.port}  driver=${process.env.PILOT_DRIVER === "mock" ? "mock" : "pi"}  token=${config.token ? "required" : "off"}  debug=${config.debug}`,
 );

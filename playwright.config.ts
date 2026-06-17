@@ -2,6 +2,7 @@ import { defineConfig, devices } from "@playwright/test";
 
 // The mock server holds a single shared session, so specs run serially and reset
 // state via /debug/reset in beforeEach. Reuses an already-running `bun run dev`.
+// PILOT_DRIVER=mock is required — the default is now the live pi driver.
 export default defineConfig({
   testDir: "./e2e",
   fullyParallel: false,
@@ -13,7 +14,7 @@ export default defineConfig({
     trace: "on-first-retry",
   },
   webServer: {
-    command: "bun run dev",
+    command: "PILOT_DRIVER=mock bun run dev",
     url: "http://localhost:5173",
     // Reuse a running `bun run dev` if present; otherwise Playwright starts one.
     reuseExistingServer: true,
