@@ -87,10 +87,15 @@ sessions run/stream concurrently server-side, but all clients share one focused
 session (per-client focus deferred as overkill for a single-user tool). Done
 (increment 1): the hub is session-focused — folds + broadcasts only the focused
 session, routes commands by `sessionId` (`server/src/hub.ts`); client messages
-carry optional `sessionId`. Pending (increment 2): the pi-driver still uses the
-runtime-swap (disposes the old session on switch), so it only ever has one live
-session — keeping N warm needs it reworked to a `Map` of independent
-`AgentSession`s (no dispose on focus-change). Needs live 2-session verification.
+carry optional `sessionId`. Done (increment 2): the pi-driver dropped the
+runtime-swap for a `Map<sessionId, WarmSession>` of independent `AgentSession`s,
+each with its own services/UI-bridge/subscription; `openSession`/`newSession`
+warm-and-focus (dedup by session file) and nothing is disposed on a focus-change,
+so a backgrounded session keeps streaming and re-focuses instantly with full
+history (`server/src/pi/pi-driver.ts`). Verified live against a real agent
+(`scripts/live-warm-toggle.ts`: two sessions warm at once, instant refocus); the
+owner since confirmed live background streaming across a focus-switch. No
+eviction cap yet (fine for a single user; a warm-cap is a fast-follow).
 
 ### D9. Approval posture = no tool gating (OQ3)
 No per-tool / per-command approval extension. Autonomous background work is the
