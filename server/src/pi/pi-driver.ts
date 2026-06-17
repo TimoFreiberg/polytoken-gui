@@ -11,6 +11,7 @@ import { basename } from "node:path";
 import {
   createAgentSession,
   type ExtensionUIContext,
+  SessionManager,
 } from "@earendil-works/pi-coding-agent";
 import type {
   HostUiResponse,
@@ -21,6 +22,7 @@ import type {
 } from "@pilot/protocol";
 import type { PilotDriver } from "../driver.js";
 import { mapPiEvent } from "./event-map.js";
+import { type HistoryMessage, historyToEvents } from "./history-map.js";
 import { PiUiBridge } from "./ui-bridge.js";
 
 export interface PiDriverOptions {
@@ -31,7 +33,14 @@ export async function createPiDriver(
   opts: PiDriverOptions = {},
 ): Promise<PilotDriver> {
   const cwd = opts.cwd ?? process.cwd();
-  const { session } = await createAgentSession({ cwd });
+  // Persist like the CLI: continue the most recent session for this cwd (or create a
+  // fresh one), writing to ~/.pi/agent/sessions/ so a SSH `pi` peer sees the same
+  // files. This is what makes pi's .jsonl the authoritative store (D13) — pilot's
+  // in-memory transcript is rebuilt from it on load via historyToEvents below.
+  const { session } = await createAgentSession({
+    cwd,
+    sessionManager: SessionManager.continueRecent(cwd),
+  });
 
   const ref: SessionRef = { workspaceId: cwd, sessionId: session.sessionId };
   const listeners = new Set<(ev: SessionDriverEvent) => void>();
@@ -96,6 +105,13 @@ export async function createPiDriver(
           type: "sessionOpened",
           snapshot: snapshot(session.isStreaming ? "running" : "idle"),
         });
+        // Rebuild the transcript from the resumed session's stored messages, so a
+        // reopened/restarted session shows its history instead of starting blank.
+        for (const ev of historyToEvents(
+          session.messages as unknown as readonly HistoryMessage[],
+          { ref, idleSnapshot: snapshot("idle"), toolMeta: ctx.toolMeta },
+        ))
+          emit(ev);
       }
       return () => listeners.delete(l);
     },
