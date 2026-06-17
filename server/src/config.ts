@@ -27,3 +27,15 @@ export const config = {
 export function tokenOk(provided: string | null | undefined): boolean {
   return config.token === null || provided === config.token;
 }
+
+/**
+ * Extract the app token from a request. Prefers `Authorization: Bearer <token>` —
+ * the right place for a credential — and falls back to a `?token=` query param so
+ * hand-curl stays convenient. The app always uses the header, so the token never
+ * lands in a URL (and thus not in history, Referer, or any proxy access log).
+ */
+export function tokenFromRequest(req: Request, url: URL): string | null {
+  const auth = req.headers.get("authorization");
+  if (auth?.startsWith("Bearer ")) return auth.slice("Bearer ".length).trim();
+  return url.searchParams.get("token");
+}

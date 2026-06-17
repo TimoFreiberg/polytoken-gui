@@ -15,9 +15,15 @@ export function pushSupported(): boolean {
   );
 }
 
-function authedUrl(path: string): string {
+// Send the token as a Bearer header (not a `?token=` query) so it never lands in a
+// URL — keeps it out of history, Referer, and any proxy access log. WS auth already
+// uses the hello-message body; this is the HTTP-side equivalent.
+function authHeaders(extra?: Record<string, string>): Record<string, string> {
   const token = getToken();
-  return token ? `${path}?token=${encodeURIComponent(token)}` : path;
+  return {
+    ...extra,
+    ...(token ? { authorization: `Bearer ${token}` } : {}),
+  };
 }
 
 // VAPID public keys are base64url; PushManager.subscribe wants a BufferSource.
@@ -50,7 +56,7 @@ export async function ensurePushSubscription(): Promise<void> {
         const perm = await Notification.requestPermission();
         if (perm !== "granted") return;
       }
-      const res = await fetch(authedUrl("/push/vapid"));
+      const res = await fetch("/push/vapid", { headers: authHeaders() });
       if (!res.ok) return;
       const { publicKey } = (await res.json()) as { publicKey: string };
       sub = await reg.pushManager.subscribe({
@@ -58,9 +64,9 @@ export async function ensurePushSubscription(): Promise<void> {
         applicationServerKey: urlBase64ToUint8Array(publicKey),
       });
     }
-    await fetch(authedUrl("/push/subscribe"), {
+    await fetch("/push/subscribe", {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: authHeaders({ "content-type": "application/json" }),
       body: JSON.stringify(sub),
     });
   } catch (e) {
@@ -71,7 +77,10 @@ export async function ensurePushSubscription(): Promise<void> {
 /** Dev/verification: ask the server to fan out a test push to all subscriptions. */
 export async function sendTestPush(): Promise<void> {
   try {
-    const res = await fetch(authedUrl("/push/test"), { method: "POST" });
+    const res = await fetch("/push/test", {
+      method: "POST",
+      headers: authHeaders(),
+    });
     console.log("[push] test:", await res.json());
   } catch (e) {
     console.warn("[push] test failed", e);

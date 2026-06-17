@@ -5,7 +5,7 @@
 
 import { type ServerMessage, parseClientMessage } from "@pilot/protocol";
 import type { ServerWebSocket } from "bun";
-import { config, tokenOk } from "./config.js";
+import { config, tokenFromRequest, tokenOk } from "./config.js";
 import type { PilotDriver } from "./driver.js";
 import { SessionHub } from "./hub.js";
 import { MockDriver } from "./mock-driver.js";
@@ -66,7 +66,7 @@ const server = Bun.serve<WsData>({
     // keeping the surface uniform is simpler). Not behind config.debug — it's a
     // real feature, not introspection.
     if (url.pathname.startsWith("/push/")) {
-      if (!tokenOk(url.searchParams.get("token")))
+      if (!tokenOk(tokenFromRequest(req, url)))
         return new Response("unauthorized", { status: 401 });
       try {
         if (url.pathname === "/push/vapid")
@@ -96,7 +96,7 @@ const server = Bun.serve<WsData>({
 
     if (url.pathname.startsWith("/debug/")) {
       if (!config.debug) return new Response("debug disabled", { status: 404 });
-      if (!tokenOk(url.searchParams.get("token")))
+      if (!tokenOk(tokenFromRequest(req, url)))
         return new Response("unauthorized", { status: 401 });
       const headers = { "access-control-allow-origin": "*" };
       if (url.pathname === "/debug/state")
