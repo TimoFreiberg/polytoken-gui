@@ -242,9 +242,9 @@
     padding: 12px 14px 10px;
   }
   .brand {
-    font-weight: 650;
+    font-weight: 600;
     font-size: 15px;
-    letter-spacing: 0.01em;
+    letter-spacing: -0.01em;
   }
   .icon {
     display: inline-flex;
@@ -405,8 +405,8 @@
     font-weight: 600;
     color: var(--text);
     text-transform: none;
-    letter-spacing: 0;
-    font-size: 12.5px;
+    letter-spacing: -0.01em;
+    font-size: 13px;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -438,7 +438,7 @@
     background: transparent;
     border: none;
     border-radius: var(--radius-sm);
-    padding: 6px 10px;
+    padding: 7px 10px;
   }
   .row:hover {
     background: var(--surface);
@@ -509,7 +509,8 @@
     }
   }
   .name {
-    font-size: 13px;
+    font-size: 13.5px;
+    letter-spacing: -0.01em;
     color: var(--text);
     white-space: nowrap;
     overflow: hidden;
@@ -517,7 +518,7 @@
   }
   .row.active .name {
     color: var(--accent);
-    font-weight: 550;
+    font-weight: 600;
   }
   .meta {
     font-size: 11px;

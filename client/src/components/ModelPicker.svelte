@@ -126,13 +126,16 @@
     display: inline-flex;
     align-items: center;
     gap: 4px;
-    font-size: 12px;
+    font-size: 12.5px;
+    /* Sans (not mono) to match the Claude app, where model/effort read as UI
+       labels rather than raw IDs. Slight negative tracking tightens the label. */
+    font-family: var(--font-sans);
+    letter-spacing: -0.01em;
     color: var(--text-muted);
     background: var(--surface-sunken);
     border: 1px solid var(--border);
     padding: 3px 9px;
     border-radius: 999px;
-    font-family: var(--font-mono);
     cursor: pointer;
     max-width: 42vw;
   }
