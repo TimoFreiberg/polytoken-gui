@@ -17,7 +17,26 @@
 
   function outputText(out: unknown): string {
     if (out == null) return "";
-    return typeof out === "string" ? out : JSON.stringify(out, null, 2);
+    if (typeof out === "string") return out;
+    // Live tool results arrive as pi's raw object { content: [{type:"text",text}], details? },
+    // while replayed-from-history results are already plain text. Extract the content
+    // text from the object so a tool card renders the SAME before and after a reload.
+    if (typeof out === "object") {
+      const content = (out as { content?: unknown }).content;
+      if (Array.isArray(content)) {
+        const text = content
+          .map((b) =>
+            b &&
+            typeof b === "object" &&
+            typeof (b as { text?: unknown }).text === "string"
+              ? (b as { text: string }).text
+              : "",
+          )
+          .join("");
+        if (text) return text;
+      }
+    }
+    return JSON.stringify(out, null, 2);
   }
 
   const statusIcon: Record<string, string> = { running: "○", ok: "●", error: "✕" };
