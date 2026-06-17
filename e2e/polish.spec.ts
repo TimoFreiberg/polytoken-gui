@@ -155,3 +155,15 @@ test("Ctrl/Cmd+Up jumps to the most recent user prompt", async ({ page }) => {
   await page.keyboard.press("Control+ArrowUp");
   await expect(lastPrompt).toBeInViewport();
 });
+
+test("PWA update prompt appears and can be dismissed", async ({ page }) => {
+  // The ?dev bar's "update" button stands in for a real service-worker update.
+  await page.getByRole("button", { name: "update", exact: true }).click();
+  const toast = page.getByText("A new version of pilot is available");
+  await expect(toast).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Refresh", exact: true }),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "Dismiss update" }).click();
+  await expect(toast).toBeHidden();
+});

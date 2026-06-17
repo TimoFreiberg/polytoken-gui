@@ -79,6 +79,8 @@ class PilotStore {
   settingsOpen = $state(false);
   // Theme override (system/light/dark), persisted per-device in localStorage.
   themeMode = $state<ThemeMode>(getThemeMode());
+  // PWA: a newer service worker installed and is ready; we prompt for a refresh.
+  swUpdateReady = $state(false);
 
   get connection(): ConnectionState {
     return connectionState();
@@ -239,6 +241,17 @@ class PilotStore {
   }
   newSession(cwd?: string, worktree?: boolean): void {
     send({ type: "newSession", cwd: cwd?.trim() || undefined, worktree });
+  }
+  /** PWA: a newer service worker installed — raise the refresh prompt (set from sw.ts). */
+  markUpdateReady(): void {
+    this.swUpdateReady = true;
+  }
+  /** Reload to pick up the new service worker's assets. */
+  applyUpdate(): void {
+    window.location.reload();
+  }
+  dismissUpdate(): void {
+    this.swUpdateReady = false;
   }
   openSettings(): void {
     this.settingsOpen = true;

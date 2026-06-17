@@ -61,6 +61,7 @@
           <button onclick={() => store.mock(s)}>{s}</button>
         {/each}
         <button onclick={() => store.testPush()}>push</button>
+        <button onclick={() => store.markUpdateReady()}>update</button>
       </div>
     {/if}
     <Composer />
@@ -69,6 +70,22 @@
 <ApprovalLayer />
 <TrustCard />
 <Settings />
+{#if store.swUpdateReady}
+  <div class="update-toast" role="status">
+    <span class="update-msg">A new version of pilot is available.</span>
+    <button
+      class="update-refresh"
+      title="Reload to update to the new version"
+      onclick={() => store.applyUpdate()}>Refresh</button
+    >
+    <button
+      class="update-x"
+      title="Dismiss update notice"
+      aria-label="Dismiss update"
+      onclick={() => store.dismissUpdate()}>×</button
+    >
+  </div>
+{/if}
 {/if}
 
 <style>
@@ -104,5 +121,42 @@
     border: 1px solid var(--border);
     border-radius: var(--radius-xs);
     padding: 3px 9px;
+  }
+  .update-toast {
+    position: fixed;
+    left: 50%;
+    bottom: calc(16px + env(safe-area-inset-bottom));
+    transform: translateX(-50%);
+    z-index: 80;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    max-width: calc(100vw - 24px);
+    padding: 9px 10px 9px 14px;
+    background: var(--surface);
+    border: 1px solid var(--border-strong);
+    border-radius: 999px;
+    box-shadow: var(--shadow-pop);
+    font-size: 13px;
+    color: var(--text);
+  }
+  .update-refresh {
+    flex-shrink: 0;
+    background: var(--accent);
+    color: var(--accent-text);
+    border: none;
+    border-radius: 999px;
+    padding: 5px 13px;
+    font-size: 12.5px;
+    font-weight: 550;
+  }
+  .update-x {
+    flex-shrink: 0;
+    background: transparent;
+    border: none;
+    color: var(--text-muted);
+    font-size: 16px;
+    line-height: 1;
+    padding: 0 4px;
   }
 </style>
