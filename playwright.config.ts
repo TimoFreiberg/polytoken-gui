@@ -1,8 +1,14 @@
 import { defineConfig, devices } from "@playwright/test";
 
-// The mock server holds a single shared session, so specs run serially and reset
-// state via /debug/reset in beforeEach. Reuses an already-running `bun run dev`.
-// PILOT_DRIVER=mock is required — the default is now the live pi driver.
+// Fixed ports that won't collide with the user's running pilot instance
+// (defaults: 8787 / 5173) or with deploy/run.sh (8787).
+const SERVER_PORT = 18787;
+const VITE_PORT = 15173;
+
+// The mock server holds a single shared session, so specs run serially and
+// reset state via /debug/reset in beforeEach. We always start a fresh dev
+// server on alternate ports so there is zero risk of colliding with the
+// user's running pilot instance.
 export default defineConfig({
   testDir: "./e2e",
   fullyParallel: false,
@@ -10,14 +16,16 @@ export default defineConfig({
   retries: process.env.CI ? 1 : 0,
   reporter: [["list"]],
   use: {
-    baseURL: "http://localhost:5173",
+    baseURL: `http://localhost:${VITE_PORT}`,
     trace: "on-first-retry",
   },
   webServer: {
-    command: "PILOT_DRIVER=mock bun run dev",
-    url: "http://localhost:5173",
-    // Reuse a running `bun run dev` if present; otherwise Playwright starts one.
-    reuseExistingServer: true,
+    command:
+      `PILOT_DRIVER=mock PILOT_PORT=${SERVER_PORT} ` +
+      `PILOT_SERVER=http://localhost:${SERVER_PORT} ` +
+      `VITE_PORT=${VITE_PORT} bun run scripts/dev.ts`,
+    url: `http://localhost:${VITE_PORT}`,
+    reuseExistingServer: false,
     timeout: 60_000,
   },
   projects: [
