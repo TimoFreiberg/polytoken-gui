@@ -3,6 +3,7 @@
 // pixels, so an agent can screenshot any UI state reproducibly without a live model.
 
 import type {
+  CommandInfo,
   ModelDefaults,
   ModelOption,
   ProviderInfo,
@@ -35,6 +36,44 @@ export const MOCK_MODELS: readonly ModelOption[] = [
     label: "DeepSeek V4 Flash",
   },
   { provider: "openai", modelId: "gpt-5", label: "GPT-5" },
+];
+
+/** A deterministic spread of slash commands for the composer typeahead — one per
+ *  source kind, with names chosen so e2e filtering has distinct prefixes ("re" →
+ *  review, "p" → plan/pr, "skill:" → the two skills). The mock doesn't execute them
+ *  (sending one just runs the normal scripted reply); the menu is exercised on its own. */
+export const MOCK_COMMANDS: readonly CommandInfo[] = [
+  {
+    name: "review",
+    description: "Review the working-copy diff for bugs",
+    source: "prompt",
+    argumentHint: "[path]",
+  },
+  {
+    name: "plan",
+    description: "Draft an implementation plan before coding",
+    source: "prompt",
+  },
+  {
+    name: "commit",
+    description: "Stage changes and commit with a generated message",
+    source: "extension",
+  },
+  {
+    name: "pr",
+    description: "Open a pull request for the current branch",
+    source: "extension",
+  },
+  {
+    name: "skill:debug",
+    description: "Trace a bug end-to-end before forming a hypothesis",
+    source: "skill",
+  },
+  {
+    name: "skill:journal",
+    description: "Capture a durable judgment for a future session",
+    source: "skill",
+  },
 ];
 
 /** The mock's starting model selection (matches the greeting snapshot). */

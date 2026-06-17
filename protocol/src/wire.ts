@@ -6,6 +6,7 @@
 // server applies the command to the currently-focused session.
 
 import type {
+  CommandInfo,
   HostUiResponse,
   ModelDefaults,
   ModelOption,
@@ -61,6 +62,10 @@ export type ServerMessage =
   /** The models available to switch to (server-authoritative, like `sessionList`).
    *  The current selection rides each session's snapshot `config`, not this. */
   | { type: "modelList"; models: readonly ModelOption[] }
+  /** The slash commands the focused session offers (extension/template/skill), for the
+   *  composer's typeahead. Server-authoritative like `modelList`; re-broadcast on
+   *  session switch because the set is cwd-scoped. See {@link CommandInfo}. */
+  | { type: "commandList"; commands: readonly CommandInfo[] }
   /** The model providers pilot can manage credentials for (curated key-capable +
    *  already-connected), server-authoritative like `modelList`. No secrets — see
    *  {@link ProviderInfo}. */
@@ -120,6 +125,8 @@ export type ClientMessage =
   | { type: "newSession"; cwd?: string; worktree?: boolean }
   /** Ask the server to re-scan disk and re-broadcast the session list. */
   | { type: "listSessions" }
+  /** Ask the server to re-read the focused session's commands and re-broadcast them. */
+  | { type: "listCommands" }
   /** Answer a project-trust card (D12). `choice` indexes the request's `options`;
    *  null denies (cancel / dismiss). */
   | { type: "trustResponse"; requestId: string; choice: number | null }

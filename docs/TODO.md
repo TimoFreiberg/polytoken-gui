@@ -191,8 +191,17 @@ _(clear — pull the next item up from Polish)_
       as you type, if straightforward
       _(done: Edit/Preview toggle renders the draft via `renderMarkdown`; appears only
       with a non-empty draft, Enter-to-send preserved.)_
-- [ ] **Slash-command autocompletion** + inline help text describing each
+- [x] **Slash-command autocompletion** + inline help text describing each
       command
+      _(done: `CommandInfo` + `commandList`/`listCommands` wire messages mirror the
+      model-list path; the pi driver reads `get_commands`' three sources (extension
+      commands + prompt templates + skills), the mock serves `MOCK_COMMANDS`. Composer
+      shows a typeahead on a leading `/` — filter helper in `lib/slash.ts`, popup in
+      `SlashMenu.svelte`, ↑↓/↵/Tab/Esc nav, click-to-insert, each row carries the
+      command's description + source. Execution is free: `/name args` is a normal
+      prompt and pi's `prompt()` runs the command / expands the template. TUI builtins
+      (/model, /settings, …) intentionally omitted — pilot has native UI. Unit test for
+      the filter + `e2e/slash.spec.ts`.)_
 - [x] **PNG / maskable icons** — proper app icons for installed PWA
       _(done: 192/512 + maskable-512 (safe-zone padded) + 180 apple-touch, rasterized
       from `icon.svg`; manifest + `<link apple-touch-icon>` wired.)_

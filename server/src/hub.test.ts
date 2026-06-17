@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type {
+  CommandInfo,
   HostUiResponse,
   ModelDefaults,
   ModelOption,
@@ -107,6 +108,9 @@ class FakeDriver implements PilotDriver {
       { provider: "anthropic", modelId: "claude-opus-4-8", label: "Opus" },
       { provider: "deepseek", modelId: "deepseek-v4-flash", label: "Flash" },
     ];
+  }
+  async listCommands(): Promise<CommandInfo[]> {
+    return [{ name: "review", source: "prompt" }];
   }
   setModel(provider: string, modelId: string, sessionId?: string) {
     this.modelCalls.push({ provider, modelId, sessionId });

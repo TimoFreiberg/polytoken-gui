@@ -46,6 +46,22 @@ export interface ModelOption {
   readonly label: string;
 }
 
+/** One slash command the composer's typeahead can offer — a JSON-safe projection of
+ *  pi's `get_commands` (extension commands, prompt templates, skills). The heavy
+ *  `sourceInfo` path metadata is dropped; `source` drives a small origin badge.
+ *  Commands are cwd/session-scoped (loaded from the focused session's `.pi`), so the
+ *  list is re-broadcast on every session switch — see `commandList`. Execution needs
+ *  nothing extra: sending `/name args` as a normal prompt routes through pi's
+ *  `prompt()`, which runs extension commands and expands templates/skills. */
+export interface CommandInfo {
+  /** Invocation name without the leading slash (e.g. "review", "skill:debug"). */
+  readonly name: string;
+  readonly description?: string;
+  readonly source: "extension" | "prompt" | "skill";
+  /** Usage hint shown after the name (prompt templates only), e.g. "[path]". */
+  readonly argumentHint?: string;
+}
+
 /** A model provider pilot can manage credentials for. No secret ever crosses the
  *  wire — only whether it's authed and where that auth comes from, so the UI can
  *  style remove-vs-readonly. Broadcast as `providerList`. */

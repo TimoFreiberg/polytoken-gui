@@ -1,7 +1,10 @@
 <script lang="ts">
   import { onMount } from "svelte";
+  import type { CommandInfo } from "@pilot/protocol";
   import { store } from "../lib/store.svelte.js";
   import { renderMarkdown } from "../lib/markdown.js";
+  import { filterCommands, slashQuery } from "../lib/slash.js";
+  import SlashMenu from "./SlashMenu.svelte";
 
   let deliverAs = $state<"steer" | "followUp">("steer");
   let ta = $state<HTMLTextAreaElement>();
@@ -14,6 +17,25 @@
   // Preview only renders when there's something to show; an empty draft always
   // falls back to the editable textarea so the box never looks blank/stuck.
   const showPreview = $derived(preview && store.composerDraft.trim().length > 0);
+
+  // --- Slash-command typeahead. The menu is open when the draft is a bare slash token
+  // (slashQuery != null), the user hasn't dismissed it for this token, and there are
+  // matches to show. Selection + dismissal are this component's state; the menu itself
+  // is presentational. Execution is free: sending `/name args` is a normal prompt, and
+  // pi's prompt() runs the command / expands the template.
+  let slashSel = $state(0);
+  let slashDismissed = $state(false);
+  const slashQ = $derived(slashQuery(store.composerDraft));
+  const slashItems = $derived(
+    slashQ === null ? [] : filterCommands(store.commands, slashQ),
+  );
+  const slashOpen = $derived(
+    slashQ !== null && !slashDismissed && slashItems.length > 0 && !showPreview,
+  );
+  // Keep the highlighted index in range as the filtered list shrinks under the cursor.
+  $effect(() => {
+    if (slashSel >= slashItems.length) slashSel = 0;
+  });
 
   function autosize() {
     if (!ta) return;
@@ -28,7 +50,52 @@
     queueMicrotask(autosize);
   }
 
+  function onInput() {
+    autosize();
+    // A fresh keystroke restarts the selection at the top; leaving slash mode clears a
+    // prior Escape so the next `/` reopens the menu.
+    slashSel = 0;
+    if (slashQuery(store.composerDraft) === null) slashDismissed = false;
+  }
+
+  // Replace the bare slash token with `/name ` and keep focus so the user types args
+  // (the trailing space settles the name, which closes the menu). No send — Enter on a
+  // no-arg command fires it on the next keystroke.
+  function acceptSlash(cmd: CommandInfo) {
+    store.composerDraft = `/${cmd.name} `;
+    slashDismissed = false;
+    slashSel = 0;
+    queueMicrotask(() => {
+      ta?.focus();
+      autosize();
+    });
+  }
+
   function onKeydown(e: KeyboardEvent) {
+    if (slashOpen) {
+      const n = slashItems.length;
+      if (e.key === "ArrowDown" || (e.ctrlKey && e.key === "n")) {
+        e.preventDefault();
+        slashSel = (slashSel + 1) % n;
+        return;
+      }
+      if (e.key === "ArrowUp" || (e.ctrlKey && e.key === "p")) {
+        e.preventDefault();
+        slashSel = (slashSel - 1 + n) % n;
+        return;
+      }
+      if (e.key === "Enter" || e.key === "Tab") {
+        e.preventDefault();
+        const cmd = slashItems[slashSel];
+        if (cmd) acceptSlash(cmd);
+        return;
+      }
+      if (e.key === "Escape") {
+        e.preventDefault();
+        slashDismissed = true;
+        return;
+      }
+    }
     if (e.key !== "Enter" || e.shiftKey) return;
     e.preventDefault();
     // While the agent runs, Enter steers (deliver after the current step) and
@@ -88,17 +155,30 @@
       </div>
     {/if}
 
-    <div class="box" class:streaming>
+    <div class="box-wrap">
+      {#if slashOpen}
+        <SlashMenu
+          items={slashItems}
+          selected={slashSel}
+          onpick={acceptSlash}
+          onhover={(i) => (slashSel = i)}
+        />
+      {/if}
+      <div class="box" class:streaming>
       {#if showPreview}
         <div class="prose preview">{@html renderMarkdown(store.composerDraft)}</div>
       {:else}
         <textarea
           bind:this={ta}
           bind:value={store.composerDraft}
-          oninput={autosize}
+          oninput={onInput}
           onkeydown={onKeydown}
           placeholder={streaming ? "Queue a message…" : "Message pilot…"}
           rows="1"
+          role="combobox"
+          aria-expanded={slashOpen}
+          aria-controls="slash-menu"
+          aria-autocomplete="list"
         ></textarea>
       {/if}
       <div class="actions">
@@ -116,6 +196,7 @@
         <button class="send" disabled={!store.composerDraft.trim()} onclick={submit} aria-label="Send" title="Send (Enter)">
           ↑
         </button>
+      </div>
       </div>
     </div>
     {#if streaming}
@@ -186,6 +267,10 @@
     font-weight: 550;
     padding: 5px 14px;
     border-radius: 999px;
+  }
+  .box-wrap {
+    /* Anchor for the slash menu, which pops upward from just above the box. */
+    position: relative;
   }
   .box {
     display: flex;

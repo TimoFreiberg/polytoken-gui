@@ -31,6 +31,7 @@ import {
   SettingsManager,
 } from "@earendil-works/pi-coding-agent";
 import type {
+  CommandInfo,
   HostUiResponse,
   ModelDefaults,
   ProviderInfo,
@@ -484,6 +485,37 @@ export async function createPiDriver(
         modelId: m.id,
         label: m.name,
       }));
+    },
+
+    async listCommands(sessionId) {
+      // The three user-defined command sources pi's own RPC `get_commands` returns; the
+      // TUI builtins (/model, /settings, …) are intentionally omitted — pilot has native
+      // UI for those. Read from the targeted session because each is cwd-scoped (its
+      // extensions/templates/skills come from that workspace's `.pi`). Sending one is a
+      // plain prompt: pi's prompt() runs extension commands and expands templates/skills.
+      const ws = target(sessionId);
+      if (!ws) return [];
+      const out: CommandInfo[] = [];
+      for (const c of ws.session.extensionRunner.getRegisteredCommands())
+        out.push({
+          name: c.invocationName,
+          description: c.description,
+          source: "extension",
+        });
+      for (const t of ws.session.promptTemplates)
+        out.push({
+          name: t.name,
+          description: t.description,
+          source: "prompt",
+          argumentHint: t.argumentHint,
+        });
+      for (const s of ws.session.resourceLoader.getSkills().skills)
+        out.push({
+          name: `skill:${s.name}`,
+          description: s.description,
+          source: "skill",
+        });
+      return out;
     },
 
     setModel(provider, modelId, sessionId) {

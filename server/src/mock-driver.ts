@@ -3,6 +3,7 @@
 // live model or API keys.
 
 import type {
+  CommandInfo,
   HostUiResponse,
   ModelDefaults,
   ModelOption,
@@ -21,6 +22,7 @@ import {
   greeting,
   idleNoComplete,
   inputDialog,
+  MOCK_COMMANDS,
   MOCK_DEFAULT_CONFIG,
   MOCK_MODEL_DEFAULTS,
   MOCK_MODELS,
@@ -234,6 +236,10 @@ export class MockDriver implements PilotDriver {
 
   async listModels(): Promise<ModelOption[]> {
     return MOCK_MODELS.map((m) => ({ ...m }));
+  }
+
+  async listCommands(): Promise<CommandInfo[]> {
+    return MOCK_COMMANDS.map((c) => ({ ...c }));
   }
 
   setModel(provider: string, modelId: string): void {

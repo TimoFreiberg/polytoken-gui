@@ -3,6 +3,7 @@
 // when we swap the fixture for a live agent.
 
 import type {
+  CommandInfo,
   HostUiResponse,
   ModelDefaults,
   ModelOption,
@@ -50,6 +51,11 @@ export interface PilotDriver {
   /** Models available to switch to (driver-wide; the real driver reads pi's model
    *  registry, the mock returns a fixture set). */
   listModels(): Promise<ModelOption[]>;
+
+  /** Slash commands the targeted session offers (extension commands + prompt templates
+   *  + skills, pi's `get_commands` set). Per-session because the set is cwd-scoped;
+   *  sessionId omitted -> the driver's current session. The mock returns a fixture set. */
+  listCommands(sessionId?: SessionId): Promise<CommandInfo[]>;
   /** Switch a session's model. The driver emits a `sessionUpdated` reflecting it.
    *  sessionId omitted -> the driver's current session. */
   setModel(provider: string, modelId: string, sessionId?: SessionId): void;

@@ -174,6 +174,19 @@ export class SessionHub {
     }
   }
 
+  /** Fetch + broadcast the focused session's slash commands (for the composer
+   *  typeahead). Re-run on session switch since the set is cwd-scoped. */
+  private async broadcastCommandList(): Promise<void> {
+    try {
+      const commands = await this.driver.listCommands(
+        this.focusedId ?? undefined,
+      );
+      this.broadcast({ type: "commandList", commands });
+    } catch (e) {
+      console.error("[hub] listCommands failed", e);
+    }
+  }
+
   /** Fetch + broadcast the manageable providers (Settings panel). No-op if the driver
    *  doesn't support credential management. */
   private async broadcastProviderList(): Promise<void> {
@@ -292,6 +305,8 @@ export class SessionHub {
       }
       this.broadcast({ type: "snapshot", state: this.snapshot() });
       await this.broadcastSessionList();
+      // Commands are cwd-scoped — the swapped-to session may expose a different set.
+      await this.broadcastCommandList();
     } finally {
       this.switchInFlight = false;
     }
@@ -314,6 +329,7 @@ export class SessionHub {
     // first.
     void this.broadcastSessionList();
     void this.broadcastModelList();
+    void this.broadcastCommandList();
     void this.broadcastProviderList();
     void this.broadcastModelDefaults();
     return () => this.clients.delete(send);
@@ -369,6 +385,9 @@ export class SessionHub {
         return;
       case "listSessions":
         void this.broadcastSessionList();
+        return;
+      case "listCommands":
+        void this.broadcastCommandList();
         return;
       case "listProviders":
         void this.broadcastProviderList();

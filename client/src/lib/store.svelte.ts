@@ -3,6 +3,7 @@
 // state (composer draft) lives here too and is intentionally never sent upstream.
 
 import {
+  type CommandInfo,
   foldEvent,
   type HostUiResponse,
   initialSessionState,
@@ -57,6 +58,9 @@ class PilotStore {
   // Model picker — the models available to switch to (current selection lives in
   // session.config). Server-authoritative, delivered like `sessions`.
   models = $state<ModelOption[]>([]);
+  // Slash commands the focused session offers, for the composer typeahead. Server-
+  // authoritative, delivered like `models`; refreshed on session switch (cwd-scoped).
+  commands = $state<CommandInfo[]>([]);
   // Interactive project-trust card (D12). Out-of-band, not part of the folded session
   // state: trust is decided per-cwd before a session exists. Null when none pending.
   trustRequest = $state<TrustRequest | null>(null);
@@ -150,6 +154,9 @@ class PilotStore {
       }
       case "modelList":
         this.models = [...msg.models];
+        break;
+      case "commandList":
+        this.commands = [...msg.commands];
         break;
       case "providerList":
         this.providers = [...msg.providers];
