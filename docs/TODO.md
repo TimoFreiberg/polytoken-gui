@@ -8,9 +8,14 @@ See `docs/` siblings for context: `STATUS.md` (what's built), `DECISIONS.md`
 
 ## 🔴 Next (urgent / blocking)
 
-- [ ] **Multi-session hub** (D8) — hub keyed per session;
-      `sessionRef` on client→server messages; session list/picker drives N
-      live sessions.
+- [ ] **Multi-session — keep N warm** (D8 increment 2) — rework the pi-driver
+      from runtime-swap (disposes the old session on switch) to a
+      `Map<sessionId, AgentSession>` of independent sessions kept warm:
+      `openSession`/`newSession` warm-and-focus instead of swap+dispose;
+      `prompt`/`abort`/`respondUi` dispatch by `sessionId` (already threaded);
+      reuse `makeTrustResolver` per session. Needs live 2-session verification
+      (background streaming + instant focus-switch). The hub half (increment 1)
+      is done — see Done.
 - [ ] **Interactive project-trust card** (D12) — surface a `hostUiRequest` trust
       card to connected clients and let them grant/deny (replaces the mock-only
       fixture). Blocked on the hub swap-guard rework: trust resolves inside
@@ -69,6 +74,16 @@ See `docs/` siblings for context: `STATUS.md` (what's built), `DECISIONS.md`
 
 ## ✅ Done (for reference)
 
+- [x] **Multi-session hub** (D8 increment 1) — the hub tracks a focused session:
+      folds + broadcasts only the focused one, routes `prompt`/`abort`/`respondUi`
+      by `sessionId`; background sessions still notify a closed phone. Behavior
+      unchanged for a single active session. Increment 2 (driver keeps N warm) is
+      still open above.
+- [x] **Project-trust gate MVP** (D12) — non-interactive `resolveProjectTrust`
+      (`server/src/pi/trust.ts`) closed a live auto-trust hole (pi auto-trusts
+      every project unless the host resolves trust). Honors trust.json
+      (parent-aware), trusts the launch cwd, denies other untrusted paths.
+      Interactive card still open above.
 - [x] **Persistence rework** (D13) — driver resumes via
       `SessionManager.continueRecent(cwd)`, discovers via `list`, switches via
       `runtime.switchSession`, rebuilds state from session files on load
@@ -79,7 +94,7 @@ See `docs/` siblings for context: `STATUS.md` (what's built), `DECISIONS.md`
       Gotchas banked: `PILOT_VAPID_SUBJECT` must be real https/mailto.
 - [x] M0–M5 built + green — mock driver, transcript/turn UI, approvals,
       multi-client, remote infra, real pi driver (typechecked, unit-tested),
-      PWA, Playwright suite (17 specs, desktop + mobile)
+      PWA, Playwright suite (19 specs, desktop + mobile)
 - [x] Open questions resolved (OQ1–OQ8 → D7–D14) — TS-embed confirmed,
       no tool gating, multiple concurrent sessions, arbitrary paths,
       dark-first styling, etc.

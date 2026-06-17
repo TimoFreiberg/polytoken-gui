@@ -1,5 +1,34 @@
 # Pilot — overnight status (morning of 2026-06-17)
 
+> ## Update — 2026-06-17, midday (supersedes the morning snapshot below)
+>
+> Since the morning snapshot, landed + committed (tree clean; `bun run test` =
+> **45** unit/integration, `bun run test:e2e` = **19** Playwright, `tsc` +
+> `svelte-check` clean):
+> - **Stale-ctx swap crash fixed** — switching/creating a session could crash the
+>   server when a TUI extension's fire-and-forget `session_start` work touched a
+>   disposed ctx. Added a loud `unhandledRejection` guard (`server/src/index.ts`)
+>   so a stray extension async error can't kill the host; the offending extension
+>   (`prompt-editor`) is fixed in `~/dotfiles` (committed there, **not pushed**).
+> - **D13 persistence** — confirmed functionally complete and verified live
+>   (resume-across-restart + new↔existing switching replay the full transcript).
+> - **D12 trust gate (MVP)** — closed a **live auto-trust hole**: pi auto-trusts
+>   every project unless the host resolves trust. `server/src/pi/trust.ts` now
+>   honors trust.json, trusts the launch cwd, denies other untrusted paths.
+> - **D8 increment 1** — the hub is session-focused (folds/broadcasts the focused
+>   session, routes commands by `sessionId`; background sessions still notify).
+>
+> **The real pi driver has now been run live** for session ops (list / switch /
+> new / resume / project-trust) via `scripts/live-switch.ts` against a real agent.
+> Still pending: a real model **turn** (Live pi bring-up — needs provider creds;
+> `~/.pi` is set to deepseek), so the "not yet run live" framing below is stale
+> for session ops but accurate for a model turn.
+>
+> **Next:** D8 increment 2 — rework the pi-driver from runtime-swap to N
+> independent warm `AgentSession`s (live 2-session verification). Then the D12
+> interactive trust card (needs the hub swap-guard reworked so a mid-switch
+> `hostUiRequest` reaches clients). See `TODO.md` + `DECISIONS.md` (D8/D12/D13).
+
 ## TL;DR
 A working, test-covered remote-control web UI for pi — running against a
 deterministic mock, with the **real pi driver implemented** (typechecked against

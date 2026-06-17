@@ -82,6 +82,16 @@ driver keyed per session) and client→server messages carry a `sessionRef` for
 dispatch; the event side already carries `sessionRef`. Crash isolation is
 deprioritized because persistence (D13) makes a crash a recoverable nuisance.
 
+Status (2026-06-17): chose the **"global active, N kept warm"** interim — N
+sessions run/stream concurrently server-side, but all clients share one focused
+session (per-client focus deferred as overkill for a single-user tool). Done
+(increment 1): the hub is session-focused — folds + broadcasts only the focused
+session, routes commands by `sessionId` (`server/src/hub.ts`); client messages
+carry optional `sessionId`. Pending (increment 2): the pi-driver still uses the
+runtime-swap (disposes the old session on switch), so it only ever has one live
+session — keeping N warm needs it reworked to a `Map` of independent
+`AgentSession`s (no dispose on focus-change). Needs live 2-session verification.
+
 ### D9. Approval posture = no tool gating (OQ3)
 No per-tool / per-command approval extension. Autonomous background work is the
 point. The only human gate is the first-run project-trust prompt (D12).
