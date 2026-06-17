@@ -95,14 +95,15 @@ Tiers: **MUST** (MVP) · **SHOULD** (fast-follow) · **LATER**.
 - Always send `cancelled` for dismissed/abandoned dialog ids — MUST
 - Binary 2-option select → Yes/No card — SHOULD
 - Countdown for dialogs carrying a timeout — SHOULD
-- Per-tool / per-dangerous-command approval gate (greenfield extension) — SHOULD
+- ~~Per-tool / per-dangerous-command approval gate~~ — DROPPED (D9: no tool gating; isolation via containers, D10)
+- Wire pi's `project_trust` event → trust card (replaces the mock-only card) — MUST (D12)
 
 ### Status & notifications
 - Working spinner derived from lifecycle events — MUST
 - Ambient maps: `status`→strip, `widget`→above/below composer, `notify`→toast — MUST
 - `title`→tab title; `editorText`→prefill composer — SHOULD
 - Notification API when tab open + approval pending / run done — SHOULD
-- Web Push (SW + VAPID + subscription store) for backgrounded phone — LATER
+- Web Push (SW + VAPID + subscription store) for backgrounded phone — NEXT (D11; spike on a real iPhone first)
 
 ### Sessions & history
 - Bootstrap snapshot via `get_state` + `get_messages` — MUST
@@ -125,7 +126,7 @@ Tiers: **MUST** (MVP) · **SHOULD** (fast-follow) · **LATER**.
 - First-responder-wins approvals (accept only if id still pending) — MUST
 - Re-subscribe after every newSession/switchSession/fork/import — MUST
 - Drain agent events into in-memory buffer; never backpressure the agent — MUST
-- Multiple concurrent live sessions streaming — LATER
+- Multiple concurrent live sessions streaming — MUST (D8; hub keyed per session, `sessionRef` on client→server msgs)
 
 ### Remote / transport / deploy
 - WS server + reconnecting client (backoff, visibility pause/resume) — MUST
@@ -138,8 +139,9 @@ Tiers: **MUST** (MVP) · **SHOULD** (fast-follow) · **LATER**.
 - App-level auth token (Tailscale is network ACL, not auth) — MUST
 - Explicit trust policy in non-interactive mode — MUST
 - Honest boundary copy ("sandboxed" ≠ working-tree safe) — MUST
-- Host-side sandbox extension routing read/write/edit + strict `sandbox.json` — SHOULD
-- Gondolin micro-VM per-session high-isolation toggle — LATER
+- ~~Host-side sandbox extension + `sandbox.json`~~ — DROPPED (D10: no host-side sandbox-exec)
+- Interim isolation: run autonomous sessions under a limited-permission Mac Mini user account — MUST (D10)
+- gondolin micro-VM via the pi-gondolin extension (egress allowlist + scoped secrets; preserves TS-embed) — LATER spike (D10)
 
 ### PWA / mobile
 - PWA bundle (manifest, SW, wakelock) — MUST
@@ -171,4 +173,25 @@ Tiers: **MUST** (MVP) · **SHOULD** (fast-follow) · **LATER**.
 - **M5** Sessions & history. List, open/create/rename/archive, idle file reads.
 - **M6** Security hardening. Auth token, tailscale serve, launchd, sandbox.
 - **M7** Notifications + extension-visibility polish.
-- **LATER** Web Push, diffs, session tree/fork, Gondolin, scheduled runs, attachments.
+- **LATER** diffs, session tree/fork, scheduled runs, attachments.
+
+## Revised next steps (2026-06-17, after OQ resolutions D7–D14)
+
+M0–M5 are largely built (see `STATUS.md`). The owner's review re-prioritized the
+remaining work. New ordering:
+
+1. **iOS Web Push spike** (D11) — SW `push`/`notificationclick` handlers, VAPID
+   keys, subscription endpoint + store, server push sender, a test trigger. The
+   real test is *on the owner's iPhone* (installed PWA). Validate early because
+   it's the most-differentiating + most-likely-to-fail feature.
+2. **Persistence rework** (D13) — swap the driver onto a persistent
+   `SessionManager.create(cwd)`; discover existing sessions
+   (`list`/`listAll`); resume (`open`/`switchSession`); rebuild pilot's
+   in-memory state from pi's session files on load.
+3. **Multi-session** (D8) — hub keyed per session; add `sessionRef` to
+   client→server messages; session list/picker drives N live sessions.
+4. **Wire real project-trust** (D12) — `project_trust` handler → trust card,
+   replacing the mock-only fixture; this is the safety net for arbitrary-path
+   opening (D12) given no tool gating (D9).
+5. **Live pi bring-up** — first real turn against provider credentials.
+6. *(later lane)* gondolin egress containment for the autonomous account (D10).
