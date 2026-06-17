@@ -8,7 +8,20 @@
   // Current selection lives in the folded session config (server-authoritative);
   // the switchable set arrives separately as store.models.
   const cfg = $derived(store.session.config);
-  const modelLabel = $derived(cfg.modelId ?? "model");
+  // Show the friendly label (e.g. "Opus 4.8") in the badge, matching the Claude
+  // app; fall back to the raw id before the model list arrives or if the active
+  // model isn't in it. The raw provider:id stays available in the tooltip.
+  const activeModel = $derived(
+    store.models.find((m) => m.provider === cfg.provider && m.modelId === cfg.modelId),
+  );
+  const modelLabel = $derived(activeModel?.label ?? cfg.modelId ?? "model");
+  const modelTitle = $derived(
+    cfg.modelId
+      ? cfg.provider
+        ? `${cfg.provider}:${cfg.modelId}`
+        : cfg.modelId
+      : "model",
+  );
   const thinking = $derived(cfg.thinkingLevel);
   const levels = $derived(cfg.availableThinkingLevels ?? []);
 
@@ -46,7 +59,7 @@
     <div class="anchor">
       <button
         class="badge"
-        title={cfg.provider ? `${cfg.provider}:${modelLabel}` : modelLabel}
+        title={modelTitle}
         disabled={!hasModels}
         onclick={() => toggle("model")}
       >
