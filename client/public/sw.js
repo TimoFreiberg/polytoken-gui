@@ -16,8 +16,12 @@ self.addEventListener("fetch", () => {
 // Foreground suppression: if a pilot window is already focused/visible, the user is
 // looking at the app — an OS notification would be redundant (and on desktop it
 // double-buzzes alongside the in-tab notify.ts path and the terminal pi notify
-// extension). So when foreground, we postMessage the payload to the open clients
-// (so the app can react in-app) and SKIP the OS notification.
+// extension). So when foreground we SKIP the OS notification and let the live WS
+// connection drive any in-app reaction: the focused client already receives the
+// underlying agent events and runs notify.ts itself. We also postMessage the payload
+// to open clients as a forward-looking hook — but note NO client registers a
+// serviceWorker "message" listener yet, so today that send is a deliberate no-op
+// reserved for future in-app handling (see followups).
 //
 // TRADE-OFF / CAVEAT: this subscription is userVisibleOnly:true, which contractually
 // obliges the SW to show a *user-visible* notification for every push. Some browsers
@@ -53,7 +57,9 @@ self.addEventListener("push", (event) => {
       );
 
       if (foreground) {
-        // App is in front — let it handle the event in-app, don't buzz the OS.
+        // App is in front — skip the OS buzz; the live WS connection already drives
+        // in-app reaction. The postMessage is a reserved hook (no SW-message listener
+        // exists yet), not the mechanism that surfaces this push in-app today.
         for (const c of windows) {
           c.postMessage({ type: "push", payload: data });
         }

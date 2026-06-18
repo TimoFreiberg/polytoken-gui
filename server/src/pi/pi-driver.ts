@@ -448,16 +448,19 @@ export async function createPiDriver(
     },
 
     async newSession(cwd?: string, worktree?: boolean) {
-      // D12: the GUI may open any path. Expand a leading `~`, make it absolute, and
-      // fail loudly if it isn't a real directory rather than letting pi create a
-      // session against a typo'd cwd. An untrusted new cwd still works — trust only
-      // gates that repo's .pi resources (resolved per-cwd in warmUp), not the session.
+      // D12: the GUI may open any path. Expand a leading `~/` (or bare `~`), make it
+      // absolute, and fail loudly if it isn't a real directory rather than letting pi
+      // create a session against a typo'd cwd. An untrusted new cwd still works — trust
+      // only gates that repo's .pi resources (resolved per-cwd in warmUp), not the
+      // session. `~otheruser` is left literal (we can't resolve another user's home);
+      // it falls through to the statSync guard and fails loudly like any bad path.
       let dir = launchCwd;
       if (cwd?.trim()) {
         const raw = cwd.trim();
-        const expanded = raw.startsWith("~")
-          ? resolve(homedir(), `.${raw.slice(1)}`)
-          : raw;
+        const expanded =
+          raw === "~" || raw.startsWith("~/")
+            ? resolve(homedir(), `.${raw.slice(1)}`)
+            : raw;
         dir = resolve(expanded);
         let stat: ReturnType<typeof statSync> | undefined;
         try {

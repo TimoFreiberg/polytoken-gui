@@ -346,6 +346,9 @@
                 <label class="mitem fav" data-testid="fav-{opt.provider}-{opt.modelId}">
                   <input
                     type="checkbox"
+                    title={store.isFavorite(opt.provider, opt.modelId)
+                      ? `Remove ${opt.label} from favorites`
+                      : `Add ${opt.label} to favorites`}
                     checked={store.isFavorite(opt.provider, opt.modelId)}
                     onchange={() => store.toggleFavorite(opt.provider, opt.modelId)}
                   />
