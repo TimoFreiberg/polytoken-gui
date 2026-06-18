@@ -173,7 +173,7 @@ _(clear — pull the next item up from Polish)_
       realistic ms gap (without breaking fold determinism) so the brainstorm
       "tool-call duration badges" item can ship and be screenshot-verified.
 
-- [ ] **Jump-to-last-prompt hotkey** (OP8)
+- [x] **Jump-to-last-prompt hotkey** (OP8)
 - [x] **Type-to-focus prompt field** — basic typable characters focus the
       text field before typing them (or a dedicated hotkey)
       _(done: window keydown focuses the composer on a printable key when no input is
