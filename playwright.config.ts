@@ -13,6 +13,7 @@ const VITE_PORT = Number(process.env.PILOT_E2E_VITE_PORT) || 15173;
 // user's running pilot instance.
 export default defineConfig({
   testDir: "./e2e",
+  testMatch: /\.e2e\.ts$/,
   fullyParallel: false,
   workers: 1,
   retries: process.env.CI ? 1 : 0,
@@ -37,14 +38,14 @@ export default defineConfig({
         ...devices["Desktop Chrome"],
         viewport: { width: 1100, height: 850 },
       },
-      testIgnore: /\.mobile\.spec\.ts$/,
+      testIgnore: /\.mobile\.e2e\.ts$/,
     },
     {
       // Pixel 7 is a Chromium-based mobile descriptor — avoids a WebKit download
       // while still exercising a phone viewport + touch.
       name: "mobile",
       use: { ...devices["Pixel 7"] },
-      testMatch: /\.mobile\.spec\.ts$/,
+      testMatch: /\.mobile\.e2e\.ts$/,
     },
   ],
 });
