@@ -49,7 +49,13 @@ export class MockDriver implements PilotDriver {
   private listeners = new Set<(ev: SessionDriverEvent) => void>();
   private trustListeners = new Set<(ev: TrustEvent) => void>();
   private pendingTrust = new Set<string>();
-  private timers = new Set<ReturnType<typeof setTimeout>>();
+  // In-flight scripted steps, in chronological order. We keep the step alongside its
+  // timer (not just the raw handle) so a NEW script can flush the in-flight one to
+  // completion before it starts — see play() for why interleaving corrupts state.
+  private scheduled: Array<{
+    timer: ReturnType<typeof setTimeout>;
+    step: ScriptStep;
+  }> = [];
   private pendingDialogs = new Set<string>();
   private sessions: SessionListEntry[] = SESSION_LIST.map((s) => ({ ...s }));
   // Cwds of worktrees the mock "created" (the -worktree sibling dirs), so listSessions
@@ -131,24 +137,54 @@ export class MockDriver implements PilotDriver {
 
   /** Schedule a script's steps with their cumulative delays. */
   private play(steps: ScriptStep[]): void {
+    // Serialize replays: instantly settle any in-flight script before starting a new
+    // one. Two concurrent timer sequences interleave their assistantDelta events, and
+    // foldEvent appends each delta to whichever assistant is currently open — so an
+    // overlapping greeting + reply splits one thinking block across two turns and
+    // leaks the greeting's tail text into the reply. Flushing keeps the mock's
+    // one-turn-at-a-time semantics, matching real pi. (Tests drive a new script the
+    // moment the greeting's first line is visible, well before it finishes streaming.)
+    this.flushScheduled();
     let t = 0;
     for (const step of steps) {
       t += step.wait;
-      const timer = setTimeout(() => {
-        this.timers.delete(timer);
-        // A turn ending settles the live message-count overlay back to the fixture
-        // baseline before the hub's run-end list broadcast reads it (see getUsage).
-        if (step.event.type === "runCompleted") this.liveCountBumps.clear();
-        this.emit(step.event);
-        if (
-          step.event.type === "hostUiRequest" &&
-          "timeoutMs" in step.event.request
-        ) {
-          // remember dialogs so respondUi / abort can settle them
-          this.pendingDialogs.add(step.event.request.requestId);
-        }
-      }, t);
-      this.timers.add(timer);
+      const entry: { timer: ReturnType<typeof setTimeout>; step: ScriptStep } =
+        {
+          timer: setTimeout(() => {
+            const i = this.scheduled.indexOf(entry);
+            if (i >= 0) this.scheduled.splice(i, 1);
+            this.fireStep(step);
+          }, t),
+          step,
+        };
+      this.scheduled.push(entry);
+    }
+  }
+
+  /** Emit one step's event plus its side bookkeeping. Shared by the timer path and
+   *  flushScheduled so a flushed event behaves exactly like a fired one. */
+  private fireStep(step: ScriptStep): void {
+    // A turn ending settles the live message-count overlay back to the fixture
+    // baseline before the hub's run-end list broadcast reads it (see getUsage).
+    if (step.event.type === "runCompleted") this.liveCountBumps.clear();
+    this.emit(step.event);
+    if (
+      step.event.type === "hostUiRequest" &&
+      "timeoutMs" in step.event.request
+    ) {
+      // remember dialogs so respondUi / abort can settle them
+      this.pendingDialogs.add(step.event.request.requestId);
+    }
+  }
+
+  /** Fire every still-pending step immediately, in order, cancelling its timer.
+   *  Settles an in-flight replay before a new one begins so the two never interleave. */
+  private flushScheduled(): void {
+    const entries = this.scheduled;
+    this.scheduled = [];
+    for (const entry of entries) {
+      clearTimeout(entry.timer);
+      this.fireStep(entry.step);
     }
   }
 
@@ -183,8 +219,8 @@ export class MockDriver implements PilotDriver {
   }
 
   abort(): void {
-    for (const timer of this.timers) clearTimeout(timer);
-    this.timers.clear();
+    for (const entry of this.scheduled) clearTimeout(entry.timer);
+    this.scheduled = [];
     this.emit({
       sessionRef: SESSION_REF,
       timestamp: String(Date.now()),
@@ -402,8 +438,8 @@ export class MockDriver implements PilotDriver {
   }
 
   private cancelTimers(): void {
-    for (const timer of this.timers) clearTimeout(timer);
-    this.timers.clear();
+    for (const entry of this.scheduled) clearTimeout(entry.timer);
+    this.scheduled = [];
     this.pendingDialogs.clear();
     this.pendingTrust.clear();
   }
