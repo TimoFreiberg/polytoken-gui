@@ -380,7 +380,6 @@
                     <button
                       class="row"
                       class:active={s.sessionId === store.activeSessionId}
-                      title={`Open session: ${s.displayName || s.preview || "(untitled)"} (right-click for actions)`}
                       onclick={() => pick(s)}
                       oncontextmenu={(e) => openMenu(e, s.path)}
                     >
@@ -411,8 +410,25 @@
                               <span
                                 class="wt"
                                 title={`Worktree: ${s.worktree.path}`}
-                                >worktree</span
-                              >{/if}</span
+                                aria-label="worktree"
+                              >
+                                <svg
+                                  viewBox="0 0 24 24"
+                                  width="11"
+                                  height="11"
+                                  fill="none"
+                                  stroke="currentColor"
+                                  stroke-width="2"
+                                  stroke-linecap="round"
+                                  stroke-linejoin="round"
+                                  aria-hidden="true"
+                                >
+                                  <line x1="6" y1="3" x2="6" y2="15" />
+                                  <circle cx="18" cy="6" r="3" />
+                                  <circle cx="6" cy="18" r="3" />
+                                  <path d="M18 9a9 9 0 0 1-9 9" />
+                                </svg>
+                              </span>{/if}</span
                           >
                           <span class="meta-end">
                             {#if s.usage}
@@ -998,13 +1014,14 @@
   .time {
     flex-shrink: 0;
   }
-  /* Worktree marker in the meta line — tinted + with a dotted underline to read as a
-     hoverable indicator (the title carries the full path). */
+  /* Worktree marker in the meta line — a compact tinted git-branch glyph (the title
+     carries the full path; aria-label names it for screen readers). */
   .wt {
+    display: inline-flex;
+    align-items: center;
     color: var(--accent);
-    text-decoration: underline dotted;
-    text-underline-offset: 2px;
     cursor: help;
+    vertical-align: middle;
   }
 
   /* Phone: the sidebar becomes a slide-over drawer above the transcript. */

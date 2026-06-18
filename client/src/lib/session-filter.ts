@@ -52,10 +52,17 @@ function matchesQuery(entry: SessionListEntry, q: string): boolean {
   );
 }
 
+/** The display name for a project group: the final path segment of its cwd. Kept here
+ *  (not imported from the Sidebar component) so this module stays DOM-free + unit-testable. */
+function projectName(cwd: string): string {
+  const parts = cwd.replace(/\/+$/, "").split("/");
+  return parts[parts.length - 1] || cwd;
+}
+
 /** Group sessions by project dir for the sidebar, applying the search query and the
- *  active-only filter. Items sort newest-first within a group; groups sort by their
- *  newest item. Empty groups are dropped — so a project whose sessions are all hidden
- *  (archived/stale) disappears from the active view entirely. */
+ *  active-only filter. Items sort newest-first within a group; groups sort alphabetically
+ *  by project name (the cwd's basename), case-insensitive. Empty groups are dropped — so a
+ *  project whose sessions are all hidden (archived/stale) disappears from the active view. */
 export function filterSessions(
   sessions: readonly SessionListEntry[],
   { query, showArchived, now }: FilterOptions,
@@ -78,8 +85,18 @@ export function filterSessions(
     cwd,
     items: [...items].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)),
   }));
-  groups.sort((a, b) =>
-    (b.items[0]?.updatedAt ?? "").localeCompare(a.items[0]?.updatedAt ?? ""),
-  );
+  // Projects A→Z by display name, case-insensitive, with the full cwd as a stable
+  // tiebreaker when two projects share a basename. (Sessions within a group stay
+  // newest-first, sorted above.)
+  groups.sort((a, b) => {
+    const byName = projectName(a.cwd).localeCompare(
+      projectName(b.cwd),
+      undefined,
+      {
+        sensitivity: "base",
+      },
+    );
+    return byName !== 0 ? byName : a.cwd.localeCompare(b.cwd);
+  });
   return { groups, hiddenCount };
 }

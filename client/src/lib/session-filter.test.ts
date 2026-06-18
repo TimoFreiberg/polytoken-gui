@@ -34,17 +34,36 @@ describe("isStale", () => {
 });
 
 describe("filterSessions", () => {
-  test("groups by cwd, sorts items + groups newest-first", () => {
+  test("groups projects alphabetically by name; items stay newest-first", () => {
     const { groups } = filterSessions(
       [
-        entry({ path: "/a", cwd: "/proj1", updatedAt: isoAgo(3000) }),
-        entry({ path: "/b", cwd: "/proj1", updatedAt: isoAgo(1000) }),
-        entry({ path: "/c", cwd: "/proj2", updatedAt: isoAgo(2000) }),
+        // /zebra holds the newest item overall, /apple older ones — alphabetical group
+        // order must still put apple first, proving groups don't sort by recency.
+        entry({ path: "/z1", cwd: "/zebra", updatedAt: isoAgo(1000) }),
+        entry({ path: "/a1", cwd: "/apple", updatedAt: isoAgo(3000) }),
+        entry({ path: "/a2", cwd: "/apple", updatedAt: isoAgo(2000) }),
       ],
       active,
     );
-    expect(groups.map((g) => g.cwd)).toEqual(["/proj1", "/proj2"]); // proj1 newest item is newest overall
-    expect(groups[0].items.map((i) => i.path)).toEqual(["/b", "/a"]); // newest first
+    expect(groups.map((g) => g.cwd)).toEqual(["/apple", "/zebra"]); // A→Z by basename
+    expect(groups[0].items.map((i) => i.path)).toEqual(["/a2", "/a1"]); // newest first within
+  });
+
+  test("project sort uses the cwd basename, case-insensitively", () => {
+    const { groups } = filterSessions(
+      [
+        entry({ path: "/1", cwd: "/Users/me/Zoo" }),
+        entry({ path: "/2", cwd: "/srv/apps/alpha" }),
+        entry({ path: "/3", cwd: "/home/beta" }),
+      ],
+      active,
+    );
+    // basenames Zoo / alpha / beta sort case-insensitively to alpha, beta, Zoo
+    expect(groups.map((g) => g.cwd)).toEqual([
+      "/srv/apps/alpha",
+      "/home/beta",
+      "/Users/me/Zoo",
+    ]);
   });
 
   test("active-only hides archived and stale; show-all reveals them", () => {
