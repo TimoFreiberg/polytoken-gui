@@ -16,6 +16,7 @@
     label: string;
     title?: string; // tooltip; falls back to the label
     icon?: Snippet; // optional leading glyph / inline SVG
+    testid?: string; // optional data-testid hook for e2e
   };
 
   interface Props {
@@ -48,6 +49,7 @@
       type="button"
       role="radio"
       aria-checked={value === opt.value}
+      data-testid={opt.testid}
       title={opt.title ?? opt.label}
       onclick={() => select(opt.value)}
     >
