@@ -175,13 +175,28 @@ that pilot should NOT build — they're paseo's domain, not pilot's differentiat
 
 ### Worth adopting
 
-- [ ] **Design-system consistency pass** — port paseo's *discipline*, not its
-      React-Native specifics: any semantic element used 3+ times becomes a shared
-      primitive, buttons get a small fixed variant taxonomy (one CTA per surface,
-      secondary, outline, ghost, destructive), and hierarchy leans on weight+color
-      over font-size. Audit pilot's Svelte components, pull repeated row/button/header
-      patterns into primitives. Refactor, not a feature; the weight-vs-font-size call
-      is a taste judgment to make by eyeballing against D14.
+- [ ] **Design-system consistency pass** _(scoped 2026-06-18; own focused session —
+      it's a broad, visually-sensitive refactor, do it screenshot-driven, not bundled)_.
+      Port paseo's *discipline*, not its React-Native specifics: any semantic element used
+      3+ times becomes a shared primitive; buttons get a small fixed variant taxonomy;
+      hierarchy leans on weight+color over font-size.
+      **Audit findings (current state):** 71 raw `<button>`s across 14 components; **no
+      `client/src/components/ui/` primitives** exist yet; button classes are ad-hoc (only
+      `Settings.svelte` has a `btn`/`btn ghost`/`btn danger` convention — everywhere else
+      is bespoke per-component classes, lots of icon-only buttons). Heaviest: `Sidebar`
+      (16), `Composer` (11), `ApprovalLayer` (11), `Settings` (10), `ModelPicker` (5).
+      **Plan:** (1) extract a `<Button>` primitive in `components/ui/` with 5 variants —
+      `default` (one CTA/surface), `secondary`, `outline` (row action), `ghost`
+      (chrome/icon), `destructive` (confirm only) — each preserving the repo rule that
+      every clickable carries a `title`/hotkey; (2) migrate the 71 buttons variant-by-
+      variant, simplest components first, screenshotting each surface (desktop + mobile +
+      light/dark) before/after to catch visual regressions; (3) pull other 3+-use patterns
+      (session row, section header) into primitives; (4) the weight-vs-font-size hierarchy
+      pass LAST, as a separate reviewable step — it's a taste call to settle with the owner
+      against D14 (the Claude app does use some size hierarchy). **Guardrails:** keep
+      `e2e` green throughout (several specs select on existing button roles/labels — don't
+      break selectors); no behavior changes, styling/structure only. Big diff — expect to
+      split across several commits by variant/component.
 - [ ] **Big-snapshot pagination + tool-update frame coalescing** — extends the
       existing "raise/chunk 64KB WS frame cap for snapshots" SHOULD in DESIGN. For a
       long session reconnecting over a flaky phone link, a paged/chunked catch-up beats
