@@ -369,6 +369,15 @@
           <ContextMeter />
         {/if}
       </div>
+      {#if streaming}
+        <!-- The steer/follow-up hint lives INSIDE the always-present toolbar rather than
+             on its own row that toggles with the run — so finishing a turn doesn't add/
+             remove a line and jump the layout. Hidden on touch viewports, where there's
+             no Enter/Alt+Enter to hint at. -->
+        <div class="toolbar-hint">
+          <kbd>Enter</kbd> steers · <kbd>Alt</kbd>+<kbd>Enter</kbd> queues a follow-up
+        </div>
+      {/if}
       <div class="toolbar-right">
         <!-- TODO: file uploader — wire to an attach/upload driver capability + a
              hotkey once the protocol carries attachments. Disabled placeholder for now. -->
@@ -386,11 +395,6 @@
       </div>
     </div>
 
-    {#if streaming}
-      <div class="hint">
-        <kbd>Enter</kbd> steers · <kbd>Alt</kbd>+<kbd>Enter</kbd> queues a follow-up
-      </div>
-    {/if}
   </div>
 </div>
 
@@ -668,13 +672,18 @@
   .send:not(:disabled):active {
     transform: scale(0.92);
   }
-  .hint {
+  /* Steer/follow-up hint, centered in the toolbar between the meter and the pickers.
+     Shrinks + ellipsizes before crowding them; hidden entirely on touch (below). */
+  .toolbar-hint {
+    flex-shrink: 1;
+    min-width: 0;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
     font-size: 11.5px;
     color: var(--text-faint);
-    text-align: center;
-    padding: 0 2px;
   }
-  .hint kbd {
+  .toolbar-hint kbd {
     font-family: var(--font-mono);
     font-size: 10.5px;
     color: var(--text-muted);
@@ -682,6 +691,12 @@
     border: 1px solid var(--border);
     border-radius: var(--radius-xs);
     padding: 0 4px;
+  }
+  /* Touch has no Enter/Alt+Enter, and the row is tighter — drop the hint there. */
+  @media (max-width: 859px) {
+    .toolbar-hint {
+      display: none;
+    }
   }
   .toolbar {
     display: flex;
