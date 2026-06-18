@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  LaunchDaemon TEMPLATE for the auto-deploy poller. A system LaunchDaemon (like the
+  server) so polling survives a headless reboot too. Runs as your user so `git fetch`
+  uses your SSH key and `bun install`/build write your-owned files. Polls origin/main
+  every 60s; `bun run deploy:now` (from your laptop) kicks an immediate run.
+
+  Rendered + installed by `scripts/deploy-ctl.sh install`. See deploy/DEPLOY.md.
+-->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.pilot.deploy</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>@@LIVE@@/scripts/auto-deploy.sh</string>
+  </array>
+
+  <key>WorkingDirectory</key>
+  <string>@@HOME@@</string>
+
+  <key>UserName</key>
+  <string>@@USER@@</string>
+
+  <key>EnvironmentVariables</key>
+  <dict>
+    <!-- No login shell at boot: HOME so git/ssh find ~/.ssh + ~/.gitconfig; PATH so
+         git, bun, ssh resolve. -->
+    <key>HOME</key>
+    <string>@@HOME@@</string>
+    <key>PATH</key>
+    <string>@@HOME@@/.bun/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+  </dict>
+
+  <!-- Poll every 60s. -->
+  <key>StartInterval</key>
+  <integer>60</integer>
+
+  <key>RunAtLoad</key>
+  <true/>
+
+  <key>StandardOutPath</key>
+  <string>@@LOGDIR@@/pilot-deploy.log</string>
+  <key>StandardErrorPath</key>
+  <string>@@LOGDIR@@/pilot-deploy.log</string>
+</dict>
+</plist>

@@ -13,7 +13,8 @@
     "test": "bun test protocol server client/src",
     "test:e2e": "playwright test",
     "test:e2e:update": "playwright test --update-snapshots",
-    "check": "tsc -p tsconfig.json --noEmit"
+    "check": "tsc -p tsconfig.json --noEmit",
+    "deploy:now": "bash scripts/deploy-now.sh"
   },
   "devDependencies": {
     "@playwright/test": "^1.61.0",

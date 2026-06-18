@@ -1,0 +1,12 @@
+# allowed-signers — trust anchor for optional commit-signature verification.
+#
+# Off by default. To enable: set PILOT_VERIFY_SIGNATURES=true in
+# ~/.local/state/pilot/pilot.env, then list the SSH public key(s) you sign commits
+# with below (one per line). auto-deploy.sh points git's
+# gpg.ssh.allowedSignersFile here and refuses to deploy any new commit on
+# origin/main that isn't signed by a listed key.
+#
+# Format (the principal must match your committer email; namespaces=git is required):
+#   timo.freiberg@gmail.com namespaces="git" ssh-ed25519 AAAAC3Nz...your-key
+#
+# Find your signing key:  cat ~/.ssh/id_ed25519.pub   (or whatever `git config user.signingkey` points to)

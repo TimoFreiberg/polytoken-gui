@@ -1,10 +1,13 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!--
-  launchd agent to keep the pilot server running on the Mac Mini.
-  Edit the CHANGE-ME values, then:
-    cp deploy/com.pilot.server.plist ~/Library/LaunchAgents/
-    launchctl load ~/Library/LaunchAgents/com.pilot.server.plist
-  See deploy/DEPLOY.md.
+  LaunchDaemon TEMPLATE for the pilot server. A system LaunchDaemon (not a per-user
+  LaunchAgent) so it starts at boot with nobody logged in — the Mac Mini runs and
+  reboots headlessly. It runs as your user via <UserName> so pi keeps your perms/env.
+
+  Don't install this file directly — the @@…@@ placeholders are rendered by
+  `scripts/deploy-ctl.sh install` (which sudo-copies the result to
+  /Library/LaunchDaemons). Secrets are NOT here: run.sh sources them from
+  ~/.local/state/pilot/pilot.env. See deploy/DEPLOY.md.
 -->
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -14,23 +17,25 @@
 
   <key>ProgramArguments</key>
   <array>
-    <string>/Users/timo/src/pilot/deploy/run.sh</string>
+    <string>/bin/bash</string>
+    <string>@@LIVE@@/deploy/run.sh</string>
   </array>
 
   <key>WorkingDirectory</key>
-  <string>/Users/timo/src/pilot</string>
+  <string>@@LIVE@@</string>
+
+  <!-- Run as you, not root: lets the deploy poller restart us with a plain kill. -->
+  <key>UserName</key>
+  <string>@@USER@@</string>
 
   <key>EnvironmentVariables</key>
   <dict>
-    <key>PILOT_TOKEN</key>
-    <string>CHANGE-ME-run-openssl-rand-hex-16</string>
-    <key>PILOT_HOST</key>
-    <string>127.0.0.1</string>
-    <key>PILOT_PORT</key>
-    <string>8787</string>
-    <!-- bun must be on PATH; adjust if installed elsewhere -->
+    <!-- A boot-time daemon has no login shell: set HOME + PATH explicitly so bun is
+         found and ~/.ssh, ~/.local/state etc. resolve. -->
+    <key>HOME</key>
+    <string>@@HOME@@</string>
     <key>PATH</key>
-    <string>/Users/timo/.bun/bin:/opt/homebrew/bin:/usr/bin:/bin</string>
+    <string>@@HOME@@/.bun/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
   </dict>
 
   <key>RunAtLoad</key>
@@ -39,8 +44,8 @@
   <true/>
 
   <key>StandardOutPath</key>
-  <string>/Users/timo/Library/Logs/pilot.out.log</string>
+  <string>@@LOGDIR@@/pilot.out.log</string>
   <key>StandardErrorPath</key>
-  <string>/Users/timo/Library/Logs/pilot.err.log</string>
+  <string>@@LOGDIR@@/pilot.err.log</string>
 </dict>
 </plist>
