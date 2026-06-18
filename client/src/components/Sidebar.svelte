@@ -599,10 +599,6 @@
        relationship reads at a glance (no tree rail — indentation only). */
     margin: 0 0 2px;
     padding: 0 0 0 12px;
-    /* Cap a busy project at ~10 visible rows and scroll within the group, so a single
-       large project can't push every other group off the screen. */
-    max-height: 21rem;
-    overflow-y: auto;
   }
   /* A row + its overflow (⋯) button on one line; the inline actions menu drops below. */
   .row-line {

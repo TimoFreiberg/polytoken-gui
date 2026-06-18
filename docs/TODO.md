@@ -80,10 +80,11 @@ _(clear — pull the next item up from Polish)_
       preview, and path in the sidebar
       _(done: sidebar search filters groups by name/preview/cwd, hides empty groups;
       `sessions.spec.ts` covers name + path matches.)_
-- [x] **Session list scroll cap** — for projects with many sessions, make the list
+- [~] **Session list scroll cap** — ~~for projects with many sessions, make the list
       internally scrollable with a visible limit of ~10, scroll within the project
-      group
-      _(done: per-group `<ul>` `max-height: 21rem` (~10 rows) + `overflow-y: auto`.)_
+      group~~
+      _(reverted: the per-group cap was dropped in favor of a plain list — the
+      archive feature is enough to manage length; the whole sidebar list scrolls.)_
 - [x] **Tool call results popup: drop description, add hover tooltip** — the tool
       description doesn't need to be listed inline in the popup; move it to a
       mouseover tooltip on the tool name instead

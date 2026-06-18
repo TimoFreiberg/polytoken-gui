@@ -8,8 +8,9 @@
 > `tsc -p protocol` + `svelte-check` clean.
 > - **Composer / turns:** Enter steers / **Alt+Enter** queues a follow-up (inline hint);
 >   **run-failed error card** with Retry (re-sends the last prompt) + Copy.
-> - **Sidebar:** **session search** (name / preview / path), per-group **height cap**
->   (~10 rows, internal scroll), **autofocus** on the new-session input, and a **worktree
+> - **Sidebar:** **session search** (name / preview / path), a **plain (un-capped)
+>   per-project list** (the whole sidebar scrolls; archiving manages length),
+>   **autofocus** on the new-session input, and a **worktree
 >   toggle** that runs the session in an isolated jj/git worktree of the chosen dir
 >   (`newSession.worktree` → both drivers; `server/src/pi/worktree.ts`).
 > - **Header / Settings:** **⌘/Ctrl+,** toggles Settings; **model search** in the picker
