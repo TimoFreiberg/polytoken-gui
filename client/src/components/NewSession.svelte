@@ -1,5 +1,6 @@
 <script lang="ts">
   import { store } from "../lib/store.svelte.js";
+  import Button from "./ui/Button.svelte";
 
   // The transcript-area hero for the new-session draft (store.draft != null). The
   // actual config chips + first-prompt input live in the Composer below; this just
@@ -19,10 +20,12 @@
       {/if}
     </div>
     <div class="note">Nothing is created until you send your first message.</div>
-    <button
+    <Button
       class="cancel"
+      variant="secondary"
+      size="sm"
       title="Discard this new session (Esc)"
-      onclick={() => store.cancelDraft()}>Cancel</button
+      onclick={() => store.cancelDraft()}>Cancel</Button
     >
   </div>
 </div>
@@ -66,18 +69,9 @@
     color: var(--text-faint);
     margin-top: 2px;
   }
-  .cancel {
+  /* Button owns the look; this only adds the spacing above it (it's a child
+     component root, so the rule pierces the scope boundary). */
+  .inner :global(.cancel) {
     margin-top: 10px;
-    font-size: 12.5px;
-    color: var(--text-muted);
-    background: var(--surface-sunken);
-    border: 1px solid var(--border);
-    border-radius: 999px;
-    padding: 5px 16px;
-    cursor: pointer;
-  }
-  .cancel:hover {
-    color: var(--text);
-    border-color: var(--border-strong);
   }
 </style>

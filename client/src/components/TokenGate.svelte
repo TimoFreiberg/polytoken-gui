@@ -1,5 +1,6 @@
 <script lang="ts">
   import { store } from "../lib/store.svelte.js";
+  import Button from "./ui/Button.svelte";
   let value = $state("");
 </script>
 
@@ -15,7 +16,7 @@
       }}
     >
       <input bind:value type="password" placeholder="Access token" autocomplete="current-password" />
-      <button type="submit" title="Connect with this access token" disabled={!value.trim()}>Connect</button>
+      <Button variant="primary" size="lg" type="submit" title="Connect with this access token" disabled={!value.trim()}>Connect</Button>
     </form>
     <p class="hint">Tip: open <code>https://&lt;host&gt;/?token=…</code> once and it's remembered.</p>
   </div>
@@ -74,18 +75,6 @@
   }
   input:focus {
     border-color: var(--accent);
-  }
-  button {
-    background: var(--accent);
-    color: var(--accent-text);
-    border: none;
-    border-radius: var(--radius-sm);
-    padding: 11px;
-    font-size: 15px;
-    font-weight: 550;
-  }
-  button:disabled {
-    opacity: 0.4;
   }
   .hint {
     margin: 16px 0 0;
