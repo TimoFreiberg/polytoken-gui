@@ -7,8 +7,20 @@
   import SlashMenu from "./SlashMenu.svelte";
   import ModelPicker from "./ModelPicker.svelte";
   import ContextMeter from "./ContextMeter.svelte";
+  import SegmentedControl from "./ui/SegmentedControl.svelte";
+  import IconButton from "./ui/IconButton.svelte";
 
   let deliverAs = $state<"steer" | "followUp">("steer");
+  // Delivery-mode options for the steer/follow-up switch. Typed so the SegmentedControl
+  // generic infers `"steer" | "followUp"` and `bind:value={deliverAs}` stays type-safe.
+  const deliverModes: { value: "steer" | "followUp"; label: string; title: string }[] = [
+    { value: "steer", label: "steer", title: "Steer — deliver after the current step (Enter)" },
+    {
+      value: "followUp",
+      label: "follow-up",
+      title: "Follow-up — deliver when the agent stops (Alt+Enter)",
+    },
+  ];
   let ta = $state<HTMLTextAreaElement>();
   let box = $state<HTMLDivElement>();
   let fileInput = $state<HTMLInputElement>();
@@ -287,10 +299,7 @@
 
     {#if streaming}
       <div class="streamrow">
-        <div class="modes">
-          <button class:active={deliverAs === "steer"} onclick={() => (deliverAs = "steer")} title="Steer — deliver after the current step (Enter)">steer</button>
-          <button class:active={deliverAs === "followUp"} onclick={() => (deliverAs = "followUp")} title="Follow-up — deliver when the agent stops (Alt+Enter)">follow-up</button>
-        </div>
+        <SegmentedControl size="sm" ariaLabel="Delivery mode" options={deliverModes} bind:value={deliverAs} />
         <button class="stop" onclick={() => store.abort()} title="Stop the agent">■ Stop</button>
       </div>
     {/if}
@@ -454,16 +463,11 @@
             </button>
           {/each}
         {:else}
-          <button
-            class="attach"
-            onclick={openFilePicker}
-            title="Attach images (⌘⇧F)"
-            aria-label="Attach images"
-          >
+          <IconButton onclick={openFilePicker} title="Attach images (⌘⇧F)" aria-label="Attach images">
             <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
               <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48" />
             </svg>
-          </button>
+          </IconButton>
         {/if}
         <ModelPicker />
       </div>
@@ -503,26 +507,6 @@
     align-items: center;
     justify-content: space-between;
     gap: 10px;
-  }
-  .modes {
-    display: inline-flex;
-    background: var(--surface-sunken);
-    border: 1px solid var(--border);
-    border-radius: 999px;
-    padding: 2px;
-  }
-  .modes button {
-    border: none;
-    background: none;
-    color: var(--text-muted);
-    font-size: 12px;
-    padding: 3px 11px;
-    border-radius: 999px;
-  }
-  .modes button.active {
-    background: var(--surface);
-    color: var(--text);
-    box-shadow: var(--shadow-card);
   }
   .stop {
     border: 1px solid color-mix(in srgb, var(--danger) 40%, transparent);
@@ -790,28 +774,6 @@
      fixed-width context meter or attach button give up their space. */
   .toolbar-right {
     flex-shrink: 1;
-  }
-  .attach {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    width: 30px;
-    height: 30px;
-    flex-shrink: 0;
-    color: var(--text-muted);
-    background: transparent;
-    border: 1px solid transparent;
-    border-radius: var(--radius-xs);
-    cursor: pointer;
-  }
-  .attach:hover:not(:disabled) {
-    background: var(--surface-sunken);
-    border-color: var(--border);
-    color: var(--text);
-  }
-  .attach:disabled {
-    opacity: 0.45;
-    cursor: default;
   }
   .file-input-hidden {
     position: absolute;

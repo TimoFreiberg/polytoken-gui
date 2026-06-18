@@ -31,7 +31,11 @@ test("the model and effort pickers live in the composer footer", async ({
 test("the attach button opens a file picker for image attachments", async ({
   page,
 }) => {
-  const attach = page.locator(".composer-wrap .attach");
+  // The attach control is now the shared IconButton primitive — select by its
+  // accessible name rather than the old bespoke `.attach` class.
+  const attach = page
+    .locator(".composer-wrap")
+    .getByRole("button", { name: "Attach images" });
   await expect(attach).toBeEnabled();
   await expect(attach).toHaveAttribute("title", /Attach images/);
 });

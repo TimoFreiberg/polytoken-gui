@@ -63,7 +63,9 @@ test("Enter steers and Alt+Enter queues a follow-up while streaming", async ({
   page,
 }) => {
   await drive(page, "streamhold"); // a turn that stays running
-  const modes = page.locator(".composer-wrap .modes");
+  // The steer/follow-up switch is now the shared SegmentedControl (a radiogroup of
+  // radios, matching Settings' theme switch) — select it by its accessible name.
+  const modes = page.getByRole("radiogroup", { name: "Delivery mode" });
   await expect(modes).toBeVisible();
   // The hotkey hint is shown alongside the steer/follow-up toggle.
   await expect(
@@ -74,7 +76,7 @@ test("Enter steers and Alt+Enter queues a follow-up while streaming", async ({
   // Alt+Enter queues a follow-up — the toggle reflects the choice and the draft clears.
   await box.fill("do this after");
   await box.press("Alt+Enter");
-  await expect(modes.getByRole("button", { name: "follow-up" })).toHaveClass(
+  await expect(modes.getByRole("radio", { name: "follow-up" })).toHaveClass(
     /active/,
   );
   await expect(box).toHaveValue("");
@@ -83,6 +85,6 @@ test("Enter steers and Alt+Enter queues a follow-up while streaming", async ({
   await box.fill("actually now");
   await box.press("Enter");
   await expect(
-    modes.getByRole("button", { name: "steer", exact: true }),
+    modes.getByRole("radio", { name: "steer", exact: true }),
   ).toHaveClass(/active/);
 });
