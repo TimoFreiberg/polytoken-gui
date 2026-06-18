@@ -89,6 +89,20 @@
     if (store.sidebarOpen) store.refreshSessions();
   });
 
+  // A reactive clock for the relative row timestamps ("7m ago"). Minute-resolution
+  // labels go stale as the minute rolls over, so re-stamp `now` once a minute. Gated
+  // on the sidebar being open (no point re-rendering a hidden drawer) and refreshed
+  // immediately on (re)open so a long-closed sidebar isn't showing a frozen time.
+  let now = $state(Date.now());
+  $effect(() => {
+    if (!store.sidebarOpen) return;
+    now = Date.now();
+    const id = setInterval(() => {
+      now = Date.now();
+    }, 60_000);
+    return () => clearInterval(id);
+  });
+
   function isPhone(): boolean {
     return (
       typeof window !== "undefined" &&
@@ -275,7 +289,7 @@
             <ul>
               {#each g.items as s (s.path)}
                 {@const st = store.sessionStatus(s.sessionId)}
-                {@const rel = relativeTime(s.updatedAt, Date.now())}
+                {@const rel = relativeTime(s.updatedAt, now)}
                 <li class="row-wrap">
                   <div class="row-line">
                     <button

@@ -67,6 +67,30 @@ test("rows show a relative last-activity timestamp; the count appears only when 
   await expect(demoRow).toHaveCount(0);
 });
 
+test("relative timestamps tick forward as time passes", async ({ page }) => {
+  // Freeze the clock before the app boots so the label is stable, then advance it and
+  // assert the minute count climbs — proving the timestamp re-renders, not just stamps once.
+  await page.clock.install();
+  await gotoFresh(page);
+  await openSidebar(page);
+
+  const time = page
+    .getByTestId("sidebar")
+    .locator(".row-wrap")
+    .filter({ hasText: "Wire up the WebSocket" })
+    .locator(".time");
+  const minutes = async (): Promise<number> => {
+    const m = (await time.textContent())?.match(/^(\d+)m ago$/);
+    if (!m)
+      throw new Error(`expected "Nm ago", got "${await time.textContent()}"`);
+    return Number(m[1]);
+  };
+
+  const before = await minutes();
+  await page.clock.runFor(5 * 60_000); // five minutes, firing the 1-minute interval
+  await expect(time).toHaveText(`${before + 5}m ago`);
+});
+
 test("a project's + button starts a new session in that dir", async ({
   page,
 }) => {
