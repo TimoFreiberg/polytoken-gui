@@ -23,7 +23,9 @@
 
   /** Human-friendly relative time. Reads `now` so callers re-run on each tick. */
   function relativeTime(iso: string): string {
-    const then = Date.parse(iso);
+    // `iso` may be an ISO 8601 string or epoch milliseconds as a string.
+    // Number(iso) handles the epoch-ms case; Date.parse handles ISO strings.
+    const then = new Date(Number(iso) || iso).getTime();
     if (Number.isNaN(then)) return "";
     const diff = now - then;
     if (diff < 45_000) return "just now";
@@ -37,7 +39,7 @@
 
   /** Exact local timestamp for the `title=` hover tooltip. */
   function exactTime(iso: string): string {
-    const d = new Date(iso);
+    const d = new Date(Number(iso) || iso);
     return Number.isNaN(d.getTime()) ? iso : d.toLocaleString();
   }
 
