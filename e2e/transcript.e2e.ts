@@ -36,6 +36,17 @@ test("tool card expands to show output", async ({ page }) => {
   await expect(page.getByText("server/src/index.ts:14")).toBeVisible();
 });
 
+test("tool card expands to show the full arguments", async ({ page }) => {
+  await page.getByText("Run shell command").click();
+  // The args block labels each input key and shows its full value in a <pre> —
+  // the collapsed header only renders a truncated single-line preview.
+  const args = page.locator(".tool .args");
+  await expect(args.locator(".arg-key", { hasText: "command" })).toBeVisible();
+  await expect(args.locator(".arg-val")).toContainText(
+    'rg -n "app.get\\(" server/src',
+  );
+});
+
 test("composer is present and idle", async ({ page }) => {
   await expect(page.getByPlaceholder("Message pilot…")).toBeVisible();
 });

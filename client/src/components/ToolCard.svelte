@@ -16,6 +16,19 @@
     return String(input);
   }
 
+  // Full argument view for the expanded body. The collapsed header only shows a
+  // truncated single-line preview() (e.g. the start of a bash command); here we
+  // render every argument in full. String values are shown raw so multi-line
+  // commands keep their newlines instead of becoming JSON-escaped "\n".
+  function argEntries(input: unknown): { key: string; value: string }[] {
+    if (input == null) return [];
+    if (typeof input !== "object") return [{ key: "", value: String(input) }];
+    return Object.entries(input as Record<string, unknown>).map(([key, v]) => ({
+      key,
+      value: typeof v === "string" ? v : JSON.stringify(v, null, 2),
+    }));
+  }
+
   function outputText(out: unknown): string {
     if (out == null) return "";
     if (typeof out === "string") return out;
@@ -79,6 +92,9 @@
   }
 
   const edit = $derived(editFrom(item.input));
+  // Edit tools visualize their input as a diff below, so the raw arg dump would
+  // duplicate it — only build arg rows for non-edit tools.
+  const argRows = $derived(edit ? [] : argEntries(item.input));
 
   // Build the two file blobs the diff renders from. Per the task: join each
   // edit's oldTexts / newTexts with newlines (single legacy edit -> used directly).
@@ -247,6 +263,14 @@
   </button>
   {#if open}
     <div class="body">
+      {#if argRows.length}
+        <div class="args">
+          {#each argRows as row}
+            {#if row.key}<div class="arg-key">{row.key}</div>{/if}
+            <pre class="arg-val">{row.value}</pre>
+          {/each}
+        </div>
+      {/if}
       {#if item.text}<pre class="stream">{item.text}</pre>{/if}
       {#if edit}
         {#await diffHTML(theme)}
@@ -385,6 +409,22 @@
     overflow: auto;
   }
   .out {
+    color: var(--text);
+  }
+  .args {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+  .arg-key {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--text-faint);
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+  }
+  .arg-val {
     color: var(--text);
   }
   .running {
