@@ -27,36 +27,11 @@ _(clear — nothing blocking; pull the next item up from Important)_
 
 ## 🟢 Polish / fast-follow
 
-- [ ] **Active session unread when new text lands below the viewport** — builds on
-      the status indicators. Today the active (focused) session is always
-      "read". Refine: if the agent appends content while you're scrolled up (content
-      exists below the visible transcript), mark the active session unread too;
-      clear it when you scroll to the bottom. Needs the transcript scroll container
-      to report "not at bottom + grew" back to the store (the classic "new messages ↓"
-      pill signal), and an exception to the active-session-is-read rule in
-      `store.svelte.ts`'s `sessionStatus`/`markRead` paths. Low priority.
-- [ ] **Session context indicator** — a small color-coded circle (or similar badge)
-      in the session list / header showing how much context the session has consumed,
-      analogous to the Claude app's colored circle (green → yellow → red as the
-      context window fills). Color could map to token-budget thresholds from the
-      snapshot's `config`/usage fields; exact threshold values TBD
-- [ ] **Realistic mock tool-event timestamps** — the mock's `ts()` is a sequential
-      counter, so any duration derived from `toolStarted`→`toolFinished` timestamps
-      renders as a meaningless ~1ms in the dev/preview UI. Stamp tool fixtures with a
-      realistic ms gap (without breaking fold determinism) so the brainstorm
-      "tool-call duration badges" item can ship and be screenshot-verified.
-- [ ] **`/tree` command (native pi command)** — pi's builtin `/tree` command shows
-      the directory tree. Currently TUI builtins are intentionally omitted from the
-      client command list. `/tree` should be passed through so typing `/tree` in the
-      composer sends it as a prompt for pi to execute, even if pilot doesn't render
-      the tree natively.
 - [ ] **Provider OAuth login** — sign-in / sign-out for OAuth-capable providers
       (Anthropic, OpenAI, …) from the Settings panel. Deferred from the settings-panel
       work (API-key entry shipped); needs a server-side OAuth callback reachable over
       Tailscale, which is the bulk of the cost.
 - [ ] **Extensions enable/disable view** + compatibility-issue surfacing
-- [ ] **Session rename / archive / unarchive** — from the sidebar (the create/open
-      half landed; this is the remaining SHOULD from DESIGN's "Sessions & history")
 
 ## 🔵 Later
 
@@ -88,9 +63,6 @@ the rest._
 - [ ] **Edit-and-resubmit a prior prompt** — hover a past user message → "Edit & resend"
       re-runs from that point (relies on pi fork/branch if available, else just resends).
       Pairs with the jump-to-last-prompt hotkey.
-- [ ] **Tool-call duration badges** — show elapsed time on each tool card
-      (`toolStarted`→`toolFinished`); makes slow tools (test runs, big greps) legible
-      at a glance.
 - [ ] **Live activity status line** — derive a one-liner from the in-flight tool
       ("Reading foo.ts", "Running tests", "Editing bar.rs") and surface it in the
       sidebar row, the tab title, and optionally the push notification. Turns the
@@ -203,18 +175,6 @@ that pilot should NOT build — they're paseo's domain, not pilot's differentiat
 
 ### Worth adopting
 
-- [ ] **Agent lifecycle `initializing` state** — pilot's `SessionStatus` is
-      `idle | running | failed` (`protocol/src/session-driver.ts`), with no explicit
-      "session created but not yet streaming" phase. Paseo models the full machine as
-      `initializing → idle ⇄ running → error → closed`. Add `initializing` so the UI
-      can show a spinner during the warm-up + trust-card swap window (the
-      "now-human-long" swap from D12) instead of a dead-looking row.
-- [ ] **PID lock file + server identity** — nothing stops two server processes
-      sharing one data dir; they'd fight over the archive store and the VAPID keypair,
-      and regenerating VAPID silently invalidates every phone's push subscription (see
-      the archive-store note in DONE.md). Write a PID lock + a stable server-id per
-      data dir and fail loud on a second start. Cheap; fits the
-      crash-loud-over-silent-corruption posture.
 - [ ] **Design-system consistency pass** — port paseo's *discipline*, not its
       React-Native specifics: any semantic element used 3+ times becomes a shared
       primitive, buttons get a small fixed variant taxonomy (one CTA per surface,
@@ -228,10 +188,7 @@ that pilot should NOT build — they're paseo's domain, not pilot's differentiat
       one huge snapshot frame; paseo's `AgentStreamCoalescer` (merge rapid tool-call
       updates into fewer WS frames) is the other half. Skip paseo's full
       sequence-dedup'd paged-timeline machinery — overkill for a single user.
-- [ ] **Structured logging + rotation for the daemon** — only the logging half of
-      paseo's "daemon as infrastructure" applies (pilot already has `/health` in
-      `server/src/index.ts`): a rotating `daemon.log` for the launchd-run server so a
-      background crash leaves a trail.
+
 ### 🚫 Out of scope (paseo does these already — not pilot's lane)
 
 _These are features paseo ships that pilot should not build. They'd pull pilot

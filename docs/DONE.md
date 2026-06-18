@@ -5,6 +5,57 @@ and its resolution note. Latest completions first.
 
 ---
 
+- [x] **Server PID lock + stable server identity** _(paseo-inspired)_
+  _(done: `server/src/pidlock.ts` — lock at `dataDir/pilot.pid`; a LIVE second server
+  aborts startup loud (names pid + data dir; guards the archive/push stores + VAPID
+  keypair), a STALE lock is reclaimed; stable per-data-dir `server-id`. Pure helpers
+  unit-tested (`pidlock.test.ts`), wired before any store opens in `index.ts`, released
+  on exit/SIGINT/SIGTERM. Surfaced a workflow conflict — the lock blocked the multi-
+  instance dev/preview/e2e setup that shared the default data dir — fixed by keying
+  `PILOT_DATA_DIR` off the port in `scripts/dev.ts` so dev instances coexist and the
+  lock only guards the production server.)_
+
+- [x] **Structured logging + rotation for the daemon** _(paseo-inspired)_
+  _(done: `server/src/log.ts` — dependency-free JSON-lines logger to `dataDir/pilot.log`
+  with size-based rotation (rotation policy unit-tested), mirrors readable lines to the
+  console, stamps the server-id, fails safe. Wired at `index.ts` startup/error points;
+  `/health` left as-is.)_
+
+- [x] **Agent lifecycle `initializing` state** _(paseo-inspired)_
+  _(done: `SessionStatus` gains `initializing`; the hub tracks/broadcasts an
+  `initializingIds` set in `sessionStatus` (wire field optional for old clients); the
+  store exposes it and the sidebar row + header render a warming-up spinner. Mock
+  `initializingSession` fixture + `?dev` button + hub test. Reduced-motion fallback.)_
+
+- [x] **Tool-call duration badges** + **realistic mock tool-event timestamps**
+  _(done: `ToolItem` gains `startedAt`/`finishedAt` (stamped from `ev.timestamp` in the
+  fold); `ToolCard` renders an elapsed badge ("345ms", "1.2s"), hidden when unknown. The
+  mock's `ts()` became an ms-clock with a `toolSpan()` helper giving each tool a realistic
+  deterministic duration so the badge is legible + screenshot-verifiable.)_
+
+- [x] **Session context indicator (sidebar context rings)**
+  _(done: sidebar rows reuse `ContextRing` per session from the entry's `usage`, sharing
+  the composer meter's tones; warm sessions show a green→orange ring, cold rows none.
+  `sidebar-context.e2e` covers it.)_
+
+- [x] **Active session unread when content lands below the viewport**
+  _(done: `store.activeUnread` + `markActiveUnread`/`clearActiveUnread`; `Transcript`
+  reports "grew while not at bottom" and shows a "new messages ↓" pill that clears on
+  scroll-to-bottom; `sessionStatus` returns "unread" for the active row when set. Caught
+  a `$derived` reactivity bug on the pill mid-build.)_
+
+- [x] **Session rename** _(the remaining half of rename / archive / unarchive)_
+  _(done: was already wired end-to-end (protocol message, both drivers, store, sidebar
+  inline-rename UI); this pass added the missing hub test coverage — rename routes +
+  rebroadcasts the list, blank-name no-op.)_
+
+- [~] **`/tree` passthrough** — _(investigated, not shipped: pi's `/tree` is a
+  TUI-interactive builtin (`BUILTIN_SLASH_COMMANDS`, the session-tree navigator), not a
+  headless-executable command. The SDK `prompt()` path only expands templates/skills/
+  extension commands, so surfacing `/tree` would send literal text to the model rather
+  than run anything — misleading. Dropped rather than ship a fake-functional command;
+  would need pi to add headless builtin execution.)_
+
 - [x] **Slash-command autocompletion** + inline help text describing each command
   _(done: `CommandInfo` + `commandList`/`listCommands` wire messages mirror the
   model-list path; the pi driver reads `get_commands`' three sources (extension
