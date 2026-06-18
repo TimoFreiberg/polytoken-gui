@@ -22,6 +22,7 @@ import {
   errorRun,
   greeting,
   idleNoComplete,
+  initializingSession,
   inputDialog,
   markdownShowcase,
   MOCK_COMMANDS,
@@ -67,8 +68,14 @@ export class MockDriver implements PilotDriver {
   };
   // Live context-window fill, grown a step on each poll so the meter is visibly
   // non-static during a run (the hub polls getUsage ~1s while a turn streams). Reset()
-  // restores the baseline.
-  private liveUsageTokens = MOCK_USAGE.tokens;
+  // restores the baseline. MOCK_USAGE.tokens is a concrete number (its type allows null
+  // for the post-compaction case, which the mock baseline never is) — fall back to 0.
+  private liveUsageTokens = MOCK_USAGE.tokens ?? 0;
+  // Transient per-session overlay on userMessageCount: bumped each getUsage poll so the
+  // focused running row's count visibly climbs mid-turn (live-updates.e2e), and cleared
+  // on runCompleted so an idle row shows its true operator-turn count (sidebar-context.e2e).
+  // An overlay — not a mutation of the fixture count — so idle and reset() restore baseline.
+  private liveCountBumps = new Map<string, number>();
 
   subscribe(listener: (ev: SessionDriverEvent) => void): () => void {
     this.listeners.add(listener);
@@ -129,6 +136,9 @@ export class MockDriver implements PilotDriver {
       t += step.wait;
       const timer = setTimeout(() => {
         this.timers.delete(timer);
+        // A turn ending settles the live message-count overlay back to the fixture
+        // baseline before the hub's run-end list broadcast reads it (see getUsage).
+        if (step.event.type === "runCompleted") this.liveCountBumps.clear();
         this.emit(step.event);
         if (
           step.event.type === "hostUiRequest" &&
@@ -151,6 +161,7 @@ export class MockDriver implements PilotDriver {
   reset(): void {
     this.cancelTimers();
     this.sessions = SESSION_LIST.map((s) => ({ ...s }));
+    this.liveCountBumps.clear();
     this.worktreeCwds.clear();
     this.config = { ...MOCK_DEFAULT_CONFIG };
     this.providers = MOCK_PROVIDERS.map((p) => ({ ...p }));
@@ -158,7 +169,7 @@ export class MockDriver implements PilotDriver {
       ...MOCK_MODEL_DEFAULTS,
       favorites: [...MOCK_MODEL_DEFAULTS.favorites],
     };
-    this.liveUsageTokens = MOCK_USAGE.tokens;
+    this.liveUsageTokens = MOCK_USAGE.tokens ?? 0;
     this.bootstrap();
   }
 
@@ -223,24 +234,26 @@ export class MockDriver implements PilotDriver {
   async listSessions(): Promise<SessionListEntry[]> {
     return this.sessions.map((s) => ({
       ...s,
+      userMessageCount:
+        s.userMessageCount + (this.liveCountBumps.get(s.sessionId) ?? 0),
       worktree: this.worktreeCwds.has(s.cwd) ? { path: s.cwd } : undefined,
     }));
   }
 
   getUsage(sessionId?: string): SessionUsage {
-    // Climb a bit each poll so the live meter is visibly non-static during a run, and
-    // bump the polled session's message count so the sidebar row demonstrably updates
-    // mid-turn too — the static fixture list otherwise never moves. The hub only polls
-    // this for the focused, running session, so the bump lands on the right row.
+    // Climb the live context meter each poll so it's visibly non-static during a run (the
+    // hub polls this ~1s for the focused, running session). Also grow a TRANSIENT overlay
+    // on the focused row's message count so it climbs mid-turn (live-updates.e2e):
+    // listSessions adds it on top of the fixture count, and a turn ending clears it (see
+    // play) so an idle row shows its true operator-turn count (sidebar-context.e2e).
     this.liveUsageTokens = Math.min(
       this.liveUsageTokens + 2800,
       MOCK_USAGE.contextWindow,
     );
     if (sessionId)
-      this.sessions = this.sessions.map((s) =>
-        s.sessionId === sessionId
-          ? { ...s, messageCount: s.messageCount + 1 }
-          : s,
+      this.liveCountBumps.set(
+        sessionId,
+        (this.liveCountBumps.get(sessionId) ?? 0) + 1,
       );
     return {
       tokens: this.liveUsageTokens,
@@ -412,6 +425,7 @@ export class MockDriver implements PilotDriver {
       editdiff: editDiff,
       error: errorRun,
       idle: idleNoComplete,
+      initializing: initializingSession,
       markdown: markdownShowcase,
       streamhold: streamHold,
       timeout: timeoutConfirm,

@@ -18,6 +18,9 @@
   const conn = $derived(store.connection);
   const s = $derived(store.session);
   const statuses = $derived(Object.entries(s.ambient.statuses));
+  // The focused session is warming up (created/opened, pre-stream) — show a small
+  // spinner beside the title. Suppressed while drafting (no real session yet).
+  const initializing = $derived(!store.draft && s.status === "initializing");
 
   // While drafting a new session there's no folded session yet — the header reflects
   // the draft so it doesn't read as the (now-backgrounded) previously-active one.
@@ -75,7 +78,17 @@
     </svg>
   </button>
   <div class="left">
-    <span class="title">{title}</span>
+    <span class="title-row">
+      {#if initializing}
+        <span
+          class="init-spinner"
+          data-testid="header-initializing"
+          title="Session initializing — warming up"
+          aria-label="session initializing"
+        ></span>
+      {/if}
+      <span class="title">{title}</span>
+    </span>
     <div class="sub">
       <span class="path"
         >{drafting
@@ -159,6 +172,12 @@
     min-width: 0;
     flex: 1;
   }
+  .title-row {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    min-width: 0;
+  }
   .title {
     display: block;
     font-weight: 600;
@@ -167,6 +186,26 @@
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
+  }
+  /* A small rotating ring beside the title while the focused session warms up. */
+  .init-spinner {
+    flex-shrink: 0;
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    border: 1.6px solid var(--border-strong);
+    border-top-color: var(--accent);
+    animation: hdrSpin 0.7s linear infinite;
+  }
+  @keyframes hdrSpin {
+    to {
+      transform: rotate(360deg);
+    }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .init-spinner {
+      animation: none;
+    }
   }
   .sub {
     font-size: 12px;

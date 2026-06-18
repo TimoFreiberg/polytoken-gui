@@ -9,7 +9,8 @@
   const items = $derived(store.session.items);
 
   let scroller = $state<HTMLDivElement>();
-  let pinned = true;
+  // Reactive so `showNewPill` ($derived) re-evaluates when scrolling flips it.
+  let pinned = $state(true);
 
   // A monotonically-bumped tick that forces relative timestamps to re-evaluate
   // on a coarse cadence. Cheap: one timer, no per-item state.
@@ -59,24 +60,56 @@
     }
   }
 
+  // A scalar that grows whenever the transcript gains content: item count plus the
+  // streaming length of the last item. Reactive — the grow-detector effect reads it.
+  const contentSize = $derived.by(() => {
+    const last = items[items.length - 1];
+    const tick =
+      last && last.kind === "assistant"
+        ? last.text.length + last.thinking.length
+        : 0;
+    return items.length * 1_000_000 + tick;
+  });
+  // The previous content size, to tell "the transcript grew" from "it re-rendered".
+  // Starts at -1 so the first measurement never reads as growth.
+  let prevSize = -1;
+
   function onScroll() {
     if (!scroller) return;
     const gap = scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight;
     pinned = gap < 80;
+    // Reaching the bottom clears the active-session unread flag (you've seen it all).
+    if (pinned) store.clearActiveUnread();
   }
 
   // keep pinned to the bottom while streaming, unless the user scrolled up
   $effect(() => {
-    // touch the things that should trigger a re-scroll
-    const _len = items.length;
-    const _last = items[items.length - 1];
-    const _tick = _last && _last.kind === "assistant" ? _last.text.length + _last.thinking.length : 0;
-    void _len;
-    void _tick;
+    const size = contentSize;
+    const grew = size > prevSize && prevSize !== -1;
+    prevSize = size;
     if (pinned && scroller) {
-      queueMicrotask(() => scroller && scroller.scrollTo({ top: scroller.scrollHeight }));
+      queueMicrotask(
+        () => scroller && scroller.scrollTo({ top: scroller.scrollHeight }),
+      );
+      // Pinned + caught up: nothing is below the fold.
+      store.clearActiveUnread();
+    } else if (grew) {
+      // New content landed while scrolled up — it's below the viewport. Flag the active
+      // session unread (the "new messages ↓" signal); the pill below offers a jump.
+      store.markActiveUnread();
     }
   });
+
+  /** Jump to the newest content and clear the unread flag (the "new messages ↓" pill). */
+  function scrollToBottom(): void {
+    if (!scroller) return;
+    scroller.scrollTo({ top: scroller.scrollHeight, behavior: "smooth" });
+    pinned = true;
+    store.clearActiveUnread();
+  }
+
+  // True when the active session has content below the viewport (drives the pill).
+  const showNewPill = $derived(!pinned && store.activeUnread);
 
   function isToolItem(i: TranscriptItem) {
     return i.kind === "tool";
@@ -107,6 +140,7 @@
   });
 </script>
 
+<div class="transcript-wrap">
 <div class="scroller" bind:this={scroller} onscroll={onScroll}>
   <div class="col">
     {#each items as item (item.id)}
@@ -211,12 +245,71 @@
     {/if}
   </div>
 </div>
+{#if showNewPill}
+  <button
+    class="new-pill"
+    data-testid="new-messages-pill"
+    title="Jump to the newest messages"
+    aria-label="New messages below — jump to newest"
+    onclick={scrollToBottom}
+  >
+    New messages ↓
+  </button>
+{/if}
+</div>
 
 <style>
+  .transcript-wrap {
+    position: relative;
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+  }
   .scroller {
     flex: 1;
     overflow-y: auto;
     overscroll-behavior: contain;
+  }
+  /* "New messages ↓" pill — floats over the transcript when content lands below the
+     fold while scrolled up. Centered near the bottom, above the composer. */
+  .new-pill {
+    position: absolute;
+    left: 50%;
+    bottom: 14px;
+    transform: translateX(-50%);
+    z-index: 5;
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    font-size: 12.5px;
+    font-weight: 550;
+    color: var(--accent-text);
+    background: var(--accent);
+    border: none;
+    border-radius: 999px;
+    padding: 7px 14px;
+    box-shadow: var(--shadow-pop);
+    cursor: pointer;
+    animation: pillIn 0.16s ease;
+  }
+  .new-pill:hover {
+    background: var(--accent-hover);
+  }
+  @keyframes pillIn {
+    from {
+      opacity: 0;
+      transform: translate(-50%, 6px);
+    }
+    to {
+      opacity: 1;
+      transform: translate(-50%, 0);
+    }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .new-pill {
+      animation: none;
+    }
   }
   .col {
     max-width: var(--maxw);

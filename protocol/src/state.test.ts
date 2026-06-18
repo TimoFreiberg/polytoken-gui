@@ -92,6 +92,42 @@ describe("foldEvent", () => {
     });
   });
 
+  test("tool span stamps startedAt/finishedAt from event timestamps", () => {
+    const s = foldAll([
+      base({
+        type: "toolStarted",
+        callId: "c1",
+        toolName: "bash",
+        timestamp: "100",
+      }),
+      base({
+        type: "toolFinished",
+        callId: "c1",
+        success: true,
+        output: "ok",
+        timestamp: "1340",
+      }),
+    ]);
+    expect(s.items[0]).toMatchObject({
+      kind: "tool",
+      startedAt: "100",
+      finishedAt: "1340",
+    });
+  });
+
+  test("a still-running tool has startedAt but no finishedAt", () => {
+    const s = foldAll([
+      base({
+        type: "toolStarted",
+        callId: "c1",
+        toolName: "bash",
+        timestamp: "100",
+      }),
+    ]);
+    expect(s.items[0]).toMatchObject({ kind: "tool", startedAt: "100" });
+    expect((s.items[0] as { finishedAt?: string }).finishedAt).toBeUndefined();
+  });
+
   test("tool failure marks error", () => {
     const s = foldAll([
       base({ type: "toolStarted", callId: "c1", toolName: "bash" }),

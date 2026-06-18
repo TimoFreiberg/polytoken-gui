@@ -110,6 +110,10 @@ class FakeDriver implements PilotDriver {
   async setArchived(path: string, archived: boolean) {
     this.archiveCalls.push({ path, archived });
   }
+  readonly renameCalls: { path: string; name: string }[] = [];
+  async renameSession(path: string, name: string) {
+    this.renameCalls.push({ path, name });
+  }
   async openSession(_path: string): Promise<SessionDriverEvent[]> {
     return [
       ev({ type: "sessionOpened", snapshot: snap("s2") }),
@@ -288,6 +292,78 @@ describe("SessionHub", () => {
       expect(list.sessions.find((s) => s.path === "/s.jsonl")?.archived).toBe(
         true,
       );
+  });
+
+  test("renameSession routes to the driver and re-broadcasts the session list", async () => {
+    const d = new FakeDriver();
+    const hub = new SessionHub(d);
+    const a = client();
+    hub.addClient(a.send);
+    await flush();
+    a.received.length = 0;
+
+    hub.handleClient(a.send, {
+      type: "renameSession",
+      path: "/s.jsonl",
+      name: "Renamed session",
+    });
+    await flush();
+
+    expect(d.renameCalls).toEqual([
+      { path: "/s.jsonl", name: "Renamed session" },
+    ]);
+    // a fresh session list follows so every client's sidebar reflects the rename
+    expect(a.received.some((m) => m.type === "sessionList")).toBe(true);
+  });
+
+  test("renameSession with a blank name is a no-op (no driver call)", async () => {
+    const d = new FakeDriver();
+    const hub = new SessionHub(d);
+    const a = client();
+    hub.addClient(a.send);
+    await flush();
+    a.received.length = 0;
+
+    hub.handleClient(a.send, {
+      type: "renameSession",
+      path: "/s.jsonl",
+      name: "   ",
+    });
+    await flush();
+
+    expect(d.renameCalls).toHaveLength(0);
+    expect(a.received.some((m) => m.type === "sessionList")).toBe(false);
+  });
+
+  test("an initializing snapshot is tracked + broadcast, distinct from running", () => {
+    const d = new FakeDriver();
+    const hub = new SessionHub(d);
+    const a = client();
+    hub.addClient(a.send);
+    a.received.length = 0;
+
+    // A session surfaces in the initializing phase (created, pre-stream).
+    d.emit(
+      ev({
+        type: "sessionOpened",
+        snapshot: { ...snap("s"), status: "initializing" },
+      }),
+    );
+    const st = a.received.filter((m) => m.type === "sessionStatus").at(-1);
+    expect(st?.type).toBe("sessionStatus");
+    if (st?.type === "sessionStatus") {
+      expect(st.initializingIds).toContain("s");
+      expect(st.runningIds).not.toContain("s");
+    }
+
+    // It begins streaming → leaves initializing, enters running.
+    d.emit(ev({ type: "assistantDelta", text: "go", channel: "text" }));
+    const after = a.received.filter((m) => m.type === "sessionStatus").at(-1);
+    expect(after?.type).toBe("sessionStatus");
+    if (after?.type === "sessionStatus") {
+      expect(after.runningIds).toContain("s");
+      expect(after.initializingIds ?? []).not.toContain("s");
+    }
   });
 
   test("openSession resets to the new session's seed and re-snapshots clients", async () => {

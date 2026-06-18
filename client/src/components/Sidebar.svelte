@@ -388,11 +388,13 @@
                         class="status"
                         data-state={st}
                         data-testid="session-status"
-                        title={st}
+                        title={st === "initializing" ? "initializing — warming up" : st}
                         aria-label={`status: ${st}`}
                       >
                         {#if st === "running"}
                           <i class="dot"></i><i class="dot"></i><i class="dot"></i>
+                        {:else if st === "initializing"}
+                          <i class="spinner"></i>
                         {:else}
                           <i class="dot"></i>
                         {/if}
@@ -924,6 +926,21 @@
   .status[data-state="running"] .dot:nth-child(3) {
     animation-delay: 0.36s;
   }
+  /* initializing — a small rotating ring (a session warming up, pre-stream). Distinct
+     from the running pulse so the two phases read apart at a glance. */
+  .status[data-state="initializing"] .spinner {
+    width: 9px;
+    height: 9px;
+    border-radius: 50%;
+    border: 1.5px solid var(--border-strong);
+    border-top-color: var(--accent);
+    animation: statusSpin 0.7s linear infinite;
+  }
+  @keyframes statusSpin {
+    to {
+      transform: rotate(360deg);
+    }
+  }
   @keyframes dotPulse {
     0%,
     75%,
@@ -939,6 +956,9 @@
     .group-running {
       animation: none;
       opacity: 0.7;
+    }
+    .status[data-state="initializing"] .spinner {
+      animation: none;
     }
   }
   .name {

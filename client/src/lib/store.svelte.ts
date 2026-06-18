@@ -52,11 +52,21 @@ class PilotStore {
   activeSessionId = $state<string | null>(null);
   // Session ids with a live turn right now (server-pushed via `sessionStatus`).
   runningIds = $state<Set<string>>(new Set());
+  // Session ids warming up (created/opened, not yet streaming) — server-pushed in the
+  // same `sessionStatus` message. Drives the sidebar/header "spinning up" indicator.
+  initializingIds = $state<Set<string>>(new Set());
   // Sessions with new content since last viewed. GUI-only, in-memory: a session is
   // marked unread when a *background* turn of it finishes (running→done while it's
   // not the active session); cleared when it becomes active. Everything starts read
   // on page load (no persistence) — matches the TODO's "old sessions default to read".
   unread = $state<Set<string>>(new Set());
+  // The ACTIVE session can also be "unread": if the agent appends content while you're
+  // scrolled up (so new content sits below the viewport), the row flags unread even
+  // though it's focused — the classic "new messages ↓" signal. GUI-only, in-memory;
+  // Transcript.svelte sets it ("grew while not at bottom") and clears it on scroll-to-
+  // bottom. Distinct from `unread` (which is background sessions only) so switching
+  // sessions doesn't entangle the two.
+  activeUnread = $state(false);
   // Model picker — the models available to switch to (current selection lives in
   // session.config). Server-authoritative, delivered like `sessions`.
   models = $state<ModelOption[]>([]);
@@ -175,6 +185,7 @@ class PilotStore {
             !next.has(id) && id !== this.activeSessionId && id !== viewing,
         );
         this.runningIds = next;
+        this.initializingIds = new Set(msg.initializingIds ?? []);
         if (newlyUnread.length > 0)
           this.unread = new Set([...this.unread, ...newlyUnread]);
         break;
@@ -266,6 +277,8 @@ class PilotStore {
     // next `sessionList`, but this avoids a flicker of the unread dot mid-switch).
     const id = this.sessions.find((s) => s.path === path)?.sessionId;
     if (id) this.markRead(id);
+    // A switched-to session renders at the bottom — clear any stale below-fold flag.
+    this.clearActiveUnread();
     send({ type: "openSession", path });
   }
   private markRead(sessionId: string): void {
@@ -274,10 +287,29 @@ class PilotStore {
     next.delete(sessionId);
     this.unread = next;
   }
-  /** The sidebar indicator for a session: a live turn, new-since-viewed, or idle. */
-  sessionStatus(sessionId: string): "running" | "unread" | "read" {
+  /** Transcript reports new content arrived below the viewport (grew while scrolled up).
+   *  Flags the active session unread until the user scrolls back to the bottom. */
+  markActiveUnread(): void {
+    if (!this.activeUnread) this.activeUnread = true;
+  }
+  /** The transcript reached the bottom (or a fresh session loaded at the bottom): the
+   *  active session has no unread content below the fold anymore. */
+  clearActiveUnread(): void {
+    if (this.activeUnread) this.activeUnread = false;
+  }
+  /** The sidebar indicator for a session: a live turn, warming up, new-since-viewed, or
+   *  idle. Running wins over initializing (mutually exclusive server-side; defensive
+   *  here); both outrank unread/read. */
+  sessionStatus(
+    sessionId: string,
+  ): "running" | "initializing" | "unread" | "read" {
     if (this.runningIds.has(sessionId)) return "running";
+    if (this.initializingIds.has(sessionId)) return "initializing";
     if (this.unread.has(sessionId)) return "unread";
+    // The active session is normally "read", but flags unread when new content landed
+    // below the viewport while you were scrolled up (cleared on scroll-to-bottom).
+    if (sessionId === this.activeSessionId && this.activeUnread)
+      return "unread";
     return "read";
   }
   /** True if any session in a project group is running (collapsed-group indicator). */

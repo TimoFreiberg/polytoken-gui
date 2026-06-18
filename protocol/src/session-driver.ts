@@ -19,7 +19,14 @@ export interface SessionRef {
   readonly sessionId: SessionId;
 }
 
-export type SessionStatus = "idle" | "running" | "failed";
+/** A session's lifecycle phase.
+ *  - `initializing`: created but not yet streaming — warming up (model load, history
+ *    replay, trust resolution). A transient pre-first-token phase; the sidebar/header
+ *    show a distinct "spinning up" indicator rather than the running pulse.
+ *  - `running`: a turn is actively streaming.
+ *  - `idle`: settled, awaiting input.
+ *  - `failed`: the last run errored. */
+export type SessionStatus = "idle" | "initializing" | "running" | "failed";
 export type SessionMessageDeliveryMode = "steer" | "followUp";
 
 /** An image attachment for a user message, as pi's SDK carries them. Base64-encoded

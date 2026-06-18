@@ -45,6 +45,11 @@ export interface ToolItem {
   text?: string;
   progress?: number;
   status: ToolStatus;
+  /** ISO timestamp (or epoch-ms string) of the `toolStarted` event — when the call began. */
+  startedAt?: string;
+  /** ISO timestamp of the `toolFinished` event — when it settled. With `startedAt`, the
+   *  card derives an elapsed-duration badge. Absent while still running. */
+  finishedAt?: string;
 }
 export interface NoticeItem {
   readonly kind: "notice";
@@ -196,6 +201,7 @@ export function foldEvent(
         description: ev.description,
         input: ev.input,
         status: "running",
+        startedAt: ev.timestamp,
       });
       return state;
     }
@@ -218,6 +224,7 @@ export function foldEvent(
       if (t) {
         t.status = ev.success ? "ok" : "error";
         t.output = ev.output;
+        t.finishedAt = ev.timestamp;
       }
       return state;
     }

@@ -165,9 +165,23 @@ export const SESSION_REF: SessionRef = {
   sessionId: "demo-session",
 };
 
+// A monotonic mock clock, in milliseconds. Each event advances it a small fixed step
+// so successive events have a realistic (but deterministic) sub-second spread; tool
+// spans bump it further (advanceTs) so a toolStarted→toolFinished duration renders as a
+// legible badge instead of ~1ms. Deterministic: no Date.now()/random — the same script
+// always yields the same timestamps, so fold output + screenshots stay stable.
 let _ts = 0;
+/** Per-event base advance (ms). Small, so non-tool events don't drift wildly apart. */
+const TS_STEP_MS = 5;
 function ts(): string {
-  return String(++_ts).padStart(10, "0");
+  _ts += TS_STEP_MS;
+  return String(_ts).padStart(10, "0");
+}
+/** Bump the mock clock by `ms` WITHOUT emitting an event — used between a tool's start
+ *  and finish so the derived duration badge reads realistically (hundreds of ms to a
+ *  few seconds). Returns nothing; call it for its side effect on the shared counter. */
+function advanceTs(ms: number): void {
+  _ts += ms;
 }
 
 export function snapshot(over: Partial<SessionSnapshot> = {}): SessionSnapshot {
@@ -190,6 +204,39 @@ export interface ScriptStep {
 
 function base() {
   return { sessionRef: SESSION_REF, timestamp: ts() };
+}
+
+/** A matched toolStarted → toolFinished pair with a DETERMINISTIC duration: the clock is
+ *  bumped by `durationMs` between stamping the two events, so the card's elapsed badge
+ *  reads realistically (the raw `ts()` counter alone makes every span ~1 step). `wait` is
+ *  the script delay before the finished event fires (the visible "running" dwell); it's
+ *  independent of `durationMs` (the rendered duration) so the two can differ. */
+function toolSpan(
+  started: Omit<
+    Extract<SessionDriverEvent, { type: "toolStarted" }>,
+    keyof ReturnType<typeof base> | "type"
+  >,
+  finished: Omit<
+    Extract<SessionDriverEvent, { type: "toolFinished" }>,
+    keyof ReturnType<typeof base> | "type"
+  >,
+  opts: { startWait?: number; wait: number; durationMs: number },
+): ScriptStep[] {
+  const startEvent: SessionDriverEvent = {
+    ...base(),
+    type: "toolStarted",
+    ...started,
+  };
+  advanceTs(opts.durationMs);
+  const finishEvent: SessionDriverEvent = {
+    ...base(),
+    type: "toolFinished",
+    ...finished,
+  };
+  return [
+    { wait: opts.startWait ?? 0, event: startEvent },
+    { wait: opts.wait, event: finishEvent },
+  ];
 }
 
 /** Split text into streaming deltas of a few words each. */
@@ -241,29 +288,23 @@ export function greeting(): ScriptStep[] {
       "I'll add a lightweight health endpoint and a test that hits it. Let me look at how routes are currently registered.",
       "text",
     ),
-    {
-      wait: 120,
-      event: {
-        ...base(),
-        type: "toolStarted",
+    ...toolSpan(
+      {
         callId: "t1",
         toolName: "bash",
         label: "Run shell command",
         description: "Execute a command in the workspace shell",
         input: { command: 'rg -n "app.get\\(" server/src' },
       },
-    },
-    {
-      wait: 220,
-      event: {
-        ...base(),
-        type: "toolFinished",
+      {
         callId: "t1",
         success: true,
         output:
           "server/src/index.ts:14:  app.get('/', ...)\nserver/src/index.ts:19:  app.get('/debug/state', ...)",
       },
-    },
+      // ~340ms span: a quick ripgrep. startWait keeps the original pre-tool think pause.
+      { startWait: 120, wait: 220, durationMs: 340 },
+    ),
     ...deltas(
       "Routes live in `server/src/index.ts`. I'll register `/health` next to the others and add a Bun test.",
       "text",
@@ -371,28 +412,22 @@ export function promptReply(userText: string): ScriptStep[] {
       "Good question. Here's the plan: I'll start by checking the existing structure, then make the change incrementally so each step is verifiable.",
       "text",
     ),
-    {
-      wait: 140,
-      event: {
-        ...base(),
-        type: "toolStarted",
+    ...toolSpan(
+      {
         callId,
         toolName: "read",
         label: "Read file",
         description: "Read a file from the workspace",
         input: { path: "server/src/index.ts" },
       },
-    },
-    {
-      wait: 260,
-      event: {
-        ...base(),
-        type: "toolFinished",
+      {
         callId,
         success: true,
         output: "// 42 lines — Bun.serve with WS + /debug/state",
       },
-    },
+      // ~1.2s span: a file read that touches disk, so the badge shows whole-seconds too.
+      { startWait: 140, wait: 260, durationMs: 1200 },
+    ),
     ...deltas(
       "That confirms it. Making the change now and then I'll verify it builds.",
       "text",
@@ -583,11 +618,8 @@ export function bgRun(): ScriptStep[] {
  *  expandable @pierre/diffs view) can be exercised deterministically. */
 export function editDiff(): ScriptStep[] {
   return [
-    {
-      wait: 0,
-      event: {
-        ...base(),
-        type: "toolStarted",
+    ...toolSpan(
+      {
         callId: "edit-1",
         toolName: "edit",
         label: "Edit file",
@@ -604,17 +636,14 @@ export function editDiff(): ScriptStep[] {
           ],
         },
       },
-    },
-    {
-      wait: 200,
-      event: {
-        ...base(),
-        type: "toolFinished",
+      {
         callId: "edit-1",
         success: true,
         output: "Successfully replaced 1 block(s) in server/src/health.ts",
       },
-    },
+      // ~480ms span: a single-block edit.
+      { wait: 200, durationMs: 480 },
+    ),
   ];
 }
 
@@ -717,6 +746,33 @@ export function yesNoSelect(): ScriptStep[] {
   ];
 }
 
+/** A newly-created session that is still WARMING UP: it surfaces in the `initializing`
+ *  phase (model load / history replay / trust resolution), dwells there long enough to
+ *  screenshot the distinct spinner, then transitions to idle once "ready". Drives the
+ *  sidebar row + header "spinning up" indicator deterministically (dev bar `initializing`,
+ *  e2e). The dwell is a script `wait`, so the rendered state is stable on capture. */
+export function initializingSession(): ScriptStep[] {
+  return [
+    {
+      wait: 0,
+      event: {
+        ...base(),
+        type: "sessionOpened",
+        snapshot: snapshot({ status: "initializing" }),
+      },
+    },
+    {
+      // After warm-up, the session settles to idle (ready for the first prompt).
+      wait: 1200,
+      event: {
+        ...base(),
+        type: "sessionUpdated",
+        snapshot: snapshot({ status: "idle" }),
+      },
+    },
+  ];
+}
+
 export const SCRIPTS: Record<string, () => ScriptStep[]> = {
   greeting,
   confirm: confirmDialog,
@@ -726,6 +782,7 @@ export const SCRIPTS: Record<string, () => ScriptStep[]> = {
   bgrun: bgRun,
   editdiff: editDiff,
   idle: idleNoComplete,
+  initializing: initializingSession,
   timeout: timeoutConfirm,
   yesno: yesNoSelect,
 };

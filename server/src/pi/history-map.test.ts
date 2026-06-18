@@ -135,6 +135,10 @@ describe("historyToEvents", () => {
         input: { command: "ls" },
         output: "file.ts",
         status: "ok",
+        // foldEvent now stamps tool spans from the mapped event timestamps so the card
+        // can show an elapsed-duration badge.
+        startedAt: expect.any(String),
+        finishedAt: expect.any(String),
       },
     ]);
   });

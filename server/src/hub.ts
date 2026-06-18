@@ -34,6 +34,11 @@ export class SessionHub {
   // but the client still needs its running/done indicator). Pushed as `sessionStatus`
   // when the set changes. In-memory only: a session on disk is never "running".
   private running = new Set<SessionId>();
+  // Sessions surfaced as `initializing` — created/opened but not yet streaming (warming
+  // up: model load, history replay, trust). Tracked + broadcast alongside `running` so a
+  // background/just-created row shows a distinct "spinning up" indicator. A session is
+  // never both running and initializing; entering either clears the other here.
+  private initializing = new Set<SessionId>();
   private clients = new Set<Send>();
   private serverId = `pilot-${Math.floor(Date.now() / 1000)}`;
   // Whether any client has connected since startup. Gates push so replayed history
@@ -107,34 +112,59 @@ export class SessionHub {
    *  (deltas, tool/user/queued) imply a live turn; failure/close end it. */
   private trackRunning(sid: SessionId, ev: SessionDriverEvent): void {
     const before = this.running.has(sid);
+    const beforeInit = this.initializing.has(sid);
     switch (ev.type) {
       case "sessionOpened":
       case "sessionUpdated":
       case "runCompleted":
         this.setRunning(sid, ev.snapshot.status === "running");
+        // `initializing` is a snapshot-only phase: a session is in it iff its latest
+        // snapshot says so. setRunning already cleared it for the running case.
+        this.setInitializing(sid, ev.snapshot.status === "initializing");
         break;
       case "assistantDelta":
       case "toolStarted":
       case "toolUpdated":
       case "userMessage":
       case "queuedMessageStarted":
+        // A live mid-turn event means it's running, not warming up.
         this.setRunning(sid, true);
         break;
       case "runFailed":
       case "sessionClosed":
         this.setRunning(sid, false);
+        this.setInitializing(sid, false);
         break;
     }
-    if (this.running.has(sid) !== before) this.broadcastSessionStatus();
+    if (
+      this.running.has(sid) !== before ||
+      this.initializing.has(sid) !== beforeInit
+    )
+      this.broadcastSessionStatus();
   }
 
+  // Running and initializing are mutually exclusive phases; turning one on clears the
+  // other so a row never reports both.
   private setRunning(sid: SessionId, on: boolean): void {
-    if (on) this.running.add(sid);
-    else this.running.delete(sid);
+    if (on) {
+      this.running.add(sid);
+      this.initializing.delete(sid);
+    } else this.running.delete(sid);
+  }
+
+  private setInitializing(sid: SessionId, on: boolean): void {
+    if (on) {
+      this.initializing.add(sid);
+      this.running.delete(sid);
+    } else this.initializing.delete(sid);
   }
 
   private broadcastSessionStatus(): void {
-    this.broadcast({ type: "sessionStatus", runningIds: [...this.running] });
+    this.broadcast({
+      type: "sessionStatus",
+      runningIds: [...this.running],
+      initializingIds: [...this.initializing],
+    });
     // The running set just changed (this is the only place it's broadcast) — match the
     // live-refresh ticker to it: start it when a turn begins, stop it when all finish.
     this.syncLiveRefresh();
@@ -429,13 +459,19 @@ export class SessionHub {
       // Focus follows the swapped-to session; its id rides the seed's sessionOpened.
       this.focusedId = this.state.ref?.sessionId ?? this.focusedId;
       this.switching = false;
-      // The seed folded directly (not via onEvent), so reconcile the running set
-      // from the swapped-to session's resolved status.
+      // The seed folded directly (not via onEvent), so reconcile the running +
+      // initializing sets from the swapped-to session's resolved status.
       const focusId = this.state.ref?.sessionId;
       if (focusId) {
         const before = this.running.has(focusId);
+        const beforeInit = this.initializing.has(focusId);
         this.setRunning(focusId, this.state.status === "running");
-        if (this.running.has(focusId) !== before) this.broadcastSessionStatus();
+        this.setInitializing(focusId, this.state.status === "initializing");
+        if (
+          this.running.has(focusId) !== before ||
+          this.initializing.has(focusId) !== beforeInit
+        )
+          this.broadcastSessionStatus();
       }
       this.broadcast({ type: "snapshot", state: this.snapshot() });
       await this.broadcastSessionList();
@@ -457,8 +493,12 @@ export class SessionHub {
       serverId: this.serverId,
     });
     send({ type: "snapshot", state: this.snapshot() });
-    // Tell the fresh client what's already running (in-memory, synchronous).
-    send({ type: "sessionStatus", runningIds: [...this.running] });
+    // Tell the fresh client what's already running / warming up (in-memory, synchronous).
+    send({
+      type: "sessionStatus",
+      runningIds: [...this.running],
+      initializingIds: [...this.initializing],
+    });
     // Fire the session + model + provider lists asynchronously (driver disk/registry
     // reads); they arrive as follow-up messages, keeping hello+snapshot synchronous +
     // first.
@@ -611,6 +651,7 @@ export class SessionHub {
     this.state = initialSessionState();
     this.focusedId = null;
     this.running.clear();
+    this.initializing.clear();
     this.driver.reset?.();
     this.broadcast({ type: "snapshot", state: this.snapshot() });
     this.broadcastSessionStatus();

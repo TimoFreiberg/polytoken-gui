@@ -55,6 +55,35 @@
 
   const statusIcon: Record<string, string> = { running: "○", ok: "●", error: "✕" };
 
+  // Elapsed wall-clock for the call, derived from the toolStarted→toolFinished
+  // timestamps the fold reducer stamps. Timestamps are ISO strings OR epoch-ms strings
+  // (the mock uses a numeric counter); Number() handles the latter, Date.parse the
+  // former. Null when either bound is missing (still running, or replayed history that
+  // lacked a timestamp) — the badge hides rather than show a bogus 0ms.
+  function parseTs(s: string | undefined): number | null {
+    if (!s) return null;
+    const n = Number(s);
+    const ms = Number.isNaN(n) ? Date.parse(s) : n;
+    return Number.isNaN(ms) ? null : ms;
+  }
+  const durationMs = $derived.by(() => {
+    const a = parseTs(item.startedAt);
+    const b = parseTs(item.finishedAt);
+    if (a === null || b === null) return null;
+    const d = b - a;
+    return d >= 0 ? d : null;
+  });
+  /** "340ms" under a second, else "1.2s" (one decimal); minutes for the rare long run. */
+  function fmtDuration(ms: number): string {
+    if (ms < 1000) return `${Math.round(ms)}ms`;
+    const s = ms / 1000;
+    if (s < 60) return `${s.toFixed(1)}s`;
+    const m = Math.floor(s / 60);
+    const rem = Math.round(s % 60);
+    return `${m}m ${rem}s`;
+  }
+  const durationLabel = $derived(durationMs === null ? null : fmtDuration(durationMs));
+
   // ── Edit-tool diff support ────────────────────────────────────────────────
   // Detect pi's edit tool by SHAPE, not name: input is an object with a `path`
   // (string) plus either `edits: [{oldText,newText}]` or legacy top-level
@@ -259,6 +288,9 @@
         <span class="del">−{counts.removed}</span>
       </span>
     {/if}
+    {#if durationLabel}
+      <span class="duration" title={`Took ${durationLabel}`} aria-label={`took ${durationLabel}`}>{durationLabel}</span>
+    {/if}
     <span class="chev" class:open>▸</span>
   </button>
   {#if open}
@@ -367,6 +399,15 @@
   }
   .counts .del {
     color: var(--danger);
+  }
+  /* Elapsed-duration badge — muted + monospace so it reads as metadata, not status. */
+  .duration {
+    font-family: var(--font-mono);
+    font-size: 11.5px;
+    color: var(--text-faint);
+    flex-shrink: 0;
+    font-variant-numeric: tabular-nums;
+    letter-spacing: -0.01em;
   }
   .chev {
     font-size: 10px;
