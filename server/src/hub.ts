@@ -50,12 +50,23 @@ export class SessionHub {
   // human input for minutes; without this, a second open/new arriving meanwhile would
   // race two swaps over the one `switching` flag and the focused state.
   private switchInFlight = false;
+  // Debounced live-refresh ticker. While a turn runs, the only events that fire are
+  // deltas/tool/user — none carries fresh `usage` and none re-lists sessions, so the
+  // composer's context meter AND the sidebar rows (message count / name / preview)
+  // freeze at their last turn-boundary value. This ticker re-broadcasts both on a
+  // cadence; it runs only while something is running AND a client is watching, and is
+  // nulled when idle. (getContextUsage / listSessions are O(messages|files) — fine once
+  // a second, never on the per-delta path.)
+  private liveTimer: ReturnType<typeof setInterval> | null = null;
 
   constructor(
     private driver: PilotDriver,
     // Called on run-done / approval-needed when NO client is connected, i.e. every
     // surface is backgrounded/closed — exactly when a Web Push should reach a pocket.
     private notify?: (n: HubNotification) => void,
+    // Cadence (ms) for the live-refresh ticker above. Default 1s; the e2e suite sets a
+    // shorter value (PILOT_LIVE_REFRESH_MS) so the meter/list visibly climb in a test.
+    private liveRefreshMs = 1000,
   ) {
     driver.subscribe((ev) => this.onEvent(ev));
     // Project-trust cards travel their own channel (D12): they're decided before a
@@ -124,6 +135,53 @@ export class SessionHub {
 
   private broadcastSessionStatus(): void {
     this.broadcast({ type: "sessionStatus", runningIds: [...this.running] });
+    // The running set just changed (this is the only place it's broadcast) — match the
+    // live-refresh ticker to it: start it when a turn begins, stop it when all finish.
+    this.syncLiveRefresh();
+  }
+
+  /** Start/stop the live-refresh ticker to track "something is running AND someone is
+   *  watching". Idempotent — safe to call on every running-set / client-set change. */
+  private syncLiveRefresh(): void {
+    const want = this.running.size > 0 && this.clients.size > 0;
+    if (want === (this.liveTimer !== null)) return;
+    if (want) {
+      this.liveTimer = setInterval(() => this.liveTick(), this.liveRefreshMs);
+      // Don't keep the process alive just for the ticker.
+      (this.liveTimer as { unref?: () => void }).unref?.();
+    } else if (this.liveTimer) {
+      clearInterval(this.liveTimer);
+      this.liveTimer = null;
+      // The ticker stopped up to one interval before the turn actually ended; a final
+      // list broadcast settles the last message count (usage settles via runCompleted).
+      void this.broadcastSessionList();
+    }
+  }
+
+  /** One live-refresh pass: a fresh session list for every client (running rows' counts
+   *  / names / previews climb) + the focused session's current context usage. */
+  private liveTick(): void {
+    void this.broadcastSessionList();
+    this.refreshUsage();
+  }
+
+  /** Emit the focused session's current context usage as a `usageUpdated` event (folded
+   *  into state + broadcast). No-op unless the focused session is the one running and the
+   *  driver can report usage. A dedicated event (not a full snapshot) so a mid-turn
+   *  refresh touches only `usage`, never the streaming transcript / queued / config. */
+  private refreshUsage(): void {
+    const ref = this.state.ref;
+    if (!ref || !this.running.has(ref.sessionId)) return;
+    const usage = this.driver.getUsage?.(ref.sessionId);
+    if (!usage) return;
+    const ev: SessionDriverEvent = {
+      type: "usageUpdated",
+      sessionRef: ref,
+      timestamp: new Date().toISOString(),
+      usage,
+    };
+    foldEvent(this.state, ev);
+    this.broadcast({ type: "event", event: ev });
   }
 
   // Mirror of the client's tab-open notify rules (App.svelte), but server-side and
@@ -409,7 +467,13 @@ export class SessionHub {
     void this.broadcastCommandList();
     void this.broadcastProviderList();
     void this.broadcastModelDefaults();
-    return () => this.clients.delete(send);
+    // A client arriving while a turn is already running starts the ticker (and one
+    // leaving the last viewer stops it).
+    this.syncLiveRefresh();
+    return () => {
+      this.clients.delete(send);
+      this.syncLiveRefresh();
+    };
   }
 
   handleClient(send: Send, msg: ClientMessage): void {
@@ -558,4 +622,3 @@ export class SessionHub {
     return this.clients.size;
   }
 }
-

@@ -38,6 +38,11 @@ export const config = {
   // Max kept-warm pi sessions before the least-recently-focused one is evicted
   // (its services disposed). ≤0 disables the cap. Only the real pi driver honors it.
   warmCap: Number(process.env.PILOT_WARM_CAP ?? 8),
+  // Cadence (ms) of the hub's live-refresh ticker, which re-pushes the session list +
+  // the focused session's context usage while a turn runs (so the sidebar rows + the
+  // composer's context meter climb live instead of freezing until the turn ends).
+  // Default 1s; the e2e suite shortens it so a test sees movement quickly.
+  liveRefreshMs: Number(process.env.PILOT_LIVE_REFRESH_MS ?? 1000),
 };
 
 /** Token check. null token = auth disabled. This is a plain string compare, not a

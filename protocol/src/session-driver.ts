@@ -289,6 +289,15 @@ export interface RunCompletedEvent extends SessionEventBase {
   readonly type: "runCompleted";
   readonly snapshot: SessionSnapshot;
 }
+export interface UsageUpdatedEvent extends SessionEventBase {
+  // pilot-synthetic: the context-window fill changed mid-turn. Emitted by the hub on a
+  // debounced timer while a turn runs, so the composer's context meter climbs live
+  // instead of freezing at the last turn-boundary snapshot. Carries ONLY usage — unlike
+  // a full sessionUpdated it never touches title/config/queued, so a mid-turn refresh
+  // can't clobber them.
+  readonly type: "usageUpdated";
+  readonly usage: SessionUsage;
+}
 export interface SessionErrorInfo {
   readonly message: string;
   readonly code?: string;
@@ -334,6 +343,7 @@ export type SessionDriverEvent =
   | ToolUpdatedEvent
   | ToolFinishedEvent
   | RunCompletedEvent
+  | UsageUpdatedEvent
   | RunFailedEvent
   | HostUiRequestEvent
   | HostUiResolvedEvent

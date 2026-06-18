@@ -218,6 +218,13 @@ export function foldEvent(
       return state;
     }
 
+    case "usageUpdated": {
+      // Mid-turn context-meter refresh (hub timer). Touches ONLY usage so it can't
+      // disturb the streaming transcript / queued messages / config.
+      state.usage = ev.usage;
+      return state;
+    }
+
     case "runFailed": {
       closeOpenAssistant(state.items);
       state.status = "failed";

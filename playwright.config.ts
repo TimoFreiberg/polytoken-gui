@@ -26,6 +26,9 @@ export default defineConfig({
     command:
       `PILOT_DRIVER=mock PILOT_PORT=${SERVER_PORT} ` +
       `PILOT_SERVER=http://localhost:${SERVER_PORT} ` +
+      // Snappy live-refresh cadence so the meter/list climb within a test's timeout
+      // (prod default is 1s); the mid-turn live-update specs depend on it.
+      `PILOT_LIVE_REFRESH_MS=150 ` +
       `VITE_PORT=${VITE_PORT} bun run scripts/dev.ts`,
     url: `http://localhost:${VITE_PORT}`,
     reuseExistingServer: false,

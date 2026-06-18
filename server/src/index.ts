@@ -52,9 +52,13 @@ if (process.env.PILOT_DRIVER === "mock") {
   driver = await createPiDriver({ cwd: process.env.PILOT_CWD });
 }
 const push = new PushService();
-const hub = new SessionHub(driver, (n) => {
-  void push.sendToAll(n);
-});
+const hub = new SessionHub(
+  driver,
+  (n) => {
+    void push.sendToAll(n);
+  },
+  config.liveRefreshMs,
+);
 mock?.bootstrap(); // replay the greeting fixture now that the hub is subscribed
 
 const send = (ws: ServerWebSocket<WsData>, msg: ServerMessage) =>

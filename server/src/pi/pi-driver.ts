@@ -542,6 +542,20 @@ export async function createPiDriver(
       target(sessionId)?.bridge.resolve(response);
     },
 
+    getUsage(sessionId) {
+      // The same getContextUsage() snapshotFor reads, exposed standalone so the hub's
+      // live ticker can refresh the meter mid-turn. O(messages) — only that ~1s tick
+      // calls it, never the per-delta path.
+      const cu = target(sessionId)?.session.getContextUsage();
+      return cu
+        ? {
+            tokens: cu.tokens,
+            contextWindow: cu.contextWindow,
+            percent: cu.percent,
+          }
+        : undefined;
+    },
+
     async listSessions() {
       // Every session on the machine, so the sidebar can group them by project dir
       // (the owner's choice — a cross-project navigator, not just launchCwd's sessions).
@@ -815,4 +829,3 @@ export async function createPiDriver(
     },
   };
 }
-

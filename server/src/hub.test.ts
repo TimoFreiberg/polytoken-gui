@@ -66,6 +66,15 @@ class FakeDriver implements PilotDriver {
     this.responded.push(r);
     this.emit(ev({ type: "hostUiResolved", requestId: r.requestId }));
   }
+  getUsageCalls = 0;
+  getUsage() {
+    this.getUsageCalls++;
+    return {
+      tokens: 1000 + this.getUsageCalls * 100,
+      contextWindow: 200000,
+      percent: 1,
+    };
+  }
   readonly archiveCalls: { path: string; archived: boolean }[] = [];
   async listSessions(): Promise<SessionListEntry[]> {
     return [
@@ -663,6 +672,80 @@ describe("SessionHub", () => {
     expect(
       a.received.filter((m) => m.type === "modelDefaults").length,
     ).toBeGreaterThanOrEqual(3);
+  });
+
+  test("the live ticker refreshes the session list + focused usage mid-turn", async () => {
+    const d = new FakeDriver();
+    const hub = new SessionHub(d);
+    const a = client();
+    hub.addClient(a.send);
+    // A running seed focuses "s", sets state.ref, and marks it running (as a real
+    // session's sessionOpened seed does before any delta).
+    d.emit(
+      ev({
+        type: "sessionOpened",
+        snapshot: { ...snap("s"), status: "running" },
+      }),
+    );
+    await flush();
+    a.received.length = 0;
+
+    (hub as unknown as { liveTick(): void }).liveTick();
+    await flush();
+
+    // The meter climbs via a usageUpdated event (only usage, not a full snapshot)...
+    const usageEv = a.received.find(
+      (m) => m.type === "event" && m.event.type === "usageUpdated",
+    );
+    expect(usageEv).toBeTruthy();
+    if (usageEv?.type === "event" && usageEv.event.type === "usageUpdated")
+      expect(usageEv.event.usage.tokens).toBeGreaterThan(0);
+    // ...and the sidebar rows refresh via a fresh session list.
+    expect(a.received.some((m) => m.type === "sessionList")).toBe(true);
+  });
+
+  test("the live ticker skips usage when the focused session is idle", async () => {
+    const d = new FakeDriver();
+    const hub = new SessionHub(d);
+    const a = client();
+    hub.addClient(a.send);
+    d.emit(ev({ type: "sessionOpened", snapshot: snap("s") })); // focus "s", idle
+    await flush();
+    a.received.length = 0;
+    d.getUsageCalls = 0;
+
+    (hub as unknown as { liveTick(): void }).liveTick();
+    await flush();
+
+    expect(d.getUsageCalls).toBe(0);
+    expect(
+      a.received.some(
+        (m) => m.type === "event" && m.event.type === "usageUpdated",
+      ),
+    ).toBe(false);
+    // The list still refreshes — harmless, and covers background rows.
+    expect(a.received.some((m) => m.type === "sessionList")).toBe(true);
+  });
+
+  test("the ticker runs while a turn streams and stops when it ends", async () => {
+    const d = new FakeDriver();
+    const hub = new SessionHub(d, undefined, 10); // 10ms cadence
+    const a = client();
+    hub.addClient(a.send);
+    d.emit(
+      ev({
+        type: "sessionOpened",
+        snapshot: { ...snap("s"), status: "running" },
+      }),
+    ); // running
+    await new Promise((r) => setTimeout(r, 40)); // a few ticks
+    expect(d.getUsageCalls).toBeGreaterThan(0);
+
+    // Turn ends → the ticker stops; no further usage polls after a quiet period.
+    d.emit(ev({ type: "runCompleted", snapshot: snap("s") }));
+    const callsAtEnd = d.getUsageCalls;
+    await new Promise((r) => setTimeout(r, 40));
+    expect(d.getUsageCalls).toBe(callsAtEnd);
   });
 
   test("commands target msg.sessionId, else the focused session", () => {

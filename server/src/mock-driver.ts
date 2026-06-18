@@ -11,6 +11,7 @@ import type {
   SessionConfig,
   SessionDriverEvent,
   SessionListEntry,
+  SessionUsage,
 } from "@pilot/protocol";
 import type { NewSessionOpts, PilotDriver, TrustEvent } from "./driver.js";
 import {
@@ -27,6 +28,7 @@ import {
   MOCK_MODEL_DEFAULTS,
   MOCK_MODELS,
   MOCK_PROVIDERS,
+  MOCK_USAGE,
   mockSessionSeed,
   mockTrustRequest,
   NEW_SESSION_ENTRY,
@@ -62,6 +64,10 @@ export class MockDriver implements PilotDriver {
     ...MOCK_MODEL_DEFAULTS,
     favorites: [...MOCK_MODEL_DEFAULTS.favorites],
   };
+  // Live context-window fill, grown a step on each poll so the meter is visibly
+  // non-static during a run (the hub polls getUsage ~1s while a turn streams). Reset()
+  // restores the baseline.
+  private liveUsageTokens = MOCK_USAGE.tokens;
 
   subscribe(listener: (ev: SessionDriverEvent) => void): () => void {
     this.listeners.add(listener);
@@ -151,6 +157,7 @@ export class MockDriver implements PilotDriver {
       ...MOCK_MODEL_DEFAULTS,
       favorites: [...MOCK_MODEL_DEFAULTS.favorites],
     };
+    this.liveUsageTokens = MOCK_USAGE.tokens;
     this.bootstrap();
   }
 
@@ -212,6 +219,30 @@ export class MockDriver implements PilotDriver {
       ...s,
       worktree: this.worktreeCwds.has(s.cwd) ? { path: s.cwd } : undefined,
     }));
+  }
+
+  getUsage(sessionId?: string): SessionUsage {
+    // Climb a bit each poll so the live meter is visibly non-static during a run, and
+    // bump the polled session's message count so the sidebar row demonstrably updates
+    // mid-turn too — the static fixture list otherwise never moves. The hub only polls
+    // this for the focused, running session, so the bump lands on the right row.
+    this.liveUsageTokens = Math.min(
+      this.liveUsageTokens + 2800,
+      MOCK_USAGE.contextWindow,
+    );
+    if (sessionId)
+      this.sessions = this.sessions.map((s) =>
+        s.sessionId === sessionId
+          ? { ...s, messageCount: s.messageCount + 1 }
+          : s,
+      );
+    return {
+      tokens: this.liveUsageTokens,
+      contextWindow: MOCK_USAGE.contextWindow,
+      percent:
+        Math.round((this.liveUsageTokens / MOCK_USAGE.contextWindow) * 1000) /
+        10,
+    };
   }
 
   async setArchived(path: string, archived: boolean): Promise<void> {

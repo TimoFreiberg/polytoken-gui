@@ -11,6 +11,7 @@ import type {
   SessionDriverEvent,
   SessionId,
   SessionListEntry,
+  SessionUsage,
   TrustRequest,
 } from "@pilot/protocol";
 
@@ -81,6 +82,13 @@ export interface PilotDriver {
    *  first prompt is NOT delivered here — the hub sends it after the switch lands,
    *  so creation + first turn stay correctly ordered. */
   newSession(opts?: NewSessionOpts): Promise<SessionDriverEvent[]>;
+
+  /** The CURRENT context-window fill for a (warm) session — lets the hub refresh the
+   *  composer's context meter mid-turn without waiting for a turn-boundary snapshot.
+   *  getContextUsage is O(messages), so the hub only calls this on its debounced live
+   *  tick, never on the per-delta path. Optional (the hub guards with `?.`); sessionId
+   *  omitted -> the driver's current session. Undefined when no model / no window. */
+  getUsage?(sessionId?: SessionId): SessionUsage | undefined;
 
   /** Models available to switch to (driver-wide; the real driver reads pi's model
    *  registry, the mock returns a fixture set). */
