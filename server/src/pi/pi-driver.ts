@@ -59,6 +59,7 @@ import {
   type ModelLike,
   resolveFavorites,
 } from "./model-config.js";
+import { mergeSessionLists } from "./session-list.js";
 import { makeTrustResolver, type TrustAsk } from "./trust.js";
 import { PiUiBridge } from "./ui-bridge.js";
 
@@ -414,6 +415,34 @@ export async function createPiDriver(
     archived: archiveStore.has(info.path),
   });
 
+  // A list entry for a warm session that isn't on disk yet. pi doesn't write a
+  // session's .jsonl until its first ASSISTANT message — it buffers the header +
+  // opening user turn in memory until then (SessionManager._persist). So a session
+  // we just created + focused via newSession is invisible to listAll() and would be
+  // missing from the very list we broadcast alongside its activeSessionId. Synthesize
+  // a placeholder so the sidebar shows it the instant it's created; once it persists,
+  // the richer disk entry supersedes it (deduped by sessionId in listSessions). cwd is
+  // the only stable field — name/preview fill in from disk after the first turn; the
+  // timestamp is "now" so a brand-new session sorts to the top and never reads as stale.
+  const warmEntry = (ws: WarmSession): SessionListEntry | null => {
+    const path = ws.session.sessionFile;
+    if (!path) return null; // non-persistent session (pilot never makes these)
+    const nowIso = new Date().toISOString();
+    return {
+      sessionId: ws.ref.sessionId,
+      path,
+      cwd: ws.cwd,
+      displayName: ws.session.sessionName,
+      preview: "",
+      messageCount: ws.session.messages.filter(
+        (m) => m.role === "user" || m.role === "assistant",
+      ).length,
+      updatedAt: nowIso,
+      createdAt: nowIso,
+      archived: archiveStore.has(path),
+    };
+  };
+
   return {
     subscribe(l) {
       listeners.add(l);
@@ -469,8 +498,13 @@ export async function createPiDriver(
     async listSessions() {
       // Every session on the machine, so the sidebar can group them by project dir
       // (the owner's choice — a cross-project navigator, not just launchCwd's sessions).
-      const infos = await SessionManager.listAll();
-      return infos.map(toEntry);
+      const onDisk = (await SessionManager.listAll()).map(toEntry);
+      // Surface warm sessions not yet persisted to disk (e.g. a just-created one) so the
+      // sidebar shows them immediately; mergeSessionLists dedupes against the disk list.
+      const warmEntries = [...warm.values()]
+        .map(warmEntry)
+        .filter((e): e is SessionListEntry => e !== null);
+      return mergeSessionLists(onDisk, warmEntries);
     },
 
     async setArchived(path: string, archived: boolean) {
