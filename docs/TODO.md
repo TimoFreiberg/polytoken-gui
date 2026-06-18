@@ -42,13 +42,6 @@ _(clear — nothing blocking; pull the next item up from Important)_
       hides `<thinking>` content from the transcript; when off, the block is collapsed or
       replaced with a subtle "thinking…" placeholder.
 - [ ] **Extensions enable/disable view** + compatibility-issue surfacing
-- [ ] **Per-session system-prompt override** — let a new session start with a custom
-      system prompt instead of pi's default (in the new-session draft, and/or a global
-      default in Settings). Seam: `resourceLoaderOptions.systemPrompt` on
-      `createAgentSessionServices` in `warmUp` (`server/src/pi/pi-driver.ts`) for a full
-      replace, or `appendSystemPrompt` for additive. NOT needed for the pi-docs-pointer
-      strip — that's handled globally by the `strip-pi-docs` pi extension
-      (`~/.pi/agent/extensions/`); this is the broader "different prompt for this session."
 
 ## 🔵 Later
 
@@ -68,6 +61,15 @@ _(clear — nothing blocking; pull the next item up from Important)_
 
 - [ ] **Right-side session minimap** (nebulous, OP8)
 - [ ] **Queued-messages editing** (replace queued)
+
+- [ ] **Per-session system-prompt override** _(deprioritized 2026-06-18 — owner doesn't
+      expect to need this soon; parked at the back of the backlog)_. Let a new session
+      start with a custom system prompt instead of pi's default (in the new-session draft,
+      and/or a global default in Settings). Seam: `resourceLoaderOptions.systemPrompt` on
+      `createAgentSessionServices` in `warmUp` (`server/src/pi/pi-driver.ts`) for a full
+      replace, or `appendSystemPrompt` for additive. NOT needed for the pi-docs-pointer
+      strip — that's handled globally by the `strip-pi-docs` pi extension
+      (`~/.pi/agent/extensions/`); this is the broader "different prompt for this session."
 
 ## 💡 Brainstorm (unfiltered — owner to triage into the lanes above)
 
