@@ -125,6 +125,10 @@ export type ClientMessage =
   | { type: "newSession"; cwd?: string; worktree?: boolean }
   /** Ask the server to re-scan disk and re-broadcast the session list. */
   | { type: "listSessions" }
+  /** Archive or unarchive a session (by its .jsonl `path`, the stable switch key).
+   *  The flag is pilot-side state (D-archive); the server persists it and re-broadcasts
+   *  the session list so every client's active-only filter updates. */
+  | { type: "setArchived"; path: string; archived: boolean }
   /** Ask the server to re-read the focused session's commands and re-broadcast them. */
   | { type: "listCommands" }
   /** Answer a project-trust card (D12). `choice` indexes the request's `options`;

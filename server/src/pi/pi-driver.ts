@@ -44,6 +44,7 @@ import type {
   SessionSnapshot,
   SessionStatus,
 } from "@pilot/protocol";
+import { ArchiveStore } from "../archive-store.js";
 import { config } from "../config.js";
 import type { PilotDriver, TrustEvent } from "../driver.js";
 import { mapPiEvent } from "./event-map.js";
@@ -86,6 +87,10 @@ export async function createPiDriver(
   const launchCwd = opts.cwd ?? process.cwd();
   const agentDir = getAgentDir();
   const now = () => String(Date.now());
+
+  // Pilot-side archive index (source of truth for the archived flag; see ArchiveStore).
+  // Read at list time as an in-memory lookup — no per-session file reads.
+  const archiveStore = new ArchiveStore();
 
   // ONE shared auth store + model registry across every warm session. Both are global
   // (auth.json + models.json under agentDir, cwd-independent), and sharing them is what
@@ -402,6 +407,7 @@ export async function createPiDriver(
     updatedAt: info.modified.toISOString(),
     createdAt: info.created.toISOString(),
     parentSessionPath: info.parentSessionPath,
+    archived: archiveStore.has(info.path),
   });
 
   return {
@@ -461,6 +467,13 @@ export async function createPiDriver(
       // (the owner's choice — a cross-project navigator, not just launchCwd's sessions).
       const infos = await SessionManager.listAll();
       return infos.map(toEntry);
+    },
+
+    async setArchived(path: string, archived: boolean) {
+      // Option B: the flag lives only in pilot's index, keyed by the .jsonl path. We do
+      // NOT append to the session file — pi's list path drops custom entries, so that
+      // copy would be write-only and force a per-session scan to read back.
+      archiveStore.set(path, archived);
     },
 
     async openSession(path: string) {

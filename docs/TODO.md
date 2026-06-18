@@ -47,19 +47,35 @@ _(clear — pull the next item up from Polish)_
       to report "not at bottom + grew" back to the store (the classic "new messages ↓"
       pill signal), and an exception to the active-session-is-read rule in
       `store.svelte.ts`'s `sessionStatus`/`markRead` paths. Low priority.
-- [ ] **Session archive + staleness filter** — store an archived flag via pi's
-      `SessionManager.appendCustomEntry("pilot.archived", true)` so it lives next
-      to the transcript. Sessions are hidden when archived OR last-modified >7 days
-      ago (client-side: `Date.now() - updatedAt > 7d`). Add a filter toggle (active
-      only / all). Hide project groups whose sessions are all hidden + newest is
-      >1 week old. Expose `SessionManager.getEntries()` through the `PilotDriver`
-      so the archived flag is readable at list time.
-
-      ⚠️ **Perf concern:** `listAll()` would need to call `getEntries()` + scan for
-      the custom entry on *every* session to determine archived state. For N sessions,
-      that's N file reads, each scanning the session from disk. Consider caching the
-      archive flag in a pilot-side index (e.g. a single JSON file mapping sessionId →
-      archived) and invalidating on write, rather than a full entry scan per list.
+- [x] **Session archive + staleness filter** — store an archived flag, hide archived
+      OR stale (>7d) sessions behind an active-only/all toggle, with an archive action
+      in the sidebar.
+      _(done: chose the index over `appendCustomEntry` after reading pi —
+      `SessionManager.listAll()` parses messages + the session name and DROPS custom
+      entries, so a JSONL-stored flag would be write-only and force a per-session scan
+      on every list, on top of the full read listAll already does. Instead an
+      `ArchiveStore` (pilot's source of truth, option B) keeps a path-keyed set in
+      `archived.json`, read at list time as an in-memory lookup — zero extra file reads.
+      `archived` rides `SessionListEntry` (cleaner than exposing raw `getEntries()` over
+      the wire — same intent, keeps `protocol/` pi-free); `setArchived` is a new
+      `PilotDriver` method + wire message, hub re-broadcasts the list on change. Client:
+      pure `filterSessions` helper (group + search + active-only hide), `showArchived`
+      toggle persisted per-device (default active-only), staleness is client-side
+      `Date.now() - updatedAt > 7d` (NaN-safe). Archive/unarchive via a per-row ⋯
+      overflow menu (hover-reveal on desktop, always shown on touch; outside-click/Esc
+      dismiss). A project group drops out once all its sessions are hidden — note: I
+      did NOT keep an empty group-header for an all-archived-but-recently-touched
+      project (the TODO's "+ newest >1 week" nuance); an empty header reads worse than
+      just hiding it. Easy to revisit. Covered: `archive-store.test.ts`,
+      `session-filter.test.ts`, a hub routing test, `e2e/archive.e2e.ts`; full unit +
+      e2e suites green. The pi-driver path is typechecked, exercised via the mock, not
+      yet run live.
+      Drive-by: flipped `config.dataDir`'s default from `.pilot-data/` (repo root) to
+      the XDG state dir (`$XDG_STATE_HOME/pilot` || `~/.local/state/pilot`) so all
+      server state — VAPID, push subs, archive index — sits in one XDG-correct place.
+      ⚠️ relocates the VAPID keypair: on first boot at the new path pilot regenerates
+      it, invalidating existing phone push subscriptions unless you `mv` the old
+      `.pilot-data/{vapid,push-subscriptions}.json` into `~/.local/state/pilot/` first.)_
 - [x] **Session search bar** — filter-as-you-type search over session display name,
       preview, and path in the sidebar
       _(done: sidebar search filters groups by name/preview/cwd, hides empty groups;

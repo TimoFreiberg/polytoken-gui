@@ -66,6 +66,7 @@ class FakeDriver implements PilotDriver {
     this.responded.push(r);
     this.emit(ev({ type: "hostUiResolved", requestId: r.requestId }));
   }
+  readonly archiveCalls: { path: string; archived: boolean }[] = [];
   async listSessions(): Promise<SessionListEntry[]> {
     return [
       {
@@ -76,6 +77,9 @@ class FakeDriver implements PilotDriver {
         messageCount: 1,
         updatedAt: "t",
         createdAt: "t",
+        archived: this.archiveCalls.some(
+          (c) => c.path === "/s.jsonl" && c.archived,
+        ),
       },
       {
         sessionId: "s2",
@@ -85,8 +89,12 @@ class FakeDriver implements PilotDriver {
         messageCount: 2,
         updatedAt: "t",
         createdAt: "t",
+        archived: false,
       },
     ];
+  }
+  async setArchived(path: string, archived: boolean) {
+    this.archiveCalls.push({ path, archived });
   }
   async openSession(_path: string): Promise<SessionDriverEvent[]> {
     return [
@@ -241,6 +249,31 @@ describe("SessionHub", () => {
     expect(list?.type).toBe("sessionList");
     if (list?.type === "sessionList")
       expect(list.sessions.length).toBeGreaterThan(0);
+  });
+
+  test("setArchived routes to the driver and re-broadcasts the session list", async () => {
+    const d = new FakeDriver();
+    const hub = new SessionHub(d);
+    const a = client();
+    hub.addClient(a.send);
+    await flush();
+    a.received.length = 0;
+
+    hub.handleClient(a.send, {
+      type: "setArchived",
+      path: "/s.jsonl",
+      archived: true,
+    });
+    await flush();
+
+    expect(d.archiveCalls).toEqual([{ path: "/s.jsonl", archived: true }]);
+    // the refreshed list reflects the new flag
+    const list = a.received.filter((m) => m.type === "sessionList").at(-1);
+    expect(list?.type).toBe("sessionList");
+    if (list?.type === "sessionList")
+      expect(list.sessions.find((s) => s.path === "/s.jsonl")?.archived).toBe(
+        true,
+      );
   });
 
   test("openSession resets to the new session's seed and re-snapshots clients", async () => {

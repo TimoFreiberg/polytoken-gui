@@ -74,6 +74,10 @@ class PilotStore {
   // Sidebar open/collapsed. Default open on a roomy viewport, closed on a phone
   // (where it's an overlay drawer). Persisted per-device in localStorage.
   sidebarOpen = $state(initialSidebarOpen());
+  // Sidebar filter: false = active only (hide archived + sessions untouched >7d),
+  // true = show everything. Per-device, persisted in localStorage; defaults to
+  // active-only (the decluttering is the point).
+  showArchived = $state(initialShowArchived());
   // Last server-side error worth showing the user (e.g. a session switch to a bad
   // path failed). Transient — cleared on the next successful switch or by the UI.
   lastError = $state<string | null>(null);
@@ -306,6 +310,11 @@ class PilotStore {
     this.sidebarOpen = false;
     persistSidebarOpen(false);
   }
+  /** Flip the active-only ↔ all filter; persisted per-device. */
+  toggleShowArchived(): void {
+    this.showArchived = !this.showArchived;
+    persistShowArchived(this.showArchived);
+  }
   clearError(): void {
     this.lastError = null;
   }
@@ -364,6 +373,14 @@ class PilotStore {
   refreshSessions(): void {
     send({ type: "listSessions" });
   }
+  /** Archive or unarchive a session by path. Optimistic — flips the local flag now so
+   *  the row reacts instantly; the server's `sessionList` re-broadcast reconciles. */
+  setArchived(path: string, archived: boolean): void {
+    this.sessions = this.sessions.map((s) =>
+      s.path === path ? { ...s, archived } : s,
+    );
+    send({ type: "setArchived", path, archived });
+  }
   get activeSessionPath(): string | null {
     return (
       this.sessions.find((s) => s.sessionId === this.activeSessionId)?.path ??
@@ -391,6 +408,19 @@ function initialSidebarOpen(): boolean {
 function persistSidebarOpen(open: boolean): void {
   if (typeof window !== "undefined")
     localStorage.setItem(SIDEBAR_KEY, open ? "1" : "0");
+}
+
+const SHOW_ARCHIVED_KEY = "pilot.showArchived";
+
+/** Default the sidebar filter to active-only; a stored preference wins. */
+function initialShowArchived(): boolean {
+  if (typeof window === "undefined") return false;
+  return localStorage.getItem(SHOW_ARCHIVED_KEY) === "1";
+}
+
+function persistShowArchived(show: boolean): void {
+  if (typeof window !== "undefined")
+    localStorage.setItem(SHOW_ARCHIVED_KEY, show ? "1" : "0");
 }
 
 export const store = new PilotStore();

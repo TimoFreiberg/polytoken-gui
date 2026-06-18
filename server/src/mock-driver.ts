@@ -207,6 +207,12 @@ export class MockDriver implements PilotDriver {
     return this.sessions.map((s) => ({ ...s }));
   }
 
+  async setArchived(path: string, archived: boolean): Promise<void> {
+    this.sessions = this.sessions.map((s) =>
+      s.path === path ? { ...s, archived } : s,
+    );
+  }
+
   async openSession(path: string): Promise<SessionDriverEvent[]> {
     this.cancelTimers(); // a switch ends any in-flight stream
     return mockSessionSeed(path);

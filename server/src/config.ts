@@ -1,14 +1,25 @@
 // Server configuration from the environment. Defaults are safe for local dev;
 // the deploy (see deploy/) sets PILOT_TOKEN and runs behind `tailscale serve`.
 
-import { resolve } from "node:path";
+import { homedir } from "node:os";
+import { join, resolve } from "node:path";
+
+/** Default server-state dir, XDG-conformant: `$XDG_STATE_HOME/pilot`, falling back to
+ *  `~/.local/state/pilot`. This is STATE (persists across restarts, machine-local, not
+ *  precious enough for `~/.local/share`) — the archive index here is a source of truth,
+ *  not a cache, so it must NOT land under `~/.cache` where a cleaner may wipe it. Works
+ *  on macOS + Linux; override wholesale with PILOT_DATA_DIR. */
+function defaultDataDir(): string {
+  const stateHome =
+    process.env.XDG_STATE_HOME?.trim() || join(homedir(), ".local", "state");
+  return join(stateHome, "pilot");
+}
 
 export const config = {
   port: Number(process.env.PILOT_PORT ?? 8787),
-  // Server-owned data that outlives a restart: VAPID keypair + push subscriptions.
-  // Gitignored (.pilot-data/). Lives at the repo root by default.
-  dataDir:
-    process.env.PILOT_DATA_DIR ?? resolve(import.meta.dir, "../../.pilot-data"),
+  // Server-owned data that outlives a restart: VAPID keypair, push subscriptions, and
+  // the session archive index. XDG state dir by default (see defaultDataDir).
+  dataDir: process.env.PILOT_DATA_DIR ?? defaultDataDir(),
   // Web Push VAPID `sub` claim — must be a real https: or mailto: URL. Apple's push
   // gateway (iOS) rejects placeholder/localhost values with 403 BadJwtToken even
   // though web-push accepts them locally, so SET THIS in any deploy that wants iOS

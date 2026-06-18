@@ -2,6 +2,7 @@
   import type { SessionListEntry } from "@pilot/protocol";
   import { tick } from "svelte";
   import { store } from "../lib/store.svelte.js";
+  import { filterSessions } from "../lib/session-filter.js";
 
   // A new-session-in-a-directory disclosure (D12: arbitrary GUI-controlled paths).
   let showNewDir = $state(false);
@@ -20,42 +21,52 @@
     store.sessions.find((s) => s.sessionId === store.activeSessionId)?.cwd ?? "",
   );
 
-  // Group sessions by project directory; sort sessions within a group and groups
-  // themselves by recency (most recent first), so the active project floats up.
-  const groups = $derived.by(() => {
-    const m = new Map<string, SessionListEntry[]>();
-    for (const s of store.sessions) {
-      const arr = m.get(s.cwd);
-      if (arr) arr.push(s);
-      else m.set(s.cwd, [s]);
-    }
-    const out = [...m.entries()].map(([cwd, items]) => ({
-      cwd,
-      items: [...items].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)),
-    }));
-    out.sort((a, b) =>
-      (b.items[0]?.updatedAt ?? "").localeCompare(a.items[0]?.updatedAt ?? ""),
-    );
-    return out;
-  });
-
-  // Filter-as-you-type search over the session list (name, preview, path). Empty =
-  // show everything; groups with no matching session are dropped entirely.
+  // Filter-as-you-type search over the session list (name, preview, path). Grouping +
+  // the active-only filter (hide archived/stale) live in the pure `filterSessions`
+  // helper. `Date.now()` is read on each recompute (sessions/query/showArchived deps);
+  // re-opening the sidebar re-scans the list, so staleness re-evaluates in practice.
   let query = $state("");
-  const q = $derived(query.trim().toLowerCase());
-  const filteredGroups = $derived.by(() => {
-    if (!q) return groups;
-    const out: { cwd: string; items: SessionListEntry[] }[] = [];
-    for (const g of groups) {
-      const items = g.items.filter(
-        (s) =>
-          (s.displayName ?? "").toLowerCase().includes(q) ||
-          (s.preview ?? "").toLowerCase().includes(q) ||
-          s.cwd.toLowerCase().includes(q),
-      );
-      if (items.length > 0) out.push({ ...g, items });
-    }
-    return out;
+  const filtered = $derived(
+    filterSessions(store.sessions, {
+      query,
+      showArchived: store.showArchived,
+      now: Date.now(),
+    }),
+  );
+  const filteredGroups = $derived(filtered.groups);
+  const hiddenCount = $derived(filtered.hiddenCount);
+
+  // Per-row actions menu (the ⋯ overflow). Holds the path of the session whose menu is
+  // open, or null. One open at a time.
+  let menuFor = $state<string | null>(null);
+  function toggleMenu(path: string): void {
+    menuFor = menuFor === path ? null : path;
+  }
+  function closeMenu(): void {
+    menuFor = null;
+  }
+  function toggleArchive(s: SessionListEntry): void {
+    store.setArchived(s.path, !s.archived);
+    closeMenu();
+  }
+  // Dismiss the row menu on an outside click or Escape. Deferred so the opening click
+  // doesn't immediately re-close it.
+  $effect(() => {
+    if (!menuFor) return;
+    const onClick = (e: MouseEvent): void => {
+      const t = e.target as HTMLElement;
+      if (!t.closest(".menu") && !t.closest(".row-menu")) closeMenu();
+    };
+    const onKey = (e: KeyboardEvent): void => {
+      if (e.key === "Escape") closeMenu();
+    };
+    const id = setTimeout(() => document.addEventListener("click", onClick), 0);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      clearTimeout(id);
+      document.removeEventListener("click", onClick);
+      document.removeEventListener("keydown", onKey);
+    };
   });
 
   // Per-project collapse state, keyed by cwd. Empty = everything expanded.
@@ -200,12 +211,32 @@
         bind:value={query}
       />
     </div>
+    <div class="filter">
+      <button
+        class="filter-toggle"
+        data-testid="filter-toggle"
+        aria-pressed={store.showArchived}
+        title={store.showArchived
+          ? "Showing all sessions incl. archived and inactive — click for active only"
+          : "Showing active sessions only — click to also show archived and inactive"}
+        onclick={() => store.toggleShowArchived()}
+      >
+        {store.showArchived ? "Showing all" : "Active only"}
+      </button>
+      {#if !store.showArchived && hiddenCount > 0}
+        <span class="hidden-count">{hiddenCount} hidden</span>
+      {/if}
+    </div>
   {/if}
 
   <nav class="list">
     {#if filteredGroups.length === 0}
       <div class="empty">
-        {q ? "No sessions match your search." : "No sessions yet."}
+        {query.trim()
+          ? "No sessions match your search."
+          : hiddenCount > 0
+            ? "Nothing active — switch to “Showing all” to see archived or inactive sessions."
+            : "No sessions yet."}
       </div>
     {:else}
       {#each filteredGroups as g (g.cwd)}
@@ -234,33 +265,59 @@
             <ul>
               {#each g.items as s (s.path)}
                 {@const st = store.sessionStatus(s.sessionId)}
-                <li>
-                  <button
-                    class="row"
-                    class:active={s.sessionId === store.activeSessionId}
-                    title={`Open session: ${s.displayName || s.preview || "(untitled)"}`}
-                    onclick={() => pick(s)}
-                  >
-                    <span
-                      class="status"
-                      data-state={st}
-                      data-testid="session-status"
-                      title={st}
-                      aria-label={`status: ${st}`}
+                <li class="row-wrap">
+                  <div class="row-line">
+                    <button
+                      class="row"
+                      class:active={s.sessionId === store.activeSessionId}
+                      title={`Open session: ${s.displayName || s.preview || "(untitled)"}`}
+                      onclick={() => pick(s)}
                     >
-                      {#if st === "running"}
-                        <i class="dot"></i><i class="dot"></i><i class="dot"></i>
-                      {:else}
-                        <i class="dot"></i>
-                      {/if}
-                    </span>
-                    <span class="row-body">
-                      <span class="name"
-                        >{s.displayName || s.preview || "(untitled)"}</span
+                      <span
+                        class="status"
+                        data-state={st}
+                        data-testid="session-status"
+                        title={st}
+                        aria-label={`status: ${st}`}
                       >
-                      <span class="meta">{s.messageCount} msg</span>
-                    </span>
-                  </button>
+                        {#if st === "running"}
+                          <i class="dot"></i><i class="dot"></i><i class="dot"></i>
+                        {:else}
+                          <i class="dot"></i>
+                        {/if}
+                      </span>
+                      <span class="row-body">
+                        <span class="name"
+                          >{s.displayName || s.preview || "(untitled)"}</span
+                        >
+                        <span class="meta"
+                          >{s.messageCount} msg{#if s.archived} · archived{/if}</span
+                        >
+                      </span>
+                    </button>
+                    <button
+                      class="row-menu"
+                      data-testid="session-menu"
+                      title="Session actions"
+                      aria-label={`Actions for ${s.displayName || s.preview || "session"}`}
+                      aria-haspopup="menu"
+                      aria-expanded={menuFor === s.path}
+                      onclick={() => toggleMenu(s.path)}>⋯</button
+                    >
+                  </div>
+                  {#if menuFor === s.path}
+                    <div class="menu" role="menu">
+                      <button
+                        class="menu-item"
+                        role="menuitem"
+                        title={s.archived
+                          ? "Restore this session to the active list"
+                          : "Hide this session from the active list"}
+                        onclick={() => toggleArchive(s)}
+                        >{s.archived ? "Unarchive" : "Archive"}</button
+                      >
+                    </div>
+                  {/if}
                 </li>
               {/each}
             </ul>
@@ -437,6 +494,33 @@
     color: var(--text-faint);
   }
 
+  .filter {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 0 10px 8px;
+  }
+  .filter-toggle {
+    font-size: 12px;
+    color: var(--text-muted);
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-xs);
+    padding: 4px 10px;
+  }
+  .filter-toggle:hover {
+    color: var(--text);
+    border-color: var(--border-strong);
+  }
+  .filter-toggle[aria-pressed="true"] {
+    color: var(--accent);
+    border-color: var(--accent);
+  }
+  .hidden-count {
+    font-size: 11px;
+    color: var(--text-faint);
+  }
+
   .list {
     flex: 1;
     overflow-y: auto;
@@ -520,12 +604,19 @@
     max-height: 21rem;
     overflow-y: auto;
   }
+  /* A row + its overflow (⋯) button on one line; the inline actions menu drops below. */
+  .row-line {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+  }
   .row {
     display: flex;
     flex-direction: row;
     align-items: center;
     gap: 8px;
-    width: 100%;
+    flex: 1;
+    min-width: 0;
     text-align: left;
     background: transparent;
     border: none;
@@ -537,6 +628,53 @@
   }
   .row.active {
     background: color-mix(in srgb, var(--accent) 15%, transparent);
+  }
+  /* Overflow (⋯) trigger: hover-revealed on desktop, always shown on touch. */
+  .row-menu {
+    flex-shrink: 0;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 26px;
+    height: 26px;
+    font-size: 16px;
+    line-height: 1;
+    color: var(--text-muted);
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: var(--radius-xs);
+    opacity: 0;
+    transition: opacity 0.1s ease;
+  }
+  .row-wrap:hover .row-menu,
+  .row-menu[aria-expanded="true"] {
+    opacity: 1;
+  }
+  .row-menu:hover {
+    background: var(--surface);
+    border-color: var(--border);
+    color: var(--text);
+  }
+  .menu {
+    display: flex;
+    flex-direction: column;
+    margin: 2px 0 4px 18px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    box-shadow: var(--shadow-pop);
+    overflow: hidden;
+  }
+  .menu-item {
+    text-align: left;
+    padding: 8px 12px;
+    font-size: 13px;
+    color: var(--text);
+    background: transparent;
+    border: none;
+  }
+  .menu-item:hover {
+    background: var(--surface-sunken);
   }
   .row-body {
     display: flex;
@@ -640,6 +778,10 @@
       z-index: 55;
       background: rgba(0, 0, 0, 0.34);
       border: none;
+    }
+    /* No hover on touch — keep the ⋯ trigger visible so it's reachable. */
+    .row-menu {
+      opacity: 1;
     }
   }
 </style>

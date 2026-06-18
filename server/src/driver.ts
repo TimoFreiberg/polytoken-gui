@@ -33,8 +33,13 @@ export interface PilotDriver {
   abort(sessionId?: SessionId): void;
   respondUi(response: HostUiResponse, sessionId?: SessionId): void;
 
-  /** Sessions on disk available to open (D13: pi's .jsonl files are authoritative). */
+  /** Sessions on disk available to open (D13: pi's .jsonl files are authoritative).
+   *  Each entry's `archived` flag is resolved here from the driver's archive index. */
   listSessions(): Promise<SessionListEntry[]>;
+  /** Archive or unarchive a session by its .jsonl path (pilot-side flag). Optional:
+   *  a bare driver may omit it and the hub guards with `?.`. The hub re-broadcasts the
+   *  session list afterward so every client's active-only filter updates. */
+  setArchived?(path: string, archived: boolean): Promise<void>;
   /**
    * Switch the active session to the given .jsonl path. Resolves with the SEED
    * events (a `sessionOpened` + the replayed history) for the now-active session;

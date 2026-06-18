@@ -133,6 +133,10 @@ export interface SessionListEntry {
   readonly updatedAt: Timestamp;
   readonly createdAt: Timestamp;
   readonly parentSessionPath?: string;
+  /** Whether the operator has archived this session (pilot-side flag; the driver
+   *  resolves it at list time). Archived sessions are hidden by the sidebar's
+   *  active-only filter, alongside ones untouched for >7 days. */
+  readonly archived: boolean;
 }
 
 // --- Host UI (extension interaction) ---

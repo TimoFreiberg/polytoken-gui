@@ -250,6 +250,26 @@ export class SessionHub {
     await this.broadcastModelDefaults();
   }
 
+  /** Archive/unarchive a session, then re-broadcast the list so every client's
+   *  active-only filter reflects it. Errors (e.g. an unwritable index) go back to the
+   *  requester via the `error` channel — surfaced, not swallowed. */
+  private async applyArchive(
+    send: Send,
+    path: string,
+    archived: boolean,
+  ): Promise<void> {
+    try {
+      await this.driver.setArchived?.(path, archived);
+    } catch (e) {
+      send({
+        type: "error",
+        message: e instanceof Error ? e.message : String(e),
+      });
+      return;
+    }
+    await this.broadcastSessionList();
+  }
+
   /** Re-scan available sessions and broadcast the list + the active session id
    *  (derived from the folded state, so the picker's "active" row is authoritative). */
   private async broadcastSessionList(): Promise<void> {
@@ -391,6 +411,9 @@ export class SessionHub {
         return;
       case "listSessions":
         void this.broadcastSessionList();
+        return;
+      case "setArchived":
+        void this.applyArchive(send, msg.path, msg.archived);
         return;
       case "listCommands":
         void this.broadcastCommandList();

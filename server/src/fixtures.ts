@@ -649,8 +649,18 @@ export const SCRIPTS: Record<string, () => ScriptStep[]> = {
 
 // --- Session listing + switching (Increment 2) ------------------------------
 
+const DAY_MS = 24 * 60 * 60 * 1000;
+/** Real wall-clock timestamps (ISO) so the client-side staleness filter
+ *  (`Date.now() - updatedAt > 7d`) is exercised deterministically: "recent" rows are
+ *  minutes/hours old, the stale one is 10 days old. Computed once at module load — the
+ *  mock's determinism is about event *order*, not the list's wall-clock metadata. */
+const isoAgo = (ms: number): string => new Date(Date.now() - ms).toISOString();
+
 /** The sessions the mock offers in the picker. `demo-session` is the one the
- *  greeting fixture loads, so it's the active row on a fresh server. */
+ *  greeting fixture loads, so it's the active row on a fresh server. The last two
+ *  exist to exercise the archive + staleness filter: one archived (hidden under the
+ *  active-only filter), one untouched >7 days and alone in its project (so its whole
+ *  group collapses out of the active view). */
 export const SESSION_LIST: SessionListEntry[] = [
   {
     sessionId: "demo-session",
@@ -659,8 +669,9 @@ export const SESSION_LIST: SessionListEntry[] = [
     displayName: "Wire up the WebSocket bridge",
     preview: "Add a /health route to the server and a smoke test for it.",
     messageCount: 6,
-    updatedAt: "0000000100",
-    createdAt: "0000000001",
+    updatedAt: isoAgo(5 * 60_000),
+    createdAt: isoAgo(2 * DAY_MS),
+    archived: false,
   },
   {
     sessionId: "older-session",
@@ -669,8 +680,9 @@ export const SESSION_LIST: SessionListEntry[] = [
     displayName: "Explore the fold reducer",
     preview: "How does foldEvent assemble the transcript?",
     messageCount: 12,
-    updatedAt: "0000000050",
-    createdAt: "0000000002",
+    updatedAt: isoAgo(2 * 60 * 60_000),
+    createdAt: isoAgo(3 * DAY_MS),
+    archived: false,
   },
   {
     sessionId: "scratch-session",
@@ -678,8 +690,31 @@ export const SESSION_LIST: SessionListEntry[] = [
     cwd: "/Users/timo/src/scratch",
     preview: "quick scratch session",
     messageCount: 2,
-    updatedAt: "0000000010",
-    createdAt: "0000000003",
+    updatedAt: isoAgo(6 * 60 * 60_000),
+    createdAt: isoAgo(4 * DAY_MS),
+    archived: false,
+  },
+  {
+    sessionId: "archived-session",
+    path: "/sessions/archived-session.jsonl",
+    cwd: WORKSPACE.path,
+    displayName: "Archived experiment",
+    preview: "An old experiment I tucked away.",
+    messageCount: 8,
+    updatedAt: isoAgo(60 * 60_000),
+    createdAt: isoAgo(5 * DAY_MS),
+    archived: true,
+  },
+  {
+    sessionId: "stale-session",
+    path: "/sessions/stale-session.jsonl",
+    cwd: "/Users/timo/src/stale-proj",
+    displayName: "Old spike",
+    preview: "A spike from a couple of weeks ago.",
+    messageCount: 4,
+    updatedAt: isoAgo(10 * DAY_MS),
+    createdAt: isoAgo(12 * DAY_MS),
+    archived: false,
   },
 ];
 
@@ -749,8 +784,9 @@ export const NEW_SESSION_ENTRY: SessionListEntry = {
   displayName: "New session",
   preview: "",
   messageCount: 0,
-  updatedAt: "0000000200",
-  createdAt: "0000000200",
+  updatedAt: isoAgo(0),
+  createdAt: isoAgo(0),
+  archived: false,
 };
 
 /** Seed events for a freshly created (empty) session. */
