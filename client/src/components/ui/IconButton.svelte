@@ -1,0 +1,116 @@
+<script lang="ts">
+  import type { Snippet } from "svelte";
+  import type { HTMLButtonAttributes } from "svelte/elements";
+
+  // Icon-only chrome button: a centered glyph or inline SVG, no text label. The icon
+  // counterpart to <Button> — same surface vocabulary, different shape. Because there's
+  // no visible label to name the action, `title` is REQUIRED here (the repo's "every
+  // clickable carries a title/hotkey" rule, enforced by the type system instead of by
+  // reviewers — which is exactly where it matters, since an icon can't self-document).
+  //
+  // `active` drives a pressed/toggled look and sets `aria-pressed`, for the many single
+  // on/off chrome toggles (preview, expand, worktree, …). That's distinct from
+  // <SegmentedControl>, which is for picking one of several. `danger` is the destructive
+  // tint (e.g. the dismiss-error ✕). Sizes mirror Button's sm/md/lg so an icon and a text
+  // button sit level in the same row; md is the proven Sidebar `.icon` (26px).
+  type Size = "sm" | "md" | "lg";
+  type Variant = "default" | "danger";
+
+  interface Props extends Omit<HTMLButtonAttributes, "title"> {
+    title: string;
+    size?: Size;
+    variant?: Variant;
+    active?: boolean;
+    children: Snippet;
+  }
+
+  let {
+    title,
+    size = "md",
+    variant = "default",
+    active = false,
+    type = "button",
+    class: extra = "",
+    children,
+    ...rest
+  }: Props = $props();
+</script>
+
+<button
+  class="icon-btn {size} {variant}{active ? ' active' : ''}{extra ? ' ' + extra : ''}"
+  {type}
+  {title}
+  aria-pressed={active ? true : undefined}
+  {...rest}
+>
+  {@render children()}
+</button>
+
+<style>
+  .icon-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex: none;
+    font-family: inherit;
+    line-height: 1;
+    color: var(--text-muted);
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: var(--radius-xs);
+    cursor: pointer;
+  }
+  .icon-btn:hover,
+  .icon-btn.active {
+    background: var(--surface);
+    border-color: var(--border);
+    color: var(--text);
+  }
+  .icon-btn:disabled {
+    opacity: 0.45;
+    cursor: default;
+  }
+  .icon-btn:disabled:hover {
+    background: transparent;
+    border-color: transparent;
+    color: var(--text-muted);
+  }
+
+  /* Size — md = the proven Sidebar .icon (26px). */
+  .sm {
+    width: 22px;
+    height: 22px;
+    font-size: 14px;
+  }
+  .md {
+    width: 26px;
+    height: 26px;
+    font-size: 17px;
+  }
+  .lg {
+    width: 32px;
+    height: 32px;
+    font-size: 19px;
+  }
+
+  /* danger — destructive tint (dismiss/clear). */
+  .danger {
+    color: var(--danger);
+  }
+  .danger:hover,
+  .danger.active {
+    background: var(--danger-soft);
+    border-color: color-mix(in srgb, var(--danger) 40%, transparent);
+    color: var(--danger);
+  }
+
+  /* Mobile keeps the glyph compact but guarantees a 44px tap target. The box stays
+     transparent until hover/active, so on touch this just widens the clickable area
+     (and the layout gap) without painting a 44px chip. */
+  @media (pointer: coarse) {
+    .icon-btn {
+      min-width: 44px;
+      min-height: 44px;
+    }
+  }
+</style>
