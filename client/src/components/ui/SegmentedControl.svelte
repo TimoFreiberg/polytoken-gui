@@ -1,4 +1,4 @@
-<script lang="ts">
+<script lang="ts" generics="T extends string">
   import type { Snippet } from "svelte";
 
   // Pill toggle for picking one of a small set — Settings' theme switcher and the
@@ -8,8 +8,11 @@
   // side effects (e.g. the composer keeps its Enter / Alt+Enter wiring and just binds
   // `value`). Distinct from a single on/off <IconButton active> — use this when there are
   // two or more named choices laid out side by side.
+  //
+  // Generic over the value type so a consumer with a union (`"steer" | "followUp"`) keeps
+  // that type through `bind:value` instead of widening to bare `string`.
   type Option = {
-    value: string;
+    value: T;
     label: string;
     title?: string; // tooltip; falls back to the label
     icon?: Snippet; // optional leading glyph / inline SVG
@@ -17,10 +20,10 @@
 
   interface Props {
     options: Option[];
-    value: string;
+    value: T;
     ariaLabel: string;
     size?: "sm" | "md";
-    onchange?: (value: string) => void;
+    onchange?: (value: T) => void;
   }
 
   let {
@@ -31,7 +34,7 @@
     onchange,
   }: Props = $props();
 
-  function select(v: string) {
+  function select(v: T) {
     value = v;
     onchange?.(v);
   }
