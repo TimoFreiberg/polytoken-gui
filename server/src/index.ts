@@ -4,13 +4,65 @@
 // deterministic mock driver; M5 swaps in the real pi-sdk driver behind PilotDriver.
 
 import { type ServerMessage, parseClientMessage } from "@pilot/protocol";
+import { join } from "node:path";
 import type { ServerWebSocket } from "bun";
 import { config, tokenFromRequest, tokenOk } from "./config.js";
 import type { PilotDriver } from "./driver.js";
 import { SessionHub } from "./hub.js";
+import { Logger } from "./log.js";
 import { MockDriver } from "./mock-driver.js";
+import {
+  LockHeldError,
+  acquirePidLock,
+  mintOrReadServerId,
+} from "./pidlock.js";
 import { PushService } from "./push.js";
 import { serveStatic } from "./static.js";
+
+// Stable per-data-dir identity, minted once and reused across restarts. Used for
+// log attribution and the PID lock record. Done before anything else touches the
+// data dir so the id is available to the logger from the first line.
+const serverId = mintOrReadServerId(config.dataDir);
+const log = new Logger({ file: join(config.dataDir, "pilot.log"), serverId });
+export { log };
+
+// Acquire the single-server lock BEFORE any store opens the data dir. Two servers
+// on one data dir corrupt the archive/worktree/push stores and — the real hazard —
+// regenerate the VAPID keypair, silently invalidating every phone's push
+// subscription. A live holder aborts startup loud (house rule: crash, don't
+// clobber); a stale lock from a crash is reclaimed.
+let pidLock: ReturnType<typeof acquirePidLock>;
+try {
+  pidLock = acquirePidLock(config.dataDir, serverId);
+} catch (e) {
+  if (e instanceof LockHeldError) {
+    log.error("startup aborted — data dir already locked", {
+      heldByPid: e.pid,
+      dataDir: e.dataDir,
+      lockPath: e.lockPath,
+    });
+    console.error(`\n${e.message}\n`);
+    process.exit(1);
+  }
+  throw e;
+}
+
+// Release the lock on every clean exit path. The 'exit' handler is the backstop
+// (covers normal return + most signals); SIGINT/SIGTERM re-exit so 'exit' fires.
+let released = false;
+function releaseLock(): void {
+  if (released) return;
+  released = true;
+  pidLock.release();
+}
+process.on("exit", releaseLock);
+for (const sig of ["SIGINT", "SIGTERM"] as const) {
+  process.on(sig, () => {
+    log.info(`received ${sig} — shutting down`);
+    releaseLock();
+    process.exit(0);
+  });
+}
 
 // A pilot host outlives the sessions it drives, so a stray async error from
 // third-party pi extension code must not take the whole process down with every
@@ -26,10 +78,13 @@ import { serveStatic } from "./static.js";
 // on the main path is far more likely our own bug, and crashing loud beats
 // limping on with corrupted state.
 process.on("unhandledRejection", (reason) => {
-  console.error(
-    "[pilot] survived an unhandled promise rejection (likely third-party " +
-      "extension async); investigate if this recurs:\n",
-    reason instanceof Error ? (reason.stack ?? reason.message) : reason,
+  log.error(
+    "survived an unhandled promise rejection (likely third-party extension " +
+      "async); investigate if this recurs",
+    {
+      reason:
+        reason instanceof Error ? (reason.stack ?? reason.message) : reason,
+    },
   );
 });
 
@@ -67,7 +122,7 @@ const send = (ws: ServerWebSocket<WsData>, msg: ServerMessage) =>
 function authenticate(ws: ServerWebSocket<WsData>): void {
   ws.data.authed = true;
   ws.data.unsub = hub.addClient((m) => send(ws, m));
-  console.log(`[ws] client authed (${hub.clientCount()} total)`);
+  log.info("client connected", { clients: hub.clientCount() });
 }
 
 const server = Bun.serve<WsData>({
@@ -165,12 +220,19 @@ const server = Bun.serve<WsData>({
       hub.handleClient((m) => send(ws, m), msg);
     },
     close(ws) {
+      const wasAuthed = ws.data.authed;
       ws.data.unsub?.();
       ws.data.unsub = null;
+      if (wasAuthed)
+        log.info("client disconnected", { clients: hub.clientCount() });
     },
   },
 });
 
-console.log(
-  `[pilot] http://${config.host}:${server.port}  driver=${process.env.PILOT_DRIVER === "mock" ? "mock" : "pi"}  token=${config.token ? "required" : "off"}  debug=${config.debug}`,
-);
+log.info("pilot server started", {
+  url: `http://${config.host}:${server.port}`,
+  dataDir: config.dataDir,
+  driver: process.env.PILOT_DRIVER === "mock" ? "mock" : "pi",
+  token: config.token ? "required" : "off",
+  debug: config.debug,
+});

@@ -8,7 +8,23 @@
 //   VITE_PORT    — Vite dev-server port (default 5173)
 //   PILOT_SERVER — WS backend URL that Vite proxies to (default http://localhost:8787)
 
+import { homedir } from "node:os";
+import { join } from "node:path";
+
 const SERVER = process.env.PILOT_SERVER ?? "http://localhost:8787";
+
+// Each dev/preview/e2e instance gets its OWN data dir, keyed by port, unless
+// PILOT_DATA_DIR is set explicitly. The server's PID lock guards one data dir against
+// two servers (so two real servers can't corrupt the shared archive/push/VAPID state);
+// without per-port dirs that lock would stop you running several pilot instances at once
+// (preview-mock 5273, preview-real, e2e, …), which would otherwise all contend for the
+// default dir. The production server runs via `server start` on the default XDG dir, so
+// the lock still protects that.
+const PORT = process.env.PILOT_PORT ?? "8787";
+const stateHome =
+  process.env.XDG_STATE_HOME?.trim() || join(homedir(), ".local", "state");
+const dataDir =
+  process.env.PILOT_DATA_DIR ?? join(stateHome, "pilot-dev", PORT);
 
 const viteArgs = ["run", "dev"];
 if (process.env.VITE_PORT) viteArgs.push("--port", process.env.VITE_PORT);
@@ -20,6 +36,7 @@ if (process.env.VITE_PORT) viteArgs.push("--port", process.env.VITE_PORT);
 // empty session list. Gating on /health makes the first WS connect succeed.
 const server = Bun.spawn(["bun", "run", "--hot", "src/index.ts"], {
   cwd: "server",
+  env: { ...process.env, PILOT_DATA_DIR: dataDir },
   stdout: "inherit",
   stderr: "inherit",
 });

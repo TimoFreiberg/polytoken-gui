@@ -1,0 +1,141 @@
+import { describe, expect, test } from "bun:test";
+import {
+  existsSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { Logger, rotateIfNeeded } from "./log.js";
+
+function freshDir(): string {
+  return mkdtempSync(join(tmpdir(), "pilot-log-"));
+}
+
+describe("rotateIfNeeded", () => {
+  test("does nothing when the file is missing", () => {
+    const dir = freshDir();
+    try {
+      expect(rotateIfNeeded(join(dir, "pilot.log"), 10, 3)).toBe(false);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("does nothing below the threshold", () => {
+    const dir = freshDir();
+    try {
+      const file = join(dir, "pilot.log");
+      writeFileSync(file, "abc");
+      expect(rotateIfNeeded(file, 1024, 3)).toBe(false);
+      expect(existsSync(`${file}.1`)).toBe(false);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("rolls to .1 at/over the threshold", () => {
+    const dir = freshDir();
+    try {
+      const file = join(dir, "pilot.log");
+      writeFileSync(file, "0123456789"); // 10 bytes
+      expect(rotateIfNeeded(file, 10, 3)).toBe(true);
+      expect(existsSync(file)).toBe(false);
+      expect(readFileSync(`${file}.1`, "utf8")).toBe("0123456789");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("shifts generations and prunes beyond the cap", () => {
+    const dir = freshDir();
+    try {
+      const file = join(dir, "pilot.log");
+      const cap = 3;
+      // Seed an active file + a full set of generations with identifiable bodies.
+      writeFileSync(file, "ACTIVE----"); // 10 bytes, over threshold
+      writeFileSync(`${file}.1`, "GEN1");
+      writeFileSync(`${file}.2`, "GEN2");
+      writeFileSync(`${file}.3`, "GEN3"); // oldest -> should be pruned
+
+      expect(rotateIfNeeded(file, 10, cap)).toBe(true);
+
+      // Active became .1; old .1->.2, .2->.3; old .3 dropped.
+      expect(existsSync(file)).toBe(false);
+      expect(readFileSync(`${file}.1`, "utf8")).toBe("ACTIVE----");
+      expect(readFileSync(`${file}.2`, "utf8")).toBe("GEN1");
+      expect(readFileSync(`${file}.3`, "utf8")).toBe("GEN2");
+      // Never more than `cap` generations.
+      expect(existsSync(`${file}.4`)).toBe(false);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("Logger", () => {
+  test("writes JSON-lines with ts/level/msg/fields and server-id", () => {
+    const dir = freshDir();
+    try {
+      const file = join(dir, "pilot.log");
+      const log = new Logger({ file, serverId: "srv-1" });
+      log.info("hello", { a: 1 });
+      log.error("boom");
+
+      const lines = readFileSync(file, "utf8").trim().split("\n");
+      expect(lines).toHaveLength(2);
+
+      const first = JSON.parse(lines[0]!);
+      expect(first.level).toBe("info");
+      expect(first.msg).toBe("hello");
+      expect(first.a).toBe(1);
+      expect(first.serverId).toBe("srv-1");
+      expect(typeof first.ts).toBe("string");
+
+      const second = JSON.parse(lines[1]!);
+      expect(second.level).toBe("error");
+      expect(second.msg).toBe("boom");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("setServerId stamps later lines", () => {
+    const dir = freshDir();
+    try {
+      const file = join(dir, "pilot.log");
+      const log = new Logger({ file });
+      log.info("before");
+      log.setServerId("late-id");
+      log.info("after");
+      const lines = readFileSync(file, "utf8").trim().split("\n");
+      expect(JSON.parse(lines[0]!).serverId).toBeUndefined();
+      expect(JSON.parse(lines[1]!).serverId).toBe("late-id");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("rotates the active file once it crosses maxBytes during logging", () => {
+    const dir = freshDir();
+    try {
+      const file = join(dir, "pilot.log");
+      // Tiny threshold so a couple of lines trip rotation.
+      const log = new Logger({ file, maxBytes: 200, maxGenerations: 2 });
+      for (let i = 0; i < 50; i++) {
+        log.info("line", { i, pad: "x".repeat(20) });
+      }
+      // A rolled generation must exist, and the active file stays small-ish
+      // (it's checked-then-appended, so it can briefly exceed by one line).
+      expect(existsSync(`${file}.1`)).toBe(true);
+      expect(statSync(file).size).toBeLessThan(200 + 200);
+      // Cap respected: never a .3 with maxGenerations=2.
+      expect(existsSync(`${file}.3`)).toBe(false);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
