@@ -1,7 +1,8 @@
 # Pilot — TODO
 
 Persistent task list. Items grouped by priority; checkboxes for tracking.
-See `docs/` siblings for context: `STATUS.md` (what's built), `DECISIONS.md`
+Completed items are archived to [`DONE.md`](DONE.md).
+See `docs/` siblings for context: `DESIGN.md` (architecture + roadmap), `DECISIONS.md`
 (settled calls), `OPEN-QUESTIONS.md` (resolved discussions).
 
 ---
@@ -12,231 +13,36 @@ _(clear — nothing blocking; pull the next item up from Important)_
 
 ## 🟡 Important
 
-_(clear — pull the next item up from Polish)_
-
 - [ ] desktop app packaging. i know nothing about running a web app like a desktop app, so proposals welcome. i'd like to have a .app in macos that i can click in my dock. so far only macos necessary
 
 ## 🟢 Polish / fast-follow
 
-- [x] **Suppress notifications when app focused** — if feasible, silence push/toast
-      notifications while the browser tab/window has focus
-      _(done: client toast now gates on `document.hasFocus()`, not visibility — fires
-      whenever pilot isn't the focused window. Committed in worktree, not yet merged.)_
-- [x] **Project sidebar hierarchy polish** — larger expand/collapse arrows for
-      project groups; indent sessions under their project header to make the
-      parent-child relationship visually obvious
-      _(done: bigger carets, indented rows, indicator gutter — shipped with the
-      status indicators below.)_
-- [x] **Session status indicators** — icons/dots to the left of session titles
-      distinguishing running (active turn), unread (new messages since last viewed),
-      and read (idle). Unread/read is GUI-only state; can be in-memory only with
-      old sessions defaulting to read on restore
-      _(done: new `sessionStatus` server msg broadcasts the per-session running set
-      across ALL sessions — the hub only streams the focused one, so this is what
-      makes a background row's running/done legible; pi driver unchanged. Client
-      tracks `runningIds` + in-memory `unread` (running→done on a non-focused session
-      marks it unread, viewing clears it; active session treated as read). Three CSS
-      states: pulsing dots / amber filled dot / hollow ring, with reduced-motion
-      fallback + a collapsed-group running dot. `bgrun` dev script + hub unit tests +
-      `e2e/status-indicators.spec.ts`.)_
 - [ ] **Active session unread when new text lands below the viewport** — builds on
-      the status indicators above. Today the active (focused) session is always
+      the status indicators. Today the active (focused) session is always
       "read". Refine: if the agent appends content while you're scrolled up (content
       exists below the visible transcript), mark the active session unread too;
       clear it when you scroll to the bottom. Needs the transcript scroll container
       to report "not at bottom + grew" back to the store (the classic "new messages ↓"
       pill signal), and an exception to the active-session-is-read rule in
       `store.svelte.ts`'s `sessionStatus`/`markRead` paths. Low priority.
-- [x] **Session archive + staleness filter** — store an archived flag, hide archived
-      OR stale (>7d) sessions behind an active-only/all toggle, with an archive action
-      in the sidebar.
-      _(done: chose the index over `appendCustomEntry` after reading pi —
-      `SessionManager.listAll()` parses messages + the session name and DROPS custom
-      entries, so a JSONL-stored flag would be write-only and force a per-session scan
-      on every list, on top of the full read listAll already does. Instead an
-      `ArchiveStore` (pilot's source of truth, option B) keeps a path-keyed set in
-      `archived.json`, read at list time as an in-memory lookup — zero extra file reads.
-      `archived` rides `SessionListEntry` (cleaner than exposing raw `getEntries()` over
-      the wire — same intent, keeps `protocol/` pi-free); `setArchived` is a new
-      `PilotDriver` method + wire message, hub re-broadcasts the list on change. Client:
-      pure `filterSessions` helper (group + search + active-only hide), `showArchived`
-      toggle persisted per-device (default active-only), staleness is client-side
-      `Date.now() - updatedAt > 7d` (NaN-safe). Archive/unarchive via a per-row ⋯
-      overflow menu (hover-reveal on desktop, always shown on touch; outside-click/Esc
-      dismiss). A project group drops out once all its sessions are hidden — note: I
-      did NOT keep an empty group-header for an all-archived-but-recently-touched
-      project (the TODO's "+ newest >1 week" nuance); an empty header reads worse than
-      just hiding it. Easy to revisit. Covered: `archive-store.test.ts`,
-      `session-filter.test.ts`, a hub routing test, `e2e/archive.e2e.ts`; full unit +
-      e2e suites green. The pi-driver path is typechecked, exercised via the mock, not
-      yet run live.
-      Drive-by: flipped `config.dataDir`'s default from `.pilot-data/` (repo root) to
-      the XDG state dir (`$XDG_STATE_HOME/pilot` || `~/.local/state/pilot`) so all
-      server state — VAPID, push subs, archive index — sits in one XDG-correct place.
-      ⚠️ relocates the VAPID keypair: on first boot at the new path pilot regenerates
-      it, invalidating existing phone push subscriptions unless you `mv` the old
-      `.pilot-data/{vapid,push-subscriptions}.json` into `~/.local/state/pilot/` first.)_
-- [x] **Session search bar** — filter-as-you-type search over session display name,
-      preview, and path in the sidebar
-      _(done: sidebar search filters groups by name/preview/cwd, hides empty groups;
-      `sessions.spec.ts` covers name + path matches.)_
-- [~] **Session list scroll cap** — ~~for projects with many sessions, make the list
-      internally scrollable with a visible limit of ~10, scroll within the project
-      group~~
-      _(reverted: the per-group cap was dropped in favor of a plain list — the
-      archive feature is enough to manage length; the whole sidebar list scrolls.)_
-- [x] **Tool call results popup: drop description, add hover tooltip** — the tool
-      description doesn't need to be listed inline in the popup; move it to a
-      mouseover tooltip on the tool name instead
-      _(done: inline `.desc` removed, `item.description` now a `title=` tooltip on
-      the tool name.)_
-- [x] **Edit tool output: collapsed diff counts + expanded diff view** — instead of
-      "Successfully replaced N block(s) in /path", show a collapsed view with
-      `+N, -M` line counts, expandable to a nice side-by-side or unified diff.
-      Use `bun i @pierre/diffs` for the diff rendering
-      _(done: `@pierre/diffs/ssr` `preloadDiffHTML` renders a syntax-highlighted diff
-      to an HTML string — no React (peer-only) — mounted in a shadow root (its CSS is
-      `:host`-scoped), lazy `import()`ed so shiki stays out of the initial bundle, and
-      re-rendered on light/dark toggle. Collapsed `+N/−M` from a dependency-free line
-      diff. Detects pi's edit shape `{path, edits:[{oldText,newText}]}` + legacy.)_
-- [x] **Desktop notifications conflict with terminal pi extension** — on desktop
-      browser, pilot's notification triggers the user's terminal pi notification
-      extension (which links back to the terminal). Needs investigation: either
-      suppress Web Notifications when pilot is the focused browser tab, or find a
-      way to avoid double-firing through the extension.
-      _(investigated: the terminal notifier is pi's example extension
-      `examples/extensions/notify.ts` — it writes an OSC 777/99 escape on `agent_end`;
-      pi core emits no OS notifications. The double-fire is one logical event driving
-      two independent notifiers (terminal OSC + pilot Web Push). Pilot's actionable
-      fix shipped: `notifyIfUnfocused` (tab-open) + the sw.js push handler now skips
-      the OS notification when a pilot window is focused. Cross-process dedup with the
-      terminal extension is out of pilot's control — run one notifier per machine.)_
-- [x] **Message timestamps** — small relative timestamp at the bottom of each
-      agent and user text box (e.g. "5m ago"), with mouseover revealing the exact
-      timestamp
-      _(done: `ts` added to user/assistant items in `foldEvent` from the event
-      timestamp; `<time>` with a relative label + exact-time `title`, refreshed on a
-      30s tick.)_
-- [x] **Copy-to-clipboard button on agent messages** — a button at the bottom of
-      each agent text area; hidden until hover, copies message content
-      _(done: hover-revealed Copy button, `navigator.clipboard.writeText`, "Copied"
-      feedback.)_
-- [x] **Worktree checkbox in new-session form** — like the Claude app's "worktree"
-      toggle; creates and passes a jj/git worktree path as the session cwd so the
-      agent works in an isolated copy, leaving the main tree clean
-      _(done: `newSession` carries `worktree` through protocol→hub→both drivers; pi
-      creates a jj (git-fallback) worktree via `server/src/pi/worktree.ts` — pure
-      planner unit-tested; mock simulates a `-worktree` sibling dir; e2e covers the
-      toggle. The pi creation path is typechecked but not yet run live.)_
 - [ ] **Session context indicator** — a small color-coded circle (or similar badge)
       in the session list / header showing how much context the session has consumed,
       analogous to the Claude app's colored circle (green → yellow → red as the
       context window fills). Color could map to token-budget thresholds from the
       snapshot's `config`/usage fields; exact threshold values TBD
-- [x] **Stray caret span in agent text** — a naked `<span class="caret svelte-1rd1h7a"></span>`
-      is appended to the end of agent output, looks like a client rendering bug.
-      Needs investigation and fix
-      _(done: root cause was `foldEvent` only closing the open assistant on
-      `runCompleted`; a turn that goes idle via `sessionUpdated` left `streaming:true`.
-      Fixed at the source (close on any non-running snapshot) + a defensive caret guard
-      on `store.streaming`. e2e repro via the `idle` fixture.)_
-- [x] **Model list search bar** — filter-as-you-type search in the model picker (top bar)
-      and the model list in the Settings panel; model lists grow quickly, and the
-      current flat menus become unwieldy with many providers connected
-      _(done: search input in the header ModelPicker panel + the Settings favorites
-      list; both filter by label/id/provider with a no-match state. e2e for each.)_
-- [x] **Autofocus after tapping `+` in the sidebar** — when creating a new session,
-      focus the cwd input field immediately so you can type a path without an extra
-      click. (An `autofocus` attribute exists already but is unreliable with Svelte's
-      `{#if}` conditional mount — needs a `tick()` + `input.focus()` approach.)
-      _(done: `tick()` + `input.focus()`/`select()` on open; e2e asserts focus.)_
-- [x] **PWA update prompt** — when a new service worker is available, show a
-      toast/banner asking the user to refresh for the latest version (standard PWA
-      lifecycle UX)
-      _(done: `lib/sw.ts` flags an update when a new SW reaches "installed" while one
-      already controls the page → refresh toast (Refresh/Dismiss); `?dev` "update"
-      button + e2e.)_
-- [x] **Tab title mirrors session title** — update `document.title` from the ambient
-      `title` so the browser tab reflects the session name instead of always showing
-      "pilot" (DESIGN.md SHOULD)
-      _(done: `$effect` in App.svelte sets `document.title` to "<title> · pilot",
-      falls back to "pilot"; e2e in polish.spec.)_
-- [x] **Warm-session eviction cap** — `pi-driver.ts` currently keeps every session
-      warm forever with no upper bound; add a configurable cap with LRU eviction
-      _(done: `PILOT_WARM_CAP` (default 8, ≤0 = unbounded); focus-recency LRU via Map
-      re-insertion; pure `evictionPlan` helper unit-tested; evicts via
-      `session.dispose()` (also aborts an in-flight run). pi path not yet run live.)_
-- [x] **Keyboard shortcut for Settings (⌘+,)** — open the settings panel with the
-      standard web app keyboard shortcut
-      _(done: ⌘/Ctrl+, toggles the panel; gear tooltip names the hotkey; e2e.)_
 - [ ] **(discussion needed) Auto session titling via cheapest model** — run a
       lightweight model on session start to generate a title from the first user
       prompt, instead of showing "New Session" indefinitely
-- [x] **Enter/Alt+Enter hint for steer vs follow-up** — add an inline hint near the
-      composer or a tooltip explaining that pressing Enter while the agent is running
-      steers, and Alt+Enter queues a follow-up message (and implement both hotkeys)
-      _(done: Enter steers / Alt+Enter queues a follow-up (reflected in the toggle);
-      hint line + hotkey-named tooltips; new `streamhold` fixture holds a running
-      state for the e2e.)_
-- [x] **Hotkey + tooltip audit for every UI action** — go through every clickable
-      element (sidebar toggle, header buttons, stop, send, approval actions, trust
-      options, settings controls, model picker items, etc.) and add a keyboard
-      shortcut or a `title` tooltip naming the action + its hotkey if one exists
-      _(done: every clickable across all components now carries a descriptive `title`
-      (icon-only buttons especially); full suite stays green.)_
 - [ ] **Realistic mock tool-event timestamps** — the mock's `ts()` is a sequential
       counter, so any duration derived from `toolStarted`→`toolFinished` timestamps
       renders as a meaningless ~1ms in the dev/preview UI. Stamp tool fixtures with a
       realistic ms gap (without breaking fold determinism) so the brainstorm
       "tool-call duration badges" item can ship and be screenshot-verified.
-
-- [x] **Jump-to-last-prompt hotkey** (OP8)
-- [x] **Type-to-focus prompt field** — basic typable characters focus the
-      text field before typing them (or a dedicated hotkey)
-      _(done: window keydown focuses the composer on a printable key when no input is
-      focused; doesn't steal from dialog/sidebar inputs.)_
-- [x] **Beautiful font rendering** — prose readability pass (OP8)
-      _(done: refined system font stack + smoothing/feature-settings; `.prose` rhythm,
-      code/pre, link styling tuned. No palette change.)_
-- [x] **Tool card inspection polish** — unobtrusive expand/collapse (OP8)
-      _(done: chevron rotation transition, hover/focus ring, gentle body reveal,
-      `aria-expanded`.)_
-- [x] **Stray iOS zoom fix** — composer `font-size: ≥16px` to stop iOS
-      auto-zoom; `overflow-x: hidden` on root
-      _(done: textarea 16px; `overflow-x: hidden` on `.shell`.)_
-- [x] **Live markdown rendering in prompt edit box** — preview formatting
-      as you type, if straightforward
-      _(done: Edit/Preview toggle renders the draft via `renderMarkdown`; appears only
-      with a non-empty draft, Enter-to-send preserved.)_
-- [x] **Slash-command autocompletion** + inline help text describing each
-      command
-      _(done: `CommandInfo` + `commandList`/`listCommands` wire messages mirror the
-      model-list path; the pi driver reads `get_commands`' three sources (extension
-      commands + prompt templates + skills), the mock serves `MOCK_COMMANDS`. Composer
-      shows a typeahead on a leading `/` — filter helper in `lib/slash.ts`, popup in
-      `SlashMenu.svelte`, ↑↓/↵/Tab/Esc nav, click-to-insert, each row carries the
-      command's description + source. Execution is free: `/name args` is a normal
-      prompt and pi's `prompt()` runs the command / expands the template. TUI builtins
-      (/model, /settings, …) intentionally omitted — pilot has native UI. Unit test for
-      the filter + `e2e/slash.spec.ts`.)_
 - [ ] **`/tree` command (native pi command)** — pi's builtin `/tree` command shows
       the directory tree. Currently TUI builtins are intentionally omitted from the
       client command list. `/tree` should be passed through so typing `/tree` in the
       composer sends it as a prompt for pi to execute, even if pilot doesn't render
       the tree natively.
-- [x] **PNG / maskable icons** — proper app icons for installed PWA
-      _(done: 192/512 + maskable-512 (safe-zone padded) + 180 apple-touch, rasterized
-      from `icon.svg`; manifest + `<link apple-touch-icon>` wired.)_
-- [x] **Virtualized transcript list** (>80 rows)
-      _(done: CSS `content-visibility: auto` + `contain-intrinsic-size` on `.row`
-      and `.tool` — browser skips rendering off-screen rows, remembers actual sizes
-      after first render. Zero JS, progressive enhancement.)_
-- [x] **Binary 2-option select → Yes/No card**
-      _(done: affirmative option detected + promoted to the primary/right button
-      regardless of array order, mirroring the confirm dialog.)_
-- [x] **Countdown for timeout-bearing dialogs**
-      _(done: shrinking bar + "Auto-dismiss in Ns" for dialogs with `timeoutMs`,
-      deny-safe auto-resolve at zero, timers cleaned per dialog.)_
 - [ ] **Provider OAuth login** — sign-in / sign-out for OAuth-capable providers
       (Anthropic, OpenAI, …) from the Settings panel. Deferred from the settings-panel
       work (API-key entry shipped); needs a server-side OAuth callback reachable over
@@ -266,13 +72,6 @@ these are net-new. Each is a candidate, not a commitment — promote the good on
 the rest._
 
 ### Agent interaction & turn control
-- [x] **Run-failed error card + retry** — `runFailed` currently has no first-class UI.
-      Render a distinct error card (message + stack/cause if present) with a "Retry"
-      button that re-sends the last prompt, and a "Copy error" affordance.
-      _(done: error notices now carry a Retry (re-sends `store.lastPrompt`) + Copy
-      button; `store.lastPrompt` tracks the last sent prompt; the `error` fixture is
-      wired into the `?dev` bar + mock `runScript`; `streaming.spec.ts` covers it.
-      Stack/cause rendering deferred — the driver only surfaces `error.message` today.)_
 - [ ] **Per-turn token + cost readout** — small footer on each completed turn showing
       tokens in/out and an estimated cost (pi emits usage in the snapshot/run events).
       Distinct from the context-window fill indicator — this is "what did that turn cost."
@@ -381,92 +180,146 @@ the rest._
 
 ---
 
-## ✅ Done (for reference)
+## 🎒 Paseo-inspired (patterns to steal from [paseo.sh](https://paseo.sh))
 
-- [x] **Settings panel** — finished the panel with the server-side pieces (theme,
-      token, notifications already shipped): provider/API-key management, global model
-      defaults, and a favorites subset. The pi driver now shares one `AuthStorage` +
-      `ModelRegistry` across all warm sessions, so a key saved in the panel updates
-      every session's model availability after a `refresh()`; a launch-cwd
-      `SettingsManager` holds the global defaults/favorites. New `PilotDriver`
-      capabilities (`listProviders`, `set/removeProviderApiKey`, `getModelDefaults`,
-      `setDefaultModel`/`setDefaultThinking`, `setFavoriteModels`) with mock + pi
-      implementations, and new wire messages (`providerList`, `modelDefaults` + client
-      commands). Provider list = pi's curated key-capable set + already-connected; no
-      secret ever crosses the wire (only auth presence/source); keys write pi's
-      `auth.json` (shared with terminal pi). Favorites map to pi's `enabledModels`
-      patterns — the GUI writes explicit `provider:modelId` refs; CLI-set globs are
-      preserved unless they resolve to an available model (then flattened). The header
-      `ModelPicker` filters to favorites, always keeping the active model visible
-      ("active · not favorited"). OAuth login deferred (see Polish). Covered:
-      model-config unit tests, hub routing/broadcast tests, e2e (key flip, default
-      persist, favorites filter); verified visually (dark + mobile).
-- [x] **Interactive project-trust card** (D12) — an untrusted cwd now prompts the
-      operator to grant/deny instead of silently denying. Trust travels an **out-of-band
-      channel** (`trustRequest`/`trustResolved` server msgs + `trustResponse` client msg;
-      `subscribeTrust`/`respondTrust` on `PilotDriver`), *not* the session event stream —
-      because trust resolves inside `warmUp`'s service creation, before the session/UI
-      bridge exist and while the hub suppresses session events mid-swap (`switching`). The
-      resolver (`trust.ts`) keeps its non-interactive fast paths (moot / saved / launch-cwd)
-      and only escalates an undecided non-launch cwd to the card, blocking the swap on the
-      answer (pi awaits `resolveProjectTrust`, exactly as its TUI blocks on `ui.select`). A
-      chosen option's trust.json updates persist via `ProjectTrustStore` (CLI-compatible);
-      session-only persists nothing; timeout / no client / dismiss denies deny-safe. Five
-      pi-parity options; new `TrustCard.svelte`; the hub gained a single-flight switch
-      guard (the card can hold a swap on human input for minutes). Mock drives it via the
-      `trust` dev button. Covered: trust unit tests, hub relay + single-flight tests, e2e
-      (render w/ cwd + 5 options, dismiss-on-click) desktop + mobile. Verified visually
-      (dark). Closes the last 🔴.
-- [x] **Live pi bring-up** — first real turn against provider credentials.
-      `PILOT_DRIVER=pi PILOT_CWD=/some/repo bun run dev`. Working; rough edges
-      are filed as separate todos.
-- [x] **Session/project sidebar** — replaced the header session dropdown
-      (`SessionPicker` deleted) with a collapsible left rail (desktop) / slide-over
-      drawer (mobile) that groups sessions by project directory. `listSessions` now
-      spans every project (`SessionManager.listAll`), so it's a cross-project
-      navigator. New sessions can target an arbitrary typed cwd (`newSession` carries
-      `cwd` → `SessionManager.create`; `~`-expanded, resolved, rejects a non-directory
-      loudly — the D12 GUI affordance), plus a per-project `+`. Switch errors surface
-      in the sidebar. Open/collapse is per-client + localStorage-persisted. e2e-covered
-      (`sessions.spec.ts`: grouping/switch, per-project `+`, arbitrary typed dir).
-      (rename/archive/unarchive still open — see Polish.)
-- [x] **Per-session model + thinking-level picker** — provider-grouped model menu +
-      thinking-level menu in the header (`setModel`/`setThinking` over the wire,
-      `modelList` broadcast; selection rides each session's snapshot `config`).
-      e2e-covered (`models.spec.ts`).
-- [x] **Multi-session — keep N warm** (D8 increment 2) — the pi-driver now holds a
-      `Map<sessionId, WarmSession>` of fully-independent sessions instead of a
-      single `AgentSessionRuntime` that disposed the old session on every switch.
-      `openSession`/`newSession` warm-and-focus (create on first touch, dedup by
-      session file and refocus after); `prompt`/`abort`/`respondUi` dispatch by
-      `sessionId`; each session gets its own services (trust resolver per cwd), UI
-      bridge, and subscription, all streaming into one `emit`. Nothing is disposed
-      on a switch — a backgrounded session stays warm and is instantly re-focusable
-      with full history. Verified live (`scripts/live-warm-toggle.ts`): open A →
-      open B (`2 warm`) → re-open A returns A's transcript intact via the refocus
-      path, no re-create, no stale-ctx crash. (No eviction cap yet — fast-follow.)
-      Live background *streaming* across a focus-switch still awaits provider creds
-      (the Live pi bring-up task) since it needs a real model turn.
-- [x] **Multi-session hub** (D8 increment 1) — the hub tracks a focused session:
-      folds + broadcasts only the focused one, routes `prompt`/`abort`/`respondUi`
-      by `sessionId`; background sessions still notify a closed phone. Behavior
-      unchanged for a single active session.
-- [x] **Project-trust gate MVP** (D12) — non-interactive `resolveProjectTrust`
-      (`server/src/pi/trust.ts`) closed a live auto-trust hole (pi auto-trusts
-      every project unless the host resolves trust). Honors trust.json
-      (parent-aware), trusts the launch cwd, denies other untrusted paths.
-      Interactive card still open above.
-- [x] **Persistence rework** (D13) — driver resumes via
-      `SessionManager.continueRecent(cwd)`, discovers via `list`, switches via
-      `runtime.switchSession`, rebuilds state from session files on load
-      (`historyToEvents`). Verified live: resume-across-restart + new↔existing
-      switching replay the full transcript. (Stale-ctx swap crash fixed en route.)
-- [x] iOS Web Push spike (D11) — SW handlers, VAPID keypair + subscription
-      store, server fan-out, header bell. Verified buzzing closed iPhone.
-      Gotchas banked: `PILOT_VAPID_SUBJECT` must be real https/mailto.
-- [x] M0–M5 built + green — mock driver, transcript/turn UI, approvals,
-      multi-client, remote infra, real pi driver (typechecked, unit-tested),
-      PWA, Playwright suite (19 specs, desktop + mobile)
-- [x] Open questions resolved (OQ1–OQ8 → D7–D14) — TS-embed confirmed,
-      no tool gating, multiple concurrent sessions, arbitrary paths,
-      dark-first styling, etc.
+_Added 2026-06-18 after a deep comparison of both codebases. Paseo is a multi-provider
+agent orchestration layer (daemon spawns agent CLIs as subprocesses, Expo mobile app,
+Electron desktop, Docker-style CLI). Pilot's differentiator is deep in-process pi SDK
+integration — things paseo structurally can't do because it talks to pi via
+`--mode rpc` over stdio. These items are patterns paseo does well that pilot can adopt
+without changing its lane. Items marked 🚫-PASEO are things paseo already ships that
+pilot should NOT build — they're paseo's domain, not pilot's differentiator._
+
+### ⚡ High payoff, low effort
+
+- [ ] **Capability flags for feature gating** — Paseo's `AgentClient` carries a
+      `capabilities` flags object (`supportsStreaming`, `supportsSessionPersistence`,
+      `supportsDynamicModes`, etc.). UI gates features on `capabilities.supportsX`,
+      not `provider === "pi"`. Even for a single-provider tool, this makes the UI
+      self-documenting about what depends on what, and keeps the mock/real driver
+      split clean. Add a `Capabilities` flags type to `PilotDriver` + `ServerMessage.hello`,
+      gate UI features on slices of it rather than scattered conditionals.
+- [ ] **Design system: "3+ uses → primitive" rule** — Paseo enforces that any
+      semantic element used in three or more places must be a primitive in
+      `components/ui/`. A `<Pressable>` styled as a button is wrong — the only
+      button is `<Button>`. A bare `<Text>` styled as a section header is wrong.
+      Pilot's Svelte components would benefit from the same rigor: audit common
+      patterns, pull them into shared primitives, stop re-implementing the same
+      row/button/header across components.
+- [ ] **Button variants with single jobs** — Paseo has exactly 5 button variants,
+      each with one job: `default` (one CTA per surface), `secondary` (paired
+      equal-weight), `outline` (row-level action), `ghost` (chrome/structural),
+      `destructive` (confirm dialog only). Adopt the same variant discipline in
+      pilot's button classes — right now buttons don't have a clear variant taxonomy.
+- [ ] **Hierarchy via weight/color, not font-size** — Paseo keeps most text at
+      `fontSize.base`. Distinction between primary and secondary lines is
+      `foreground` vs `foregroundMuted`. Weight tiers: screen titles (light),
+      structural labels (medium), content (normal). Pilot uses varying font sizes
+      for hierarchy; switch to the weight+color approach for a calmer visual rhythm.
+- [ ] **Directory-backed vs workspace-owned state boundary** — Paseo splits
+      right-sidebar state cleanly: git status/diff keyed by `(serverId, cwd)` so
+      same-directory workspaces share it; tabs/agents/drafts keyed by opaque
+      `workspaceId` so they don't leak. Pilot's current flat "sessions grouped by
+      cwd" doesn't have this distinction. Formalize what state is directory-scoped
+      vs session-scoped, and enforce it through the key shape in the protocol +
+      client stores.
+- [ ] **Agent lifecycle as explicit state machine** — Paseo's `ManagedAgent` is a
+      discriminated union: `initializing → idle ⇄ running → error → closed`. The
+      `initializing` state (session being created, not ready) lets the UI show a
+      spinner. Pilot's mock fixture currently has no `initializing` phase. Add it
+      so the UI handles "session created but not yet streaming" gracefully.
+- [ ] **Opaque session/workspace IDs — never parse into paths** — Paseo's
+      `workspaceId` is opaque (`wks_<hex>`). Code reads `cwd` for the filesystem
+      path. Pilot's session IDs are pi's session file paths by convention — adopt
+      a stable opaque ID for pilot sessions, keep the path as a separate field, and
+      never parse the ID.
+
+### ⚡ High payoff, medium effort
+
+- [ ] **E2E encrypted relay with QR pairing** — Paseo's relay is zero-knowledge:
+      daemon holds a persistent Curve25519 keypair, phone generates ephemeral one
+      per connection, ECDH + XSalsa20-Poly1305 (NaCl `box`). The QR code embeds
+      the daemon's public key in a URL fragment (never sent to the relay server).
+      Pilot currently depends on Tailscale for network ACL + an app-level auth
+      token. A relay option would make mobile connectivity zero-config and remove
+      the Tailscale dependency for external access. Paseo's `@getpaseo/relay`
+      package is AGPL-3.0 and could be reused or studied as a reference.
+- [ ] **Timeline sync: live stream + authoritative paged fetch** — Paseo's event
+      delivery has two paths: `agent_stream` (live, for immediacy) and
+      `fetch_agent_timeline` (authoritative, paged to completion). The invariant:
+      every connected client eventually displays every committed timeline row.
+      Pilot's snapshot-on-reconnect works but doesn't handle the case where a
+      client was disconnected during a long run and the full snapshot is huge.
+      Paged catch-up with sequence-based dedup would be more robust over flaky
+      mobile connections. Also worth stealing: the `AgentStreamCoalescer` pattern
+      for reducing WS frame churn during rapid tool-call updates.
+- [ ] **Password auth for direct-TCP exposure** — Paseo supports optional bcrypt
+      password auth: `Authorization: Bearer <token>` on HTTP, and the token rides
+      in the `Sec-WebSocket-Protocol` subprotocol for browser WS (browsers can't
+      set custom headers on upgrade). Health + CORS preflight are exempt. Pilot
+      has no auth besides network ACL — add password auth as a defense-in-depth
+      layer for direct exposure even within the tailnet.
+- [ ] **PID lock file + daemon identity** — Paseo writes `paseo.pid` / `server-id`
+      to prevent two daemons sharing one `$PASEO_HOME`. Pilot currently has no
+      PID lock — two server processes would fight over the same archive store +
+      VAPID keypair. Add a PID lock file + a stable server ID per data dir.
+- [ ] **Config hot-reload** — Paseo watches `config.json` for changes and applies
+      them at runtime. Pilot reads config once at startup. Hot-reload would make
+      "add API key in Settings" feel instant rather than requiring a restart
+      (or the current workaround of driver re-initialization).
+
+### 📐 Medium payoff, medium effort
+
+- [ ] **Workspace model: projects + workspaces + worktrees** — Paseo's abstraction
+      layers: Project (logical group, keyed by git remote) → Workspace (one `cwd`,
+      git state, kind = `directory|local_checkout|worktree`) → Isolation (create-time
+      choice: reuse vs new git worktree). Pilot's "sessions grouped by directory"
+      is a simpler version of this. Consider formalizing the project/workspace
+      concepts so multi-repo workflows and worktree-based isolation are first-class
+      in the UI rather than ad-hoc path conventions.
+- [ ] **Subagent track UI pattern** — Paseo has a collapsible lane above the composer
+      showing running child agents with live status. Closing a tab on a subagent is
+      layout-only (stays in the track); closing a root's tab archives it. If pilot
+      adds multi-agent orchestration (pi sub-agents), the track pattern is better
+      than burying children in a sidebar.
+- [ ] **Daemon as infrastructure: log rotation, startup health** — Paseo's daemon
+      writes `daemon.log` with pino + rotation, and has a `/api/health` endpoint.
+      Pilot has no structured logging or health endpoint. Add both for
+      production-readiness.
+
+### 🚫 Out of scope (paseo does these already — not pilot's lane)
+
+_These are features paseo ships that pilot should not build. They'd pull pilot
+toward "generic agent platform" rather than "deepest pi remote UI." If you need
+them, use paseo — or use paseo alongside pilot._
+
+- **Terminal with PTY streaming** — Paseo's pipeline: `node-pty → headless xterm
+  (worker) → coalescer → binary WS frames`. Highly optimized, battle-tested. Don't
+  rebuild this in pilot; pi sessions on the Mac Mini can be explored via SSH or a
+  separate terminal app.
+- **Voice mode (STT + TTS)** — Paseo ships local Sherpa-ONNX models for dictation
+  + real-time voice. Web Speech API dictation in the composer (which is in the
+  brainstorm) is the minimal viable alternative — don't build a full voice pipeline.
+- **Docker-style CLI (`paseo run/ls/attach/send`)** — Pilot's interface is the web
+  UI. A CLI is useful for scripting but adds a whole new surface to maintain.
+  Paseo's CLI already works with pi via `paseo run --provider pi ...`.
+- **MCP server for agent-to-agent orchestration** — Paseo exposes `create_agent`,
+  `send_agent_prompt`, schedules, worktrees via MCP. This is the orchestration
+  layer pilot deliberately isn't building. If agents need to spawn other agents,
+  use paseo's MCP server or pi's native sub-agent support.
+- **Scheduled agents (cron)** — Paseo's `ScheduleTarget` discriminated union
+  (send-to-existing vs create-new) with cron expressions. Useful but out of
+  scope for pilot's "drive pi from your phone" mission.
+- **Loop service (Ralph loops)** — Paseo's iterative agent loops with verifier
+  agents. Powerful but paseo-specific. Pilot doesn't need this.
+- **Service proxy** — Paseo reverse-proxies workspace scripts at
+  `script--branch--project.localhost`. Neat, but pilot doesn't run workspace
+  services.
+- **File explorer + diff UI** — Paseo has a full right-sidebar with file tree,
+  git diff, GitHub PR panel. Pilot's `@pierre/diffs` inline diff cards are the
+  right scope — don't build a full file explorer or git management UI.
+- **Chat rooms for agent-to-agent messaging** — Paseo has a chat system where
+  agents can `@mention` each other. Not pilot's domain.
+- **Multi-provider support** — Paseo supports 5+ agent CLIs under a unified
+  abstraction. Pilot is pi-only by design; the deep SDK integration is the
+  value proposition. Adding other providers would dilute this.
