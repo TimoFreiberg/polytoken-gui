@@ -6,9 +6,9 @@
       "runtimeExecutable": "bash",
       "runtimeArgs": [
         "-c",
-        "PILOT_DRIVER=mock PILOT_PORT=8788 PILOT_SERVER=http://localhost:8788 VITE_PORT=5273 bun run scripts/dev.ts"
+        "PILOT_DRIVER=mock bun run scripts/dev.ts"
       ],
-      "port": 5273
+      "autoPort": true
     },
     {
       "name": "pilot-real",

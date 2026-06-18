@@ -62,15 +62,17 @@ run, override `PILOT_E2E_SERVER_PORT` / `PILOT_E2E_VITE_PORT` (see
 ## Verifying the UI (agent-legible introspection)
 
 This is set up so you can verify autonomously — use it.
-- **Launch + screenshot:** the `Claude_Preview` config named `pilot` (port 5273)
-  runs the **mock driver** — it boots deterministic fixture sessions + the `/?dev`
-  dev bar, which is what you want for UI work (no running pi needed).
-  `preview_start("pilot")` → `preview_screenshot`. Use `preview_resize` for
-  mobile/light/dark. Verify text/structure with `preview_snapshot`, errors with
-  `preview_console_logs`. (`pilot-real`, port 5173, runs the real pi driver for
-  eyeballing live output — rarely what you want from an agent.) `scripts/dev.ts`
-  gates Vite on the server's `/health`, so the page is connected on first load —
-  no "Offline" warmup window to wait through.
+- **Launch + screenshot:** the `Claude_Preview` config named `pilot` runs the
+  **mock driver** on an **auto-assigned free port** (`autoPort`, so parallel worktree
+  sessions never fight over one hardcoded port — `scripts/dev.ts` takes the harness's
+  `$PORT` for Vite and grabs its own free backend port). It boots deterministic fixture
+  sessions + the `/?dev` dev bar, which is what you want for UI work (no running pi
+  needed). `preview_start("pilot")` → `preview_screenshot`; the call's returned `port`
+  is where it landed. Use `preview_resize` for mobile/light/dark. Verify text/structure
+  with `preview_snapshot`, errors with `preview_console_logs`. (`pilot-real`, port 5173,
+  runs the real pi driver for eyeballing live output — rarely what you want from an
+  agent.) `scripts/dev.ts` gates Vite on the server's `/health`, so the page is
+  connected on first load — no "Offline" warmup window to wait through.
 - **Drive any UI state deterministically:** open `/?dev` to get a dev bar with
   buttons (`reply`, `confirm`, `trust`, `input`, `ambient`) that push the mock to
   that state. Or send a `{type:"mock", script}` WS message.
