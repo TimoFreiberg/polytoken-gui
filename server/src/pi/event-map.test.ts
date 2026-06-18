@@ -140,21 +140,58 @@ describe("mapPiEvent", () => {
     ).toEqual([]);
   });
 
-  test("assistant error -> runFailed", () => {
+  test("agent_end with an errored final assistant message -> runFailed", () => {
+    // An API error reaches the SDK as a message_end whose final assistant message has
+    // stopReason "error" + errorMessage; agent_end then closes the turn. We fail there.
     const out = mapPiEvent(
       pi({
-        type: "message_update",
-        assistantMessageEvent: {
-          type: "error",
-          reason: "error",
-          error: "boom",
-        },
+        type: "agent_end",
+        willRetry: false,
+        messages: [
+          { role: "user", content: "hi" },
+          {
+            role: "assistant",
+            content: [],
+            stopReason: "error",
+            errorMessage: "529 overloaded",
+          },
+        ],
       }),
       ctx,
     );
     expect(out[0]).toMatchObject({
       type: "runFailed",
-      error: { message: "boom" },
+      error: { message: "529 overloaded" },
+    });
+  });
+
+  test("agent_end whose last assistant turn succeeded -> runCompleted", () => {
+    const out = mapPiEvent(
+      pi({
+        type: "agent_end",
+        willRetry: false,
+        messages: [
+          { role: "assistant", content: [], stopReason: "stop" },
+          { role: "toolResult", content: "ok" },
+        ],
+      }),
+      ctx,
+    );
+    expect(out[0]).toMatchObject({ type: "runCompleted" });
+  });
+
+  test("errored assistant turn with no errorMessage -> generic runFailed text", () => {
+    const out = mapPiEvent(
+      pi({
+        type: "agent_end",
+        willRetry: false,
+        messages: [{ role: "assistant", content: [], stopReason: "error" }],
+      }),
+      ctx,
+    );
+    expect(out[0]).toMatchObject({
+      type: "runFailed",
+      error: { message: "The model returned an error" },
     });
   });
 

@@ -158,6 +158,22 @@ describe("historyToEvents", () => {
     });
   });
 
+  test("an errored assistant turn yields an inline error notice", () => {
+    const items = transcript([
+      { role: "user", content: "go" },
+      {
+        role: "assistant",
+        content: [],
+        stopReason: "error",
+        errorMessage: "529 overloaded",
+      },
+    ]);
+    expect(items.find((i) => i.kind === "notice")).toMatchObject({
+      level: "error",
+      text: "529 overloaded",
+    });
+  });
+
   test("consecutive turns separate into distinct assistant bubbles", () => {
     const items = transcript([
       { role: "user", content: "go" },

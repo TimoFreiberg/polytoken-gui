@@ -46,11 +46,34 @@ export function mapPiEvent(
         { ...meta, type: "sessionUpdated", snapshot: ctx.snapshot("running") },
       ];
 
-    case "agent_end":
-      // willRetry = overflow auto-retry; the turn isn't really done yet.
-      return ev.willRetry
-        ? []
-        : [{ ...meta, type: "runCompleted", snapshot: ctx.snapshot("idle") }];
+    case "agent_end": {
+      // willRetry = overflow/retryable auto-retry; the turn isn't really done yet.
+      if (ev.willRetry) return [];
+      // An API error (overloaded, rate limit, auth, quota, network drop, …) is NOT
+      // delivered as a message_update "error" event: agent-core consumes the provider
+      // error into a message_end, and the turn's FINAL assistant message carries
+      // stopReason "error" + errorMessage (agent-loop.ts case "error"). Mirror pi's TUI,
+      // which surfaces message.errorMessage. Scan from the end for the last assistant
+      // message (skipping trailing toolResults) and fail the run if it errored.
+      for (let i = ev.messages.length - 1; i >= 0; i--) {
+        const m = ev.messages[i];
+        if (!m || m.role !== "assistant") continue;
+        if (m.stopReason === "error")
+          return [
+            {
+              ...meta,
+              type: "runFailed",
+              error: {
+                message: m.errorMessage ?? "The model returned an error",
+              },
+            },
+          ];
+        break; // last assistant turn was fine → normal completion
+      }
+      return [
+        { ...meta, type: "runCompleted", snapshot: ctx.snapshot("idle") },
+      ];
+    }
 
     case "message_update": {
       const a = ev.assistantMessageEvent;
@@ -67,10 +90,10 @@ export function mapPiEvent(
             channel: "thinking",
           },
         ];
-      if (a.type === "error")
-        return [
-          { ...meta, type: "runFailed", error: { message: asText(a.error) } },
-        ];
+      // NB: an API/provider error is NOT surfaced here. agent-core never re-emits the
+      // provider's `{type:"error"}` as a message_update — it folds it into a message_end
+      // whose final assistant message has stopReason "error". We fail the run from
+      // `agent_end` (above), the single choke point that also carries willRetry.
       return [];
     }
 

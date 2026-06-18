@@ -31,6 +31,9 @@ export interface HistoryMessage {
   // ToolResultMessage and the custom message types all carry this; we surface it so
   // a reloaded transcript shows real times instead of synthetic ordering markers.
   readonly timestamp?: number;
+  // assistant: a failed turn (API error) carries these instead of content
+  readonly stopReason?: string;
+  readonly errorMessage?: string;
   // toolResult
   readonly toolCallId?: string;
   readonly toolName?: string;
@@ -132,6 +135,21 @@ export function historyToEvents(
             });
           }
         }
+        // A turn that ended in an API error persists with stopReason "error" and an
+        // errorMessage (often with empty content). Surface it as an inline error
+        // notice so a reloaded/refocused session shows the failure the live path
+        // raised via runFailed — not a silently empty assistant bubble.
+        if (m.stopReason === "error")
+          out.push({
+            ...meta(m.timestamp),
+            type: "hostUiRequest",
+            request: {
+              kind: "notify",
+              requestId: `err-${seq}`,
+              message: m.errorMessage ?? "The model returned an error",
+              level: "error",
+            },
+          });
         break;
       }
 
