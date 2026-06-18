@@ -22,6 +22,10 @@ export interface MapCtx {
   toolMeta(name: string): { label?: string; description?: string };
   /** Build a snapshot reflecting the current title/config at a given status. */
   snapshot(status: SessionStatus): SessionSnapshot;
+  /** The session's live run status. Used by out-of-band events (a rename) whose snapshot
+   *  must reflect reality, not assume idle — an idle snapshot mid-turn closes the
+   *  streaming bubble and clears the running indicator. */
+  liveStatus(): SessionStatus;
 }
 
 function asText(v: unknown): string {
@@ -107,8 +111,14 @@ export function mapPiEvent(
       ];
 
     case "session_info_changed":
+      // A rename (or other info change) can land mid-turn; reflect the live status so
+      // it doesn't masquerade as an idle turn boundary.
       return [
-        { ...meta, type: "sessionUpdated", snapshot: ctx.snapshot("idle") },
+        {
+          ...meta,
+          type: "sessionUpdated",
+          snapshot: ctx.snapshot(ctx.liveStatus()),
+        },
       ];
 
     case "auto_retry_start":

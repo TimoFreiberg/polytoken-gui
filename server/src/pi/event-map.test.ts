@@ -20,6 +20,7 @@ const ctx: MapCtx = {
     updatedAt: "t",
     config: { modelId: "m" },
   }),
+  liveStatus: () => "idle",
 };
 // pi's event union is broad; cast synthetic literals to it for these mapping tests.
 const pi = (e: unknown): AgentSessionEvent => e as AgentSessionEvent;
@@ -154,6 +155,22 @@ describe("mapPiEvent", () => {
     expect(out[0]).toMatchObject({
       type: "runFailed",
       error: { message: "boom" },
+    });
+  });
+
+  test("session_info_changed -> sessionUpdated at the live status (not forced idle)", () => {
+    // At rest: idle.
+    expect(
+      mapPiEvent(pi({ type: "session_info_changed", name: "n" }), ctx)[0],
+    ).toMatchObject({ type: "sessionUpdated", snapshot: { status: "idle" } });
+    // Mid-turn (rename while streaming): must stay running, else the fold reducer
+    // closes the open assistant bubble and the running indicator clears.
+    const running: MapCtx = { ...ctx, liveStatus: () => "running" };
+    expect(
+      mapPiEvent(pi({ type: "session_info_changed", name: "n" }), running)[0],
+    ).toMatchObject({
+      type: "sessionUpdated",
+      snapshot: { status: "running" },
     });
   });
 

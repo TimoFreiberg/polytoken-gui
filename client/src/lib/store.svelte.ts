@@ -381,6 +381,17 @@ class PilotStore {
     );
     send({ type: "setArchived", path, archived });
   }
+  /** Rename a session by path. Optimistic — sets the local displayName now so the row
+   *  (and, for the active session, the header) react instantly; the server's
+   *  `sessionList` re-broadcast reconciles. Empty names are dropped (not a rename). */
+  renameSession(path: string, name: string): void {
+    const next = name.trim();
+    if (!next) return;
+    this.sessions = this.sessions.map((s) =>
+      s.path === path ? { ...s, displayName: next } : s,
+    );
+    send({ type: "renameSession", path, name: next });
+  }
   get activeSessionPath(): string | null {
     return (
       this.sessions.find((s) => s.sessionId === this.activeSessionId)?.path ??

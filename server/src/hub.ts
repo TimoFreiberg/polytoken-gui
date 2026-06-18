@@ -270,6 +270,28 @@ export class SessionHub {
     await this.broadcastSessionList();
   }
 
+  /** Rename a session, then re-broadcast the list so every client's sidebar reflects
+   *  the new name. A warm session also emits a `sessionUpdated` (via the driver) so its
+   *  header title updates live. Empty names are dropped here — clearing a name isn't a
+   *  rename. Errors go back to the requester via the `error` channel. */
+  private async applyRename(
+    send: Send,
+    path: string,
+    name: string,
+  ): Promise<void> {
+    if (!name.trim()) return;
+    try {
+      await this.driver.renameSession?.(path, name.trim());
+    } catch (e) {
+      send({
+        type: "error",
+        message: e instanceof Error ? e.message : String(e),
+      });
+      return;
+    }
+    await this.broadcastSessionList();
+  }
+
   /** Re-scan available sessions and broadcast the list + the active session id
    *  (derived from the folded state, so the picker's "active" row is authoritative). */
   private async broadcastSessionList(): Promise<void> {
@@ -414,6 +436,9 @@ export class SessionHub {
         return;
       case "setArchived":
         void this.applyArchive(send, msg.path, msg.archived);
+        return;
+      case "renameSession":
+        void this.applyRename(send, msg.path, msg.name);
         return;
       case "listCommands":
         void this.broadcastCommandList();

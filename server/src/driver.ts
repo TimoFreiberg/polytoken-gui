@@ -40,6 +40,12 @@ export interface PilotDriver {
    *  a bare driver may omit it and the hub guards with `?.`. The hub re-broadcasts the
    *  session list afterward so every client's active-only filter updates. */
   setArchived?(path: string, archived: boolean): Promise<void>;
+  /** Rename a session by its .jsonl path, writing pi's display name. Optional: a bare
+   *  driver may omit it (the hub guards with `?.`). A warm (open) session is renamed
+   *  through its live AgentSession so its header title updates immediately; a cold one
+   *  is renamed by appending a `session_info` entry to its file. The hub re-broadcasts
+   *  the session list afterward so every client's sidebar reflects the new name. */
+  renameSession?(path: string, name: string): Promise<void>;
   /**
    * Switch the active session to the given .jsonl path. Resolves with the SEED
    * events (a `sessionOpened` + the replayed history) for the now-active session;

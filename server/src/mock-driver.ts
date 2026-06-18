@@ -213,6 +213,14 @@ export class MockDriver implements PilotDriver {
     );
   }
 
+  async renameSession(path: string, name: string): Promise<void> {
+    const next = name.trim();
+    if (!next) return;
+    this.sessions = this.sessions.map((s) =>
+      s.path === path ? { ...s, displayName: next } : s,
+    );
+  }
+
   async openSession(path: string): Promise<SessionDriverEvent[]> {
     this.cancelTimers(); // a switch ends any in-flight stream
     return mockSessionSeed(path);

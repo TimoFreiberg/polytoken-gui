@@ -340,6 +340,10 @@ export async function createPiDriver(
         now,
         toolMeta: (name) => toolMetaFor(ws, name),
         snapshot: (status) => snapshotFor(ws, status),
+        // The live run status, for out-of-band events (e.g. a rename mid-turn) that
+        // must NOT report idle — that would close the streaming bubble + clear the
+        // running indicator. Turn-boundary events still hardcode running/idle.
+        liveStatus: () => (ws.session.isStreaming ? "running" : "idle"),
       })) {
         emit(out);
       }
@@ -474,6 +478,25 @@ export async function createPiDriver(
       // NOT append to the session file — pi's list path drops custom entries, so that
       // copy would be write-only and force a per-session scan to read back.
       archiveStore.set(path, archived);
+    },
+
+    async renameSession(path: string, name: string) {
+      const next = name.trim();
+      if (!next) return;
+      // A warm session owns an open AgentSession on this JSONL — rename through it so the
+      // write goes through the single owning writer AND emits `session_info_changed`,
+      // which re-snapshots the header title live (event-map.ts). Opening a second
+      // SessionManager on the same file would race that writer.
+      const warmSession = [...warm.values()].find(
+        (w) => w.session.sessionFile === path,
+      );
+      if (warmSession) {
+        warmSession.session.setSessionName(next);
+        return;
+      }
+      // Cold session: append a `session_info` entry directly, exactly as pi's TUI rename
+      // does. No live AgentSession, so the hub's list re-broadcast is what surfaces it.
+      SessionManager.open(path).appendSessionInfo(next);
     },
 
     async openSession(path: string) {

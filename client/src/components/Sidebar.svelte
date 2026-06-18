@@ -57,6 +57,30 @@
     store.setArchived(s.path, !s.archived);
     closeMenu();
   }
+
+  // Inline rename. Holds the path of the session being renamed (one at a time), the
+  // working text, and the input ref so we can focus+select on open.
+  let renamingFor = $state<string | null>(null);
+  let renameValue = $state("");
+  let renameInput = $state<HTMLInputElement | null>(null);
+  async function startRename(s: SessionListEntry): Promise<void> {
+    closeMenu();
+    renamingFor = s.path;
+    // Prefill the current name (not the preview/path fallback) — renaming starts from
+    // what's actually set, blank if unnamed.
+    renameValue = s.displayName ?? "";
+    await tick();
+    renameInput?.focus();
+    renameInput?.select();
+  }
+  function submitRename(): void {
+    if (!renamingFor) return;
+    store.renameSession(renamingFor, renameValue);
+    renamingFor = null;
+  }
+  function cancelRename(): void {
+    renamingFor = null;
+  }
   // Dismiss the row menu on an outside click or Escape. Deferred so the opening click
   // doesn't immediately re-close it.
   $effect(() => {
@@ -291,6 +315,45 @@
                 {@const st = store.sessionStatus(s.sessionId)}
                 {@const rel = relativeTime(s.updatedAt, now)}
                 <li class="row-wrap">
+                  {#if renamingFor === s.path}
+                    <form
+                      class="rename"
+                      onsubmit={(e) => {
+                        e.preventDefault();
+                        submitRename();
+                      }}
+                    >
+                      <input
+                        class="rename-input"
+                        type="text"
+                        bind:this={renameInput}
+                        bind:value={renameValue}
+                        spellcheck="false"
+                        autocapitalize="off"
+                        autocorrect="off"
+                        placeholder="Session name"
+                        title="New session name — Enter to save, Esc to cancel"
+                        aria-label="New session name"
+                        onkeydown={(e) => {
+                          if (e.key === "Escape") cancelRename();
+                        }}
+                      />
+                      <div class="rename-actions">
+                        <button
+                          class="ghost"
+                          type="button"
+                          title="Cancel rename (Esc)"
+                          onclick={cancelRename}>Cancel</button
+                        >
+                        <button
+                          class="primary"
+                          type="submit"
+                          title="Save the new session name (Enter)"
+                          disabled={!renameValue.trim()}>Save</button
+                        >
+                      </div>
+                    </form>
+                  {:else}
                   <div class="row-line">
                     <button
                       class="row"
@@ -344,6 +407,12 @@
                       <button
                         class="menu-item"
                         role="menuitem"
+                        title="Rename this session"
+                        onclick={() => startRename(s)}>Rename</button
+                      >
+                      <button
+                        class="menu-item"
+                        role="menuitem"
                         title={s.archived
                           ? "Restore this session to the active list"
                           : "Hide this session from the active list"}
@@ -351,6 +420,7 @@
                         >{s.archived ? "Unarchive" : "Archive"}</button
                       >
                     </div>
+                  {/if}
                   {/if}
                 </li>
               {/each}
@@ -714,6 +784,28 @@
   }
   .menu-item:hover {
     background: var(--surface-sunken);
+  }
+  /* Inline rename: replaces the row in place while editing. */
+  .rename {
+    padding: 4px 6px 6px;
+  }
+  .rename-input {
+    width: 100%;
+    font-size: 13.5px;
+    color: var(--text);
+    background: var(--surface);
+    border: 1px solid var(--accent);
+    border-radius: var(--radius-sm);
+    padding: 7px 10px;
+  }
+  .rename-input:focus {
+    outline: none;
+  }
+  .rename-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 6px;
+    margin-top: 6px;
   }
   .row-body {
     display: flex;

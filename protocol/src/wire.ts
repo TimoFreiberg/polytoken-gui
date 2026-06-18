@@ -129,6 +129,11 @@ export type ClientMessage =
    *  The flag is pilot-side state (D-archive); the server persists it and re-broadcasts
    *  the session list so every client's active-only filter updates. */
   | { type: "setArchived"; path: string; archived: boolean }
+  /** Rename a session (by its .jsonl `path`). Writes pi's session display name (a
+   *  `session_info` entry); the server re-broadcasts the session list so every client's
+   *  sidebar updates, and a warm session's header title updates live. Empty `name` is a
+   *  no-op server-side (the client shouldn't submit one). */
+  | { type: "renameSession"; path: string; name: string }
   /** Ask the server to re-read the focused session's commands and re-broadcast them. */
   | { type: "listCommands" }
   /** Answer a project-trust card (D12). `choice` indexes the request's `options`;
