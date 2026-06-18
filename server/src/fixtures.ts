@@ -95,6 +95,14 @@ export const MOCK_USAGE: SessionUsage = {
   percent: 23.6,
 };
 
+/** A nearly-full window, so the sidebar/meter ring exercises the hot-color band
+ *  (82% → dark orange) next to MOCK_USAGE's healthy green. */
+export const MOCK_USAGE_HIGH: SessionUsage = {
+  tokens: 164000,
+  contextWindow: 200000,
+  percent: 82,
+};
+
 /** The mock's starting model selection (matches the greeting snapshot). */
 export const MOCK_DEFAULT_CONFIG: SessionConfig = {
   provider: "anthropic",
@@ -678,7 +686,9 @@ export const SESSION_LIST: SessionListEntry[] = [
     cwd: WORKSPACE.path,
     displayName: "Wire up the WebSocket bridge",
     preview: "Add a /health route to the server and a smoke test for it.",
-    messageCount: 6,
+    userMessageCount: 3,
+    // The active fixture session is "loaded", so it carries a context gauge.
+    usage: MOCK_USAGE,
     updatedAt: isoAgo(5 * 60_000),
     createdAt: isoAgo(2 * DAY_MS),
     archived: false,
@@ -689,7 +699,9 @@ export const SESSION_LIST: SessionListEntry[] = [
     cwd: WORKSPACE.path,
     displayName: "Explore the fold reducer",
     preview: "How does foldEvent assemble the transcript?",
-    messageCount: 12,
+    userMessageCount: 5,
+    // A second loaded session, deep into its window — drives the hot-color ring.
+    usage: MOCK_USAGE_HIGH,
     updatedAt: isoAgo(2 * 60 * 60_000),
     createdAt: isoAgo(3 * DAY_MS),
     archived: false,
@@ -699,7 +711,8 @@ export const SESSION_LIST: SessionListEntry[] = [
     path: "/sessions/scratch-session.jsonl",
     cwd: "/Users/timo/src/scratch",
     preview: "quick scratch session",
-    messageCount: 2,
+    // No usage: this session isn't loaded, so the sidebar shows no ring for it.
+    userMessageCount: 1,
     updatedAt: isoAgo(6 * 60 * 60_000),
     createdAt: isoAgo(4 * DAY_MS),
     archived: false,
@@ -710,7 +723,7 @@ export const SESSION_LIST: SessionListEntry[] = [
     cwd: WORKSPACE.path,
     displayName: "Archived experiment",
     preview: "An old experiment I tucked away.",
-    messageCount: 8,
+    userMessageCount: 4,
     updatedAt: isoAgo(60 * 60_000),
     createdAt: isoAgo(5 * DAY_MS),
     archived: true,
@@ -721,7 +734,7 @@ export const SESSION_LIST: SessionListEntry[] = [
     cwd: "/Users/timo/src/stale-proj",
     displayName: "Old spike",
     preview: "A spike from a couple of weeks ago.",
-    messageCount: 4,
+    userMessageCount: 2,
     updatedAt: isoAgo(10 * DAY_MS),
     createdAt: isoAgo(12 * DAY_MS),
     archived: false,
@@ -793,7 +806,7 @@ export const NEW_SESSION_ENTRY: SessionListEntry = {
   cwd: WORKSPACE.path,
   displayName: "New session",
   preview: "",
-  messageCount: 0,
+  userMessageCount: 0,
   updatedAt: isoAgo(0),
   createdAt: isoAgo(0),
   archived: false,

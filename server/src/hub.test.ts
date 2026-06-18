@@ -83,7 +83,7 @@ class FakeDriver implements PilotDriver {
         path: "/s.jsonl",
         cwd: "/w",
         preview: "a",
-        messageCount: 1,
+        userMessageCount: 1,
         updatedAt: "t",
         createdAt: "t",
         archived: this.archiveCalls.some(
@@ -95,7 +95,7 @@ class FakeDriver implements PilotDriver {
         path: "/s2.jsonl",
         cwd: "/w",
         preview: "b",
-        messageCount: 2,
+        userMessageCount: 2,
         updatedAt: "t",
         createdAt: "t",
         archived: false,

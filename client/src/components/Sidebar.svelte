@@ -4,6 +4,7 @@
   import { store } from "../lib/store.svelte.js";
   import { filterSessions } from "../lib/session-filter.js";
   import { relativeTime } from "../lib/relative-time.js";
+  import ContextRing from "./ContextRing.svelte";
 
   function basename(p: string): string {
     const parts = p.replace(/\/+$/, "").split("/");
@@ -401,7 +402,7 @@
                         >
                         <span class="meta">
                           <span class="msg-count"
-                            >{s.messageCount} msg{#if s.archived} ·
+                            >{s.userMessageCount} msg{#if s.archived} ·
                               archived{/if}{#if s.worktree}
                               ·
                               <span
@@ -410,11 +411,20 @@
                                 >worktree</span
                               >{/if}</span
                           >
-                          {#if rel}
-                            <span class="time" title={`Last activity ${rel}`}
-                              >{rel}</span
-                            >
-                          {/if}
+                          <span class="meta-end">
+                            {#if s.usage}
+                              <ContextRing
+                                usage={s.usage}
+                                size={12}
+                                showLabel={false}
+                              />
+                            {/if}
+                            {#if rel}
+                              <span class="time" title={`Last activity ${rel}`}
+                                >{rel}</span
+                              >
+                            {/if}
+                          </span>
                         </span>
                       </span>
                     </button>
@@ -930,6 +940,13 @@
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
+  }
+  /* Right side of the meta line: the optional context-fill ring + the timestamp. */
+  .meta-end {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-shrink: 0;
   }
   /* Last-activity timestamp ("15m ago"), right-aligned under the name. */
   .time {

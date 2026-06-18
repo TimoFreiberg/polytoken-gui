@@ -133,10 +133,19 @@ export interface SessionListEntry {
   readonly cwd: string;
   readonly displayName?: string;
   readonly preview: string;
-  readonly messageCount: number;
+  /** Count of the operator's own turns (messages with role "user") — NOT every
+   *  message. pi's session files interleave assistant + toolResult messages, so a
+   *  raw message count balloons with tool traffic; the sidebar wants "how many times
+   *  did I write something", which is this. */
+  readonly userMessageCount: number;
   readonly updatedAt: Timestamp;
   readonly createdAt: Timestamp;
   readonly parentSessionPath?: string;
+  /** Context-window fill, present only for sessions already loaded in memory (the
+   *  driver can read it for free from a warm session). Disk-only sessions omit it —
+   *  we don't load a session just to show its gauge — so the sidebar shows a ring
+   *  only where this is set. */
+  readonly usage?: SessionUsage;
   /** Whether the operator has archived this session (pilot-side flag; the driver
    *  resolves it at list time). Archived sessions are hidden by the sidebar's
    *  active-only filter, alongside ones untouched for >7 days. */

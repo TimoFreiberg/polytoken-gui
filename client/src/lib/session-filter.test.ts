@@ -11,7 +11,7 @@ function entry(over: Partial<SessionListEntry> = {}): SessionListEntry {
     path: "/s.jsonl",
     cwd: "/proj",
     preview: "",
-    messageCount: 1,
+    userMessageCount: 1,
     updatedAt: isoAgo(0),
     createdAt: isoAgo(0),
     archived: false,

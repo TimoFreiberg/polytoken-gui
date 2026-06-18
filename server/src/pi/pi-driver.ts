@@ -43,6 +43,7 @@ import type {
   SessionRef,
   SessionSnapshot,
   SessionStatus,
+  SessionUsage,
 } from "@pilot/protocol";
 import { ArchiveStore } from "../archive-store.js";
 import { config } from "../config.js";
@@ -63,6 +64,7 @@ import {
 import { firstUserPreview, mergeSessionLists } from "./session-list.js";
 import { makeTrustResolver, type TrustAsk } from "./trust.js";
 import { PiUiBridge } from "./ui-bridge.js";
+import { countUserMessages } from "./user-message-count.js";
 
 export interface PiDriverOptions {
   cwd?: string;
@@ -250,12 +252,6 @@ export async function createPiDriver(
     status: SessionStatus,
   ): SessionSnapshot => {
     const m = ws.session.model;
-    // Context-window fill for the composer meter. getContextUsage() walks the branch
-    // + estimates tokens over the message list — O(messages), so it's fine here (only
-    // called at turn boundaries / config changes, never on the per-delta path) but
-    // would not be on the hot stream. Returns undefined when no model / no window;
-    // re-shaped to a plain object so nothing pi-internal leaks onto the wire.
-    const cu = ws.session.getContextUsage();
     return {
       ref: ws.ref,
       workspace: {
@@ -272,14 +268,23 @@ export async function createPiDriver(
         thinkingLevel: ws.session.thinkingLevel,
         availableThinkingLevels: ws.session.getAvailableThinkingLevels(),
       },
-      usage: cu
-        ? {
-            tokens: cu.tokens,
-            contextWindow: cu.contextWindow,
-            percent: cu.percent,
-          }
-        : undefined,
+      usage: usageFor(ws),
     };
+  };
+
+  // Context-window fill for a warm session, re-shaped to the wire type so nothing
+  // pi-internal leaks. getContextUsage() walks the branch + estimates tokens over the
+  // message list — O(messages), fine at turn boundaries / list refreshes, never on the
+  // per-delta path. Undefined when the session has no model / no known window.
+  const usageFor = (ws: WarmSession): SessionUsage | undefined => {
+    const cu = ws.session.getContextUsage();
+    return cu
+      ? {
+          tokens: cu.tokens,
+          contextWindow: cu.contextWindow,
+          percent: cu.percent,
+        }
+      : undefined;
   };
 
   // Emit a fresh snapshot for a warm session (after a model/thinking change). Status
@@ -431,15 +436,21 @@ export async function createPiDriver(
   const initial = await warmUp(SessionManager.continueRecent(launchCwd));
   focus(initial.ref.sessionId);
 
-  const toEntry = (
+  const toEntry = async (
     info: Awaited<ReturnType<typeof SessionManager.list>>[number],
-  ): SessionListEntry => ({
+  ): Promise<SessionListEntry> => ({
     sessionId: info.id,
     path: info.path,
     cwd: info.cwd,
     displayName: info.name,
     preview: info.firstMessage ?? "",
-    messageCount: info.messageCount,
+    // info.messageCount counts user + assistant + toolResult; the sidebar wants only
+    // the operator's turns, so re-scan for role-"user" entries (cached by mtime+total).
+    userMessageCount: await countUserMessages(
+      info.path,
+      info.modified.getTime(),
+      info.messageCount,
+    ),
     updatedAt: info.modified.toISOString(),
     createdAt: info.created.toISOString(),
     parentSessionPath: info.parentSessionPath,
@@ -469,9 +480,9 @@ export async function createPiDriver(
       cwd: ws.cwd,
       displayName: ws.session.sessionName,
       preview: firstUserPreview(messages),
-      messageCount: messages.filter(
-        (m) => m.role === "user" || m.role === "assistant",
-      ).length,
+      userMessageCount: messages.filter((m) => m.role === "user").length,
+      // usage is attached uniformly by the post-merge overlay in listSessions (which
+      // covers warm-only and disk-superseded entries alike), so it's omitted here.
       updatedAt: nowIso,
       createdAt: nowIso,
       archived: archiveStore.has(path),
@@ -562,13 +573,27 @@ export async function createPiDriver(
     async listSessions() {
       // Every session on the machine, so the sidebar can group them by project dir
       // (the owner's choice — a cross-project navigator, not just launchCwd's sessions).
-      const onDisk = (await SessionManager.listAll()).map(toEntry);
+      const onDisk = await Promise.all(
+        (await SessionManager.listAll()).map(toEntry),
+      );
       // Surface warm sessions not yet persisted to disk (e.g. a just-created one) so the
       // sidebar shows them immediately; mergeSessionLists dedupes against the disk list.
       const warmEntries = [...warm.values()]
         .map(warmEntry)
         .filter((e): e is SessionListEntry => e !== null);
-      return mergeSessionLists(onDisk, warmEntries);
+      const merged = mergeSessionLists(onDisk, warmEntries);
+      // Overlay live context usage onto whichever entry won the merge (the disk entry
+      // supersedes the warm placeholder, so usage set only on warmEntry would be lost).
+      // Sessions not currently warm get no usage — we don't load them to compute it.
+      const warmUsage = new Map<SessionId, SessionUsage>();
+      for (const ws of warm.values()) {
+        const u = usageFor(ws);
+        if (u) warmUsage.set(ws.ref.sessionId, u);
+      }
+      return merged.map((e) => {
+        const u = warmUsage.get(e.sessionId);
+        return u ? { ...e, usage: u } : e;
+      });
     },
 
     async setArchived(path: string, archived: boolean) {
