@@ -33,8 +33,14 @@ _(clear — nothing blocking; pull the next item up from Important)_
       Tailscale, which is the bulk of the cost.
 - [ ] **Workspace icon instead of text label in sidebar** — replace the "WORKSPACE: …" label on
       session rows with a compact icon (no text), matching the Claude app's visual density.
+- [ ] **Sort projects alphabetically in sidebar** — projects grouped by name A→Z;
+      sessions within each project stay sorted by last-used (most recent on top).
 - [ ] **Remove hover tooltip on session titles in the sidebar** — intentional: it's visually
       noisy and doesn't add information beyond what's already visible in the title itself.
+- [ ] **Hide thinking blocks behind a toggle** — thinking blocks are visually noisy and
+      rarely useful to a human driver. Add a toggle (default off, tucked in Settings) that
+      hides `<thinking>` content from the transcript; when off, the block is collapsed or
+      replaced with a subtle "thinking…" placeholder.
 - [ ] **Extensions enable/disable view** + compatibility-issue surfacing
 - [ ] **Per-session system-prompt override** — let a new session start with a custom
       system prompt instead of pi's default (in the new-session draft, and/or a global
