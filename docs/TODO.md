@@ -13,7 +13,17 @@ _(clear — nothing blocking; pull the next item up from Important)_
 
 ## 🟡 Important
 
-- [ ] desktop app packaging. i know nothing about running a web app like a desktop app, so proposals welcome. i'd like to have a .app in macos that i can click in my dock. so far only macos necessary
+- [ ] **Desktop app (macOS .app), local-first** — deferred to a dedicated session.
+      Direction (owner, 2026-06-18): the app should **run pi agents locally by default**
+      and spawn the pilot server locally on launch, with connecting to a remote server as
+      an *option*, not the default. Leaning toward a **mini Swift / WKWebView wrapper**
+      around the local server URL — a clickable, dockable `.app`. macOS only for now.
+      ⚠️ **Blocker to handle there:** pi spawning must **disregard the server's cwd**.
+      `warmUp`'s `launchCwd = opts.cwd ?? process.cwd()` (`server/src/pi/pi-driver.ts`)
+      both defaults a session's cwd *and* feeds the trust resolver (the launch cwd is
+      implicitly trusted, D12). When the app spawns the server from an arbitrary dir, that
+      dir must NOT silently become a trusted default. Audit every reader of `launchCwd`
+      before changing it — it's a state-interpretation change, not a one-liner.
 
 ## 🟢 Polish / fast-follow
 
@@ -30,9 +40,6 @@ _(clear — nothing blocking; pull the next item up from Important)_
       analogous to the Claude app's colored circle (green → yellow → red as the
       context window fills). Color could map to token-budget thresholds from the
       snapshot's `config`/usage fields; exact threshold values TBD
-- [ ] **(discussion needed) Auto session titling via cheapest model** — run a
-      lightweight model on session start to generate a title from the first user
-      prompt, instead of showing "New Session" indefinitely
 - [ ] **Realistic mock tool-event timestamps** — the mock's `ts()` is a sequential
       counter, so any duration derived from `toolStarted`→`toolFinished` timestamps
       renders as a meaningless ~1ms in the dev/preview UI. Stamp tool fixtures with a
@@ -225,12 +232,6 @@ that pilot should NOT build — they're paseo's domain, not pilot's differentiat
       paseo's "daemon as infrastructure" applies (pilot already has `/health` in
       `server/src/index.ts`): a rotating `daemon.log` for the launchd-run server so a
       background crash leaves a trail.
-- [ ] **Render pi's native sub-agents** (conditional, low priority) — *not* paseo's
-      orchestration track; pilot deliberately isn't the orchestration layer (D9, and
-      see 🚫 below). But pi has native sub-agents — if/when they surface in the event
-      stream, render them as a collapsible lane rather than burying them. Display, not
-      orchestrate.
-
 ### 🚫 Out of scope (paseo does these already — not pilot's lane)
 
 _These are features paseo ships that pilot should not build. They'd pull pilot
