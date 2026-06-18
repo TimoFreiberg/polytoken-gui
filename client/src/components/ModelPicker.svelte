@@ -66,6 +66,16 @@
   function toggle(which: "model" | "thinking"): void {
     open = open === which ? "none" : which;
   }
+
+  // React to global hotkeys dispatched from StatusHeader via the store.
+  let lastHotkeyN = $state(0);
+  $effect(() => {
+    const hk = store.hotkeyAction;
+    if (hk && hk.n !== lastHotkeyN) {
+      lastHotkeyN = hk.n;
+      toggle(hk.which);
+    }
+  });
   function pickModel(provider: string, modelId: string): void {
     if (!(provider === cfg.provider && modelId === cfg.modelId))
       store.setModel(provider, modelId);
@@ -82,7 +92,7 @@
     <div class="anchor">
       <button
         class="badge"
-        title={modelTitle}
+        title={modelTitle + " (⌘⇧M)"}
         disabled={!hasModels}
         onclick={() => toggle("model")}
       >
@@ -136,7 +146,7 @@
 
   {#if thinking}
     <div class="anchor">
-      <button class="badge" title="Thinking level" onclick={() => toggle("thinking")}>
+      <button class="badge" title="Thinking level (⌘⇧E / ⌘⇧T)" onclick={() => toggle("thinking")}>
         <span class="badge-text">{thinking}</span>
         {#if levels.length > 0}<span class="chev" class:up={open === "thinking"}>▾</span>{/if}
       </button>

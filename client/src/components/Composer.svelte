@@ -8,7 +8,13 @@
 
   let deliverAs = $state<"steer" | "followUp">("steer");
   let ta = $state<HTMLTextAreaElement>();
+  let box = $state<HTMLDivElement>();
   let preview = $state(false);
+  // Expand toggle: collapsed keeps the composer modest so more of the session
+  // shows; expanded trades that for reading a long prompt whole. Auto-resets on send.
+  let expanded = $state(false);
+  // Tracked so the caps re-derive on window resize (the cap scales with viewport).
+  let winH = $state(window.innerHeight);
 
   const widgets = $derived(
     Object.values(store.session.ambient.widgets).filter((w) => w.placement === "aboveComposer"),
@@ -37,17 +43,41 @@
     if (slashSel >= slashItems.length) slashSel = 0;
   });
 
+  // Max textarea/preview height in px. Collapsed: floor at 3 lines so a scrollbar
+  // never shows below that, grow a little with the window, cap ~6.5 lines. Expanded:
+  // up to 62vh (well under "eats the whole screen") so a long prompt is readable.
+  const maxH = $derived(
+    expanded ? Math.min(winH * 0.62, 560) : Math.max(80, Math.min(winH * 0.22, 168)),
+  );
+
   function autosize() {
+    if (box) box.style.setProperty("--composer-max", `${maxH}px`);
     if (!ta) return;
     ta.style.height = "auto";
-    ta.style.height = `${Math.min(ta.scrollHeight, 220)}px`;
+    ta.style.height = `${Math.min(ta.scrollHeight, maxH)}px`;
   }
+
+  // Re-fit whenever the cap changes (expand toggle or window resize), in edit or
+  // preview mode — autosize no-ops on the textarea when it isn't mounted.
+  $effect(() => {
+    maxH;
+    autosize();
+  });
 
   function submit() {
     const text = store.composerDraft;
     if (!text.trim()) return;
     store.prompt(text, streaming ? deliverAs : undefined);
+    expanded = false;
     queueMicrotask(autosize);
+  }
+
+  function toggleExpand() {
+    expanded = !expanded;
+    queueMicrotask(() => {
+      ta?.focus();
+      autosize();
+    });
   }
 
   function onInput() {
@@ -72,6 +102,14 @@
   }
 
   function onKeydown(e: KeyboardEvent) {
+    // Alt+Up/Down resize the composer (checked before the slash menu's bare
+    // Arrow handling, which has no modifier).
+    if (e.altKey && (e.key === "ArrowUp" || e.key === "ArrowDown")) {
+      e.preventDefault();
+      expanded = e.key === "ArrowUp";
+      queueMicrotask(autosize);
+      return;
+    }
     if (slashOpen) {
       const n = slashItems.length;
       if (e.key === "ArrowDown" || (e.ctrlKey && e.key === "n")) {
@@ -132,8 +170,15 @@
       }
       ta.focus();
     }
+    function onResize() {
+      winH = window.innerHeight;
+    }
     window.addEventListener("keydown", onWindowKeydown);
-    return () => window.removeEventListener("keydown", onWindowKeydown);
+    window.addEventListener("resize", onResize);
+    return () => {
+      window.removeEventListener("keydown", onWindowKeydown);
+      window.removeEventListener("resize", onResize);
+    };
   });
 </script>
 
@@ -164,7 +209,16 @@
           onhover={(i) => (slashSel = i)}
         />
       {/if}
-      <div class="box" class:streaming>
+      <div class="box" class:streaming bind:this={box}>
+      <button
+        class="expand"
+        class:expanded
+        onclick={toggleExpand}
+        aria-pressed={expanded}
+        aria-label={expanded ? "Collapse composer" : "Expand composer"}
+        title={expanded ? "Collapse composer (⌥↓)" : "Expand composer (⌥↑)"}
+        tabindex="-1"
+      >{expanded ? "⌄" : "⌃"}</button>
       {#if showPreview}
         <div class="prose preview">{@html renderMarkdown(store.composerDraft)}</div>
       {:else}
@@ -273,6 +327,7 @@
     position: relative;
   }
   .box {
+    position: relative;
     display: flex;
     align-items: flex-end;
     gap: 8px;
@@ -285,6 +340,36 @@
   .box:focus-within {
     border-color: var(--accent);
   }
+  /* Drag-handle-style expand toggle, straddling the top border. Greyed out at
+     rest; revealed on hover (desktop) or focus-within (touch, which has no hover). */
+  .expand {
+    position: absolute;
+    top: 0;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    width: 32px;
+    height: 16px;
+    display: grid;
+    place-items: center;
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    background: var(--surface);
+    color: var(--text-faint);
+    font-size: 11px;
+    line-height: 1;
+    opacity: 0;
+    cursor: pointer;
+    z-index: 2;
+    transition: opacity 0.15s, color 0.15s;
+  }
+  .box:hover .expand,
+  .box:focus-within .expand,
+  .expand.expanded {
+    opacity: 1;
+  }
+  .expand:hover {
+    color: var(--text-muted);
+  }
   textarea {
     flex: 1;
     resize: none;
@@ -295,13 +380,18 @@
     font-family: inherit;
     font-size: 16px;
     line-height: 1.5;
-    max-height: 220px;
+    max-height: var(--composer-max, 168px);
+    /* Text wraps, so horizontal scroll is never wanted; the styled h-scrollbar
+       (app.css) would otherwise flicker in on subpixel overflow. Vertical only
+       appears once content passes the cap. */
+    overflow-x: hidden;
+    overflow-y: auto;
     padding: 4px 0;
   }
   .preview {
     flex: 1;
     min-width: 0;
-    max-height: 220px;
+    max-height: var(--composer-max, 168px);
     overflow-y: auto;
     padding: 4px 0;
     font-size: 16px;

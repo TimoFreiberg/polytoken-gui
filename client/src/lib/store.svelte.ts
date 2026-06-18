@@ -87,6 +87,10 @@ class PilotStore {
   swUpdateReady = $state(false);
   // The last prompt text sent — lets the run-failed error card re-send it on Retry.
   lastPrompt = $state("");
+  // Global hotkey dispatch — incremented so $effect catches every keystroke.
+  hotkeyAction = $state<{ which: "model" | "thinking"; n: number } | null>(
+    null,
+  );
 
   get connection(): ConnectionState {
     return connectionState();

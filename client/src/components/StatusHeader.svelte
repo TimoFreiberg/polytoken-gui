@@ -2,6 +2,20 @@
   import { store } from "../lib/store.svelte.js";
   import ModelPicker from "./ModelPicker.svelte";
 
+  let hotkeyN = $state(0);
+
+  function onWindowKeydown(e: KeyboardEvent) {
+    const mod = e.metaKey || e.ctrlKey;
+    if (!mod || !e.shiftKey) return;
+    if (e.key === "m" || e.key === "M") {
+      e.preventDefault();
+      store.hotkeyAction = { which: "model", n: ++hotkeyN };
+    } else if (e.key === "e" || e.key === "E" || e.key === "t" || e.key === "T") {
+      e.preventDefault();
+      store.hotkeyAction = { which: "thinking", n: ++hotkeyN };
+    }
+  }
+
   const conn = $derived(store.connection);
   const s = $derived(store.session);
   const statuses = $derived(Object.entries(s.ambient.statuses));
@@ -38,6 +52,7 @@
   };
 </script>
 
+<svelte:window onkeydown={onWindowKeydown} />
 <header class="hdr">
   <button
     class="menu"
