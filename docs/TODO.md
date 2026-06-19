@@ -36,14 +36,16 @@ See `docs/` siblings for context: `DESIGN.md` (architecture + roadmap), `DECISIO
 - [ ] **Per-client UI state persistence** — store the active session, sidebar visibility,
       theme, and other UI state per-client (e.g. localStorage) so that a mobile PWA reload
       doesn't reset to the default session. The user should land exactly where they left off.
-- [ ] **Per-session prompt draft persistence (pilot-level, not pi state)** — save the
-      unsent prompt text per session in client-side state (localStorage) so switching
-      between sessions preserves whatever you were typing. Key behaviors: (a) starting a
-      prompt in the new-session view, switching to a running session, and coming back
-      restores the draft text. (b) switching away from a running session and back restores
-      its draft. (c) as durable as possible — prefer storing up to one pending new-session
-      draft per project rather than losing paragraphs on a reload. Pure client state, no
-      protocol change needed (supersedes the brainstorm item).
+- [x] **Per-session prompt draft persistence (pilot-level, not pi state)** → done 2026-06-19.
+      Store holds a `draftMap` persisted in localStorage (`pilot.composerDrafts`), keyed
+      `s:<sessionId>` for an existing session and `n:<cwd>` for a pending new-session draft
+      (one per project). Stashed on every switch (`openSession`/`startDraft`/`cancelDraft`),
+      on a 400ms debounced keystroke, and on `pagehide`; restored on switch + on boot
+      (`maybeOpenBootDraft` loads the active session's draft). Sending clears the stored
+      copy. All three key behaviors covered — (a) needed `openSession` to exit a draft when
+      you navigate to a session (it now stashes + clears the draft), (b)/(c) by the keyed map
+      + pagehide/boot restore. `e2e/drafts.e2e.ts` (switch-away-and-back, reload, new-session
+      draft, send-clears).
 - [ ] **Agent turn cancelled when client disconnects?** — observed behavior on the Mac Mini:
       firing off a prompt, then fully exiting the phone view (closing the PWA / navigating
       away), the existing turn appeared to be cancelled before completing. This must NOT

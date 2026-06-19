@@ -105,6 +105,13 @@ class PilotStore {
 
   // per-client view state — local only (never sent upstream; see D5)
   composerDraft = $state("");
+  // Per-session (and per new-session-draft) unsent prompt text, persisted in localStorage
+  // so switching sessions — or reloading — preserves whatever you were typing. Keyed by
+  // `s:<sessionId>` for an existing session and `n:<cwd>` for a pending new-session draft
+  // (up to one per project). The live edit lives in `composerDraft`; this map is the
+  // durable backing store, stashed on switch / debounced keystroke / pagehide. Pure client
+  // state — no protocol change.
+  private draftMap: Record<string, string> = loadDraftMap();
   // New-session draft (Claude-app style): when non-null the main pane shows the
   // config chips + composer for a session that does NOT exist yet. Creation is
   // deferred — submitDraft() sends `newSession` (cwd/worktree/model/thinking + the
@@ -153,6 +160,34 @@ class PilotStore {
 
   focusComposer(): void {
     this.focusComposerN++;
+  }
+
+  /** The localStorage key the current composer text belongs to: the new-session draft's
+   *  project while drafting, else the focused/active session. */
+  private get composerDraftKey(): string {
+    if (this.draft) return `n:${this.draft.cwd.trim() || "~"}`;
+    const id = this.session.ref?.sessionId ?? this.activeSessionId;
+    return id ? `s:${id}` : "none";
+  }
+  /** Persist the current composer text under its key so a switch / reload restores it.
+   *  Empty (whitespace-only) drafts are removed rather than stored. Called on every
+   *  switch, on a debounced keystroke, and on pagehide (see Composer). */
+  stashDraft(): void {
+    const key = this.composerDraftKey;
+    if (this.composerDraft.trim()) this.draftMap[key] = this.composerDraft;
+    else delete this.draftMap[key];
+    persistDraftMap(this.draftMap);
+  }
+  /** Load the saved draft for `key` into the live composer (empty if none). */
+  private loadDraft(key: string): void {
+    this.composerDraft = this.draftMap[key] ?? "";
+  }
+  /** Drop a stored draft once it's been consumed (sent). */
+  private clearStoredDraft(key: string): void {
+    if (key in this.draftMap) {
+      delete this.draftMap[key];
+      persistDraftMap(this.draftMap);
+    }
   }
 
   get connection(): ConnectionState {
@@ -347,6 +382,8 @@ class PilotStore {
       this.pushState = s;
     });
     send({ type: "prompt", text: t, images, deliverAs });
+    // The draft was consumed — clear the live text AND its stored copy.
+    this.clearStoredDraft(this.composerDraftKey);
     this.composerDraft = "";
   }
   abort(): void {
@@ -376,10 +413,19 @@ class PilotStore {
     send({ type: "mock", script });
   }
   openSession(path: string): void {
-    if (path === this.activeSessionPath) return;
+    const switching = path !== this.activeSessionPath;
+    // Save the draft we're leaving (the new-session draft, or the prior session's text)
+    // before the composer re-points; navigating to a session exits any new-session draft.
+    this.stashDraft();
+    this.draft = null;
+    const id = this.sessions.find((s) => s.path === path)?.sessionId;
+    // Restore the target's saved draft into the composer (empty if none).
+    this.loadDraft(id ? `s:${id}` : "none");
+    // Same session (e.g. tapped the active row while drafting) — we've exited the draft
+    // and restored its text; nothing to switch.
+    if (!switching) return;
     // Optimistic: opening a session reads it (the authoritative clear also rides the
     // next `sessionList`, but this avoids a flicker of the unread dot mid-switch).
-    const id = this.sessions.find((s) => s.path === path)?.sessionId;
     if (id) this.markRead(id);
     // A switched-to session renders at the bottom — clear any stale below-fold flag.
     this.clearActiveUnread();
@@ -435,6 +481,10 @@ class PilotStore {
       this.draft === null
     ) {
       this.startDraft(this.defaultNewSessionCwd);
+    } else if (!this.draft && this.activeSessionId) {
+      // Booted/reconnected straight onto a session — restore its saved draft so a reload
+      // doesn't lose a half-typed prompt.
+      this.loadDraft(`s:${this.activeSessionId}`);
     }
   }
 
@@ -442,6 +492,8 @@ class PilotStore {
    *  group's cwd, or the active session's). Model/thinking seed from pi's global
    *  defaults so the chips reflect what a plain new session would use. */
   startDraft(cwd = ""): void {
+    // Save whatever session/draft we're leaving before flipping into the new draft.
+    this.stashDraft();
     const d = this.modelDefaults;
     this.draft = {
       cwd,
@@ -452,10 +504,14 @@ class PilotStore {
           : undefined,
       thinking: d.thinkingLevel,
     };
-    this.composerDraft = "";
+    // Restore this project's pending new-session draft, if any (key now resolves to n:cwd).
+    this.loadDraft(this.composerDraftKey);
   }
   cancelDraft(): void {
+    // Keep the new-session draft for next time, then drop back to the active session's draft.
+    this.stashDraft();
     this.draft = null;
+    this.loadDraft(this.composerDraftKey);
   }
   setDraftCwd(cwd: string): void {
     if (this.draft) this.draft = { ...this.draft, cwd };
@@ -476,6 +532,9 @@ class PilotStore {
     void ensurePushSubscription().then((s) => {
       this.pushState = s;
     });
+    // The pending new-session draft is consumed — drop its stored copy (key is n:cwd
+    // while the draft is still set).
+    this.clearStoredDraft(this.composerDraftKey);
     send({
       type: "newSession",
       cwd: d.cwd.trim() || undefined,
@@ -771,6 +830,35 @@ function initialHideThinking(): boolean {
 function persistHideThinking(hide: boolean): void {
   if (typeof window !== "undefined")
     localStorage.setItem(HIDE_THINKING_KEY, hide ? "1" : "0");
+}
+
+const DRAFTS_KEY = "pilot.composerDrafts";
+
+/** Read the per-session composer drafts map from localStorage. Tolerant of a missing /
+ *  corrupt value (returns an empty map) — a lost draft is never worth a thrown boot. */
+function loadDraftMap(): Record<string, string> {
+  if (typeof window === "undefined") return {};
+  try {
+    const raw = localStorage.getItem(DRAFTS_KEY);
+    if (!raw) return {};
+    const parsed: unknown = JSON.parse(raw);
+    if (!parsed || typeof parsed !== "object") return {};
+    const out: Record<string, string> = {};
+    for (const [k, v] of Object.entries(parsed as Record<string, unknown>))
+      if (typeof v === "string") out[k] = v;
+    return out;
+  } catch {
+    return {};
+  }
+}
+
+function persistDraftMap(map: Record<string, string>): void {
+  if (typeof window === "undefined") return;
+  try {
+    localStorage.setItem(DRAFTS_KEY, JSON.stringify(map));
+  } catch {
+    // Storage full / unavailable (private mode) — drafts stay in-memory this session.
+  }
 }
 
 export const store = new PilotStore();

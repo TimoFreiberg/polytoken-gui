@@ -100,6 +100,21 @@
     }
   });
 
+  // Persist the in-progress draft on a debounced cadence so a reload / tab eviction
+  // mid-typing doesn't lose it (switch + pagehide stash too; this covers the gap). The
+  // effect re-runs on every keystroke; its cleanup resets the timer, giving the debounce.
+  let stashTimer: ReturnType<typeof setTimeout> | undefined;
+  $effect(() => {
+    const text = store.composerDraft; // track
+    // Re-fit the box when the draft changes programmatically (a restored draft on
+    // session switch / boot — `oninput` only covers user typing).
+    void text;
+    autosize();
+    clearTimeout(stashTimer);
+    stashTimer = setTimeout(() => store.stashDraft(), 400);
+    return () => clearTimeout(stashTimer);
+  });
+
   function submit() {
     const text = store.composerDraft;
     if (!text.trim() && images.length === 0) return;
@@ -269,11 +284,17 @@
     function onResize() {
       winH = window.innerHeight;
     }
+    // Last chance to persist the draft before a reload / close / app switch.
+    function onPageHide() {
+      store.stashDraft();
+    }
     window.addEventListener("keydown", onWindowKeydown);
     window.addEventListener("resize", onResize);
+    window.addEventListener("pagehide", onPageHide);
     return () => {
       window.removeEventListener("keydown", onWindowKeydown);
       window.removeEventListener("resize", onResize);
+      window.removeEventListener("pagehide", onPageHide);
     };
   });
 </script>
