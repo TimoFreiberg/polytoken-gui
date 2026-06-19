@@ -29,6 +29,11 @@
     oncancel: () => void;
     initialDraft?: QnaDraft;
     onchange?: (draft: QnaDraft) => void;
+    // When provided, render a minimize toggle in the header; `collapsed` hides the
+    // body (card/dots/actions) so only the title bar shows. Owned by the parent so
+    // the collapsed state survives this component remounting on request change.
+    collapsed?: boolean;
+    onMinimize?: () => void;
   }
   let {
     request,
@@ -36,6 +41,8 @@
     oncancel,
     initialDraft,
     onchange,
+    collapsed = false,
+    onMinimize,
   }: Props = $props();
 
   const questions = $derived(request.questions);
@@ -228,13 +235,28 @@
 >
   <div class="head">
     {#if request.title}<h2>{request.title}</h2>{/if}
-    {#if total > 1}
-      <span class="progress" aria-live="polite"
-        >Question {current + 1} of {total} · {answeredCount} answered</span
-      >
-    {/if}
+    <div class="head-right">
+      {#if total > 1}
+        <span class="progress" aria-live="polite"
+          >Question {current + 1} of {total} · {answeredCount} answered</span
+        >
+      {/if}
+      {#if onMinimize}
+        <button
+          type="button"
+          class="min"
+          onclick={onMinimize}
+          aria-expanded={!collapsed}
+          aria-label={collapsed ? "Expand the questions" : "Minimize to the title"}
+          title={collapsed ? "Expand the questions" : "Minimize to the title"}
+        >
+          {collapsed ? "▸" : "▾"}
+        </button>
+      {/if}
+    </div>
   </div>
 
+  {#if !collapsed}
   <div class="card">
     <p class="q">{q.question}</p>
     {#if q.context}<p class="ctx">{q.context}</p>{/if}
@@ -348,6 +370,7 @@
       >
     {/if}
   </div>
+  {/if}
 </div>
 
 <style>
@@ -372,6 +395,31 @@
     color: var(--text-faint);
     font-size: 12px;
     white-space: nowrap;
+  }
+  .head-right {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex: 0 0 auto;
+  }
+  .min {
+    flex: 0 0 auto;
+    width: 26px;
+    height: 26px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: transparent;
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius-xs);
+    color: var(--text-muted);
+    font-size: 12px;
+    line-height: 1;
+    cursor: pointer;
+  }
+  .min:hover {
+    color: var(--text);
+    border-color: var(--accent);
   }
   .card {
     max-height: min(48vh, 420px);

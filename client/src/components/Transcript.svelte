@@ -12,6 +12,7 @@
   import ToolCard from "./ToolCard.svelte";
   import ToolSummary from "./ToolSummary.svelte";
   import ThinkingBlock from "./ThinkingBlock.svelte";
+  import QnaResult from "./QnaResult.svelte";
 
   const items = $derived(store.session.items);
 
@@ -302,6 +303,9 @@
           open={mergedOpen[item.id] ?? false}
           ontoggle={() => toggleMerged(item.id)}
         />
+      {:else if item.kind === "tool" && item.name === "answer"}
+        <!-- The user's Q&A answers, surfaced visibly instead of buried in a tool card. -->
+        <QnaResult {item} />
       {:else if item.kind === "tool"}
         <ToolCard {item} />
       {:else if item.kind === "notice"}
@@ -363,6 +367,11 @@
           {@render itemView(it)}
         {/each}
       {/if}
+      <!-- Always-visible items (the answer Q&A) sit after the collapsed work and
+           before the turn-final response. -->
+      {#each turn.visible as it (it.id)}
+        {@render itemView(it)}
+      {/each}
       {#each turn.response as it (it.id)}
         {@render itemView(it)}
       {/each}

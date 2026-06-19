@@ -2,31 +2,16 @@
   import { isDialogRequest } from "@pilot/protocol";
   import { store } from "../lib/store.svelte.js";
   import Button from "./ui/Button.svelte";
-  import QnaForm, { type QnaDraft } from "./QnaForm.svelte";
 
-  // Show one dialog at a time — the oldest pending. Resolving it reveals the next.
-  const current = $derived(store.session.pendingApprovals[0] ?? null);
+  // Show one dialog at a time — the oldest pending. `qna` is rendered inline in the
+  // chat column by QnaInline, not as a floating sheet, so skip it here (the two can
+  // coexist: a floating confirm over the inline form).
+  const current = $derived(
+    store.session.pendingApprovals.find((r) => r.kind !== "qna") ?? null,
+  );
 
   let inputValue = $state("");
   let selectedOption = $state<string | null>(null);
-  // Q&A answers are local drafts until Submit. Keep them keyed by session/request so
-  // focusing another chat can unmount this form without throwing away typed answers.
-  // The real request ids are unique; including the session also keeps deterministic
-  // mock ids from colliding across chats.
-  const qnaDrafts = new Map<string, QnaDraft>();
-
-  function qnaKey(requestId: string): string {
-    return `${store.session.ref?.sessionId ?? "unknown"}:${requestId}`;
-  }
-  function rememberQna(key: string, draft: QnaDraft): void {
-    qnaDrafts.set(key, draft);
-    // Pending forms are few, but bound stale drafts if another client resolves one
-    // while this chat is in the background.
-    if (qnaDrafts.size > 20) {
-      const oldest = qnaDrafts.keys().next().value;
-      if (oldest) qnaDrafts.delete(oldest);
-    }
-  }
 
   // reset local field state whenever the active dialog changes
   $effect(() => {
@@ -41,13 +26,10 @@
 
   function cancel() {
     if (!current) return;
-    if (current.kind === "qna") qnaDrafts.delete(qnaKey(current.requestId));
     store.respondUi({ requestId: current.requestId, cancelled: true });
   }
-  // The qna form holds in-progress answers — a stray backdrop tap shouldn't
-  // discard them. Every other dialog is cheap to reopen, so a tap dismisses.
+  // These dialogs are all cheap to reopen, so a backdrop tap dismisses.
   function scrimClick() {
-    if (current?.kind === "qna") return;
     cancel();
   }
   function confirm(value: boolean) {
@@ -139,7 +121,7 @@
 
 {#if current}
   <div class="scrim" onclick={scrimClick} role="presentation"></div>
-  <div class="sheet" class:wide={current.kind === "qna"} role="dialog">
+  <div class="sheet" role="dialog">
     <div class="grip"></div>
 
     {#if current.kind === "confirm"}
@@ -180,20 +162,6 @@
         <Button variant="secondary" size="lg" block title="Cancel this request" onclick={cancel}>Cancel</Button>
         <Button variant="primary" size="lg" block title="Save your edits" onclick={() => submitValue(inputValue)}>Save</Button>
       </div>
-    {:else if current.kind === "qna"}
-      {@const draftKey = qnaKey(current.requestId)}
-      {#key current.requestId}
-        <QnaForm
-          request={current}
-          initialDraft={qnaDrafts.get(draftKey)}
-          onchange={(draft) => rememberQna(draftKey, draft)}
-          onsubmit={(answers) => {
-            qnaDrafts.delete(draftKey);
-            store.respondUi({ requestId: current.requestId, answers });
-          }}
-          oncancel={cancel}
-        />
-      {/key}
     {:else if isDialogRequest(current)}
       <!-- unreachable: all dialog kinds handled above -->
     {:else}
@@ -245,10 +213,6 @@
       border-radius: 18px;
       border-bottom: 1px solid var(--border);
     }
-  }
-  /* The qna form carries more content (cards + nav) than a one-shot dialog. */
-  .sheet.wide {
-    width: min(620px, 100%);
   }
   .grip {
     width: 36px;

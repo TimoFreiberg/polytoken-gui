@@ -5,6 +5,7 @@ import {
   formatWorkedDuration,
   groupTurns,
   mergeTools,
+  parseQnaResult,
   workedLabel,
 } from "./transcript-view.js";
 
@@ -162,6 +163,64 @@ describe("groupTurns", () => {
     ]);
     expect(turns[0]!.startTs).toBe("1000");
     expect(turns[0]!.endTs).toBe("38000");
+  });
+});
+
+describe("groupTurns: answer (visible) tools", () => {
+  test("the answer tool is pulled out of work into visible, in order", () => {
+    const turns = groupTurns([
+      user("u1"),
+      asst("narration"),
+      tool("a1", "answer", { output: "Q: x\nA: y" }),
+      asst("final"),
+    ]);
+    const t = turns[0]!;
+    expect(t.visible.map((i) => i.id)).toEqual(["a1"]);
+    expect(t.work.map((i) => i.id)).toEqual(["narration"]);
+    expect(t.response.map((i) => i.id)).toEqual(["final"]);
+  });
+
+  test("a turn whose only tool is answer is not collapsible", () => {
+    const turns = groupTurns([user("u1"), tool("a1", "answer"), asst("final")]);
+    expect(turns[0]!.collapsible).toBe(false);
+    expect(turns[0]!.visible.map((i) => i.id)).toEqual(["a1"]);
+  });
+
+  test("answer stays standalone, not folded into a tool summary", () => {
+    const out = mergeTools([tool("a1", "answer"), tool("r1", "read")]);
+    expect(out.map((i) => i.kind)).toEqual(["tool", "mergedTools"]);
+  });
+});
+
+describe("parseQnaResult", () => {
+  test("parses questions, context, options and answer lines", () => {
+    const text = [
+      "Q: Which package manager?",
+      "> repo has both locks",
+      "Options:",
+      "  [x] bun",
+      "  [ ] npm",
+      "A: bun",
+      "",
+      "Q: Anything else?",
+      "A: keep commits small",
+    ].join("\n");
+    expect(parseQnaResult(text)).toEqual([
+      {
+        question: "Which package manager?",
+        context: "repo has both locks",
+        options: [
+          { label: "bun", picked: true },
+          { label: "npm", picked: false },
+        ],
+        answer: "bun",
+      },
+      { question: "Anything else?", answer: "keep commits small" },
+    ]);
+  });
+
+  test("returns null when there are no Q: lines (raw fallback)", () => {
+    expect(parseQnaResult("just some prose, no questions")).toBeNull();
   });
 });
 

@@ -8,6 +8,7 @@
   import WorkingIndicator from "./components/WorkingIndicator.svelte";
   import NewSession from "./components/NewSession.svelte";
   import Composer from "./components/Composer.svelte";
+  import QnaInline from "./components/QnaInline.svelte";
   import ApprovalLayer from "./components/ApprovalLayer.svelte";
   import TrustCard from "./components/TrustCard.svelte";
   import TokenGate from "./components/TokenGate.svelte";
@@ -75,6 +76,7 @@
           <button onclick={() => store.markUpdateReady()}>update</button>
         </div>
       {/if}
+      <QnaInline />
       <Composer />
       <ApprovalLayer />
     </div>

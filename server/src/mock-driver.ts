@@ -11,6 +11,8 @@ import {
   type ModelDefaults,
   type ModelOption,
   type ProviderInfo,
+  type QnaAnswer,
+  type QnaQuestion,
   type SessionConfig,
   type SessionDriverEvent,
   type SessionListEntry,
@@ -73,6 +75,44 @@ function seedWorktrees(
       m.set(s.cwd, { base: s.worktree.base, name: s.worktree.name });
   }
   return m;
+}
+
+/** Render a submitted Q&A into the same transcript text the answer extension's
+ *  `formatQnA` produces (Q / context / Options / A lines), so the mock exercises the
+ *  client's parse-and-render path. Kept in sync with agents/extensions/answer.ts. */
+function formatQnaText(
+  questions: readonly QnaQuestion[],
+  answers: readonly QnaAnswer[],
+): string {
+  const parts: string[] = [];
+  for (let i = 0; i < questions.length; i++) {
+    const q = questions[i]!;
+    const a = answers[i] ?? { selectedOptionIndices: [], customText: "" };
+    parts.push(`Q: ${q.question}`);
+    if (q.context) parts.push(`> ${q.context}`);
+    const opts = q.options ?? [];
+    const hasOptions = opts.length > 0;
+    if (hasOptions) {
+      const picked = new Set(a.selectedOptionIndices);
+      parts.push("Options:");
+      for (let j = 0; j < opts.length; j++) {
+        parts.push(`  ${picked.has(j) ? "[x]" : "[ ]"} ${opts[j]!.label}`);
+      }
+    }
+    const chosen = hasOptions
+      ? a.selectedOptionIndices
+          .filter((idx) => idx >= 0 && idx < opts.length)
+          .map((idx) => opts[idx]!.label)
+      : [];
+    const custom = a.customText.trim();
+    const segments = [...chosen];
+    if (custom) segments.push(hasOptions ? `(typed) ${custom}` : custom);
+    parts.push(
+      `A: ${segments.length > 0 ? segments.join(", ") : "(no answer)"}`,
+    );
+    parts.push("");
+  }
+  return parts.join("\n").trim();
 }
 
 export class MockDriver implements PilotDriver {
@@ -303,12 +343,42 @@ export class MockDriver implements PilotDriver {
   respondUi(response: HostUiResponse): void {
     const pending = this.pendingDialogs.get(response.requestId);
     this.pendingDialogs.delete(response.requestId);
+    const sessionRef = pending?.sessionRef ?? SESSION_REF;
     this.emit({
-      sessionRef: pending?.sessionRef ?? SESSION_REF,
+      sessionRef,
       timestamp: String(Date.now()),
       type: "hostUiResolved",
       requestId: response.requestId,
     });
+
+    // Q&A submissions: mirror real pi, where the `answer` tool records the filled-in
+    // Q&A as its result. The client surfaces that as a visible transcript block, so
+    // emit a real toolStarted/toolFinished pair (not a notify) to exercise that path.
+    if ("answers" in response) {
+      const req = pending?.request;
+      const questions = req?.kind === "qna" ? req.questions : [];
+      const text = formatQnaText(questions, response.answers);
+      const callId = `answer-${response.requestId}`;
+      this.emit({
+        sessionRef,
+        timestamp: String(Date.now()),
+        type: "toolStarted",
+        callId,
+        toolName: "answer",
+        label: "Answer",
+        input: { questions },
+      });
+      this.emit({
+        sessionRef,
+        timestamp: String(Date.now()),
+        type: "toolFinished",
+        callId,
+        success: true,
+        output: { content: [{ type: "text", text }] },
+      });
+      return;
+    }
+
     const summary =
       "cancelled" in response
         ? "Dialog cancelled."
@@ -316,11 +386,9 @@ export class MockDriver implements PilotDriver {
           ? response.confirmed
             ? "Approved — continuing."
             : "Denied — skipping that step."
-          : "answers" in response
-            ? `Recorded ${response.answers.length} answer${response.answers.length === 1 ? "" : "s"}.`
-            : `Received: ${response.value}`;
+          : `Received: ${response.value}`;
     this.emit({
-      sessionRef: pending?.sessionRef ?? SESSION_REF,
+      sessionRef,
       timestamp: String(Date.now()),
       type: "hostUiRequest",
       request: {
