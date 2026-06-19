@@ -229,9 +229,16 @@ and its resolution note. Latest completions first.
   regardless of array order, mirroring the confirm dialog.)_
 
 - [x] **Virtualized transcript list** (>80 rows)
-  _(done: CSS `content-visibility: auto` + `contain-intrinsic-size` on `.row`
-  and `.tool` — browser skips rendering off-screen rows, remembers actual sizes
-  after first render. Zero JS, progressive enhancement.)_
+  _(done, then reverted: CSS `content-visibility: auto` + `contain-intrinsic-size`
+  on `.row`/`.tool`/`.merged-reads` skipped off-screen rows — but the estimated
+  intrinsic size meant rows snapped from a 120px placeholder to their real height as
+  you scrolled up, injecting height above the viewport and drifting it downward (the
+  "viewport must never move on its own" rule). Removed; the transcript now renders
+  every row at true height up front (no virtualization). A dev-only `[pilot] transcript
+  render` log (gated behind `?dev`, `store.logRenderTiming`) reports item count +
+  paint time so the trend is visible; real JS windowing — render last N turns +
+  "load older", which can preserve scroll on prepend — is the proper fix when that
+  number grows. Regression pinned in `e2e/transcript.e2e.ts`.)_
 
 - [x] **PNG / maskable icons** — proper app icons for installed PWA
   _(done: 192/512 + maskable-512 (safe-zone padded) + 180 apple-touch, rasterized

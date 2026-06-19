@@ -449,10 +449,6 @@
     flex-direction: column;
     gap: 18px;
   }
-  .row, :global(.tool) {
-    content-visibility: auto;
-    contain-intrinsic-size: auto 120px;
-  }
   .row {
     display: flex;
     flex-direction: column;
@@ -633,11 +629,6 @@
     /* code blocks scroll horizontally rather than wrap */
     overflow-wrap: normal;
     tab-size: 2;
-  }
-  /* ── Merged sequential navigation tools (read/grep/find/session_search) ── */
-  .merged-tools {
-    content-visibility: auto;
-    contain-intrinsic-size: auto 60px;
   }
   .merged-head {
     display: flex;

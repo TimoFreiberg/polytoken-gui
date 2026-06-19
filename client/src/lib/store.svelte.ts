@@ -252,6 +252,9 @@ class PilotStore {
         // A snapshot lands after a successful switch — clear any stale switch error.
         this.lastError = null;
         this.maybeOpenBootDraft();
+        // Dev-only: time how long this full transcript render takes. The signal for
+        // "is it time to build JS windowing?" (see docs/DESIGN.md).
+        this.logRenderTiming(msg.state.items.length);
         break;
       case "event":
         foldEvent(this.session, msg.event);
@@ -434,6 +437,30 @@ class PilotStore {
     // A switched-to session renders at the bottom — clear any stale below-fold flag.
     this.clearActiveUnread();
     send({ type: "openSession", path });
+  }
+  /** Dev-only timing for a full transcript render (fires on every snapshot: session
+   *  open, switch, reconnect, mid-turn re-snapshot). Gated behind `?dev` — the same
+   *  runtime URL flag that reveals the dev bar — so production stays silent until you
+   *  add `?dev` to the URL in any deploy. Watch the trend: when `itemCount` climbs into
+   *  the thousands AND the paint time grows past a perceptible pause, JS windowing
+   *  (render only the last N turns + "load older") starts to earn its complexity. The
+   *  transcript otherwise renders every item up front (no virtualization) since CSS
+   *  `content-visibility` was removed (it drifted the viewport while scrolling up). */
+  private logRenderTiming(itemCount: number): void {
+    if (typeof window === "undefined") return;
+    if (!new URLSearchParams(window.location.search).has("dev")) return;
+    const start = performance.now();
+    // Two frames: the first lets Svelte flush + the browser lay out/paint the new
+    // transcript; the second fires once that painted frame is done, so the delta
+    // covers script + layout + paint, not just the scripting before the frame.
+    requestAnimationFrame(() =>
+      requestAnimationFrame(() => {
+        const ms = Math.round(performance.now() - start);
+        console.debug(
+          `[pilot] transcript render: ${itemCount} items · ${ms}ms (to paint)`,
+        );
+      }),
+    );
   }
   private markRead(sessionId: string): void {
     if (!this.unread.has(sessionId)) return;
