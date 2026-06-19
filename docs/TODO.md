@@ -94,6 +94,7 @@ See `docs/` siblings for context: `DESIGN.md` (architecture + roadmap), `DECISIO
       button now renders only on the turn-final paragraph (same `turnText` gate as the
       timestamp), and copies the WHOLE turn's assistant text — every paragraph joined,
       excluding tool + thinking blocks. Covered by `e2e/polish.e2e.ts`.
+
 ### Jank found in the 2026-06-19 live pass (real pi, deepseek-v4-flash)
 
 - [x] **Wide markdown tables overflowed the mobile viewport** → fixed 2026-06-19
@@ -107,21 +108,25 @@ See `docs/` siblings for context: `DESIGN.md` (architecture + roadmap), `DECISIO
       *reliable* touch reveal: a bare `@media (hover: none)` rule misfires under headless
       Chromium (it reports `hover: none`), breaking the desktop "copy fades back out" spec —
       so gate on an explicit touch/coarse-pointer signal or a JS capability check instead.
-- [ ] **Attach-tag tooltip lies** — the composer's attached-images chip
-      (`client/src/components/Composer.svelte:552`) has `title="… right-click to clear"` but
-      there is no `oncontextmenu` handler, so right-click just opens the native menu. Either
-      wire up right-click-to-clear (+`preventDefault`) or drop the claim from the tooltip.
-- [ ] **Stop button has no hotkey** — the composer Stop button
-      (`client/src/components/Composer.svelte`, `title="Stop the agent"`) names no shortcut,
-      unlike every other composer control (`⌘⇧M`, `⌥↑`, `Enter`, …), and no global
-      stop/abort key was found. Violates the "every UI action needs a hotkey + tooltip" rule
-      (e.g. Escape to abort a running turn).
-- [ ] **Session auto-title keeps a literal markdown `#`** — a turn whose reply began with a
-      heading got auto-titled `# Demo` (the `#` shows verbatim in the header + sidebar). The
-      title comes from pi's session-namer, but pilot could defensively strip leading markdown
-      when rendering titles. Low priority.
-- [ ] **QnA form header says "A few questions" for a single question** — minor copy nit; a
-      one-question form should read singular (or just show the question).
+- [x] **Attach-tag tooltip lies** → fixed 2026-06-19. Dropped the unimplemented
+      "right-click to clear" claim from the attached-images count badge's tooltip
+      (`Composer.svelte`); per-image removal already works via the thumb-chips next to it
+      (each `Click to remove this image`), so no bulk-clear affordance was wired (owner's
+      call: drop the claim, don't build right-click-clear-all).
+- [x] **Stop button has no hotkey** → fixed 2026-06-19. **Escape** now aborts a running
+      turn (parity with pi TUI / Claude app); Stop's tooltip names it (`Stop the agent
+      (Esc)`). Composer-scoped (textarea-focused) to avoid racing the 5 other Esc handlers.
+      Bonus per owner: if the agent hasn't produced output yet AND the composer is empty,
+      Esc pulls the just-sent prompt back into the box to edit/resend (`store.abortRestoreText`
+      — gated on no assistant text + no tool call since the last user message). History is
+      left alone: the orphaned user message stays, duplicate prompts on resend accepted.
+- [x] **QnA form header says "A few questions" for a single question** → fixed 2026-06-19.
+      Dropped the `?? "A few questions"` fallback in `QnaForm.svelte`; the `<h2>` renders
+      only when the request carries an explicit title, otherwise the question itself is the
+      header (owner's call). Multi-question forms still show the `Question N of M` progress.
+      _(Session auto-title keeping a literal markdown `#` was triaged out: it's the
+      session-namer pi extension's gap, not pilot's to defend against — owner declined a
+      pilot-side strip.)_
 
 ## 🔵 Later
 

@@ -595,7 +595,7 @@ export function searchBatch(): ScriptStep[] {
     ...summarySpan(
       "b1",
       "bash",
-      { command: "rg -n \"reconnect\" client/src/lib" },
+      { command: 'rg -n "reconnect" client/src/lib' },
       "client/src/lib/store.svelte.ts:88:  private reconnect() {",
     ),
     ...deltas("Reconnect lives in the store's WS singleton.", "text"),
@@ -905,6 +905,36 @@ export function streamHold(): ScriptStep[] {
   ];
 }
 
+/** A turn that goes running with a user message and stays in the THINKING phase — no
+ *  assistant answer text, no tool, no runCompleted. The deterministic "prompt sent, the
+ *  agent hasn't responded yet" state for the Escape-to-abort restore test: `abortRestoreText`
+ *  returns the user text because nothing after the user message emitted output. */
+export function pendingHold(): ScriptStep[] {
+  return [
+    {
+      wait: 0,
+      event: {
+        ...base(),
+        type: "userMessage",
+        id: `u-pending-${ts()}`,
+        text: "Refactor the auth middleware",
+      },
+    },
+    {
+      wait: 0,
+      event: {
+        ...base(),
+        type: "sessionUpdated",
+        snapshot: snapshot({ status: "running" }),
+      },
+    },
+    ...deltas(
+      "Let me look at how auth is wired before I touch it.",
+      "thinking",
+    ),
+  ];
+}
+
 /** A turn that streams an assistant line and then goes idle via `sessionUpdated`
  *  ONLY (no runCompleted) — the original "stray caret" repro. With the fold fix the
  *  caret must NOT linger after the idle transition. */
@@ -1081,6 +1111,7 @@ export const SCRIPTS: Record<string, () => ScriptStep[]> = {
   idle: idleNoComplete,
   initializing: initializingSession,
   staleidle: staleIdle,
+  pendinghold: pendingHold,
   timeout: timeoutConfirm,
   yesno: yesNoSelect,
 };

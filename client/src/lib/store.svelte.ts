@@ -234,6 +234,35 @@ class PilotStore {
     return items.some((i) => i.kind === "tool" && i.status === "running");
   }
 
+  /** The just-sent prompt to restore to the composer when the user aborts a turn that
+   *  hasn't produced output yet (Escape-to-abort UX). Returns the last user message's
+   *  text iff nothing after it has emitted output — no assistant answer text and no
+   *  tool call (thinking-only still counts as "no response yet"). Otherwise null: a
+   *  turn that's already underway shouldn't yank the prompt back. History is left
+   *  untouched either way — the orphaned user message stays as a visible "aborted"
+   *  marker (duplicate prompts on resend are accepted, per the owner's call). */
+  get abortRestoreText(): string | null {
+    const items = this.session.items;
+    let lastUserText: string | null = null;
+    let lastUserIdx = -1;
+    for (let i = items.length - 1; i >= 0; i--) {
+      const it = items[i];
+      if (it && it.kind === "user") {
+        lastUserText = it.text;
+        lastUserIdx = i;
+        break;
+      }
+    }
+    if (lastUserText === null) return null;
+    for (let i = lastUserIdx + 1; i < items.length; i++) {
+      const it = items[i];
+      if (!it) continue;
+      if (it.kind === "tool") return null;
+      if (it.kind === "assistant" && it.text.trim().length > 0) return null;
+    }
+    return lastUserText;
+  }
+
   start(): void {
     onMessage((msg) => this.onServer(msg));
     connect();

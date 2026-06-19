@@ -54,3 +54,18 @@ test("a wide markdown table scrolls horizontally instead of overflowing", async 
   expect(metrics.rightWithinViewport).toBe(true);
   expect(metrics.noPageOverflow).toBe(true);
 });
+
+test("the per-turn copy button stays visible on touch (no hover to reveal it)", async ({
+  page,
+}) => {
+  // The greeting's final assistant paragraph carries the copy footer. On desktop it's
+  // hover-revealed (opacity 0 at rest); a touch device has no hover, so it must be
+  // pinned visible. Gated on a JS capability check (maxTouchPoints), so this mobile
+  // project (hasTouch) shows it while the desktop project keeps the hover-reveal.
+  await expect(
+    page.getByText("Routes live in", { exact: false }),
+  ).toBeVisible();
+  const copy = page.locator(".copy").last();
+  await expect(copy).toBeVisible();
+  await expect(copy).toHaveCSS("opacity", "1");
+});

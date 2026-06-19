@@ -196,6 +196,24 @@
     if (node instanceof HTMLInputElement) node.select();
   }
 
+  // Esc while a turn runs: abort it. If the agent hasn't produced any output yet AND the
+  // composer is empty (not mid-typing a queued/steer message), pull the just-sent prompt
+  // back into the box to edit/resend. History is left alone — the orphaned user message
+  // stays. Composer-scoped (textarea-focused) on purpose: a window-level Esc would race
+  // the other Esc handlers (ModelPicker, Settings, Sidebar menu, QnaForm, Tooltip). After
+  // send the textarea keeps focus, so this covers the dominant flow; Stop covers the rest.
+  function abortFromComposer() {
+    const restore = store.abortRestoreText;
+    store.abort();
+    if (restore != null && !store.composerDraft.trim()) {
+      store.composerDraft = restore;
+      queueMicrotask(() => {
+        ta?.focus();
+        autosize();
+      });
+    }
+  }
+
   function toggleExpand() {
     expanded = !expanded;
     queueMicrotask(() => {
@@ -357,6 +375,13 @@
         return;
       }
     }
+    // Esc aborts a running turn (parity with pi TUI / Claude). Placed after the
+    // slash/file/draft Esc handlers so an open menu or draft-cancel wins first.
+    if (e.key === "Escape" && streaming) {
+      e.preventDefault();
+      abortFromComposer();
+      return;
+    }
     if (e.key !== "Enter" || e.shiftKey) return;
     e.preventDefault();
     // While the agent runs, Enter steers (deliver after the current step) and
@@ -426,7 +451,7 @@
     {#if streaming}
       <div class="streamrow">
         <SegmentedControl size="sm" ariaLabel="Delivery mode" options={deliverModes} bind:value={deliverAs} />
-        <button class="stop" onclick={() => store.abort()} title="Stop the agent">■ Stop</button>
+        <button class="stop" onclick={() => store.abort()} title="Stop the agent (Esc)">■ Stop</button>
       </div>
     {/if}
 
@@ -569,7 +594,7 @@
           tabindex="-1"
         />
         {#if imageCount > 0}
-          <button class="attach-tag" onclick={openFilePicker} title={`${imageCount} image${imageCount > 1 ? "s" : ""} attached — click to add more, right-click to clear`}>
+          <button class="attach-tag" onclick={openFilePicker} title={`${imageCount} image${imageCount > 1 ? "s" : ""} attached — click to add more`}>
             <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
               <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48" />
             </svg>

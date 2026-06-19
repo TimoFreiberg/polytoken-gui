@@ -47,6 +47,7 @@ import {
   mockTrustRequest,
   NEW_SESSION_ENTRY,
   newSessionSeed,
+  pendingHold,
   promptReply,
   searchBatch,
   type ScriptStep,
@@ -588,6 +589,7 @@ export class MockDriver implements PilotDriver {
       search: searchBatch,
       staleidle: staleIdle,
       streamhold: streamHold,
+      pendinghold: pendingHold,
       timeout: timeoutConfirm,
       yesno: yesNoSelect,
     };

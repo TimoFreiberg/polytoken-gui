@@ -15,6 +15,13 @@
 
   const items = $derived(store.session.items);
 
+  // Touch devices have no hover, so the copy footer (hover-revealed on desktop) would be
+  // unreachable. Pin it visible on touch-primary devices. Gate on a JS capability check
+  // (maxTouchPoints), NOT `@media (hover: none)` — headless Chromium reports hover:none
+  // and would force the button visible on desktop too, breaking the desktop fade-out spec.
+  const isTouch =
+    typeof navigator !== "undefined" && navigator.maxTouchPoints > 0;
+
   // Two view-model passes (pure, unit-tested in transcript-view.test.ts):
   //   1. mergeTools — uninterrupted runs of every tool except write/edit fold into
   //      one summary card.
@@ -207,7 +214,7 @@
 </script>
 
 <div class="transcript-wrap">
-<div class="scroller" bind:this={scroller} onscroll={onScroll}>
+<div class="scroller" class:touch={isTouch} bind:this={scroller} onscroll={onScroll}>
   <div class="col">
     <!-- One transcript item, rendered the same whether it sits in a turn's collapsible
          work block or as the visible final response. -->
@@ -506,6 +513,10 @@
   }
   .assistant:hover .copy,
   .copy:focus-visible {
+    opacity: 1;
+  }
+  /* Touch devices have no hover; pin the copy button visible so it stays reachable. */
+  .scroller.touch .copy {
     opacity: 1;
   }
   .copy:hover {

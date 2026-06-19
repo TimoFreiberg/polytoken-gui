@@ -232,7 +232,7 @@
   tabindex="-1"
 >
   <div class="head">
-    <h2>{request.title ?? "A few questions"}</h2>
+    {#if request.title}<h2>{request.title}</h2>{/if}
     {#if total > 1}
       <span class="progress" aria-live="polite"
         >Question {current + 1} of {total} · {answeredCount} answered</span
