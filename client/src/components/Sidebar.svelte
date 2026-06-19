@@ -308,7 +308,9 @@
         <button
           class="row active"
           title={`New session in ${draft.cwd || "home"} — click to return to the draft`}
-          onclick={() => startDraft(draft.cwd)}
+          onclick={() => {
+            if (draft) startDraft(draft.cwd);
+          }}
         >
           <span class="status" data-state="draft" title="New session draft" aria-label="draft">
             <span class="draft-marker">+</span>
