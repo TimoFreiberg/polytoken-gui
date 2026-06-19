@@ -151,7 +151,10 @@ function buildTurn(
   };
 }
 
-export function groupTurns(items: readonly DisplayItem[]): TurnGroup[] {
+export function groupTurns(
+  items: readonly DisplayItem[],
+  lastTurnActive = false,
+): TurnGroup[] {
   const turns: TurnGroup[] = [];
   let user: TranscriptItem | undefined;
   let body: DisplayItem[] = [];
@@ -174,6 +177,14 @@ export function groupTurns(items: readonly DisplayItem[]): TurnGroup[] {
     }
   }
   flush();
+  // A trailing assistant paragraph is only a *candidate* final response until the
+  // run settles: another tool call can still move it back into `work`. Keep that
+  // live turn inline so the collapse affordance cannot flicker in and out between
+  // text and tool events.
+  if (lastTurnActive) {
+    const last = turns[turns.length - 1];
+    if (last) last.collapsible = false;
+  }
   return turns;
 }
 

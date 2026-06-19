@@ -102,6 +102,18 @@ describe("groupTurns", () => {
     expect(t.response.map((i) => i.id)).toEqual(["final"]);
   });
 
+  test("an active last turn stays inline even when it has a candidate final response", () => {
+    const items = [
+      user("u1"),
+      asst("narration"),
+      tool("b1", "bash"),
+      asst("candidate-final", { streaming: true }),
+    ];
+
+    expect(groupTurns(items, true)[0]!.collapsible).toBe(false);
+    expect(groupTurns(items, false)[0]!.collapsible).toBe(true);
+  });
+
   test("response is the LAST assistant after the last tool, not earlier ones", () => {
     // narration → tool → final. Only `final` is the response; `narration` is work.
     const turns = groupTurns([

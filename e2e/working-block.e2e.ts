@@ -22,6 +22,61 @@ test("a settled turn collapses its working section behind 'Worked for Ns'", asyn
   await expect(page.getByText("Routes live in")).toBeVisible();
 });
 
+test("the collapse affordance never appears while the final response is still streaming", async ({
+  page,
+}) => {
+  await page.evaluate(() => {
+    const probe = {
+      sawLiveToggle: false,
+      observer: null as MutationObserver | null,
+    };
+    const scan = () => {
+      if (
+        [...document.querySelectorAll('[data-testid="work-toggle"]')].some(
+          (el) => el.textContent?.includes("Working…"),
+        )
+      ) {
+        probe.sawLiveToggle = true;
+      }
+    };
+    probe.observer = new MutationObserver(scan);
+    probe.observer.observe(document.body, {
+      childList: true,
+      subtree: true,
+      characterData: true,
+    });
+    (
+      window as Window & {
+        __pilotCollapseProbe?: typeof probe;
+      }
+    ).__pilotCollapseProbe = probe;
+    scan();
+  });
+
+  await drive(page, "reply");
+  await expect(
+    page.getByText("That confirms it", { exact: false }),
+  ).toBeVisible();
+  await expect
+    .poll(() => page.getByTestId("working-indicator").count())
+    .toBe(0);
+
+  const sawLiveToggle = await page.evaluate(() => {
+    const probe = (
+      window as Window & {
+        __pilotCollapseProbe?: {
+          sawLiveToggle: boolean;
+          observer: MutationObserver | null;
+        };
+      }
+    ).__pilotCollapseProbe;
+    probe?.observer?.disconnect();
+    return probe?.sawLiveToggle ?? false;
+  });
+  expect(sawLiveToggle).toBe(false);
+  await expect(page.getByTestId("work-toggle")).toHaveCount(2);
+});
+
 test("the working block toggles open and closed, with a descriptive tooltip", async ({
   page,
 }) => {

@@ -22,9 +22,10 @@
   //      portion (tools + intermediate narration) and the turn-final response that
   //      stays visible. That's the "Worked for Ns" block below.
   const displayItems = $derived(mergeTools(items));
-  const turns = $derived(groupTurns(displayItems));
-  // The live turn is the last one while the session is still working; only it stays
-  // expanded by default. Every settled turn collapses its work.
+  // While the last turn is active, its trailing text is only a candidate final
+  // response — another tool can still follow. Keep the whole turn inline until the
+  // lifecycle says it settled, then expose the collapse affordance.
+  const turns = $derived(groupTurns(displayItems, store.turnActive));
   const lastTurnId = $derived(turns[turns.length - 1]?.id);
   function turnDone(turn: TurnGroup): boolean {
     return turn.id !== lastTurnId || !store.turnActive;
@@ -327,8 +328,8 @@
       {/if}
       {#if turn.collapsible}
         <!-- Codex-style working block: the turn's tools + intermediate narration
-             collapse behind a "Worked for Ns" header once the turn settles; the final
-             response (rendered after) stays visible. Expanded while the turn is live. -->
+             collapse behind a "Worked for Ns" header only once the turn settles; the
+             final response (rendered after) stays visible. -->
         <div class="turn-work" class:open={workShown(turn)}>
           <button
             class="work-head"

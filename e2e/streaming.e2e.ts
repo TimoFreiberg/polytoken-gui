@@ -59,6 +59,10 @@ test("disabling Hide thinking reveals the expandable thinking block", async ({
   await expect(
     page.getByText("That confirms it", { exact: false }),
   ).toBeVisible();
+  // The live turn renders inline and only collapses into its "Worked for Ns" work block
+  // once it settles. Wait for the reply's work toggle to join the greeting's (count 2)
+  // so expanding + clicking the thinking block can't race the inline→collapsed reflow.
+  await expect(page.getByTestId("work-toggle")).toHaveCount(2);
   await expandWork(page);
   const think = page.getByText("Thought process");
   await expect(think).toBeVisible();
