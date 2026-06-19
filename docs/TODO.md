@@ -17,12 +17,14 @@ See `docs/` siblings for context: `DESIGN.md` (architecture + roadmap), `DECISIO
 
 ## 🟡 Important
 
-- [ ] **Stop default-new-session-in-server-cwd for production usage** — in real deployed
-      usage the server's cwd should never become a session's default working directory.
-      Instead, restore the last active session on launch; if that state doesn't exist or gets
-      lost/corrupted, the safe default is an empty (/new) session at the topmost project.
-      _Cross-refs the desktop-app item below which already flags the `launchCwd` issue in
-      `warmUp` — but this is a separate concern from the app wrapper._
+- [x] ~~**Stop default-new-session-in-server-cwd for production usage**~~ → done
+      2026-06-19. The server's cwd no longer feeds any logic: it's not a trust anchor
+      (no dir is implicitly trusted — every cwd goes through pi's built-in trust:
+      trust.json → interactive card → deny-safe), not the boot session (the server boots
+      to an empty landing; the client opens a new-session draft at $HOME), and not the
+      new-session default (`newSession()` with no cwd defaults to $HOME). `PILOT_CWD` is
+      gone. **Remaining fast-follow:** restore the last-focused session on launch (today
+      the landing is always the $HOME draft) — separate item below.
 - [ ] **Per-client UI state persistence** — store the active session, sidebar visibility,
       theme, and other UI state per-client (e.g. localStorage) so that a mobile PWA reload
       doesn't reset to the default session. The user should land exactly where they left off.
@@ -46,12 +48,9 @@ See `docs/` siblings for context: `DESIGN.md` (architecture + roadmap), `DECISIO
 - [x] ~~**Desktop app (macOS .app), local-first**~~ → done 2026-06-19, archived to
       `docs/DONE.md`. Swift/AppKit + `WKWebView` shell that runs a local pilot server from a
       dedicated clone and supervises it; auto-updater ships with it (unattended-apply /
-      deferred + in-app update card). See `desktop/README.md`. The `launchCwd`/trust blocker
-      flagged here is **still open** and remains tracked by the sibling item above ("Stop
-      default-new-session-in-server-cwd for production usage") — the wrapper launches the
-      server as-is, so the launch dir still defaults a new session's cwd and is implicitly
-      trusted (D12). Audit every reader of `launchCwd` before changing it; it's a
-      state-interpretation change, not a one-liner.
+      deferred + in-app update card). See `desktop/README.md`. (The `launchCwd`/trust
+      blocker flagged here when this item was open is **now resolved** — see the sibling
+      item above, done the same day.)
 
 ## 🟢 Polish / fast-follow
 
@@ -68,6 +67,14 @@ See `docs/` siblings for context: `DESIGN.md` (architecture + roadmap), `DECISIO
       no "thinking…" stub, nothing. (3) Add a minimal thinking spinner/animated dot in the
       activity/composer area so the user still gets feedback that the model is doing
       something when there's no visible thinking block.
+- [ ] **Timestamp only on last paragraph of an agent turn** — the per-paragraph timestamp
+      at the bottom of each text block is only meaningful on the final paragraph of an
+      agent's turn. Paragraphs that appear between tool calls (interleaved content blocks)
+      should omit the timestamp to reduce visual noise.
+- [ ] **Copy button only at end of agent turn, copies all text** — the copy-message button
+      on text paragraphs should only appear on the final paragraph of an agent turn (same
+      position as the timestamp). It should copy all the agent's text content for that
+      turn, excluding tool blocks/thinking blocks.
 - [ ] **Extension compatibility-issue surfacing** — surface when an extension uses a
       terminal-only capability against pilot's non-tui host. _Half already done (found
       2026-06-19 while building OAuth):_ the protocol has the `extensionCompatibilityIssue`
