@@ -46,7 +46,6 @@ export class SessionHub {
   // never both running and initializing; entering either clears the other here.
   private initializing = new Set<SessionId>();
   private clients = new Set<Send>();
-  private serverId = `pilot-${Math.floor(Date.now() / 1000)}`;
   // Whether any client has connected since startup. Gates push so replayed history
   // — the mock's bootstrap greeting, or the pi driver's on-load session replay
   // (both can end in runCompleted while clientCount is 0) — doesn't buzz a stored
@@ -92,6 +91,9 @@ export class SessionHub {
     // Cadence (ms) for the live-refresh ticker above. Default 1s; the e2e suite sets a
     // shorter value (PILOT_LIVE_REFRESH_MS) so the meter/list visibly climb in a test.
     private liveRefreshMs = 1000,
+    // Stable per data-dir identity. Production passes the persisted id minted at startup;
+    // tests that construct a hub directly get a process-local fallback.
+    private serverId = `pilot-${Math.floor(Date.now() / 1000)}`,
   ) {
     driver.subscribe((ev) => this.onEvent(ev));
     // Project-trust cards travel their own channel (D12): they're decided before a
@@ -792,15 +794,16 @@ export class SessionHub {
     }
   }
 
-  /** Dev/test-only: clear state, replay the initial fixture, re-snapshot clients. */
-  reset(): void {
+  /** Dev/test-only: clear state, optionally replay the mock's initial fixture, and
+   *  re-snapshot clients. `bootstrap:false` exposes the production empty landing. */
+  reset(opts: { bootstrap?: boolean } = {}): void {
     this.state = initialSessionState();
     this.focusedId = null;
     this.running.clear();
     this.initializing.clear();
     this.updateSha = null;
     this.applying = false;
-    this.driver.reset?.();
+    this.driver.reset?.(opts);
     this.broadcast({ type: "snapshot", state: this.snapshot() });
     this.broadcastSessionStatus();
   }

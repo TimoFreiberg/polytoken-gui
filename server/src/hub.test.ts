@@ -230,6 +230,22 @@ describe("SessionHub", () => {
     expect(a.received[1]?.type).toBe("snapshot");
   });
 
+  test("hello exposes the stable server identity supplied by startup", () => {
+    const hub = new SessionHub(
+      new FakeDriver(),
+      undefined,
+      1000,
+      "stable-server-id",
+    );
+    const a = client();
+    hub.addClient(a.send);
+    expect(a.received[0]).toEqual({
+      type: "hello",
+      protocolVersion: 1,
+      serverId: "stable-server-id",
+    });
+  });
+
   test("events broadcast to all connected clients", () => {
     const d = new FakeDriver();
     const hub = new SessionHub(d);

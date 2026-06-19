@@ -113,6 +113,7 @@ const hub = new SessionHub(
     void push.sendToAll(n);
   },
   config.liveRefreshMs,
+  serverId,
 );
 mock?.bootstrap(); // replay the greeting fixture now that the hub is subscribed
 
@@ -212,7 +213,9 @@ const server = Bun.serve<WsData>({
       if (url.pathname === "/debug/state")
         return Response.json(hub.snapshot(), { headers });
       if (url.pathname === "/debug/reset") {
-        hub.reset();
+        hub.reset({
+          bootstrap: url.searchParams.get("bootstrap") !== "0",
+        });
         return Response.json({ ok: true }, { headers });
       }
       return new Response("not found", { status: 404 });

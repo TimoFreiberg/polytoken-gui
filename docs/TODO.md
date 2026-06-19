@@ -31,11 +31,14 @@ See `docs/` siblings for context: `DESIGN.md` (architecture + roadmap), `DECISIO
       trust.json → interactive card → deny-safe), not the boot session (the server boots
       to an empty landing; the client opens a new-session draft at $HOME), and not the
       new-session default (`newSession()` with no cwd defaults to $HOME). `PILOT_CWD` is
-      gone. **Remaining fast-follow:** restore the last-focused session on launch (today
-      the landing is always the $HOME draft) — separate item below.
-- [ ] **Per-client UI state persistence** — store the active session, sidebar visibility,
-      theme, and other UI state per-client (e.g. localStorage) so that a mobile PWA reload
-      doesn't reset to the default session. The user should land exactly where they left off.
+      gone. **Fast-follow resolved:** the per-client persistence item below now restores
+      the last-focused session from that empty landing.
+- [x] **Per-client UI state persistence** → done 2026-06-19. The active session is now
+      remembered in localStorage per stable Pilot server id and restored from the empty
+      startup landing; missing/archived/failed-to-open targets clear themselves and fall
+      back to the $HOME draft. Sidebar visibility, theme, archive filter, thinking
+      visibility, and per-session composer drafts were already persisted per client.
+      E2E covers valid restoration + stale-session fallback.
 - [x] **Per-session prompt draft persistence (pilot-level, not pi state)** → done 2026-06-19.
       Store holds a `draftMap` persisted in localStorage (`pilot.composerDrafts`), keyed
       `s:<sessionId>` for an existing session and `n:<cwd>` for a pending new-session draft

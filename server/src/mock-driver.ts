@@ -233,8 +233,9 @@ export class MockDriver implements PilotDriver {
     this.play(greeting());
   }
 
-  /** Cancel everything in flight and replay the initial fixture (test determinism). */
-  reset(): void {
+  /** Cancel everything in flight and optionally replay the initial fixture. Skipping
+   *  bootstrap exposes the real driver's empty startup landing for focused e2e tests. */
+  reset(opts: { bootstrap?: boolean } = {}): void {
     this.cancelTimers();
     this.sessions = SESSION_LIST.map((s) => ({ ...s }));
     this.liveCountBumps.clear();
@@ -246,7 +247,7 @@ export class MockDriver implements PilotDriver {
       favorites: [...MOCK_MODEL_DEFAULTS.favorites],
     };
     this.liveUsageTokens = MOCK_USAGE.tokens ?? 0;
-    this.bootstrap();
+    if (opts.bootstrap !== false) this.bootstrap();
   }
 
   prompt(

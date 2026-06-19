@@ -169,6 +169,7 @@ export interface PilotDriver {
 
   /** Dev-only: jump the mock to a named scripted state. No-op for the real driver. */
   runScript?(name: string): void;
-  /** Dev/test-only: clear all state and replay the initial fixture. No-op for real. */
-  reset?(): void;
+  /** Dev/test-only reset. Mock drivers may skip their bootstrap fixture so the empty
+   *  production landing can be exercised deterministically. No-op for real drivers. */
+  reset?(opts?: { bootstrap?: boolean }): void;
 }

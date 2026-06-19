@@ -41,6 +41,60 @@ test("the sidebar groups sessions by project and switches the active one", async
   );
 });
 
+test("an empty launch restores this client's last-focused session", async ({
+  page,
+}) => {
+  await openSidebar(page);
+  await page.getByText("Explore the fold reducer").click();
+  await expect(page.locator("header .title")).toContainText(
+    "Explore the fold reducer",
+  );
+  await expect
+    .poll(() =>
+      page.evaluate(() =>
+        Object.entries(localStorage).some(
+          ([key, value]) =>
+            key.startsWith("pilot.lastSession.") &&
+            value === "older-session",
+        ),
+      ),
+    )
+    .toBe(true);
+
+  // Leave the server on the same empty landing as the real driver after a restart,
+  // while retaining its stable identity + on-disk session list.
+  await page.request.get("/debug/reset?bootstrap=0");
+  await page.reload();
+
+  await expect(page.locator("header .title")).toContainText(
+    "Explore the fold reducer",
+  );
+  await expect(
+    page.getByText("How does foldEvent assemble the transcript?"),
+  ).toBeVisible();
+});
+
+test("a stale last-focused session falls back to the home draft", async ({
+  page,
+}) => {
+  const key = await page.evaluate(() => {
+    const found = Object.keys(localStorage).find((k) =>
+      k.startsWith("pilot.lastSession."),
+    );
+    if (!found) throw new Error("last-session preference was not persisted");
+    localStorage.setItem(found, "missing-session");
+    return found;
+  });
+
+  await page.request.get("/debug/reset?bootstrap=0");
+  await page.reload();
+
+  await expect(
+    page.getByPlaceholder("Describe a task or ask a question…"),
+  ).toBeVisible();
+  expect(await page.evaluate((k) => localStorage.getItem(k), key)).toBeNull();
+});
+
 test("a pilot-created worktree session groups under its parent project, interleaved by recency", async ({
   page,
 }) => {

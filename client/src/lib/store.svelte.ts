@@ -61,6 +61,10 @@ class PilotStore {
   // session was already active). Prevents reconnects from re-opening a draft the
   // operator dismissed.
   bootDraftHandled = $state(false);
+  // True only while boot is reopening the last session saved for this Pilot server.
+  // If the disk entry disappears between list + open, the switch error clears the stale
+  // preference and falls back to the normal $HOME draft instead of leaving a blank pane.
+  private bootRestoreInFlight = false;
   // Session ids with a live turn right now (server-pushed via `sessionStatus`).
   runningIds = $state<Set<string>>(new Set());
   // Session ids warming up (created/opened, not yet streaming) — server-pushed in the
@@ -258,6 +262,8 @@ class PilotStore {
       case "snapshot":
         this.session = msg.state;
         this.ready = true;
+        if (this.bootRestoreInFlight && msg.state.ref)
+          this.bootRestoreInFlight = false;
         // A snapshot lands after a successful switch — clear any stale switch error.
         this.lastError = null;
         this.maybeOpenBootDraft();
@@ -272,6 +278,17 @@ class PilotStore {
         this.sessions = [...msg.sessions];
         this.activeSessionId = msg.activeSessionId;
         this.defaultNewSessionCwd = msg.defaultNewSessionCwd;
+        // Focus is server-authoritative today, but the preference is local to this
+        // browser and keyed by the stable server id. Archived sessions deliberately
+        // stop being boot targets: archiving is the operator saying "put this away".
+        if (this.serverId && msg.activeSessionId) {
+          const active = msg.sessions.find(
+            (s) => s.sessionId === msg.activeSessionId,
+          );
+          if (active?.archived) clearLastSession(this.serverId);
+          else if (active)
+            persistLastSession(this.serverId, msg.activeSessionId);
+        }
         // The session you're now viewing can't be unread.
         if (msg.activeSessionId) this.markRead(msg.activeSessionId);
         this.maybeOpenBootDraft();
@@ -374,6 +391,14 @@ class PilotStore {
         } else {
           console.error("[server error]", msg.message);
           this.lastError = msg.message;
+          if (
+            this.bootRestoreInFlight &&
+            msg.message.startsWith("session switch failed")
+          ) {
+            this.bootRestoreInFlight = false;
+            if (this.serverId) clearLastSession(this.serverId);
+            this.startDraft(this.defaultNewSessionCwd);
+          }
         }
         break;
     }
@@ -524,20 +549,32 @@ class PilotStore {
   groupRunning(sessionIds: readonly string[]): boolean {
     return sessionIds.some((id) => this.runningIds.has(id));
   }
-  /** On boot, if no session is active (empty landing), open a new-session draft at
-   *  $HOME so the operator lands on a prompt page rather than a blank transcript.
+  /** On boot, if no session is active (empty landing), restore this client's last
+   *  focused session for the current Pilot server. If none survives, open a new-session
+   *  draft at $HOME so the operator lands on a prompt page rather than a blank transcript.
    *  Fires at most once per store instance (reconnects don't re-open a dismissed
    *  draft), and only when both the snapshot and the sessionList have arrived —
-   *  snapshot carries ref/ready, sessionList carries activeSessionId + $HOME. */
+   *  hello carries serverId, snapshot carries ref/ready, and sessionList carries the
+   *  available sessions + activeSessionId + $HOME. */
   private maybeOpenBootDraft(): void {
     if (this.bootDraftHandled) return;
-    if (!this.ready || !this.defaultNewSessionCwd) return;
+    if (!this.serverId || !this.ready || !this.defaultNewSessionCwd) return;
     this.bootDraftHandled = true;
     if (
       this.activeSessionId === null &&
       this.session.ref === null &&
       this.draft === null
     ) {
+      const savedId = loadLastSession(this.serverId);
+      const saved = savedId
+        ? this.sessions.find((s) => s.sessionId === savedId && !s.archived)
+        : undefined;
+      if (saved) {
+        this.bootRestoreInFlight = true;
+        this.openSession(saved.path);
+        return;
+      }
+      if (savedId) clearLastSession(this.serverId);
       this.startDraft(this.defaultNewSessionCwd);
     } else if (!this.draft && this.activeSessionId) {
       // Booted/reconnected straight onto a session — restore its saved draft so a reload
@@ -891,6 +928,38 @@ function persistHideThinking(hide: boolean): void {
 }
 
 const DRAFTS_KEY = "pilot.composerDrafts";
+const LAST_SESSION_PREFIX = "pilot.lastSession.";
+
+function lastSessionKey(serverId: string): string {
+  return `${LAST_SESSION_PREFIX}${serverId}`;
+}
+
+function loadLastSession(serverId: string): string | null {
+  if (typeof window === "undefined") return null;
+  try {
+    return localStorage.getItem(lastSessionKey(serverId));
+  } catch {
+    return null;
+  }
+}
+
+function persistLastSession(serverId: string, sessionId: string): void {
+  if (typeof window === "undefined") return;
+  try {
+    localStorage.setItem(lastSessionKey(serverId), sessionId);
+  } catch {
+    // Storage unavailable (private mode) — focus simply lasts for this page load.
+  }
+}
+
+function clearLastSession(serverId: string): void {
+  if (typeof window === "undefined") return;
+  try {
+    localStorage.removeItem(lastSessionKey(serverId));
+  } catch {
+    // Best effort: a stale preference is harmless and retried on the next boot.
+  }
+}
 
 /** Read the per-session composer drafts map from localStorage. Tolerant of a missing /
  *  corrupt value (returns an empty map) — a lost draft is never worth a thrown boot. */
