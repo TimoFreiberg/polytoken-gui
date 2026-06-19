@@ -45,18 +45,41 @@ test("message timestamps render with an exact-time tooltip", async ({
   await expect(times.first()).toHaveAttribute("datetime", /.+/);
 });
 
-test("copy button copies an agent message and shows feedback", async ({
+test("copy + timestamp show only on the turn-final paragraph", async ({
+  page,
+}) => {
+  // The greeting turn has TWO assistant paragraphs (one before its tool call, one
+  // after). Only the LAST carries the copy button + timestamp; the earlier one is bare.
+  const rows = page.locator(".row.assistant");
+  await expect(rows).toHaveCount(2);
+  const first = rows.first();
+  const last = rows.last();
+  await expect(first.getByRole("button", { name: "Copy message" })).toHaveCount(
+    0,
+  );
+  await expect(first.locator("time.ts")).toHaveCount(0);
+  await expect(
+    last.getByRole("button", { name: "Copy message" }),
+  ).toBeVisible();
+  await expect(last.locator("time.ts")).toHaveCount(1);
+});
+
+test("copy button copies the whole turn's text and shows feedback", async ({
   page,
   context,
 }) => {
   await context.grantPermissions(["clipboard-read", "clipboard-write"]);
-  const assistant = page.locator(".row.assistant").first();
+  const assistant = page.locator(".row.assistant").last();
   await assistant.hover();
   const copy = assistant.getByRole("button", { name: "Copy message" });
   await expect(copy).toBeVisible();
   await copy.click();
   // Feedback is now an icon swap (copy -> check) + accent tint, flagged by `copied`.
   await expect(copy).toHaveClass(/\bcopied\b/);
+  // The clipboard holds BOTH paragraphs of the turn, not just the final block.
+  const copied = await page.evaluate(() => navigator.clipboard.readText());
+  expect(copied).toContain("I'll add a lightweight health endpoint");
+  expect(copied).toContain("Routes live in");
 });
 
 test("copy button fades back out once the pointer leaves the message", async ({
@@ -64,7 +87,7 @@ test("copy button fades back out once the pointer leaves the message", async ({
   context,
 }) => {
   await context.grantPermissions(["clipboard-read", "clipboard-write"]);
-  const assistant = page.locator(".row.assistant").first();
+  const assistant = page.locator(".row.assistant").last();
   const copy = assistant.getByRole("button", { name: "Copy message" });
   // Hover reveals it (opacity animates to 1).
   await assistant.hover();

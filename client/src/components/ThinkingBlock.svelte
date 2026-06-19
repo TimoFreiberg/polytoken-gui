@@ -1,22 +1,17 @@
 <script lang="ts">
-  let { text, streaming, minimal = false }: { text: string; streaming: boolean; minimal?: boolean } = $props();
+  // Rendered only when thinking blocks are NOT hidden (Transcript gates on the toggle),
+  // so there's a single expandable variant — no minimal/placeholder mode.
+  let { text, streaming }: { text: string; streaming: boolean } = $props();
   let open = $state(false);
 </script>
 
-<div class="think" class:open class:minimal>
-  {#if minimal}
-    <span class="head subtle" title="Thinking hidden — toggle in Settings">
-      <span class="label">{streaming ? "Thinking…" : "Thought process"}</span>
-      {#if streaming}<span class="shimmer"></span>{/if}
-    </span>
-  {:else}
-    <button class="head" title={open ? "Collapse thinking" : "Expand thinking"} onclick={() => (open = !open)}>
-      <span class="chev">{open ? "▾" : "▸"}</span>
-      <span class="label">{streaming ? "Thinking…" : "Thought process"}</span>
-      {#if streaming}<span class="shimmer"></span>{/if}
-    </button>
-  {/if}
-  {#if open && !minimal}
+<div class="think" class:open>
+  <button class="head" title={open ? "Collapse thinking" : "Expand thinking"} onclick={() => (open = !open)}>
+    <span class="chev">{open ? "▾" : "▸"}</span>
+    <span class="label">{streaming ? "Thinking…" : "Thought process"}</span>
+    {#if streaming}<span class="shimmer"></span>{/if}
+  </button>
+  {#if open}
     <div class="body">{text}</div>
   {/if}
 </div>
@@ -25,10 +20,6 @@
   .think {
     border-left: 2px solid var(--border-strong);
     padding-left: 10px;
-  }
-  .think.minimal {
-    border-left-color: var(--border);
-    padding-left: 8px;
   }
   .head {
     display: inline-flex;
@@ -39,10 +30,6 @@
     padding: 2px 0;
     color: var(--text-muted);
     font-size: 13px;
-  }
-  .head.subtle {
-    color: var(--text-faint);
-    font-size: 12px;
   }
   .chev {
     font-size: 10px;

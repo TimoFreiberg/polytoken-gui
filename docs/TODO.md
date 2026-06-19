@@ -9,11 +9,19 @@ See `docs/` siblings for context: `DESIGN.md` (architecture + roadmap), `DECISIO
 
 ## 🔴 Next (urgent / blocking)
 
-- [ ] **Missing stop-turn interface when a session is running** — investigate the bug where
-      a session was running (actively producing output) but the UI didn't show the stop turn
-      affordance. Harden this as much as possible: not being able to stop an agent that's
-      looping is genuinely annoying and can be dangerous. The stop pill must be visible in
-      every state where a turn is in-flight, across reconnect and state transitions.
+- [x] **Missing stop-turn interface when a session is running** → done 2026-06-19. Root
+      cause: the stop pill + working indicator derived solely from the folded
+      `session.status === "running"`, which only changes on snapshot events. An out-of-band
+      re-snapshot mid-turn (rename / model change / pi auto-title via `session_info_changed`,
+      taken when pi's `isStreaming` momentarily reads false during a tool gap) flips the
+      folded status to `idle` AND clears the hub's running set, even though the run continues
+      — and on reconnect that corrupted status rides the snapshot. Fix: a robust
+      `store.turnActive` that ORs four independent in-flight signals a single glitch can't all
+      clear at once — folded `running`, the server-authoritative running set, an open
+      streaming assistant bubble, and any still-running tool (a `failed` run is terminal).
+      The stop pill, working indicator, and composer steer/queue mode now use it. Regression
+      fixture `staleidle` + `e2e/stop-turn.e2e.ts` reproduce the stray-idle case. (Also made
+      the mock's `abort()` settle in-flight tools, mirroring pi's `tool_execution_end`.)
 
 ## 🟡 Important
 
@@ -66,21 +74,21 @@ See `docs/` siblings for context: `DESIGN.md` (architecture + roadmap), `DECISIO
       sessions within each project stay sorted by last-used (most recent on top).
 - [x] **Remove hover tooltip on session titles in the sidebar** — intentional: it's visually
       noisy and doesn't add information beyond what's already visible in the title itself.
-- [ ] **Thinking-blocks refinement: default to hidden, full invisibility, thinking spinner** —
-      follow-up to the shipped toggle. Three changes: (1) the hide-thinking toggle in
-      Settings should default to hiding (current default is showing). (2) When hidden,
-      thinking blocks must be completely invisible in the UI — no collapsed placeholder,
-      no "thinking…" stub, nothing. (3) Add a minimal thinking spinner/animated dot in the
-      activity/composer area so the user still gets feedback that the model is doing
-      something when there's no visible thinking block.
-- [ ] **Timestamp only on last paragraph of an agent turn** — the per-paragraph timestamp
-      at the bottom of each text block is only meaningful on the final paragraph of an
-      agent's turn. Paragraphs that appear between tool calls (interleaved content blocks)
-      should omit the timestamp to reduce visual noise.
-- [ ] **Copy button only at end of agent turn, copies all text** — the copy-message button
-      on text paragraphs should only appear on the final paragraph of an agent turn (same
-      position as the timestamp). It should copy all the agent's text content for that
-      turn, excluding tool blocks/thinking blocks.
+- [x] **Thinking-blocks refinement: default to hidden, full invisibility, thinking spinner** →
+      done 2026-06-19. (1) `initialHideThinking()` now defaults to hiding (a stored pref still
+      wins). (2) Transcript gates the `ThinkingBlock` render on `!hideThinking`, so hidden
+      thinking renders nothing at all — no stub; removed the now-dead `minimal` placeholder
+      mode from `ThinkingBlock`. (3) The bottom `WorkingIndicator` (animated π/dot, already in
+      the activity area) now reads "Thinking…" while the turn is in its thinking phase (open
+      assistant accumulating reasoning, no answer text yet), "Working…" otherwise.
+- [x] **Timestamp only on last paragraph of an agent turn** → done 2026-06-19. Transcript
+      derives `turnText` (a per-turn map keyed by the turn-final text-bearing assistant id);
+      only that paragraph renders the timestamp footer. Interleaved mid-turn paragraphs are
+      bare. (Shares the footer with the copy button below.)
+- [x] **Copy button only at end of agent turn, copies all text** → done 2026-06-19. The copy
+      button now renders only on the turn-final paragraph (same `turnText` gate as the
+      timestamp), and copies the WHOLE turn's assistant text — every paragraph joined,
+      excluding tool + thinking blocks. Covered by `e2e/polish.e2e.ts`.
 - [ ] **Extension compatibility-issue surfacing** — surface when an extension uses a
       terminal-only capability against pilot's non-tui host. _Half already done (found
       2026-06-19 while building OAuth):_ the protocol has the `extensionCompatibilityIssue`

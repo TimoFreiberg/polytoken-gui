@@ -21,7 +21,32 @@ test("a streamed reply renders user text, assistant text, and a tool call", asyn
   ).toBeVisible();
 });
 
-test("a thinking block appears and expands", async ({ page }) => {
+test("thinking blocks are hidden by default — fully invisible, no stub", async ({
+  page,
+}) => {
+  await drive(page, "reply");
+  // The reply's answer text lands, proving the turn ran…
+  await expect(
+    page.getByText("Here's the plan", { exact: false }),
+  ).toBeVisible();
+  // …but the thinking is gone entirely: no collapsed head, no "Thinking…" stub.
+  await expect(page.getByText("Thought process")).toHaveCount(0);
+  await expect(
+    page.getByText("Let me think about the cleanest way", { exact: false }),
+  ).toHaveCount(0);
+});
+
+test("disabling Hide thinking reveals the expandable thinking block", async ({
+  page,
+}) => {
+  // Turn the (default-on) hide-thinking toggle off via Settings.
+  await page.getByTestId("settings-toggle").click();
+  const toggle = page.getByTestId("hide-thinking");
+  await expect(toggle).toHaveAttribute("aria-checked", "true");
+  await toggle.click();
+  await expect(toggle).toHaveAttribute("aria-checked", "false");
+  await page.keyboard.press("Escape");
+
   await drive(page, "reply");
   const think = page.getByText("Thought process");
   await expect(think).toBeVisible();

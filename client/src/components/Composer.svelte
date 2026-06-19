@@ -37,7 +37,9 @@
   const widgets = $derived(
     Object.values(store.session.ambient.widgets).filter((w) => w.placement === "aboveComposer"),
   );
-  const streaming = $derived(store.streaming);
+  // "A turn is in flight" — the robust signal (see store.turnActive), so the stop pill +
+  // steer/queue affordances stay correct even if the folded status glitches mid-turn.
+  const streaming = $derived(store.turnActive);
   // Drafting a brand-new session: the composer doubles as the new-session form (config
   // chips above, first prompt below). Send creates the session + delivers the prompt.
   const drafting = $derived(store.draft != null);

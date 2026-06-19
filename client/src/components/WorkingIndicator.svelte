@@ -1,21 +1,38 @@
 <script lang="ts">
   import { store } from "../lib/store.svelte.js";
+
+  // The current turn is in its THINKING phase: the open assistant bubble is
+  // accumulating reasoning but hasn't emitted answer text yet. With thinking blocks
+  // hidden (the default) this is the only feedback the model is doing something, so
+  // the indicator says "Thinking…" instead of the generic "Working…".
+  const thinking = $derived.by(() => {
+    const items = store.session.items;
+    const last = items[items.length - 1];
+    return (
+      !!last &&
+      last.kind === "assistant" &&
+      last.streaming &&
+      last.thinking.length > 0 &&
+      last.text.length === 0
+    );
+  });
 </script>
 
 <!-- The "pi is still working" affordance. Lives at the bottom of the chat window,
      just above the composer, so it sits below the last output and stays visible
      through thinking/tool gaps (not only while text streams). Replaces the inline
-     streaming caret. Driven by store.streaming (session.status === "running"). -->
-{#if store.streaming}
+     streaming caret. Driven by store.turnActive — the robust in-flight signal, so it
+     never disappears mid-turn just because a stray snapshot reported idle. -->
+{#if store.turnActive}
   <div class="wrap" data-testid="working-indicator" role="status" aria-live="polite">
-    <span class="inner" title="pi is working">
+    <span class="inner" title={thinking ? "pi is thinking" : "pi is working"}>
       <span class="mark" aria-hidden="true">
         <span class="pi">π</span>
         <!-- Only .ring rotates; the π is a static, centered sibling so its
              centering transform never collides with the orbit animation. -->
         <span class="ring"><span class="dot"></span></span>
       </span>
-      <span class="label">Working…</span>
+      <span class="label">{thinking ? "Thinking…" : "Working…"}</span>
     </span>
   </div>
 {/if}

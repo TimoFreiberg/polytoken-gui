@@ -716,6 +716,60 @@ export function idleNoComplete(): ScriptStep[] {
   ];
 }
 
+/** Reproduces the "missing stop affordance while running" bug: a turn goes running,
+ *  streams text, starts a tool, and then a STRAY `sessionUpdated(idle)` lands while the
+ *  tool is still executing (the real trigger: an out-of-band re-snapshot mid-turn — a
+ *  rename / model change / pi auto-title via `session_info_changed` — taken at an instant
+ *  pi's `isStreaming` reads false during a tool gap). The folded `session.status` flips to
+ *  idle and the hub's running set clears, yet the run is plainly still in flight (the tool
+ *  never finished). The robust `turnActive` signal must keep the stop pill + working
+ *  indicator visible here; before the fix they vanished. The turn deliberately never
+ *  completes, so the stuck state is stable to assert on. */
+export function staleIdle(): ScriptStep[] {
+  return [
+    {
+      wait: 0,
+      event: {
+        ...base(),
+        type: "userMessage",
+        id: `u-stale-${ts()}`,
+        text: "Run the long thing — but glitch the status mid-turn.",
+      },
+    },
+    {
+      wait: 0,
+      event: {
+        ...base(),
+        type: "sessionUpdated",
+        snapshot: snapshot({ status: "running" }),
+      },
+    },
+    ...deltas("On it — kicking off a command that takes a while.", "text"),
+    {
+      wait: 40,
+      event: {
+        ...base(),
+        type: "toolStarted",
+        callId: "stale-tool-1",
+        toolName: "bash",
+        label: "Run shell command",
+        description: "Execute a command in the workspace shell",
+        input: { command: "sleep 30 && echo done" },
+      },
+    },
+    {
+      // The stray idle snapshot — corrupts the folded status mid-turn. No toolFinished
+      // follows, so the tool stays "running" and the run is unmistakably still live.
+      wait: 60,
+      event: {
+        ...base(),
+        type: "sessionUpdated",
+        snapshot: snapshot({ status: "idle" }),
+      },
+    },
+  ];
+}
+
 /** A confirm dialog with a SHORT timeout, to exercise the countdown + deny-safe
  *  auto-resolve without an e2e waiting a full minute. */
 export function timeoutConfirm(): ScriptStep[] {
@@ -796,6 +850,7 @@ export const SCRIPTS: Record<string, () => ScriptStep[]> = {
   editdiff: editDiff,
   idle: idleNoComplete,
   initializing: initializingSession,
+  staleidle: staleIdle,
   timeout: timeoutConfirm,
   yesno: yesNoSelect,
 };

@@ -56,6 +56,33 @@
     return result;
   });
 
+  // Per-turn aggregation for the assistant footer (copy + timestamp). Only the LAST
+  // assistant paragraph of a turn carries the footer: paragraphs interleaved between
+  // tool calls omit it (less visual noise), and its copy grabs ALL of the turn's
+  // assistant text (every paragraph joined), excluding tool + thinking blocks. A turn
+  // runs from one user message to the next; the map is keyed by the turn-final
+  // text-bearing assistant item's id, with the joined turn text as its value.
+  const turnText = $derived.by(() => {
+    const map = new Map<string, string>();
+    let buf: string[] = [];
+    let lastId: string | null = null;
+    const flush = () => {
+      if (lastId !== null) map.set(lastId, buf.join("\n\n"));
+      buf = [];
+      lastId = null;
+    };
+    for (const it of displayItems) {
+      if (it.kind === "user") {
+        flush();
+      } else if (it.kind === "assistant" && it.text) {
+        buf.push(it.text);
+        lastId = it.id;
+      }
+    }
+    flush();
+    return map;
+  });
+
   // Track open/close state for merged-read cards. Keyed by the first read's id
   // (stable across recomputes — a new read appended doesn't change the first id).
   let mergedOpen = $state<Record<string, boolean>>({});
@@ -213,25 +240,32 @@
         </div>
       {:else if item.kind === "assistant"}
         <div class="row assistant">
-          {#if item.thinking}
-            <ThinkingBlock text={item.thinking} streaming={item.streaming && !item.text} minimal={store.hideThinking} />
+          <!-- Thinking blocks are hidden entirely when the Settings toggle is on (the
+               default) — no collapsed stub, nothing. The composer's "Thinking…" indicator
+               carries the feedback instead. -->
+          {#if item.thinking && !store.hideThinking}
+            <ThinkingBlock text={item.thinking} streaming={item.streaming && !item.text} />
           {/if}
           {#if item.text}
             <Markdown
               content={item.text}
-              final={!(item.streaming && store.streaming)}
+              final={!(item.streaming && store.turnActive)}
             />
           {/if}
           <!-- "Still working" lives in the bottom WorkingIndicator now, not as an
-               inline caret on the streaming paragraph. -->
-          {#if item.text && (!item.streaming || !store.streaming)}
+               inline caret on the streaming paragraph. The copy + timestamp footer
+               shows ONLY on the turn-final paragraph (turnText holds its id), once the
+               turn settles — interleaved mid-turn paragraphs stay bare. -->
+          {#if turnText.has(item.id) && (!item.streaming || !store.turnActive)}
             <div class="meta">
               <button
                 class="copy"
                 class:copied={copiedId === item.id}
                 type="button"
                 onclick={(e) => {
-                  copyText(item.id, item.text);
+                  // Copy the WHOLE turn's assistant text (all paragraphs joined), not
+                  // just this final block.
+                  copyText(item.id, turnText.get(item.id) ?? item.text);
                   // Drop focus so a mouse click doesn't leave the button pinned
                   // visible via :focus-visible after the pointer leaves the row.
                   e.currentTarget.blur();

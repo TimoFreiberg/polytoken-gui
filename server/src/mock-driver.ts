@@ -30,6 +30,7 @@ import {
   initializingSession,
   inputDialog,
   markdownShowcase,
+  staleIdle,
   MOCK_COMMANDS,
   MOCK_DEFAULT_CONFIG,
   MOCK_MODEL_DEFAULTS,
@@ -78,6 +79,10 @@ export class MockDriver implements PilotDriver {
     step: ScriptStep;
   }> = [];
   private pendingDialogs = new Set<string>();
+  // Tool callIds that have started but not yet finished. Tracked so abort() can settle
+  // them (emit a toolFinished), mirroring real pi's tool_execution_end on abort —
+  // otherwise an aborted turn leaves a tool card "running" forever.
+  private openTools = new Set<string>();
   private sessions: SessionListEntry[] = SESSION_LIST.map((s) => ({ ...s }));
   // Worktrees the mock "created" (the -worktree sibling dirs), keyed by the worktree
   // cwd (== the session's cwd) → {base, name}. Mirrors the real WorktreeStore so
@@ -193,6 +198,11 @@ export class MockDriver implements PilotDriver {
     // A turn ending settles the live message-count overlay back to the fixture
     // baseline before the hub's run-end list broadcast reads it (see getUsage).
     if (step.event.type === "runCompleted") this.liveCountBumps.clear();
+    // Track in-flight tools so abort() can settle whatever a turn left running.
+    if (step.event.type === "toolStarted")
+      this.openTools.add(step.event.callId);
+    else if (step.event.type === "toolFinished")
+      this.openTools.delete(step.event.callId);
     this.emit(step.event);
     if (
       step.event.type === "hostUiRequest" &&
@@ -247,6 +257,19 @@ export class MockDriver implements PilotDriver {
   abort(): void {
     for (const entry of this.scheduled) clearTimeout(entry.timer);
     this.scheduled = [];
+    // Settle any tool the aborted turn left running, mirroring real pi (which emits a
+    // tool_execution_end on abort). Without this the tool card stays "running" and the
+    // robust turnActive signal would keep the stop affordance up after the turn ended.
+    for (const callId of this.openTools)
+      this.emit({
+        sessionRef: SESSION_REF,
+        timestamp: String(Date.now()),
+        type: "toolFinished",
+        callId,
+        success: false,
+        output: "Aborted.",
+      });
+    this.openTools.clear();
     this.emit({
       sessionRef: SESSION_REF,
       timestamp: String(Date.now()),
@@ -503,6 +526,7 @@ export class MockDriver implements PilotDriver {
     this.scheduled = [];
     this.pendingDialogs.clear();
     this.pendingTrust.clear();
+    this.openTools.clear();
   }
 
   runScript(name: string): void {
@@ -524,6 +548,7 @@ export class MockDriver implements PilotDriver {
       idle: idleNoComplete,
       initializing: initializingSession,
       markdown: markdownShowcase,
+      staleidle: staleIdle,
       streamhold: streamHold,
       timeout: timeoutConfirm,
       yesno: yesNoSelect,

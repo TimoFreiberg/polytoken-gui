@@ -158,8 +158,28 @@ class PilotStore {
   get connection(): ConnectionState {
     return connectionState();
   }
-  get streaming(): boolean {
-    return this.session.status === "running";
+  /** True when a turn is in flight for the FOCUSED session — the robust signal that
+   *  drives the stop pill, the working indicator, and the composer's steer/queue mode.
+   *
+   *  The folded `session.status` alone is NOT enough: it only changes on snapshot-
+   *  bearing events, while raw deltas/tool events never touch it. An out-of-band
+   *  re-snapshot mid-turn (a rename / model change while a tool runs, when pi's
+   *  `isStreaming` momentarily reads false) flips it to "idle" even though the run
+   *  continues — and on reconnect that corrupted status rides the snapshot. So we OR
+   *  it with three independent in-flight signals a single glitch can't all clear at
+   *  once: the server-authoritative running set (tracked separately by the hub from
+   *  raw turn/tool events), an open streaming assistant bubble, and any still-running
+   *  tool. A failed run is terminal — never active — even if a tool card is orphaned. */
+  get turnActive(): boolean {
+    const status = this.session.status;
+    if (status === "running") return true;
+    if (status === "failed") return false;
+    const focusId = this.session.ref?.sessionId;
+    if (focusId && this.runningIds.has(focusId)) return true;
+    const items = this.session.items;
+    const last = items[items.length - 1];
+    if (last && last.kind === "assistant" && last.streaming) return true;
+    return items.some((i) => i.kind === "tool" && i.status === "running");
   }
 
   start(): void {
@@ -738,9 +758,14 @@ function persistShowArchived(show: boolean): void {
 
 const HIDE_THINKING_KEY = "pilot.hideThinking";
 
+/** Default to HIDING thinking blocks (the owner's call): the reasoning stream is noise
+ *  for most reading, and the composer's "Thinking…" indicator still signals activity.
+ *  A stored preference (either direction) wins. */
 function initialHideThinking(): boolean {
-  if (typeof window === "undefined") return false;
-  return localStorage.getItem(HIDE_THINKING_KEY) === "1";
+  if (typeof window === "undefined") return true;
+  const stored = localStorage.getItem(HIDE_THINKING_KEY);
+  if (stored !== null) return stored === "1";
+  return true;
 }
 
 function persistHideThinking(hide: boolean): void {
