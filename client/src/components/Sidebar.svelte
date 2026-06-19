@@ -566,7 +566,7 @@
     flex-shrink: 0;
     height: 100%;
     height: 100dvh;
-    background: var(--surface-sunken);
+    background: var(--sidebar-bg);
     border-right: 1px solid var(--border);
     overflow: hidden;
   }
