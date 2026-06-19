@@ -8,53 +8,74 @@
 
   const items = $derived(store.session.items);
 
-  // ── Merge consecutive read tool calls ──────────────────────────────────
-  // Consecutive `read` calls to the same file (with contiguous/overlapping
-  // ranges) or different files are collapsed into a single "Read N files" card.
-  // Single reads, writes, edits, and other tools pass through unchanged.
+  // ── Merge consecutive navigation/inspection tool calls ─────────────────
+  // Any uninterrupted run of "mergeable" tools (read / grep / find /
+  // session_search / preview_*) collapses into ONE card — regardless of which
+  // of those names it mixes. Membership is decided by name; the run itself is
+  // heterogeneous, so the header summarizes it as "N tools (distinct names)"
+  // (e.g. 3 reads + 2 greps -> "5 tools (read, grep)"). A run of length 1
+  // passes through as a plain ToolCard; writes, edits, bash, etc. break a run.
+  const MERGEABLE_TOOLS = new Set([
+    "read",
+    "grep",
+    "find",
+    "session_search",
+    "preview_start",
+    "preview_eval",
+    "preview_stop",
+  ]);
 
-  interface MergedReadsItem {
-    kind: "mergedReads";
+  interface MergedToolsItem {
+    kind: "mergedTools";
     id: string;
-    reads: ToolItem[];
+    /** Distinct tool names in the run, in first-appearance order. */
+    names: string[];
+    tools: ToolItem[];
   }
 
   function isToolItem(i: TranscriptItem): i is ToolItem {
     return i.kind === "tool";
   }
-  function isReadTool(i: TranscriptItem): i is ToolItem & { name: "read" } {
-    return isToolItem(i) && i.name === "read";
+  function isMergeableTool(i: TranscriptItem): i is ToolItem {
+    return isToolItem(i) && MERGEABLE_TOOLS.has(i.name);
   }
 
-  const displayItems = $derived.by((): (TranscriptItem | MergedReadsItem)[] => {
-    const result: (TranscriptItem | MergedReadsItem)[] = [];
+  const displayItems = $derived.by((): (TranscriptItem | MergedToolsItem)[] => {
+    const result: (TranscriptItem | MergedToolsItem)[] = [];
     let pending: ToolItem[] = [];
-    for (const item of items) {
-      if (isReadTool(item)) {
-        pending.push(item);
-      } else {
-        if (pending.length > 0) {
-          const first = pending[0]!;
-          if (pending.length === 1) {
-            result.push(first);
-          } else {
-            result.push({ kind: "mergedReads", id: first.id, reads: pending });
-          }
-          pending = [];
-        }
-        result.push(item);
-      }
-    }
-    if (pending.length > 0) {
+    const flush = () => {
+      if (pending.length === 0) return;
       const first = pending[0]!;
       if (pending.length === 1) {
         result.push(first);
       } else {
-        result.push({ kind: "mergedReads", id: first.id, reads: pending });
+        result.push({
+          kind: "mergedTools",
+          id: first.id,
+          names: [...new Set(pending.map((t) => t.name))],
+          tools: pending,
+        });
+      }
+      pending = [];
+    };
+    for (const item of items) {
+      if (isMergeableTool(item)) {
+        pending.push(item);
+      } else {
+        flush();
+        result.push(item);
       }
     }
+    flush();
     return result;
   });
+
+  /** Header summary for a merged card: total count + the distinct tool names
+   *  once each, e.g. "5 tools (read, grep)". */
+  function mergedSummary(item: MergedToolsItem): string {
+    const noun = item.tools.length === 1 ? "tool" : "tools";
+    return `${item.tools.length} ${noun} (${item.names.join(", ")})`;
+  }
 
   // Per-turn aggregation for the assistant footer (copy + timestamp). Only the LAST
   // assistant paragraph of a turn carries the footer: paragraphs interleaved between
@@ -83,20 +104,13 @@
     return map;
   });
 
-  // Track open/close state for merged-read cards. Keyed by the first read's id
-  // (stable across recomputes — a new read appended doesn't change the first id).
+  // Track open/close state for merged cards (the outer toggle that reveals the
+  // collapsed list). Keyed by the first call's id (stable across recomputes — a
+  // new call appended to the run doesn't change the first id). Each listed
+  // ToolCard owns its own inner expand state, giving the two-step drill-down.
   let mergedOpen = $state<Record<string, boolean>>({});
   function toggleMerged(id: string) {
     mergedOpen = { ...mergedOpen, [id]: !mergedOpen[id] };
-  }
-  function filePath(r: ToolItem): string {
-    const inp = r.input as Record<string, unknown> | undefined;
-    return String(inp?.file_path ?? inp?.path ?? "(unknown)");
-  }
-  function fileContent(r: ToolItem): string {
-    if (typeof r.output === "string") return r.output;
-    if (typeof r.text === "string") return r.text;
-    return "";
   }
 
   let scroller = $state<HTMLDivElement>();
@@ -308,26 +322,24 @@
             </div>
           {/if}
         </div>
-      {:else if item.kind === "mergedReads"}
-        <div class="merged-reads">
+      {:else if item.kind === "mergedTools"}
+        <div class="merged-tools">
           <button
             class="merged-head"
             onclick={() => toggleMerged(item.id)}
             aria-expanded={mergedOpen[item.id] ?? false}
+            title={`${mergedOpen[item.id] ? "Collapse" : "Expand"} ${mergedSummary(item)}`}
           >
             <span class="chevron" class:open={mergedOpen[item.id]}>▸</span>
-            <span class="tool-name">read</span>
-            <span class="summary">Read {item.reads.length} files</span>
+            <span class="count">{item.tools.length} {item.tools.length === 1 ? "tool" : "tools"}</span>
+            <span class="tool-names">({item.names.join(", ")})</span>
           </button>
           {#if mergedOpen[item.id]}
+            <!-- Two-step drill-down: the outer toggle reveals the run as a list of
+                 collapsed ToolCards; each ToolCard then expands on its own click. -->
             <div class="merged-body">
-              {#each item.reads as r (r.id)}
-                <div class="merged-file">
-                  <span class="file-path">{filePath(r)}</span>
-                  {#if fileContent(r)}
-                    <pre class="file-content">{fileContent(r)}</pre>
-                  {/if}
-                </div>
+              {#each item.tools as t (t.id)}
+                <ToolCard item={t} />
               {/each}
             </div>
           {/if}
@@ -622,8 +634,8 @@
     overflow-wrap: normal;
     tab-size: 2;
   }
-  /* ── Merged sequential reads ─────────────────────────────────────────── */
-  .merged-reads {
+  /* ── Merged sequential navigation tools (read/grep/find/session_search) ── */
+  .merged-tools {
     content-visibility: auto;
     contain-intrinsic-size: auto 60px;
   }
@@ -655,52 +667,25 @@
   .merged-head .chevron.open {
     transform: rotate(90deg);
   }
-  .merged-head .tool-name {
+  .merged-head .count {
     font-weight: 600;
-    color: var(--accent);
+    color: var(--text);
     flex-shrink: 0;
   }
-  .merged-head .summary {
-    color: var(--text-muted);
+  .merged-head .tool-names {
+    color: var(--accent);
     flex: 1;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
   }
   .merged-body {
-    margin-top: 4px;
+    margin-top: 6px;
     margin-left: 6px;
     padding-left: 10px;
     border-left: 1px solid var(--border);
-  }
-  .merged-file {
-    margin-bottom: 10px;
-  }
-  .merged-file:last-child {
-    margin-bottom: 0;
-  }
-  .file-path {
-    display: block;
-    font-size: 12px;
-    font-family: var(--font-mono);
-    color: var(--text-muted);
-    margin-bottom: 4px;
-  }
-  .file-content {
-    background: var(--surface-sunken);
-    border: 1px solid var(--border);
-    border-radius: var(--radius-sm);
-    padding: 10px 12px;
-    overflow-x: auto;
-    font-family: var(--font-mono);
-    font-size: 12.5px;
-    line-height: 1.55;
-    max-height: 320px;
-    overflow-y: auto;
-    margin: 0;
-    white-space: pre-wrap;
-    word-break: break-word;
-    tab-size: 2;
-    -webkit-overflow-scrolling: touch;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
   }
 </style>

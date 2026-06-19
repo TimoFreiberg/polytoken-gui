@@ -456,6 +456,95 @@ export function promptReply(userText: string): ScriptStep[] {
   ];
 }
 
+// --- A burst of navigation tools, to exercise the merged-tools card ---------
+
+/** One scripted navigation/inspection call (read/grep/find/…) with a
+ *  deterministic span. */
+function navSpan(
+  callId: string,
+  toolName: string,
+  input: Record<string, unknown>,
+  output: string,
+): ScriptStep[] {
+  return toolSpan(
+    {
+      callId,
+      toolName,
+      label: toolName,
+      description: `Run ${toolName}`,
+      input,
+    },
+    { callId, success: true, output },
+    { startWait: 40, wait: 90, durationMs: 180 },
+  );
+}
+
+/** A mixed, uninterrupted burst of navigation tools (2 reads, 2 greps, 1 find).
+ *  They all collapse into ONE merged card whose header reads "5 tools (read,
+ *  grep, find)" — exercising the merge-by-membership behavior (heterogeneous run,
+ *  distinct names deduped) and the two-step drill-down. */
+export function searchBatch(): ScriptStep[] {
+  return [
+    {
+      wait: 0,
+      event: {
+        ...base(),
+        type: "userMessage",
+        id: `u-${ts()}`,
+        text: "Where is the WebSocket reconnect logic?",
+      },
+    },
+    {
+      wait: 0,
+      event: {
+        ...base(),
+        type: "sessionUpdated",
+        snapshot: snapshot({ status: "running" }),
+      },
+    },
+    ...deltas("Let me poke around the codebase a few ways.", "text"),
+    ...navSpan(
+      "r1",
+      "read",
+      { path: "client/src/lib/store.svelte.ts" },
+      "// store.svelte.ts\n  private reconnect() { /* WS singleton backoff */ }",
+    ),
+    ...navSpan(
+      "r2",
+      "read",
+      { path: "client/src/App.svelte" },
+      "// App.svelte — mounts the store and the transcript",
+    ),
+    ...navSpan(
+      "g1",
+      "grep",
+      { pattern: "reconnect", path: "client/src" },
+      "client/src/lib/store.svelte.ts:88:  private reconnect() {",
+    ),
+    ...navSpan(
+      "g2",
+      "grep",
+      { pattern: "WebSocket", path: "client/src" },
+      "client/src/lib/store.svelte.ts:31:    this.ws = new WebSocket(url);",
+    ),
+    ...navSpan(
+      "f1",
+      "find",
+      { pattern: "*.svelte", path: "client/src/components" },
+      "client/src/components/Transcript.svelte\nclient/src/components/ToolCard.svelte",
+    ),
+    ...deltas("Reconnect lives in the store's WS singleton.", "text"),
+    {
+      wait: 60,
+      event: {
+        ...base(),
+        type: "runCompleted",
+        snapshot: snapshot({ status: "idle" }),
+      },
+    },
+  ];
+}
+
 // --- Approval dialogs -------------------------------------------------------
 
 export function confirmDialog(): ScriptStep[] {
