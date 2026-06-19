@@ -5,6 +5,25 @@ and its resolution note. Latest completions first.
 
 ---
 
+- [x] **Hide thinking blocks behind a toggle** _(shipped 2026-06-18)_
+  _(done: a "Hide thinking blocks" switch in Settings → Appearance, default off, persisted
+  via `store.hideThinking`/`setHideThinking`. When on, `ThinkingBlock` collapses to a subtle
+  "thinking…" placeholder instead of rendering the content. `mock-driver` replays were
+  serialized so concurrent scripts don't interleave (fixed the flaky thinking-block e2e).)_
+
+- [x] **Workspace icon instead of text label in sidebar** _(shipped 2026-06-18)_
+  _(done: session rows show a compact worktree glyph with `aria-label="worktree"` +
+  `title="Worktree: <path>"` instead of the "worktree" text label, matching the Claude
+  app's density.)_
+
+- [x] **Sort projects alphabetically in sidebar** _(shipped 2026-06-18)_
+  _(done: projects grouped A→Z in `session-filter.ts`; sessions within each project stay
+  sorted by last-used, most recent on top. Covered by `session-filter.test.ts`.)_
+
+- [x] **Remove hover tooltip on session titles in the sidebar** _(shipped 2026-06-18)_
+  _(done: dropped the per-row `title` tooltip on session rows — it was visually noisy and
+  added nothing beyond the visible title. Row actions remain reachable via the ⋯ menu.)_
+
 - [x] **Design-system consistency pass — button primitives** _(scoped + reshaped with owner
   2026-06-18; shipped 2026-06-18)_
   _(done: three interactive primitives in `client/src/components/ui/` —
