@@ -27,23 +27,6 @@ _(clear — nothing blocking; pull the next item up from Important)_
 
 ## 🟢 Polish / fast-follow
 
-- [ ] **Provider OAuth login** — sign-in / sign-out for OAuth-capable providers from the
-      Settings panel. **Greenlit + scoped (owner, 2026-06-19): the driver is subscription
-      billing** — OAuth lets pi bill against a flat-rate Claude Max/Pro sub instead of
-      per-token API. Anthropic first. _Cost premise corrected:_ the old "needs a
-      Tailscale-reachable OAuth callback" note was wrong. pi already ships the whole flow
-      (`packages/ai/src/utils/oauth/`, registry + `authStorage.login()` + token refresh)
-      and it's **built for the headless/remote case** — `loginAnthropic` races a localhost
-      loopback against a **manual paste path** (`onManualCodeInput`/`onPrompt`): phone opens
-      the authorize URL, completes login, pastes the redirect URL/code back; pi exchanges +
-      stores + auto-refreshes. **No Tailscale callback needed.** Pilot's actual work:
-      driver `login/logout` methods bridging pi's callbacks over WS (reuse the existing
-      `respondUi` Host-UI channel for the paste round-trip) + a Settings button & paste
-      field. The protocol already models `authSource: "oauth"` and the driver already
-      enumerates OAuth providers from `authStorage`. ⚠️ **ToS gray area:** pi requests
-      Claude Code's scopes (`user:sessions:claude_code`), i.e. presents as Claude Code;
-      whether subscription OAuth from a third-party tool is within Anthropic's ToS is
-      unsettled — weigh before relying on it.
 - [ ] **Workspace icon instead of text label in sidebar** — replace the "WORKSPACE: …" label on
       session rows with a compact icon (no text), matching the Claude app's visual density.
 - [ ] **Sort projects alphabetically in sidebar** — projects grouped by name A→Z;
@@ -54,12 +37,17 @@ _(clear — nothing blocking; pull the next item up from Important)_
       rarely useful to a human driver. Add a toggle (default off, tucked in Settings) that
       hides `<thinking>` content from the transcript; when off, the block is collapsed or
       replaced with a subtle "thinking…" placeholder.
-- [ ] **Extension compatibility-issue surfacing** — render extension compat issues in the
-      UI (an extension silently breaking against a pi version is exactly the kind of silent
-      failure to surface loudly). Cheap: the protocol already has the
-      `extensionCompatibilityIssue` event + `extensionPath` — emit it server-side, render a
-      banner. _(Scoped down from "enable/disable view", owner 2026-06-19: the enable/disable
-      toggle was split off to Later — see below.)_
+- [ ] **Extension compatibility-issue surfacing** — surface when an extension uses a
+      terminal-only capability against pilot's non-tui host. _Half already done (found
+      2026-06-19 while building OAuth):_ the protocol has the `extensionCompatibilityIssue`
+      event AND `state.ts` already folds it into a transcript `notice` (warning) that
+      renders today — so **the rendering is wired; the only missing half is the pi-driver
+      emitting the event.** That's the real cost: a pi-integration task — find how pi signals
+      terminal-only capability use to a non-tui host (the type was vendored from pi-gui's
+      `session-driver`, so pi-gui's emit path is the reference) and wire `PiUiBridge`
+      (`server/src/pi/ui-bridge.ts`) to emit it. NOT the cheap render-a-banner job the
+      earlier note assumed. _(Scoped down from "enable/disable view", owner 2026-06-19: the
+      enable/disable toggle was split off to Later — see below.)_
 - [ ] **Per-session system-prompt override** — let a new session start with a custom
       system prompt instead of pi's default (in the new-session draft, and/or a global
       default in Settings). Seam: `resourceLoaderOptions.systemPrompt` on

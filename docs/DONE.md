@@ -5,6 +5,25 @@ and its resolution note. Latest completions first.
 
 ---
 
+- [x] **Provider OAuth login** — sign-in / sign-out for OAuth-capable providers (Anthropic
+  Claude Pro/Max, OpenAI Codex, GitHub Copilot) from the Settings panel, for subscription
+  billing instead of per-token API.
+  _(done 2026-06-19: provider-generic, driven off pi's OAuth registry. New global +
+  interactive wire channel modeled on the trust flow — `oauthLogin`/`oauthRespond`/
+  `oauthLogout` client msgs, `oauthPrompt`/`oauthProgress`/`oauthDeviceCode`/`oauthResolved`/
+  `oauthResult` server msgs — not the session-scoped Host UI, since login writes pi's global
+  `auth.json`. `PilotDriver.oauthLogin(id, io)` + `oauthLogout(id)`; the pi-driver maps pi's
+  `authStorage.login` callbacks (`onAuth`/`onManualCodeInput`/`onPrompt`/`onSelect`/
+  `onDeviceCode`) onto the hub IO, so the **remote manual-paste path** works with no
+  Tailscale callback (phone opens the authorize URL, pastes the code back; pi exchanges +
+  auto-refreshes). `ProviderInfo.oauthSupported` added; `listProviders` now surfaces
+  unauthed OAuth providers so a fresh Anthropic row shows a "Sign in" button. Hub is
+  single-flight with a 5-min prompt timeout. Settings shows Sign in / Sign out per provider
+  + an interactive sign-in modal. Mock driver + fixtures simulate the flow; hub unit tests
+  (4) + e2e (sign-in / cancel / sign-out) cover it. ⚠️ ToS gray area noted: pi presents as
+  Claude Code (`user:sessions:claude_code` scopes); owner confirmed it works today and the
+  feature degrades to other providers if Anthropic tightens up.)_
+
 - [x] **Tooltip survives element re-render under a resting pointer** _(2026-06-19)_
   _(done: the global `Tooltip` vanished whenever its tracked node was replaced by a
   re-render (e.g. tool progress in a warm session) — the removed node fired `mouseout`,
@@ -58,7 +77,6 @@ and its resolution note. Latest completions first.
   primitives is catalogued as future-primitive candidates in `docs/design-system-pass.md`
   and a follow-on TODO; the layout-primitive fast-follow + type-hierarchy polish stay
   separate. Per-surface commits on a stack above `main`, left for owner review.)_
-
 - [x] **Server PID lock + stable server identity** _(paseo-inspired)_
   _(done: `server/src/pidlock.ts` — lock at `dataDir/pilot.pid`; a LIVE second server
   aborts startup loud (names pid + data dir; guards the archive/push stores + VAPID
