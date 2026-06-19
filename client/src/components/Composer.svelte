@@ -42,13 +42,18 @@
   // pill (parsed from its lines) that expands on hover/click; everything else
   // renders as the raw monospace box. A tasklist whose lines don't parse (format
   // drift / empty) falls back to the box too — never an empty pill.
+  // Suppressed while drafting a new session: the draft is a client overlay over the
+  // previously-focused session, so its ambient state (e.g. that session's tasklist)
+  // would otherwise bleed into the new-session view it doesn't belong to.
   const widgets = $derived(
-    Object.values(store.session.ambient.widgets)
-      .filter((w) => w.placement === "aboveComposer")
-      .map((w) => ({
-        w,
-        tasks: w.key === "tasklist" ? parseTasklist(w.lines) : null,
-      })),
+    store.draft != null
+      ? []
+      : Object.values(store.session.ambient.widgets)
+          .filter((w) => w.placement === "aboveComposer")
+          .map((w) => ({
+            w,
+            tasks: w.key === "tasklist" ? parseTasklist(w.lines) : null,
+          })),
   );
   // "A turn is in flight" — the robust signal (see store.turnActive), so the stop pill +
   // steer/queue affordances stay correct even if the folded status glitches mid-turn.

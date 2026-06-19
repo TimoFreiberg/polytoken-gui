@@ -1,5 +1,5 @@
 import { expect, type Page, test } from "@playwright/test";
-import { gotoFresh, openSidebar } from "./helpers.js";
+import { drive, gotoFresh, openSidebar } from "./helpers.js";
 
 test.beforeEach(async ({ page }) => {
   await gotoFresh(page);
@@ -70,4 +70,21 @@ test("sending a prompt clears its stored draft (no resurrection on return)", asy
   await row(page, "Wire up the WebSocket bridge").click();
   await openSidebar(page);
   await expect(composer(page)).toHaveValue("");
+});
+
+test("a new-session draft hides the focused session's tasklist pill", async ({
+  page,
+}) => {
+  await drive(page, "ambient");
+  const pill = page.getByRole("button", { name: /3 tasks/ });
+  await expect(pill).toBeVisible();
+
+  // Opening the new-session view is a client overlay over the focused session;
+  // that session's tasklist must not bleed into the fresh draft (which has none).
+  await openSidebar(page);
+  await page.getByRole("button", { name: "New session…" }).click();
+  await expect(
+    page.getByPlaceholder("Describe a task or ask a question…"),
+  ).toBeVisible();
+  await expect(pill).toBeHidden();
 });
