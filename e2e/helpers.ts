@@ -6,15 +6,27 @@ import { expect, type Page } from "@playwright/test";
 export async function gotoFresh(page: Page): Promise<void> {
   await page.request.get("/debug/reset");
   await page.goto("/?dev");
-  // greeting's final assistant line — present only once replay completes
-  await expect(
-    page.getByText("Routes live in", { exact: false }),
-  ).toBeVisible();
+  // The final text starts rendering before the fixture emits runCompleted. Wait for
+  // the settled work block instead: its appearance proves the turn finished and the
+  // live inline content has completed its collapse/reflow.
+  await waitForSettledWorkBlocks(page, 1);
 }
 
 /** Click one of the dev-bar buttons that drives the mock to a named UI state. */
 export async function drive(page: Page, script: string): Promise<void> {
   await page.getByRole("button", { name: script, exact: true }).click();
+}
+
+/** Wait until `count` tool-bearing turns have settled and collapsed their work.
+ *  This is stronger than waiting for final response text, which appears mid-stream. */
+export async function waitForSettledWorkBlocks(
+  page: Page,
+  count: number,
+): Promise<void> {
+  const toggles = page.getByTestId("work-toggle");
+  await expect(toggles).toHaveCount(count);
+  await expect(toggles.last()).toContainText("Worked for");
+  await expect(toggles.last()).toHaveAttribute("aria-expanded", "false");
 }
 
 /** Expand a settled turn's collapsible "Worked for Ns" block so its tools + intermediate

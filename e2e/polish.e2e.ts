@@ -1,5 +1,10 @@
 import { expect, test } from "@playwright/test";
-import { drive, expandWork, gotoFresh } from "./helpers.js";
+import {
+  drive,
+  expandWork,
+  gotoFresh,
+  waitForSettledWorkBlocks,
+} from "./helpers.js";
 
 test.beforeEach(async ({ page }) => {
   await gotoFresh(page);
@@ -118,13 +123,6 @@ test("copy button fades back out once the pointer leaves the message", async ({
 test("no stray working indicator after a turn ends via sessionUpdated (not runCompleted)", async ({
   page,
 }) => {
-  // gotoFresh returns as soon as "Routes live in" appears — which is mid-stream.
-  // Wait for the greeting's FINAL delta so its deltas can't interleave with the
-  // turn we're about to drive (the greeting never goes "running", so there's no
-  // working-indicator to wait on).
-  await expect(
-    page.getByText("add a Bun test", { exact: false }),
-  ).toBeVisible();
   await drive(page, "idle");
   // Wait for the streamed line to finish.
   await expect(
@@ -146,11 +144,6 @@ test("tab title mirrors the active session title", async ({ page }) => {
 test("transcript: full markdown renders (headings, table, code, links)", async ({
   page,
 }) => {
-  // gotoFresh resolves as soon as the greeting's *start* is visible, but the greeting
-  // streams at idle status (no "running"), so it keeps streaming after that. Wait for
-  // its final words before driving, or the markdown script interleaves with the
-  // greeting's tail in the mock's shared timer queue.
-  await expect(page.locator(".row.assistant").last()).toContainText("Bun test");
   await drive(page, "markdown");
   // Wait for the markdown turn to settle (final render) before asserting structure.
   const row = page.locator(".row.assistant").last();
@@ -205,17 +198,17 @@ test("timeout-bearing dialog shows a countdown and auto-resolves deny-safe", asy
 });
 
 test("Ctrl/Cmd+Up jumps to the most recent user prompt", async ({ page }) => {
-  // Wait for the greeting to finish, then add several turns so the transcript is
-  // tall enough to scroll (otherwise everything fits and nothing leaves the view).
-  await expect(
-    page.getByText("add a Bun test", { exact: false }),
-  ).toBeVisible();
+  // Add several turns so the transcript is tall enough to scroll (otherwise
+  // everything fits and nothing leaves the view).
   for (let i = 0; i < 3; i++) {
     await drive(page, "reply");
     await expect(
       page.getByText("That confirms it", { exact: false }).last(),
     ).toBeVisible();
   }
+  // Final response text appears before runCompleted. Wait for the fourth settled work
+  // block (greeting + three replies) so no remaining delta can auto-scroll the viewport.
+  await waitForSettledWorkBlocks(page, 4);
   const lastPrompt = page
     .getByText("Show me the streamed reply script.")
     .last();
