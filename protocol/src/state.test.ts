@@ -141,6 +141,67 @@ describe("foldEvent", () => {
     expect(s.items[0]).toMatchObject({ status: "error" });
   });
 
+  test("runCompleted interrupts a tool with no matching result", () => {
+    const s = foldAll([
+      base({
+        type: "toolStarted",
+        callId: "c1",
+        toolName: "answer",
+        timestamp: "100",
+      }),
+      base({
+        type: "runCompleted",
+        timestamp: "250",
+        snapshot: {
+          ref,
+          workspace: { workspaceId: "w", path: "/p" },
+          title: "t",
+          status: "idle",
+          updatedAt: "250",
+        },
+      }),
+    ]);
+    expect(s.items[0]).toMatchObject({
+      kind: "tool",
+      status: "interrupted",
+      startedAt: "100",
+      finishedAt: "250",
+    });
+  });
+
+  test("an idle sessionUpdated does not interrupt a live tool", () => {
+    const s = foldAll([
+      base({ type: "toolStarted", callId: "c1", toolName: "bash" }),
+      base({
+        type: "sessionUpdated",
+        snapshot: {
+          ref,
+          workspace: { workspaceId: "w", path: "/p" },
+          title: "t",
+          status: "idle",
+          updatedAt: "t",
+        },
+      }),
+    ]);
+    expect(s.items[0]).toMatchObject({ kind: "tool", status: "running" });
+  });
+
+  test("runFailed interrupts a tool with no matching result", () => {
+    const s = foldAll([
+      base({ type: "toolStarted", callId: "c1", toolName: "bash" }),
+      base({
+        type: "runFailed",
+        timestamp: "failed-at",
+        error: { message: "aborted" },
+      }),
+    ]);
+    expect(s.items[0]).toMatchObject({
+      kind: "tool",
+      status: "interrupted",
+      finishedAt: "failed-at",
+    });
+  });
+
   test("dialog requests queue as pending approvals and resolve away", () => {
     const s = initialSessionState();
     foldEvent(

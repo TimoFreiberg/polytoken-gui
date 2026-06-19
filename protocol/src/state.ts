@@ -39,7 +39,7 @@ export interface AssistantItem {
    *  tool / error rather than an assistant message. */
   completedAt?: string;
 }
-export type ToolStatus = "running" | "ok" | "error";
+export type ToolStatus = "running" | "ok" | "error" | "interrupted";
 export interface ToolItem {
   readonly kind: "tool";
   id: string; // callId
@@ -128,6 +128,22 @@ function closeOpenAssistant(
   }
 }
 
+/** Settle tool cards that never received a matching toolFinished event. This only
+ *  runs at authoritative turn boundaries: an idle sessionUpdated can be a transient
+ *  mid-tool snapshot (pi's isStreaming briefly reads false), while runCompleted,
+ *  runFailed, and sessionClosed guarantee that the tool is no longer executing. */
+function interruptRunningTools(
+  items: TranscriptItem[],
+  finishedAt: string,
+): void {
+  for (const item of items) {
+    if (item.kind === "tool" && item.status === "running") {
+      item.status = "interrupted";
+      item.finishedAt = finishedAt;
+    }
+  }
+}
+
 /**
  * Fold one driver event into state. MUTATES `state` and returns it — callers that
  * need immutability (Svelte reactivity) should clone first or reassign the result.
@@ -158,6 +174,11 @@ export function foldEvent(
       // transition that arrives only as a sessionUpdated leaves the assistant
       // item streaming:true forever (the stray blinking caret bug).
       if (s.status !== "running") closeOpenAssistant(state.items, ev.timestamp);
+      // Unlike sessionUpdated, runCompleted is an authoritative turn boundary.
+      // Settle any tool whose result was never persisted/emitted so replay cannot
+      // leave a historical card "running" forever.
+      if (ev.type === "runCompleted")
+        interruptRunningTools(state.items, ev.timestamp);
       return state;
     }
 
@@ -254,6 +275,7 @@ export function foldEvent(
 
     case "runFailed": {
       closeOpenAssistant(state.items);
+      interruptRunningTools(state.items, ev.timestamp);
       state.status = "failed";
       state.items.push({
         kind: "notice",
@@ -338,6 +360,7 @@ export function foldEvent(
 
     case "sessionClosed": {
       closeOpenAssistant(state.items, ev.timestamp);
+      interruptRunningTools(state.items, ev.timestamp);
       state.status = ev.reason === "failed" ? "failed" : "idle";
       return state;
     }

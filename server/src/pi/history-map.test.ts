@@ -163,6 +163,41 @@ describe("historyToEvents", () => {
     });
   });
 
+  test("an unmatched historical tool call is interrupted at replay end", () => {
+    const items = transcript([
+      { role: "user", content: "ask me" },
+      {
+        role: "assistant",
+        content: [
+          {
+            type: "toolCall",
+            id: "dangling-answer",
+            name: "answer",
+            arguments: { questions: [{ question: "Favorite color?" }] },
+          },
+        ],
+      },
+      // A later turn proves the old tool is not still executing, even though pi
+      // never persisted a matching toolResult for it.
+      { role: "user", content: "try again" },
+      {
+        role: "assistant",
+        content: [{ type: "text", text: "Done." }],
+      },
+    ]);
+    expect(
+      items.find(
+        (i) => i.kind === "tool" && i.id === "dangling-answer",
+      ),
+    ).toMatchObject({
+      status: "interrupted",
+      finishedAt: expect.any(String),
+    });
+    expect(
+      items.some((i) => i.kind === "tool" && i.status === "running"),
+    ).toBe(false);
+  });
+
   test("an errored assistant turn yields an inline error notice", () => {
     const items = transcript([
       { role: "user", content: "go" },

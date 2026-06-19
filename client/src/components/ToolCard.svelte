@@ -53,7 +53,12 @@
     return JSON.stringify(out, null, 2);
   }
 
-  const statusIcon: Record<string, string> = { running: "○", ok: "●", error: "✕" };
+  const statusIcon: Record<ToolItem["status"], string> = {
+    running: "○",
+    ok: "●",
+    error: "✕",
+    interrupted: "–",
+  };
 
   // Elapsed wall-clock for the call, derived from the toolStarted→toolFinished
   // timestamps the fold reducer stamps. Timestamps are ISO strings OR epoch-ms strings
@@ -319,6 +324,9 @@
         <pre class="out">{outputText(item.output)}</pre>
       {/if}
       {#if item.status === "running" && !item.text}<div class="running">running…</div>{/if}
+      {#if item.status === "interrupted" && item.output === undefined}
+        <div class="interrupted">interrupted before a result was recorded</div>
+      {/if}
     </div>
   {/if}
 </div>
@@ -364,6 +372,9 @@
   }
   .tool.error .status {
     color: var(--danger);
+  }
+  .tool.interrupted .status {
+    color: var(--text-faint);
   }
   @keyframes blink {
     50% {
@@ -468,7 +479,8 @@
   .arg-val {
     color: var(--text);
   }
-  .running {
+  .running,
+  .interrupted {
     font-size: 12px;
     color: var(--text-muted);
     font-style: italic;
