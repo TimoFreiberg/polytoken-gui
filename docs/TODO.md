@@ -38,13 +38,13 @@ See `docs/` siblings for context: `DESIGN.md` (architecture + roadmap), `DECISIO
 
 ## 🟢 Polish / fast-follow
 
-- [ ] **Workspace icon instead of text label in sidebar** — replace the "WORKSPACE: …" label on
+- [x] **Workspace icon instead of text label in sidebar** — replace the "WORKSPACE: …" label on
       session rows with a compact icon (no text), matching the Claude app's visual density.
-- [ ] **Sort projects alphabetically in sidebar** — projects grouped by name A→Z;
+- [x] **Sort projects alphabetically in sidebar** — projects grouped by name A→Z;
       sessions within each project stay sorted by last-used (most recent on top).
-- [ ] **Remove hover tooltip on session titles in the sidebar** — intentional: it's visually
+- [x] **Remove hover tooltip on session titles in the sidebar** — intentional: it's visually
       noisy and doesn't add information beyond what's already visible in the title itself.
-- [ ] **Hide thinking blocks behind a toggle** — thinking blocks are visually noisy and
+- [x] **Hide thinking blocks behind a toggle** — thinking blocks are visually noisy and
       rarely useful to a human driver. Add a toggle (default off, tucked in Settings) that
       hides `<thinking>` content from the transcript; when off, the block is collapsed or
       replaced with a subtle "thinking…" placeholder.

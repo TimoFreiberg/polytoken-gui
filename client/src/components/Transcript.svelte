@@ -1,12 +1,76 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import type { TranscriptItem } from "@pilot/protocol";
+  import type { TranscriptItem, ToolItem } from "@pilot/protocol";
   import { store } from "../lib/store.svelte.js";
   import Markdown from "./Markdown.svelte";
   import ToolCard from "./ToolCard.svelte";
   import ThinkingBlock from "./ThinkingBlock.svelte";
 
   const items = $derived(store.session.items);
+
+  // ── Merge consecutive read tool calls ──────────────────────────────────
+  // Consecutive `read` calls to the same file (with contiguous/overlapping
+  // ranges) or different files are collapsed into a single "Read N files" card.
+  // Single reads, writes, edits, and other tools pass through unchanged.
+
+  interface MergedReadsItem {
+    kind: "mergedReads";
+    id: string;
+    reads: ToolItem[];
+  }
+
+  function isToolItem(i: TranscriptItem): i is ToolItem {
+    return i.kind === "tool";
+  }
+  function isReadTool(i: TranscriptItem): i is ToolItem & { name: "read" } {
+    return isToolItem(i) && i.name === "read";
+  }
+
+  const displayItems = $derived.by((): (TranscriptItem | MergedReadsItem)[] => {
+    const result: (TranscriptItem | MergedReadsItem)[] = [];
+    let pending: ToolItem[] = [];
+    for (const item of items) {
+      if (isReadTool(item)) {
+        pending.push(item);
+      } else {
+        if (pending.length > 0) {
+          const first = pending[0]!;
+          if (pending.length === 1) {
+            result.push(first);
+          } else {
+            result.push({ kind: "mergedReads", id: first.id, reads: pending });
+          }
+          pending = [];
+        }
+        result.push(item);
+      }
+    }
+    if (pending.length > 0) {
+      const first = pending[0]!;
+      if (pending.length === 1) {
+        result.push(first);
+      } else {
+        result.push({ kind: "mergedReads", id: first.id, reads: pending });
+      }
+    }
+    return result;
+  });
+
+  // Track open/close state for merged-read cards. Keyed by the first read's id
+  // (stable across recomputes — a new read appended doesn't change the first id).
+  let mergedOpen = $state<Record<string, boolean>>({});
+  function toggleMerged(id: string) {
+    mergedOpen = { ...mergedOpen, [id]: !mergedOpen[id] };
+  }
+  function filePath(r: ToolItem): string {
+    const inp = r.input as Record<string, unknown> | undefined;
+    return String(inp?.file_path ?? inp?.path ?? "(unknown)");
+  }
+  function fileContent(r: ToolItem): string {
+    if (typeof r.output === "string") return r.output;
+    if (typeof r.text === "string") return r.text;
+    return "";
+  }
 
   let scroller = $state<HTMLDivElement>();
   // Reactive so `showNewPill` ($derived) re-evaluates when scrolling flips it.
@@ -111,10 +175,6 @@
   // True when the active session has content below the viewport (drives the pill).
   const showNewPill = $derived(!pinned && store.activeUnread);
 
-  function isToolItem(i: TranscriptItem) {
-    return i.kind === "tool";
-  }
-
   /** Scroll so the most recent user prompt sits at the top of the viewport (your
    *  message + the response below it) — for re-reading what you last asked after
    *  scrolling through a long turn. Bound to Cmd/Ctrl+↑. */
@@ -143,7 +203,7 @@
 <div class="transcript-wrap">
 <div class="scroller" bind:this={scroller} onscroll={onScroll}>
   <div class="col">
-    {#each items as item (item.id)}
+    {#each displayItems as item (item.id)}
       {#if item.kind === "user"}
         <div class="row user">
           <div class="bubble">{item.text}</div>
@@ -214,6 +274,30 @@
             </div>
           {/if}
         </div>
+      {:else if item.kind === "mergedReads"}
+        <div class="merged-reads">
+          <button
+            class="merged-head"
+            onclick={() => toggleMerged(item.id)}
+            aria-expanded={mergedOpen[item.id] ?? false}
+          >
+            <span class="chevron" class:open={mergedOpen[item.id]}>▸</span>
+            <span class="tool-name">read</span>
+            <span class="summary">Read {item.reads.length} files</span>
+          </button>
+          {#if mergedOpen[item.id]}
+            <div class="merged-body">
+              {#each item.reads as r (r.id)}
+                <div class="merged-file">
+                  <span class="file-path">{filePath(r)}</span>
+                  {#if fileContent(r)}
+                    <pre class="file-content">{fileContent(r)}</pre>
+                  {/if}
+                </div>
+              {/each}
+            </div>
+          {/if}
+        </div>
       {:else if isToolItem(item)}
         <ToolCard {item} />
       {:else if item.kind === "notice"}
@@ -240,7 +324,7 @@
         </div>
       {/if}
     {/each}
-    {#if items.length === 0}
+    {#if displayItems.length === 0}
       <div class="empty">No messages yet. Say something below to start a turn.</div>
     {/if}
   </div>
@@ -503,5 +587,86 @@
     /* code blocks scroll horizontally rather than wrap */
     overflow-wrap: normal;
     tab-size: 2;
+  }
+  /* ── Merged sequential reads ─────────────────────────────────────────── */
+  .merged-reads {
+    content-visibility: auto;
+    contain-intrinsic-size: auto 60px;
+  }
+  .merged-head {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    width: 100%;
+    text-align: left;
+    background: transparent;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    padding: 8px 10px;
+    color: var(--text);
+    font-size: 13px;
+    cursor: pointer;
+  }
+  .merged-head:hover {
+    background: var(--surface);
+  }
+  .merged-head .chevron {
+    font-size: 10px;
+    width: 14px;
+    text-align: center;
+    color: var(--text-faint);
+    transition: transform 0.12s;
+    flex-shrink: 0;
+  }
+  .merged-head .chevron.open {
+    transform: rotate(90deg);
+  }
+  .merged-head .tool-name {
+    font-weight: 600;
+    color: var(--accent);
+    flex-shrink: 0;
+  }
+  .merged-head .summary {
+    color: var(--text-muted);
+    flex: 1;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .merged-body {
+    margin-top: 4px;
+    margin-left: 6px;
+    padding-left: 10px;
+    border-left: 1px solid var(--border);
+  }
+  .merged-file {
+    margin-bottom: 10px;
+  }
+  .merged-file:last-child {
+    margin-bottom: 0;
+  }
+  .file-path {
+    display: block;
+    font-size: 12px;
+    font-family: var(--font-mono);
+    color: var(--text-muted);
+    margin-bottom: 4px;
+  }
+  .file-content {
+    background: var(--surface-sunken);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    padding: 10px 12px;
+    overflow-x: auto;
+    font-family: var(--font-mono);
+    font-size: 12.5px;
+    line-height: 1.55;
+    max-height: 320px;
+    overflow-y: auto;
+    margin: 0;
+    white-space: pre-wrap;
+    word-break: break-word;
+    tab-size: 2;
+    -webkit-overflow-scrolling: touch;
   }
 </style>
