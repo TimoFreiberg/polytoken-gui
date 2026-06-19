@@ -16,7 +16,7 @@
       {#if cwd}
         in <code>{cwd}</code>{#if worktree} · isolated worktree{/if}
       {:else}
-        in the launch directory{#if worktree} · isolated worktree{/if}
+        in your home directory{#if worktree} · isolated worktree{/if}
       {/if}
     </div>
     <div class="note">Nothing is created until you send your first message.</div>

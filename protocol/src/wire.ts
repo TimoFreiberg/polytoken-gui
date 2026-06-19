@@ -57,6 +57,11 @@ export type ServerMessage =
       type: "sessionList";
       sessions: readonly SessionListEntry[];
       activeSessionId: SessionId | null;
+      /** The cwd a bare new session defaults to when the operator doesn't pick one
+       *  ($HOME). The client uses it to open the boot landing draft and as the
+       *  new-session placeholder. Surfaced here (cross-session meta, like
+       *  activeSessionId) so the client doesn't have to guess the server's $HOME. */
+      defaultNewSessionCwd: string;
     }
   /** Which sessions currently have a live turn, and which are still warming up (D8
    *  multi-session). Pushed whenever either set changes, so background rows can show a
@@ -170,7 +175,7 @@ export type ClientMessage =
   /** Switch the active session to this .jsonl path. */
   | { type: "openSession"; path: string }
   /** Create a fresh session and make it active. `cwd` (an absolute dir, D12
-   *  arbitrary GUI paths) picks the workspace; omit it for the server's launch cwd.
+   *  arbitrary GUI paths) picks the workspace; omit it for $HOME.
    *  `worktree`: create an isolated jj/git worktree of `cwd` and run the session
    *  there, leaving the main tree clean (like the Claude app's worktree toggle).
    *  `model`/`thinking`: apply this model + thinking level at creation, so the

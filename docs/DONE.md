@@ -5,6 +5,30 @@ and its resolution note. Latest completions first.
 
 ---
 
+- [x] **Stop default-new-session-in-server-cwd (the `launchCwd` blocker)** — the server's
+  own cwd no longer feeds any logic; boot to an empty landing + $HOME new-session draft.
+  _(done 2026-06-19: the server cwd carries no operator intent — a Finder-launched
+  desktop app starts in `/`, and even `bun run dev` is run from the repo, not the
+  project you want to work in — so it must not be a trust anchor, the boot session, or
+  the new-session default. `server/src/pi/pi-driver.ts`: removed `launchCwd` entirely;
+  `makeTrustResolver(cwd, ask)` drops the `isLaunchCwd` param (no dir is implicitly
+  trusted — every cwd goes through pi's built-in trust: trust.json → interactive card
+  → deny-safe, D12); `SettingsManager.create(homedir(), agentDir, { projectTrusted:
+  false })` makes the global-settings manager cwd-independent (project-scope settings
+  file never loaded); the boot `warmUp(continueRecent(launchCwd))` is gone — the server
+  boots with `focusedId=null` and no warm session; `newSession()` with no cwd defaults
+  to `homedir()`. `PILOT_CWD` is dropped (`PiDriverOptions.cwd`, `index.ts`, all
+  docs/scripts). Client: on boot, if no session is active the store auto-opens a
+  new-session draft at $HOME (`maybeOpenBootDraft`, fires once per store instance so
+  reconnects don't re-open a dismissed draft); $HOME is surfaced via a new
+  `defaultNewSessionCwd` field on the `sessionList` protocol message. Stale "launch
+  dir" copy fixed in `NewSession`/`Composer`. The mock driver still seeds its greeting
+  fixture on boot (so e2e/dev keep their transcript), so the empty-landing path is
+  verified by code inspection + a live drive of the store, NOT by e2e — a gap to close
+  if the mock should model empty-boot too. Gate: canonical `tsc` clean, `svelte-check`
+  clean, 206 unit + 88 e2e pass.)_ Remaining fast-follow: restore the last-focused
+  session on launch (today the landing is always the $HOME draft).
+
 - [x] **Desktop app (macOS .app), local-first** — a clickable, dockable Swift/AppKit
   shell that runs pi agents locally by default.
   _(done 2026-06-19: `desktop/` — a thin `WKWebView` wrapper (`Sources/Pilot/*.swift`,
@@ -26,12 +50,9 @@ and its resolution note. Latest completions first.
   and an `applyUpdate` WS message lets the card's button request the apply. Pure decision
   logic (`decideAction`/`lockfileChanged`/`isBusyFromHealth`/`shouldNotify`/`parseServerPid`)
   is exported and unit-tested (`scripts/desktop/update-watcher.test.ts`, 21 tests).
-  ⚠️ **The `launchCwd`/trust blocker flagged in the original TODO item is NOT resolved**
-  — the app launches the server as-is, so the launch dir still defaults a new session's
-  cwd and is implicitly trusted (D12). That stays tracked under the sibling TODO item
-  "Stop default-new-session-in-server-cwd for production usage"; it's a server-side
-  concern, not a desktop-wrapper one. Still missing: code-signing/notarization, app icon,
-  and a release/CI step to publish a built `.app`._
+  ⚠️ **The `launchCwd`/trust blocker flagged in the original TODO item was resolved
+  2026-06-19** (same-day follow-up) — see the dedicated DONE entry below. Still missing:
+  code-signing/notarization, app icon, and a release/CI step to publish a built `.app`._
 
 - [x] **Provider OAuth login** — sign-in / sign-out for OAuth-capable providers (Anthropic
   Claude Pro/Max, OpenAI Codex, GitHub Copilot) from the Settings panel, for subscription
@@ -418,7 +439,8 @@ and its resolution note. Latest completions first.
   (dark). Closes the last 🔴.
 
 - [x] **Live pi bring-up** — first real turn against provider credentials.
-  `PILOT_DRIVER=pi PILOT_CWD=/some/repo bun run dev`. Working; rough edges
+  `PILOT_DRIVER=pi bun run dev`, then open a project from the sidebar (the server
+  boots to an empty landing, no `PILOT_CWD`). Working; rough edges
   are filed as separate todos.
 
 - [x] **Session/project sidebar** — replaced the header session dropdown

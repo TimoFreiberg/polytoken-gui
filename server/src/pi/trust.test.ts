@@ -11,62 +11,50 @@ import {
 
 describe("decideProjectTrust", () => {
   test("no trust-requiring resources → trusted (gate is moot)", () => {
-    // Even a non-launch cwd with a saved deny is trusted when nothing needs gating.
+    // Even a cwd with a saved deny is trusted when nothing needs gating.
     expect(
       decideProjectTrust({
         hasTrustRequiringResources: false,
         savedDecision: false,
-        isLaunchCwd: false,
       }),
     ).toBe(true);
   });
 
-  test("a saved decision wins over the launch-cwd default", () => {
-    // Saved deny beats the implicit launch-cwd trust...
+  test("a saved decision wins over the deny-by-default", () => {
+    // A saved deny denies...
     expect(
       decideProjectTrust({
         hasTrustRequiringResources: true,
         savedDecision: false,
-        isLaunchCwd: true,
       }),
     ).toBe(false);
-    // ...and a saved trust beats the deny-other-paths default.
+    // ...and a saved trust trusts.
     expect(
       decideProjectTrust({
         hasTrustRequiringResources: true,
         savedDecision: true,
-        isLaunchCwd: false,
       }),
     ).toBe(true);
   });
 
-  test("no saved decision: launch cwd trusted, other paths denied", () => {
+  test("no saved decision: every path denied (no implicit trust)", () => {
     expect(
       decideProjectTrust({
         hasTrustRequiringResources: true,
         savedDecision: null,
-        isLaunchCwd: true,
-      }),
-    ).toBe(true);
-    expect(
-      decideProjectTrust({
-        hasTrustRequiringResources: true,
-        savedDecision: null,
-        isLaunchCwd: false,
       }),
     ).toBe(false);
   });
 });
 
 describe("needsInteractiveTrust", () => {
-  test("only an untrusted, undecided, non-launch cwd should ask", () => {
+  test("only an untrusted, undecided cwd should ask", () => {
     const base = {
       hasTrustRequiringResources: true,
       savedDecision: null,
-      isLaunchCwd: false,
     };
     expect(needsInteractiveTrust(base)).toBe(true);
-    // each of the three escape hatches removes the need to ask:
+    // each of the escape hatches removes the need to ask:
     expect(
       needsInteractiveTrust({ ...base, hasTrustRequiringResources: false }),
     ).toBe(false);
@@ -74,7 +62,6 @@ describe("needsInteractiveTrust", () => {
     expect(needsInteractiveTrust({ ...base, savedDecision: false })).toBe(
       false,
     );
-    expect(needsInteractiveTrust({ ...base, isLaunchCwd: true })).toBe(false);
   });
 });
 
@@ -124,29 +111,24 @@ describe("makeTrustResolver (interactive)", () => {
 
   test("escalates to ask, and a session-only trust returns true without persisting", async () => {
     let asked: { cwd: string; optionCount: number } | null = null;
-    const resolver = makeTrustResolver(
-      root,
-      false,
-      async ({ cwd, options }) => {
-        asked = { cwd, optionCount: options.length };
-        return options.findIndex(
-          (o) => o.label === "Trust for this session only",
-        );
-      },
-    );
+    const resolver = makeTrustResolver(root, async ({ cwd, options }) => {
+      asked = { cwd, optionCount: options.length };
+      return options.findIndex(
+        (o) => o.label === "Trust for this session only",
+      );
+    });
     expect(await resolver()).toBe(true);
     expect(asked).toMatchObject({ cwd: root, optionCount: 5 });
   });
 
   test("a null answer (cancel / dismiss / timeout) denies", async () => {
-    const resolver = makeTrustResolver(root, false, async () => null);
+    const resolver = makeTrustResolver(root, async () => null);
     expect(await resolver()).toBe(false);
   });
 
   test("without an ask channel it stays non-interactive (deny-safe)", async () => {
-    // No ask wired → falls back to decideProjectTrust: a non-launch untrusted cwd denies.
-    expect(await makeTrustResolver(root, false)()).toBe(false);
-    // ...but the same cwd as the launch cwd is implicitly trusted.
-    expect(await makeTrustResolver(root, true)()).toBe(true);
+    // No ask wired → falls back to decideProjectTrust: an untrusted cwd with no saved
+    // decision denies. No path is implicitly trusted.
+    expect(await makeTrustResolver(root)()).toBe(false);
   });
 });

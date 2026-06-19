@@ -72,7 +72,6 @@ import { PiUiBridge } from "./ui-bridge.js";
 import { countUserMessages } from "./user-message-count.js";
 
 export interface PiDriverOptions {
-  cwd?: string;
   /** Max kept-warm sessions before LRU eviction. Defaults to config.warmCap. */
   warmCap?: number;
 }
@@ -117,9 +116,12 @@ interface WarmSession {
 export async function createPiDriver(
   opts: PiDriverOptions = {},
 ): Promise<PilotDriver> {
-  // The operator-launched cwd is implicitly trusted; sessions opened from other cwds
-  // are gated by the per-session trust resolver below (D12).
-  const launchCwd = opts.cwd ?? process.cwd();
+  // The server's own cwd carries no operator intent (a Finder-launched desktop app
+  // starts in `/`; even `bun run dev` is run from the repo, not the project you want
+  // to work in), so it must NOT feed any logic: not trust (no dir is implicitly
+  // trusted — every cwd goes through pi's built-in trust: trust.json → interactive
+  // card → deny-safe), not the initial session (boot to an empty landing, not a
+  // session at the server cwd), and not the new-session default ($HOME). See D12.
   const agentDir = getAgentDir();
   const now = () => String(Date.now());
 
@@ -137,14 +139,18 @@ export async function createPiDriver(
   // here + `modelRegistry.refresh()` immediately updates each warm session's available
   // models (and `setModel`'s `find`). Per-session settings managers stay cwd-bound (they
   // layer project settings at session creation); for the GLOBAL defaults/favorites the
-  // panel edits we keep a separate launchCwd-bound manager — those settings are global,
+  // panel edits we keep a separate cwd-independent manager (projectTrusted:false) —
   // so the bound cwd doesn't matter for what we read/write.
   const authStorage = AuthStorage.create(join(agentDir, "auth.json"));
   const modelRegistry = ModelRegistry.create(
     authStorage,
     join(agentDir, "models.json"),
   );
-  const globalSettings = SettingsManager.create(launchCwd, agentDir);
+  // Global settings only: pass projectTrusted:false so the project-scope settings
+  // file at the (irrelevant) cwd is never loaded — this manager is cwd-independent.
+  const globalSettings = SettingsManager.create(homedir(), agentDir, {
+    projectTrusted: false,
+  });
 
   // Available models as the small shape model-config helpers want.
   const availableModelLikes = (): ModelLike[] => {
@@ -330,7 +336,7 @@ export async function createPiDriver(
   // Warm up a brand-new session from a SessionManager: create cwd-bound services (with
   // the per-cwd trust resolver), build the session, bind the UI bridge for approvals,
   // and subscribe its event stream into the shared emit. The cwd is taken from the
-  // manager so an opened session is bound to ITS stored cwd, not launchCwd. Registers
+  // manager so an opened session is bound to ITS stored cwd, not the server's. Registers
   // and returns the WarmSession.
   async function warmUp(sessionManager: SessionManager): Promise<WarmSession> {
     const cwd = sessionManager.getCwd();
@@ -344,9 +350,9 @@ export async function createPiDriver(
       modelRegistry,
       // Without this, pi leaves projectTrusted=true and auto-loads every project's .pi
       // resources — the D12 gap. Resolve trust per cwd instead (non-interactive MVP;
-      // honors trust.json, trusts launchCwd, denies other untrusted paths).
+      // honors trust.json, denies untrusted paths (no implicit trust — see createPiDriver).
       resourceLoaderReloadOptions: {
-        resolveProjectTrust: makeTrustResolver(cwd, cwd === launchCwd, ask),
+        resolveProjectTrust: makeTrustResolver(cwd, ask),
       },
     });
     const { session } = await createAgentSessionFromServices({
@@ -436,10 +442,10 @@ export async function createPiDriver(
     return ws;
   };
 
-  // Startup: resume the most recent session for launchCwd (or a fresh one if none),
-  // writing to ~/.pi/agent/sessions/ so an SSH `pi` peer sees the same files (D13).
-  const initial = await warmUp(SessionManager.continueRecent(launchCwd));
-  focus(initial.ref.sessionId);
+  // Startup: boot to an empty landing (no warm session, focusedId=null). The client
+  // opens a new-session draft at $HOME; a session is only materialized when the
+  // operator sends a first prompt or opens one from the sidebar. (Restoring the
+  // last-focused session on boot is a separate, planned fast-follow.)
 
   const toEntry = async (
     info: Awaited<ReturnType<typeof SessionManager.list>>[number],
@@ -512,9 +518,9 @@ export async function createPiDriver(
   return {
     subscribe(l) {
       listeners.add(l);
-      // Seed the first (only) subscriber — the hub — synchronously with the startup
-      // session so no live event races ahead of the initial transcript.
-      if (listeners.size === 1) for (const ev of seedFor(initial)) emit(ev);
+      // No boot session to seed: the server starts on an empty landing, and each
+      // opened/created session delivers its own seed through switchTo. The first
+      // subscriber (the hub) simply starts listening.
       return () => listeners.delete(l);
     },
 
@@ -578,7 +584,7 @@ export async function createPiDriver(
 
     async listSessions() {
       // Every session on the machine, so the sidebar can group them by project dir
-      // (the owner's choice — a cross-project navigator, not just launchCwd's sessions).
+      // (the owner's choice — a cross-project navigator, not just the server cwd's sessions).
       const onDisk = await Promise.all(
         (await SessionManager.listAll()).map(toEntry),
       );
@@ -665,7 +671,7 @@ export async function createPiDriver(
       // only gates that repo's .pi resources (resolved per-cwd in warmUp), not the
       // session. `~otheruser` is left literal (we can't resolve another user's home);
       // it falls through to the statSync guard and fails loudly like any bad path.
-      let dir = launchCwd;
+      let dir = homedir();
       if (cwd?.trim()) {
         const raw = cwd.trim();
         const expanded =

@@ -168,8 +168,9 @@ desktop + mobile, `svelte-check` + `tsc` clean):
 
 ## To go live (first thing, once OQ1/OQ3/OQ6 are settled)
 ```bash
-# uses your existing ~/.pi model + credentials; runs in the given workspace
-PILOT_DRIVER=pi PILOT_CWD=/path/to/a/repo bun run dev
+# uses your existing ~/.pi model + credentials. The server boots to an empty landing;
+# open a session at a project from the sidebar (or send a prompt to start one at $HOME).
+PILOT_DRIVER=pi bun run dev
 # open http://localhost:5173 and send a prompt
 ```
 Expect rough edges on the first real turn (it's untested live) — they'll fail

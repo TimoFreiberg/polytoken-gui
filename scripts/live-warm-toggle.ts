@@ -4,8 +4,8 @@
 // watching the server log: a refocus logs `[pi] refocus warm session …` and does NOT
 // grow the warm count, whereas a cold open logs `[pi] warmed session …`.
 //
-// Usage (server must run the real pi driver against a cwd with ≥2 populated sessions):
-//   PILOT_DRIVER=pi PILOT_CWD=~/src/tdo bun run --cwd server start
+// Usage (server must run the real pi driver; on-disk sessions come from ~/.pi/agent/sessions):
+//   PILOT_DRIVER=pi bun run --cwd server start
 //   bun scripts/live-warm-toggle.ts
 //
 // Sequence: open A → open B → re-open A. Asserts A's transcript is identical across the

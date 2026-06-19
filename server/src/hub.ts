@@ -2,6 +2,7 @@
 // driver event into it, and fans events out to all connected WS clients. New
 // clients get hello + a full snapshot so they catch up without replaying history.
 
+import { homedir } from "node:os";
 import {
   type ClientMessage,
   foldEvent,
@@ -507,6 +508,7 @@ export class SessionHub {
         type: "sessionList",
         sessions,
         activeSessionId: this.focusedId,
+        defaultNewSessionCwd: homedir(),
       });
     } catch (e) {
       console.error("[hub] listSessions failed", e);

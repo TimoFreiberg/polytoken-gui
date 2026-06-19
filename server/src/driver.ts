@@ -37,8 +37,8 @@ export interface OAuthLoginIO {
   deviceCode(info: OAuthDeviceInfo): void;
 }
 
-/** Options for {@link PilotDriver.newSession}. All optional: a bare new session in
- *  the launch cwd is `newSession()`. The first `prompt` is delivered by the hub after
+/** Options for {@link PilotDriver.newSession}. All optional: a bare new session
+ *  defaults to $HOME. The first `prompt` is delivered by the hub after
  *  the switch, not by the driver. */
 export interface NewSessionOpts {
   cwd?: string;
@@ -92,7 +92,7 @@ export interface PilotDriver {
   openSession(path: string): Promise<SessionDriverEvent[]>;
   /** Create a fresh session and make it active; resolves with its seed events (an
    *  empty `sessionOpened`). `cwd` (an absolute dir) picks the workspace per D12;
-   *  omit it for the driver's launch cwd. `worktree`: create an isolated jj/git
+   *  omit it for $HOME. `worktree`: create an isolated jj/git
    *  worktree of `cwd` first and bind the session to it. `model`/`thinking`: apply
    *  this config to the new session at creation (not pi's global defaults). The
    *  first prompt is NOT delivered here — the hub sends it after the switch lands,

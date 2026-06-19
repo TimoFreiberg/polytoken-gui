@@ -52,6 +52,13 @@ class PilotStore {
   // Session picker — server-authoritative: the sessions on disk + which is active.
   sessions = $state<SessionListEntry[]>([]);
   activeSessionId = $state<string | null>(null);
+  // The cwd a bare new session defaults to ($HOME), surfaced by the server in
+  // sessionList. Used for the boot landing draft + the new-session placeholder.
+  defaultNewSessionCwd = $state("");
+  // True once the boot-landing draft has been handled (opened or skipped because a
+  // session was already active). Prevents reconnects from re-opening a draft the
+  // operator dismissed.
+  bootDraftHandled = $state(false);
   // Session ids with a live turn right now (server-pushed via `sessionStatus`).
   runningIds = $state<Set<string>>(new Set());
   // Session ids warming up (created/opened, not yet streaming) — server-pushed in the
@@ -185,6 +192,7 @@ class PilotStore {
         this.ready = true;
         // A snapshot lands after a successful switch — clear any stale switch error.
         this.lastError = null;
+        this.maybeOpenBootDraft();
         break;
       case "event":
         foldEvent(this.session, msg.event);
@@ -192,8 +200,10 @@ class PilotStore {
       case "sessionList":
         this.sessions = [...msg.sessions];
         this.activeSessionId = msg.activeSessionId;
+        this.defaultNewSessionCwd = msg.defaultNewSessionCwd;
         // The session you're now viewing can't be unread.
         if (msg.activeSessionId) this.markRead(msg.activeSessionId);
+        this.maybeOpenBootDraft();
         break;
       case "sessionStatus": {
         // A session leaving the running set = a turn just finished. If it's a
@@ -390,6 +400,24 @@ class PilotStore {
   groupRunning(sessionIds: readonly string[]): boolean {
     return sessionIds.some((id) => this.runningIds.has(id));
   }
+  /** On boot, if no session is active (empty landing), open a new-session draft at
+   *  $HOME so the operator lands on a prompt page rather than a blank transcript.
+   *  Fires at most once per store instance (reconnects don't re-open a dismissed
+   *  draft), and only when both the snapshot and the sessionList have arrived —
+   *  snapshot carries ref/ready, sessionList carries activeSessionId + $HOME. */
+  private maybeOpenBootDraft(): void {
+    if (this.bootDraftHandled) return;
+    if (!this.ready || !this.defaultNewSessionCwd) return;
+    this.bootDraftHandled = true;
+    if (
+      this.activeSessionId === null &&
+      this.session.ref === null &&
+      this.draft === null
+    ) {
+      this.startDraft(this.defaultNewSessionCwd);
+    }
+  }
+
   /** Open the new-session draft. `cwd` prefills the project (the sidebar passes the
    *  group's cwd, or the active session's). Model/thinking seed from pi's global
    *  defaults so the chips reflect what a plain new session would use. */

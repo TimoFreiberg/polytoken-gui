@@ -6,11 +6,12 @@
 // that auto-trust is the gap this closes.
 //
 // Posture: nothing to gate → trust is moot; a saved trust.json decision (parent-aware
-// via ProjectTrustStore) wins; the operator-launched cwd is implicitly trusted. Any
-// OTHER untrusted path with gated resources is escalated to an interactive card when a
-// client is around to answer (D12), and denied deny-safe otherwise (e.g. a startup
-// resume before anyone connects). A chosen option's trust.json updates are written
-// through ProjectTrustStore, so decisions stay compatible with the CLI `pi`.
+// via ProjectTrustStore) wins. Any untrusted path with gated resources is escalated to
+// an interactive card when a client is around to answer (D12), and denied deny-safe
+// otherwise (e.g. a startup resume before anyone connects). No path is implicitly
+// trusted — the server's cwd carries no operator intent (see createPiDriver). A chosen
+// option's trust.json updates are written through ProjectTrustStore, so decisions stay
+// compatible with the CLI `pi`.
 
 import { dirname, resolve } from "node:path";
 import {
@@ -25,8 +26,6 @@ export interface TrustInputs {
   hasTrustRequiringResources: boolean;
   /** Nearest saved decision for cwd or a parent (ProjectTrustStore.get), or null. */
   savedDecision: boolean | null;
-  /** True only for the operator-launched PILOT_CWD (implicitly trusted). */
-  isLaunchCwd: boolean;
 }
 
 /** One option on the trust card, plus the trust.json mutations to apply if chosen.
@@ -47,24 +46,20 @@ export type TrustAsk = (req: {
 
 /**
  * Pure non-interactive trust decision. Order: nothing to gate → trust is moot; a saved
- * decision (this dir or nearest parent) wins; otherwise the launch cwd is trusted and
- * every other untrusted path is denied (deny-safe). Kept pure so every branch is testable.
+ * decision (this dir or nearest parent) wins; otherwise deny (deny-safe — no path is
+ * implicitly trusted). Kept pure so every branch is testable.
  */
 export function decideProjectTrust(input: TrustInputs): boolean {
   if (!input.hasTrustRequiringResources) return true;
   if (input.savedDecision !== null) return input.savedDecision;
-  return input.isLaunchCwd;
+  return false;
 }
 
 /** True when the only thing standing between this cwd and a decision is the operator:
- *  it has gated resources, no saved decision, and isn't the implicitly-trusted launch
- *  cwd. Exactly the case {@link decideProjectTrust} would otherwise deny by default. */
+ *  it has gated resources and no saved decision. Exactly the case
+ *  {@link decideProjectTrust} would otherwise deny by default. */
 export function needsInteractiveTrust(input: TrustInputs): boolean {
-  return (
-    input.hasTrustRequiringResources &&
-    input.savedDecision === null &&
-    !input.isLaunchCwd
-  );
+  return input.hasTrustRequiringResources && input.savedDecision === null;
 }
 
 /**
@@ -127,7 +122,6 @@ function warnDenied(cwd: string): void {
  */
 export function makeTrustResolver(
   cwd: string,
-  isLaunchCwd: boolean,
   ask?: TrustAsk,
 ): () => Promise<boolean> {
   return async () => {
@@ -137,7 +131,6 @@ export function makeTrustResolver(
     const input: TrustInputs = {
       hasTrustRequiringResources,
       savedDecision,
-      isLaunchCwd,
     };
 
     if (!ask || !needsInteractiveTrust(input)) {

@@ -84,12 +84,13 @@ by hand.)
 - **Code-signing/notarization** for frictionless installs.
 - **App icon** (`Resources/`), and a release/CI step to publish a built `.app`.
 
-## Known caveat (not a desktop bug)
+## Known caveat (resolved)
 
-The app spawns the pilot server from an arbitrary directory, which becomes the
-server's `launchCwd`. Today `warmUp`'s `launchCwd = opts.cwd ?? process.cwd()`
-(`server/src/pi/pi-driver.ts`) both defaults a new session's cwd *and* feeds the trust
-resolver (the launch cwd is implicitly trusted, D12) — so the app's launch dir must
-not silently become a trusted default. This is tracked as a server-side concern in
-`docs/TODO.md` ("Stop default-new-session-in-server-cwd for production usage"), not a
-desktop-app issue; the wrapper itself just runs the server as-is.
+The app spawns the pilot server from an arbitrary directory. Previously that dir
+became the server's `launchCwd`, which both defaulted a new session's cwd *and* was
+implicitly trusted (D12) — so the app's launch dir silently became a trusted default.
+**Resolved 2026-06-19:** the server's cwd no longer feeds any logic. No dir is
+implicitly trusted (every cwd goes through pi's built-in trust: trust.json →
+interactive card → deny-safe); the server boots to an empty landing (the client opens
+a new-session draft at $HOME); and a bare new session defaults to $HOME. See
+`docs/DONE.md`.

@@ -104,7 +104,7 @@ if (process.env.PILOT_DRIVER === "mock") {
   driver = mock;
 } else {
   const { createPiDriver } = await import("./pi/pi-driver.js");
-  driver = await createPiDriver({ cwd: process.env.PILOT_CWD });
+  driver = await createPiDriver();
 }
 const push = new PushService();
 const hub = new SessionHub(

@@ -45,7 +45,7 @@
   let editingCwd = $state(false);
   const cwdBase = $derived.by(() => {
     const c = store.draft?.cwd?.replace(/\/+$/, "") ?? "";
-    return c ? (c.split("/").pop() ?? c) : "launch dir";
+    return c ? (c.split("/").pop() ?? c) : "home";
   });
   // --- Slash-command typeahead. The menu is open when the draft is a bare slash token
   // (slashQuery != null), the user hasn't dismissed it for this token, and there are
@@ -300,7 +300,7 @@
             class="cwd-input"
             type="text"
             value={store.draft.cwd}
-            placeholder="/absolute/path/to/project (blank = launch dir)"
+            placeholder="/absolute/path/to/project (blank = home)"
             spellcheck="false"
             autocapitalize="off"
             autocorrect="off"
@@ -319,7 +319,7 @@
         {:else}
           <button
             class="chip"
-            title={`Project: ${store.draft.cwd || "launch dir"} — click to change`}
+            title={`Project: ${store.draft.cwd || "home"} — click to change`}
             onclick={() => (editingCwd = true)}
           >
             <span class="chip-ico" aria-hidden="true">▸</span>

@@ -5,9 +5,9 @@
 // (an extension's fire-and-forget session_start work touching a ctx we disposed).
 //
 // Usage:
-//   # in one terminal, run the server against the real agent on a cwd that already
-//   # has at least one saved session:
-//   PILOT_DRIVER=pi PILOT_CWD=/path/to/repo bun run --cwd server start
+//   # in one terminal, run the server against the real agent. The server boots to
+//   # an empty landing; this script opens its own sessions, so PILOT_CWD is gone.
+//   PILOT_DRIVER=pi bun run --cwd server start
 //   # in another:
 //   bun scripts/live-switch.ts
 //
