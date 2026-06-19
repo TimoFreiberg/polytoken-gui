@@ -1,0 +1,30 @@
+# bunfig.toml — supply-chain cooldown backbone for the pilot monorepo.
+# Bun enforces this on EVERY install in the workspace (one root lockfile).
+# Project-local on purpose: Bun ignores a *global* bunfig for these keys
+# (bun #28726), and the cooldown is what dodges fresh npm malware.
+
+[install]
+# Refuse to RESOLVE any package version published < 3 days ago. 3d (259200s)
+# tops the dominant npm-malware detection band (most malicious versions are
+# yanked within minutes–hours) and matches Renovate's default. Covers direct
+# AND transitive deps at resolution time.
+#   Knob: 302400 = 3.5d ("half a week"); 86400 = 1d floor.
+#   Caveat: enforced only when versions are (re)resolved — a version already
+#   pinned in bun.lock is NOT re-checked (bun #30525). That's fine: the cooldown
+#   gates NEW picks; `bun audit` covers already-installed ones. It also means a
+#   plain `bun install` / deploy honors the committed lockfile and is unaffected.
+minimumReleaseAge = 259200
+
+# Exempt the whole pi release train from the cooldown so it updates same-day
+# (new-model support ships via pi releases). The exclude is name-scoped — no
+# transitive subtree, no globs — so every pi package the lockfile resolves is
+# listed individually. If a future pi release adds/renames a sub-package, add
+# it here (the dep-bump skill's pi mode flags this).
+# The @mariozechner/clipboard* native binaries are intentionally left gated:
+# platform artifacts, not part of pi's logic cadence.
+minimumReleaseAgeExcludes = [
+  "@earendil-works/pi-coding-agent",
+  "@earendil-works/pi-agent-core",
+  "@earendil-works/pi-ai",
+  "@earendil-works/pi-tui",
+]
