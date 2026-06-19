@@ -108,24 +108,6 @@ test("tab title mirrors the active session title", async ({ page }) => {
   await expect(page).toHaveTitle("Wire up the WebSocket bridge · pilot");
 });
 
-test("composer: live markdown preview toggle", async ({ page }) => {
-  const ta = page.locator(".composer-wrap textarea");
-  await ta.fill("some **bold** and `code`");
-  await page
-    .locator(".composer-wrap")
-    .getByRole("button", { name: "Preview", exact: true })
-    .click();
-  const preview = page.locator(".composer-wrap .prose.preview");
-  await expect(preview.locator("strong")).toHaveText("bold");
-  await expect(preview.locator("code")).toHaveText("code");
-  // Toggle back restores the editable textarea with the draft intact.
-  await page
-    .locator(".composer-wrap")
-    .getByRole("button", { name: "Edit", exact: true })
-    .click();
-  await expect(ta).toHaveValue("some **bold** and `code`");
-});
-
 test("transcript: full markdown renders (headings, table, code, links)", async ({
   page,
 }) => {

@@ -5,6 +5,13 @@ and its resolution note. Latest completions first.
 
 ---
 
+- [x] **Remove composer markdown preview/edit toggle** _(2026-06-19)_
+  _(done: dropped the Preview/Edit toggle from the composer — the `preview`/`showPreview`
+  state, `toggleEdit`, the `<Markdown>` preview branch + its scoped `.prose`/`.preview` CSS,
+  and the `.toggle` button. The composer is textarea-only now; markdown still renders in the
+  transcript. Removed the obsolete `polish.e2e.ts` preview test; updated the design-system
+  follow-on notes that cited the now-gone `.toggle` Preview/Edit example.)_
+
 - [x] **Hide thinking blocks behind a toggle** _(shipped 2026-06-18)_
   _(done: a "Hide thinking blocks" switch in Settings → Appearance, default off, persisted
   via `store.hideThinking`/`setHideThinking`. When on, `ThinkingBlock` collapses to a subtle

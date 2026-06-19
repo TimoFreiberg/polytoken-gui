@@ -2,7 +2,6 @@
   import { onMount } from "svelte";
   import type { CommandInfo, ImageContent } from "@pilot/protocol";
   import { store } from "../lib/store.svelte.js";
-  import Markdown from "./Markdown.svelte";
   import { filterCommands, slashQuery } from "../lib/slash.js";
   import SlashMenu from "./SlashMenu.svelte";
   import ModelPicker from "./ModelPicker.svelte";
@@ -24,7 +23,6 @@
   let ta = $state<HTMLTextAreaElement>();
   let box = $state<HTMLDivElement>();
   let fileInput = $state<HTMLInputElement>();
-  let preview = $state(false);
   // Expand toggle: collapsed keeps the composer modest so more of the session
   // shows; expanded trades that for reading a long prompt whole. Auto-resets on send.
   let expanded = $state(false);
@@ -49,10 +47,6 @@
     const c = store.draft?.cwd?.replace(/\/+$/, "") ?? "";
     return c ? (c.split("/").pop() ?? c) : "launch dir";
   });
-  // Preview only renders when there's something to show; an empty draft always
-  // falls back to the editable textarea so the box never looks blank/stuck.
-  const showPreview = $derived(preview && store.composerDraft.trim().length > 0);
-
   // --- Slash-command typeahead. The menu is open when the draft is a bare slash token
   // (slashQuery != null), the user hasn't dismissed it for this token, and there are
   // matches to show. Selection + dismissal are this component's state; the menu itself
@@ -65,14 +59,14 @@
     slashQ === null ? [] : filterCommands(store.commands, slashQ),
   );
   const slashOpen = $derived(
-    slashQ !== null && !slashDismissed && slashItems.length > 0 && !showPreview,
+    slashQ !== null && !slashDismissed && slashItems.length > 0,
   );
   // Keep the highlighted index in range as the filtered list shrinks under the cursor.
   $effect(() => {
     if (slashSel >= slashItems.length) slashSel = 0;
   });
 
-  // Max textarea/preview height in px. Collapsed: floor at 3 lines so a scrollbar
+  // Max textarea height in px. Collapsed: floor at 3 lines so a scrollbar
   // never shows below that, grow a little with the window, cap ~6.5 lines. Expanded:
   // up to 62vh (well under "eats the whole screen") so a long prompt is readable.
   const maxH = $derived(
@@ -86,8 +80,7 @@
     ta.style.height = `${Math.min(ta.scrollHeight, maxH)}px`;
   }
 
-  // Re-fit whenever the cap changes (expand toggle or window resize), in edit or
-  // preview mode — autosize no-ops on the textarea when it isn't mounted.
+  // Re-fit whenever the cap changes (expand toggle or window resize).
   $effect(() => {
     maxH;
     autosize();
@@ -101,7 +94,7 @@
     const n = store.focusComposerN;
     if (n !== lastFocusN) {
       lastFocusN = n;
-      if (!showPreview) queueMicrotask(() => ta?.focus());
+      queueMicrotask(() => ta?.focus());
     }
   });
 
@@ -243,16 +236,10 @@
     submit();
   }
 
-  function toggleEdit() {
-    preview = !preview;
-    // Returning to edit mode: restore focus + sizing on the textarea.
-    if (!preview) queueMicrotask(() => { ta?.focus(); autosize(); });
-  }
-
   // Type-to-focus: a printable keystroke while nothing is focused lands in the
   // composer. We don't preventDefault, so the character itself types into the
   // now-focused textarea. Guarded so it never steals keys from approval/settings/
-  // sidebar inputs or while previewing.
+  // sidebar inputs.
   onMount(() => {
     function onWindowKeydown(e: KeyboardEvent) {
       // ⌘⇧F / Ctrl+Shift+F: open the file picker for image attachments.
@@ -262,7 +249,7 @@
         return;
       }
       if (e.key.length !== 1 || e.ctrlKey || e.metaKey || e.altKey) return;
-      if (!ta || showPreview) return;
+      if (!ta) return;
       const el = document.activeElement as HTMLElement | null;
       if (el && el !== document.body) {
         const tag = el.tagName;
@@ -371,40 +358,23 @@
         title={expanded ? "Collapse composer (⌥↓)" : "Expand composer (⌥↑)"}
         tabindex="-1"
       >{expanded ? "⌄" : "⌃"}</button>
-      {#if showPreview}
-        <div class="prose preview">
-          <Markdown content={store.composerDraft} />
-        </div>
-      {:else}
-        <textarea
-          bind:this={ta}
-          bind:value={store.composerDraft}
-          oninput={onInput}
-          onkeydown={onKeydown}
-          placeholder={drafting
-            ? "Describe a task or ask a question…"
-            : streaming
-              ? "Queue a message…"
-              : "Message pilot…"}
-          rows="1"
-          role="combobox"
-          aria-expanded={slashOpen}
-          aria-controls="slash-menu"
-          aria-autocomplete="list"
-        ></textarea>
-      {/if}
+      <textarea
+        bind:this={ta}
+        bind:value={store.composerDraft}
+        oninput={onInput}
+        onkeydown={onKeydown}
+        placeholder={drafting
+          ? "Describe a task or ask a question…"
+          : streaming
+            ? "Queue a message…"
+            : "Message pilot…"}
+        rows="1"
+        role="combobox"
+        aria-expanded={slashOpen}
+        aria-controls="slash-menu"
+        aria-autocomplete="list"
+      ></textarea>
       <div class="actions">
-        {#if store.composerDraft.trim()}
-          <button
-            class="toggle"
-            class:active={showPreview}
-            onclick={toggleEdit}
-            aria-pressed={showPreview}
-            title={showPreview ? "Back to editing" : "Preview formatting"}
-          >
-            {showPreview ? "Edit" : "Preview"}
-          </button>
-        {/if}
         <button
           class="send"
           disabled={!store.composerDraft.trim()}
@@ -643,71 +613,12 @@
     overflow-y: auto;
     padding: 4px 0;
   }
-  .preview {
-    flex: 1;
-    min-width: 0;
-    max-height: var(--composer-max, 168px);
-    overflow-y: auto;
-    padding: 4px 0;
-    font-size: 16px;
-    line-height: 1.5;
-    color: var(--text);
-    word-break: break-word;
-  }
-  /* Scoped prose styling for the live preview (the .prose :global rules live in
-     Transcript.svelte and don't reach this component). */
-  .prose :global(p) {
-    margin: 0 0 10px;
-  }
-  .prose :global(p:last-child) {
-    margin-bottom: 0;
-  }
-  .prose :global(code) {
-    font-family: var(--font-mono);
-    font-size: 0.88em;
-    background: var(--surface-sunken);
-    border: 1px solid var(--border);
-    padding: 1px 5px;
-    border-radius: var(--radius-xs);
-  }
-  .prose :global(pre) {
-    background: var(--surface-sunken);
-    border: 1px solid var(--border);
-    border-radius: var(--radius-sm);
-    padding: 12px 14px;
-    overflow-x: auto;
-    margin: 10px 0;
-  }
-  .prose :global(pre code) {
-    background: none;
-    border: none;
-    padding: 0;
-    font-size: 0.86em;
-    line-height: 1.55;
-  }
-  .prose :global(a) {
-    color: var(--accent);
-  }
   .actions {
     flex-shrink: 0;
     display: flex;
     align-items: center;
     gap: 6px;
     align-self: flex-end;
-  }
-  .toggle {
-    border: 1px solid var(--border);
-    background: var(--surface-sunken);
-    color: var(--text-muted);
-    font-size: 12px;
-    padding: 4px 10px;
-    border-radius: 999px;
-    transition: color 0.15s, border-color 0.15s;
-  }
-  .toggle.active {
-    color: var(--accent-text);
-    background: var(--accent);
-    border-color: var(--accent);
   }
   .send {
     flex-shrink: 0;

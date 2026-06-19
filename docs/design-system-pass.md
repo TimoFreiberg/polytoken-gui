@@ -37,7 +37,7 @@ These didn't fit the three primitives cleanly. Each is a real pattern; grouped,
 they're the strongest signal for **future primitives** (a `Toggle`, a `Chip`, and a
 `Menu`/dropdown family). Listed so the visual session can decide intent before shape.
 
-- **Single _labeled_ toggles** (`.filter-toggle` in Sidebar, `.toggle` Preview/Edit in Composer) — a 2-state pill with a changing label + `aria-pressed`. Not IconButton (has a label), not SegmentedControl (single, not a set). **→ candidate `Toggle` primitive.**
+- **Single _labeled_ toggles** (`.filter-toggle` in Sidebar, the hide-thinking switch in Settings) — a 2-state pill with a changing label + `aria-pressed`. Not IconButton (has a label), not SegmentedControl (single, not a set). **→ candidate `Toggle` primitive.**
 - **Chips** (Composer `.chip` project opener, `.toggle-chip` worktree) — small labeled pills, one a menu-opener and one a toggle. **→ candidate `Chip` primitive.**
 - **Dropdown/menu family** — ModelPicker's `.badge` triggers + `.item` menu rows + `.backdrop`, and Sidebar's `.row-menu` popover + `.menu-item`s. A 3+-use pattern. **→ candidate `Menu`/`Dropdown` primitive.** (ModelPicker has *no* clean Button/IconButton/SegmentedControl targets — it's entirely this family.)
 - **Disclosure rows** (`ToolCard .head`, `ThinkingBlock .head`) — accordion headers (status/label + chevron). **→ candidate `Disclosure` primitive.**

@@ -202,8 +202,8 @@ that pilot should NOT build — they're paseo's domain, not pilot's differentiat
       didn't fit the three, each used 3+ times, so each is a real future primitive — promote
       only once it recurs cleanly, don't pre-build:
       (1) **single labeled toggle** — a 2-state pill with a changing label + `aria-pressed`
-      (Sidebar `.filter-toggle`, Composer `.toggle` Preview/Edit). Not IconButton (labeled),
-      not SegmentedControl (single).
+      (Sidebar `.filter-toggle`; the Settings hide-thinking switch is the same shape). Not
+      IconButton (labeled), not SegmentedControl (single).
       (2) **chip** — small labeled pill (Composer project / worktree chips).
       (3) **menu / dropdown family** — highest-leverage: trigger + menu items + backdrop
       (ModelPicker is entirely this; Sidebar's row menu is the same shape).
