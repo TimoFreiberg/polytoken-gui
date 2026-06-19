@@ -325,7 +325,7 @@ function deltas(
 // --- The conversation already present on first load -------------------------
 
 export function greeting(): ScriptStep[] {
-  return [
+  const steps: ScriptStep[] = [
     {
       wait: 0,
       event: { ...base(), type: "sessionOpened", snapshot: snapshot() },
@@ -339,6 +339,13 @@ export function greeting(): ScriptStep[] {
         text: "Add a /health route to the server and a smoke test for it.",
       },
     },
+  ];
+  // Simulate ~37s of working wall-clock between the prompt and the settled reply, so the
+  // collapsed "Worked for Ns" header reads realistically on first load (the mock clock is
+  // otherwise compressed to a few ms). Only shifts absolute timestamps forward; per-tool
+  // span durations are computed inside toolSpan and are unaffected.
+  advanceTs(36_600);
+  steps.push(
     ...deltas(
       "I'll add a lightweight health endpoint and a test that hits it. Let me look at how routes are currently registered.",
       "text",
@@ -372,7 +379,8 @@ export function greeting(): ScriptStep[] {
         snapshot: snapshot({ status: "idle" }),
       },
     },
-  ];
+  );
+  return steps;
 }
 
 // --- A rich-markdown turn for verifying full markdown rendering -------------

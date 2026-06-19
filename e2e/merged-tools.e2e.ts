@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { drive, gotoFresh } from "./helpers.js";
+import { drive, expandWork, gotoFresh } from "./helpers.js";
 
 test.beforeEach(async ({ page }) => {
   await gotoFresh(page);
@@ -9,6 +9,10 @@ test("a mixed run of mergeable tools collapses into one combined card", async ({
   page,
 }) => {
   await drive(page, "search");
+  // The search turn settles, so its working section collapses behind "Worked for Ns";
+  // reveal it to reach the merged card.
+  await expect(page.getByText("Reconnect lives in")).toBeVisible();
+  await expandWork(page);
 
   // 2 reads + 2 greps + 1 find, uninterrupted, fold into ONE card. The header
   // shows the total count plus each distinct tool name once (first-appearance
@@ -23,6 +27,8 @@ test("merged card expands in two steps: the list, then each call", async ({
   page,
 }) => {
   await drive(page, "search");
+  await expect(page.getByText("Reconnect lives in")).toBeVisible();
+  await expandWork(page);
   const card = page.locator(".merged-tools");
 
   // Step 0 — collapsed: no inner tool cards rendered yet.

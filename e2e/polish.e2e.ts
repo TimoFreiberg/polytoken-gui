@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { drive, gotoFresh } from "./helpers.js";
+import { drive, expandWork, gotoFresh } from "./helpers.js";
 
 test.beforeEach(async ({ page }) => {
   await gotoFresh(page);
@@ -50,6 +50,8 @@ test("copy + timestamp show only on the turn-final paragraph", async ({
 }) => {
   // The greeting turn has TWO assistant paragraphs (one before its tool call, one
   // after). Only the LAST carries the copy button + timestamp; the earlier one is bare.
+  // The earlier paragraph lives inside the collapsed work block — reveal it first.
+  await expandWork(page);
   const rows = page.locator(".row.assistant");
   await expect(rows).toHaveCount(2);
   const first = rows.first();

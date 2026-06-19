@@ -91,6 +91,7 @@ describe("historyToEvents", () => {
         thinking: "hmm",
         streaming: false, // closed by the trailing runCompleted
         ts: expect.any(String),
+        completedAt: expect.any(String), // turn-end stamp from the runCompleted close
       },
     ]);
   });

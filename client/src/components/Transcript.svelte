@@ -1,80 +1,44 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import type { TranscriptItem, ToolItem } from "@pilot/protocol";
   import { store } from "../lib/store.svelte.js";
+  import {
+    type DisplayItem,
+    groupTurns,
+    mergedSummary,
+    mergeTools,
+    type TurnGroup,
+    workedLabel,
+  } from "../lib/transcript-view.js";
   import Markdown from "./Markdown.svelte";
   import ToolCard from "./ToolCard.svelte";
   import ThinkingBlock from "./ThinkingBlock.svelte";
 
   const items = $derived(store.session.items);
 
-  // ── Merge consecutive navigation/inspection tool calls ─────────────────
-  // Any uninterrupted run of "mergeable" tools (read / grep / find /
-  // session_search / preview_*) collapses into ONE card — regardless of which
-  // of those names it mixes. Membership is decided by name; the run itself is
-  // heterogeneous, so the header summarizes it as "N tools (distinct names)"
-  // (e.g. 3 reads + 2 greps -> "5 tools (read, grep)"). A run of length 1
-  // passes through as a plain ToolCard; writes, edits, bash, etc. break a run.
-  const MERGEABLE_TOOLS = new Set([
-    "read",
-    "grep",
-    "find",
-    "session_search",
-    "preview_start",
-    "preview_eval",
-    "preview_stop",
-  ]);
-
-  interface MergedToolsItem {
-    kind: "mergedTools";
-    id: string;
-    /** Distinct tool names in the run, in first-appearance order. */
-    names: string[];
-    tools: ToolItem[];
+  // Two view-model passes (pure, unit-tested in transcript-view.test.ts):
+  //   1. mergeTools — uninterrupted runs of nav/inspection tools fold into one card.
+  //   2. groupTurns — each turn (user → next user) splits into a collapsible "work"
+  //      portion (tools + intermediate narration) and the turn-final response that
+  //      stays visible. That's the "Worked for Ns" block below.
+  const displayItems = $derived(mergeTools(items));
+  const turns = $derived(groupTurns(displayItems));
+  // The live turn is the last one while the session is still working; only it stays
+  // expanded by default. Every settled turn collapses its work.
+  const lastTurnId = $derived(turns[turns.length - 1]?.id);
+  function turnDone(turn: TurnGroup): boolean {
+    return turn.id !== lastTurnId || !store.turnActive;
   }
 
-  function isToolItem(i: TranscriptItem): i is ToolItem {
-    return i.kind === "tool";
+  // Per-turn open/close for the work block. Default: collapsed once the turn settles,
+  // expanded while it's still in flight. An explicit user toggle overrides the default.
+  let workOpen = $state<Record<string, boolean>>({});
+  function toggleWork(id: string) {
+    const turn = turns.find((t) => t.id === id);
+    const current = workOpen[id] ?? (turn ? !turnDone(turn) : false);
+    workOpen = { ...workOpen, [id]: !current };
   }
-  function isMergeableTool(i: TranscriptItem): i is ToolItem {
-    return isToolItem(i) && MERGEABLE_TOOLS.has(i.name);
-  }
-
-  const displayItems = $derived.by((): (TranscriptItem | MergedToolsItem)[] => {
-    const result: (TranscriptItem | MergedToolsItem)[] = [];
-    let pending: ToolItem[] = [];
-    const flush = () => {
-      if (pending.length === 0) return;
-      const first = pending[0]!;
-      if (pending.length === 1) {
-        result.push(first);
-      } else {
-        result.push({
-          kind: "mergedTools",
-          id: first.id,
-          names: [...new Set(pending.map((t) => t.name))],
-          tools: pending,
-        });
-      }
-      pending = [];
-    };
-    for (const item of items) {
-      if (isMergeableTool(item)) {
-        pending.push(item);
-      } else {
-        flush();
-        result.push(item);
-      }
-    }
-    flush();
-    return result;
-  });
-
-  /** Header summary for a merged card: total count + the distinct tool names
-   *  once each, e.g. "5 tools (read, grep)". */
-  function mergedSummary(item: MergedToolsItem): string {
-    const noun = item.tools.length === 1 ? "tool" : "tools";
-    return `${item.tools.length} ${noun} (${item.names.join(", ")})`;
+  function workShown(turn: TurnGroup): boolean {
+    return workOpen[turn.id] ?? !turnDone(turn);
   }
 
   // Per-turn aggregation for the assistant footer (copy + timestamp). Only the LAST
@@ -244,7 +208,9 @@
 <div class="transcript-wrap">
 <div class="scroller" bind:this={scroller} onscroll={onScroll}>
   <div class="col">
-    {#each displayItems as item (item.id)}
+    <!-- One transcript item, rendered the same whether it sits in a turn's collapsible
+         work block or as the visible final response. -->
+    {#snippet itemView(item: DisplayItem)}
       {#if item.kind === "user"}
         <div class="row user">
           <div class="bubble">{item.text}</div>
@@ -344,7 +310,7 @@
             </div>
           {/if}
         </div>
-      {:else if isToolItem(item)}
+      {:else if item.kind === "tool"}
         <ToolCard {item} />
       {:else if item.kind === "notice"}
         <div class="row notice {item.level}">
@@ -369,8 +335,47 @@
           {/if}
         </div>
       {/if}
+    {/snippet}
+
+    {#each turns as turn (turn.id)}
+      {#if turn.user}
+        {@render itemView(turn.user)}
+      {/if}
+      {#if turn.collapsible}
+        <!-- Codex-style working block: the turn's tools + intermediate narration
+             collapse behind a "Worked for Ns" header once the turn settles; the final
+             response (rendered after) stays visible. Expanded while the turn is live. -->
+        <div class="turn-work" class:open={workShown(turn)}>
+          <button
+            class="work-head"
+            data-testid="work-toggle"
+            onclick={() => toggleWork(turn.id)}
+            aria-expanded={workShown(turn)}
+            title={workShown(turn)
+              ? "Collapse the agent's working steps for this turn"
+              : "Expand the agent's working steps for this turn"}
+          >
+            <span class="chevron" class:open={workShown(turn)}>▸</span>
+            <span class="work-label">{turnDone(turn) ? workedLabel(turn) : "Working…"}</span>
+          </button>
+          {#if workShown(turn)}
+            <div class="work-body" data-testid="work-body">
+              {#each turn.work as it (it.id)}
+                {@render itemView(it)}
+              {/each}
+            </div>
+          {/if}
+        </div>
+      {:else}
+        {#each turn.work as it (it.id)}
+          {@render itemView(it)}
+        {/each}
+      {/if}
+      {#each turn.response as it (it.id)}
+        {@render itemView(it)}
+      {/each}
     {/each}
-    {#if displayItems.length === 0}
+    {#if turns.length === 0}
       <div class="empty">No messages yet. Say something below to start a turn.</div>
     {/if}
   </div>
@@ -448,6 +453,10 @@
     display: flex;
     flex-direction: column;
     gap: 18px;
+  }
+  .row, :global(.tool) {
+    content-visibility: auto;
+    contain-intrinsic-size: auto 120px;
   }
   .row {
     display: flex;
@@ -630,6 +639,11 @@
     overflow-wrap: normal;
     tab-size: 2;
   }
+  /* ── Merged sequential navigation tools (read/grep/find/session_search) ── */
+  .merged-tools {
+    content-visibility: auto;
+    contain-intrinsic-size: auto 60px;
+  }
   .merged-head {
     display: flex;
     align-items: center;
@@ -678,5 +692,50 @@
     display: flex;
     flex-direction: column;
     gap: 6px;
+  }
+
+  /* ── Per-turn "Worked for Ns" block (Codex-style collapsed working section) ── */
+  .turn-work {
+    content-visibility: auto;
+    contain-intrinsic-size: auto 44px;
+  }
+  .work-head {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    background: transparent;
+    border: none;
+    padding: 2px 0;
+    color: var(--text-muted);
+    font-size: 12.5px;
+    cursor: pointer;
+  }
+  .work-head:hover {
+    color: var(--text);
+  }
+  .work-head .chevron {
+    font-size: 10px;
+    width: 12px;
+    text-align: center;
+    color: var(--text-faint);
+    transition: transform 0.12s;
+    flex-shrink: 0;
+  }
+  .work-head .chevron.open {
+    transform: rotate(90deg);
+  }
+  .work-head .work-label {
+    font-weight: 550;
+  }
+  /* When expanded, the work items indent under the header with a thread line, echoing
+     the merged-tools body so nested cards read as "inside" the working section. */
+  .work-body {
+    margin-top: 10px;
+    margin-left: 5px;
+    padding-left: 13px;
+    border-left: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    gap: 18px;
   }
 </style>

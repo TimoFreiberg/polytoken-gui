@@ -1,35 +1,40 @@
 import { expect, test } from "@playwright/test";
-import { drive, gotoFresh } from "./helpers.js";
+import { drive, expandWork, gotoFresh } from "./helpers.js";
 
 test.beforeEach(async ({ page }) => {
   await gotoFresh(page);
 });
 
-test("a streamed reply renders user text, assistant text, and a tool call", async ({
+test("a streamed reply renders user text, a working block, and the final answer", async ({
   page,
 }) => {
   await drive(page, "reply");
   await expect(
     page.getByText("Show me the streamed reply script."),
   ).toBeVisible();
+  // The turn settles with its final answer visible…
+  await expect(
+    page.getByText("That confirms it", { exact: false }),
+  ).toBeVisible();
+  // …and its narration + tool collapse into the "Worked for Ns" block — reveal them.
+  await expandWork(page);
   await expect(
     page.getByText("Here's the plan", { exact: false }),
   ).toBeVisible();
   await expect(page.getByText("Read file")).toBeVisible();
-  await expect(
-    page.getByText("That confirms it", { exact: false }),
-  ).toBeVisible();
 });
 
-test("thinking blocks are hidden by default — fully invisible, no stub", async ({
+test("thinking stays hidden by default even inside an expanded working block", async ({
   page,
 }) => {
   await drive(page, "reply");
-  // The reply's answer text lands, proving the turn ran…
+  // The turn's final answer lands, proving it ran…
   await expect(
-    page.getByText("Here's the plan", { exact: false }),
+    page.getByText("That confirms it", { exact: false }),
   ).toBeVisible();
-  // …but the thinking is gone entirely: no collapsed head, no "Thinking…" stub.
+  // …and even with the working block expanded, the thinking is gone entirely (hidden by
+  // the default-on Settings toggle): no collapsed head, no reasoning text.
+  await expandWork(page);
   await expect(page.getByText("Thought process")).toHaveCount(0);
   await expect(
     page.getByText("Let me think about the cleanest way", { exact: false }),
@@ -48,6 +53,11 @@ test("disabling Hide thinking reveals the expandable thinking block", async ({
   await page.keyboard.press("Escape");
 
   await drive(page, "reply");
+  // The thinking block lives in the turn's working section — settle, then expand it.
+  await expect(
+    page.getByText("That confirms it", { exact: false }),
+  ).toBeVisible();
+  await expandWork(page);
   const think = page.getByText("Thought process");
   await expect(think).toBeVisible();
   await think.click();

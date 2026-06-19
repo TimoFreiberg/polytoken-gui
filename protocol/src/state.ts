@@ -32,6 +32,12 @@ export interface AssistantItem {
   streaming: boolean;
   /** ISO timestamp of when this assistant turn began. */
   ts?: string;
+  /** ISO timestamp (or epoch-ms string) of when the turn settled — stamped on the
+   *  turn-final assistant when a non-running snapshot closes it (runCompleted, or an
+   *  idle sessionUpdated/sessionClosed). With `ts` it yields the turn's wall-clock
+   *  duration ("Worked for Ns"). Absent while streaming, or when the turn ended on a
+   *  tool / error rather than an assistant message. */
+  completedAt?: string;
 }
 export type ToolStatus = "running" | "ok" | "error";
 export interface ToolItem {
@@ -107,9 +113,19 @@ function openAssistant(items: TranscriptItem[]): AssistantItem | undefined {
   return last && last.kind === "assistant" && last.streaming ? last : undefined;
 }
 
-function closeOpenAssistant(items: TranscriptItem[]): void {
+/** Close the open assistant bubble (if any). When `completedAt` is given — i.e. the
+ *  turn actually ended, not just got interrupted by a new item — stamp it so the UI
+ *  can derive the turn's "Worked for Ns" duration. Interruption closers (toolStarted,
+ *  userMessage, a mid-turn notify) pass nothing: that bubble isn't the turn-final one. */
+function closeOpenAssistant(
+  items: TranscriptItem[],
+  completedAt?: string,
+): void {
   const a = openAssistant(items);
-  if (a) a.streaming = false;
+  if (a) {
+    a.streaming = false;
+    if (completedAt) a.completedAt = completedAt;
+  }
 }
 
 /**
@@ -141,7 +157,7 @@ export function foldEvent(
       // "running" (idle or failed) also ends it. Without this, an idle
       // transition that arrives only as a sessionUpdated leaves the assistant
       // item streaming:true forever (the stray blinking caret bug).
-      if (s.status !== "running") closeOpenAssistant(state.items);
+      if (s.status !== "running") closeOpenAssistant(state.items, ev.timestamp);
       return state;
     }
 
@@ -321,7 +337,7 @@ export function foldEvent(
     }
 
     case "sessionClosed": {
-      closeOpenAssistant(state.items);
+      closeOpenAssistant(state.items, ev.timestamp);
       state.status = ev.reason === "failed" ? "failed" : "idle";
       return state;
     }

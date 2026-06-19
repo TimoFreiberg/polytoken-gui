@@ -17,6 +17,21 @@ export async function drive(page: Page, script: string): Promise<void> {
   await page.getByRole("button", { name: script, exact: true }).click();
 }
 
+/** Expand a settled turn's collapsible "Worked for Ns" block so its tools + intermediate
+ *  narration render. Settled turns collapse that section by default; tests that assert on
+ *  working-step content must reveal it first. Targets the most recent turn's block by
+ *  default (pass "first" for the earliest, e.g. the greeting when later turns exist). */
+export async function expandWork(
+  page: Page,
+  which: "first" | "last" = "last",
+): Promise<void> {
+  const toggles = page.getByTestId("work-toggle");
+  const toggle = which === "first" ? toggles.first() : toggles.last();
+  await expect(toggle).toBeVisible();
+  if ((await toggle.getAttribute("aria-expanded")) !== "true")
+    await toggle.click();
+}
+
 /** Ensure the session sidebar is open. Desktop opens by default; the phone drawer
  *  needs the toggle. Driven off `data-open` (the drawer stays mounted off-screen, so
  *  visibility checks are unreliable). */
