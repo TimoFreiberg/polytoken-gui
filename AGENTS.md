@@ -57,7 +57,10 @@ starts without `node_modules` (gitignored), so run `bun install` in it before
 building/testing. The e2e suite runs fully inside one checkout — it boots its own
 dev server — so a worktree can run it standalone; to run alongside another e2e
 run, override `PILOT_E2E_SERVER_PORT` / `PILOT_E2E_VITE_PORT` (see
-`playwright.config.ts`).
+`playwright.config.ts`). The e2e mock server also takes the **data-dir lock**
+(`~/Library/Application Support/Pilot`); if the harness's own pilot or another
+checkout already holds it, the e2e server aborts with "data dir already locked".
+Give the run its own store: `PILOT_DATA_DIR=$(mktemp -d) bun run test:e2e`.
 
 ## Verifying the UI (agent-legible introspection)
 
