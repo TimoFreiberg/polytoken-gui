@@ -41,6 +41,10 @@ const backendPort = process.env.PILOT_PORT
     : "8787";
 
 const SERVER = process.env.PILOT_SERVER ?? `http://localhost:${backendPort}`;
+// Bun-run Vite can hang proxy WebSocket upgrades; point the client at the backend
+// socket directly while keeping Vite's HTTP proxy for /debug, /health, etc.
+const wsUrl = new URL("/ws", SERVER);
+wsUrl.protocol = wsUrl.protocol === "https:" ? "wss:" : "ws:";
 
 // Each dev/preview/e2e instance gets its OWN data dir, keyed by port, unless
 // PILOT_DATA_DIR is set explicitly. The server's PID lock guards one data dir against
@@ -89,7 +93,11 @@ await waitForHealth(SERVER);
 
 const vite = Bun.spawn(["bun", ...viteArgs], {
   cwd: "client",
-  env: { ...process.env, PILOT_SERVER: SERVER },
+  env: {
+    ...process.env,
+    PILOT_SERVER: SERVER,
+    VITE_PILOT_WS_URL: wsUrl.toString(),
+  },
   stdout: "inherit",
   stderr: "inherit",
 });

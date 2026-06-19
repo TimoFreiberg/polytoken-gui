@@ -40,6 +40,7 @@ import {
   type ConnectionState,
   connectionState,
   disconnect,
+  forceReconnect,
   onMessage,
   send,
 } from "./ws.svelte.js";
@@ -383,6 +384,9 @@ class PilotStore {
     setToken(token);
     this.unauthorized = false;
     connect();
+  }
+  reconnect(): void {
+    forceReconnect();
   }
 
   prompt(

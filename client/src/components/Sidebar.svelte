@@ -34,6 +34,7 @@
   );
   const filteredGroups = $derived(filtered.groups);
   const hiddenCount = $derived(filtered.hiddenCount);
+  const draft = $derived(store.draft);
 
   // Per-row actions menu (the ⋯ overflow) — a floating popover anchored under the ⋯ trigger
   // (right-aligned to it) or at the cursor on right-click. Positioned in viewport coords so
@@ -302,12 +303,12 @@
   {/if}
 
   <nav class="list">
-    {#if store.draft}
+    {#if draft}
       <div class="draft-row">
         <button
           class="row active"
-          title={`New session in ${store.draft.cwd || "home"} — click to return to the draft`}
-          onclick={() => startDraft(store.draft.cwd)}
+          title={`New session in ${draft.cwd || "home"} — click to return to the draft`}
+          onclick={() => startDraft(draft.cwd)}
         >
           <span class="status" data-state="draft" title="New session draft" aria-label="draft">
             <span class="draft-marker">+</span>
@@ -315,7 +316,7 @@
           <span class="row-body">
             <span class="name">New session</span>
             <span class="meta">
-              <span class="msg-count">{store.draft.cwd ? basename(store.draft.cwd) : "home"}</span>
+              <span class="msg-count">{draft.cwd ? basename(draft.cwd) : "home"}</span>
             </span>
           </span>
         </button>
@@ -1091,4 +1092,3 @@
     }
   }
 </style>
-

@@ -67,7 +67,7 @@ export default defineConfig({
   server: {
     port: 5173,
     proxy: {
-      "/ws": { target: SERVER.replace("http", "ws"), ws: true },
+      "/ws": { target: SERVER, ws: true },
       "/debug": { target: SERVER },
       "/health": { target: SERVER },
       "/push": { target: SERVER },

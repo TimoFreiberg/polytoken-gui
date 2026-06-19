@@ -42,6 +42,8 @@ function getReconnectDelay(): number {
 }
 
 function buildWsUrl(): string {
+  const configured = import.meta.env.VITE_PILOT_WS_URL;
+  if (configured) return configured;
   const proto = window.location.protocol === "https:" ? "wss:" : "ws:";
   return `${proto}//${window.location.host}/ws`;
 }
@@ -115,6 +117,22 @@ function doConnect(): void {
 export function connect(): void {
   intentionalClose = false;
   _reconnectAttempt = 0;
+  doConnect();
+}
+
+/** User-requested reconnect: cancel any backoff and open a fresh socket now. */
+export function forceReconnect(): void {
+  intentionalClose = false;
+  _reconnectAttempt = 0;
+  if (reconnectTimer !== null) {
+    clearTimeout(reconnectTimer);
+    reconnectTimer = null;
+  }
+  if (ws) {
+    const closing = ws;
+    cleanupSocket();
+    closing.close();
+  }
   doConnect();
 }
 
