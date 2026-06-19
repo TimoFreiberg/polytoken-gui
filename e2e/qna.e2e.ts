@@ -51,29 +51,30 @@ test("qna form: Back returns to the previous card", async ({ page }) => {
   ).toBeVisible();
 });
 
-test("qna form: custom radio preserves its text across choices and questions", async ({
+test("qna form: free-text answer preserves its text across choices and questions", async ({
   page,
 }) => {
   await drive(page, "qna");
   const dialog = page.getByRole("dialog");
-  const custom = dialog.getByRole("radio", { name: "Something else" });
   const field = dialog.getByPlaceholder("Something else…");
+  const bun = dialog.getByRole("radio", { name: /bun/ });
 
+  // Typing into the free-text field selects it, clearing any preset choice.
   await field.fill("Use the repo default.");
-  await expect(custom).toHaveAttribute("aria-checked", "true");
+  await expect(bun).toHaveAttribute("aria-checked", "false");
 
-  await dialog.getByRole("radio", { name: /bun/ }).click();
-  await expect(custom).toHaveAttribute("aria-checked", "false");
+  // Picking a preset switches the selection but keeps the typed text as a draft.
+  await bun.click();
+  await expect(bun).toHaveAttribute("aria-checked", "true");
   await expect(field).toHaveValue("Use the repo default.");
 
   await dialog.getByRole("button", { name: "Next" }).click();
-  await dialog
-    .getByRole("tab", { name: "Question 1, answered" })
-    .click();
+  await dialog.getByRole("tab", { name: "Question 1, answered" }).click();
   await expect(field).toHaveValue("Use the repo default.");
 
-  await custom.click();
-  await expect(custom).toHaveAttribute("aria-checked", "true");
+  // Focusing the field re-selects the free-text answer over the preset.
+  await field.click();
+  await expect(bun).toHaveAttribute("aria-checked", "false");
   await expect(field).toHaveValue("Use the repo default.");
 });
 

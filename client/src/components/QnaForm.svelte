@@ -17,7 +17,8 @@
   import Button from "./ui/Button.svelte";
 
   // The remote face of the answer extension's Q&A widget: one card per question,
-  // radio (single) / checkbox (multi) / free-text, with prev-next + arrow/Esc/⌘↵
+  // a highlight-selected choice list (single) / checkbox list (multi) / free-text,
+  // with prev-next + arrow/Esc/⌘↵
   // navigation. Each card produces a structured QnaAnswer (picked indices + a
   // free-text "something else" escape) so the extension's formatQnA renders the
   // transcript identically to the TUI path. The parent can seed/observe a local draft
@@ -212,12 +213,6 @@
   $effect(() => {
     root?.focus();
   });
-
-  function mark(j: number): string {
-    const sel = a.selectedOptionIndices.includes(j);
-    if (isMulti) return sel ? "☑" : "☐";
-    return sel ? "◉" : "○";
-  }
 </script>
 
 <!-- Form-level keyboard shortcuts (Esc / ⌘↵ / arrows) live on the container; the
@@ -256,7 +251,13 @@
             title={`${isMulti ? "Toggle" : "Choose"}: ${opt.label}`}
             onclick={() => (isMulti ? toggleMulti(j) : pickSingle(j))}
           >
-            <span class="box">{mark(j)}</span>
+            {#if isMulti}
+              <span
+                class="check"
+                class:on={a.selectedOptionIndices.includes(j)}
+                aria-hidden="true">{a.selectedOptionIndices.includes(j) ? "✓" : ""}</span
+              >
+            {/if}
             <span class="lbl">
               <span class="lbl-main">{opt.label}</span>
               {#if opt.description}<span class="lbl-desc">{opt.description}</span
@@ -265,29 +266,16 @@
           </button>
         {/each}
         {#if !isMulti}
-          <div class="custom">
-            <button
-              type="button"
-              class="custom-radio"
-              class:sel={a.customSelected}
-              role="radio"
-              aria-checked={a.customSelected}
-              aria-label="Something else"
-              title="Choose a free-text answer"
-              onclick={() => chooseCustom()}
-            >
-              {a.customSelected ? "◉" : "○"}
-            </button>
-            <input
-              class="field"
-              bind:this={customInput}
-              placeholder="Something else…"
-              value={a.customText}
-              onfocus={() => chooseCustom(false)}
-              oninput={(e) => setCustom(e.currentTarget.value)}
-              title="Choose “Something else” and type a free-text answer"
-            />
-          </div>
+          <input
+            class="field"
+            class:sel={a.customSelected}
+            bind:this={customInput}
+            placeholder="Something else…"
+            value={a.customText}
+            onfocus={() => chooseCustom(false)}
+            oninput={(e) => setCustom(e.currentTarget.value)}
+            title="Type a free-text answer instead of choosing an option"
+          />
         {:else}
           <input
             class="field"
@@ -423,31 +411,24 @@
     border-color: var(--accent);
     background: var(--accent-soft);
   }
-  .box {
-    font-size: 15px;
-    line-height: 1.4;
-    color: var(--accent);
+  .check {
     flex: 0 0 auto;
-  }
-  .custom {
+    width: 18px;
+    height: 18px;
+    margin-top: 1px;
     display: flex;
     align-items: center;
-    gap: 10px;
-  }
-  .custom-radio {
-    flex: 0 0 auto;
-    width: 42px;
-    align-self: stretch;
-    color: var(--accent);
-    background: var(--surface);
+    justify-content: center;
     border: 1px solid var(--border-strong);
-    border-radius: var(--radius-sm);
-    font-size: 15px;
-    cursor: pointer;
+    border-radius: var(--radius-xs);
+    font-size: 12px;
+    line-height: 1;
+    color: var(--text);
   }
-  .custom-radio.sel {
+  .check.on {
+    background: var(--accent);
     border-color: var(--accent);
-    background: var(--accent-soft);
+    color: var(--text);
   }
   .lbl {
     display: flex;
@@ -473,7 +454,8 @@
     font-family: inherit;
     outline: none;
   }
-  .field:focus {
+  .field:focus,
+  .field.sel {
     border-color: var(--accent);
   }
   .field.area {
