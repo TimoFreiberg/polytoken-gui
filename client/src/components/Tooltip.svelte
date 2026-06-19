@@ -23,6 +23,7 @@
 
   let tipEl = $state<HTMLDivElement>();
   let timer: ReturnType<typeof setTimeout> | undefined;
+  let raf: number | undefined; // pending mouseout decision (see onOut)
   let current: HTMLElement | null = null; // element we're showing/scheduling for
   let suppressed = false; // did we strip current's native `title`?
 
@@ -48,6 +49,10 @@
   function end() {
     clearTimeout(timer);
     timer = undefined;
+    if (raf != null) {
+      cancelAnimationFrame(raf);
+      raf = undefined;
+    }
     if (suppressed && current) {
       const t = current.getAttribute("data-tip-title");
       if (t != null) current.setAttribute("title", t);
@@ -93,7 +98,44 @@
     if (!current) return;
     const target = e.target as Node | null;
     const to = e.relatedTarget as Node | null;
-    if (target && current.contains(target) && !(to && current.contains(to))) end();
+    if (!(target && current.contains(target) && !(to && current.contains(to)))) return;
+    // A mouseout has two very different causes:
+    //   1. the pointer genuinely left the element  → close
+    //   2. the element's DOM node was replaced by a re-render under a still
+    //      resting pointer (e.g. tool-progress updates in a warm session). The
+    //      browser fires mouseout for the removed node but NO mouseover for its
+    //      replacement, so closing here would strand the tooltip for good.
+    // Defer one frame so any replacement node is in place, then decide by what is
+    // actually under the pointer rather than by the (possibly detached) old node.
+    const px = e.clientX;
+    const py = e.clientY;
+    const leaving = current;
+    if (raf != null) cancelAnimationFrame(raf);
+    raf = requestAnimationFrame(() => {
+      raf = undefined;
+      // Pointer already moved onto another titled element, which started its own
+      // tooltip — let that path own the state.
+      if (current !== leaving) return;
+      // Node still attached → the pointer really left it.
+      if (document.contains(leaving)) {
+        end();
+        return;
+      }
+      // Node was removed by a re-render. If the same tooltip target still sits
+      // under the resting pointer, re-acquire the fresh node and keep the tip up;
+      // otherwise the content genuinely changed, so close.
+      const under = document.elementFromPoint(px, py);
+      const el = under?.closest<HTMLElement>("[title]");
+      if (el && el.getAttribute("title") === text) {
+        current = el;
+        el.setAttribute("data-tip-title", text);
+        el.removeAttribute("title");
+        suppressed = true;
+        if (visible) reveal();
+      } else {
+        end();
+      }
+    });
   }
 
   function onFocusIn(e: FocusEvent) {

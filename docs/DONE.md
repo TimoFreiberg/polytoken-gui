@@ -5,6 +5,15 @@ and its resolution note. Latest completions first.
 
 ---
 
+- [x] **Tooltip survives element re-render under a resting pointer** _(2026-06-19)_
+  _(done: the global `Tooltip` vanished whenever its tracked node was replaced by a
+  re-render (e.g. tool progress in a warm session) — the removed node fired `mouseout`,
+  `end()` hid the tip, and no `mouseover` fired for the replacement, stranding it. `onOut`
+  now defers the close one frame and decides by what's actually under the pointer: if the
+  node was detached and a same-`title` node still sits there it re-acquires the fresh node
+  and keeps the tip up; a genuine pointer-leave still closes, as do Esc/click/scroll/blur.
+  Regression test in `tooltip.e2e.ts`.)_
+
 - [x] **Remove composer markdown preview/edit toggle** _(2026-06-19)_
   _(done: dropped the Preview/Edit toggle from the composer — the `preview`/`showPreview`
   state, `toggleEdit`, the `<Markdown>` preview branch + its scoped `.prose`/`.preview` CSS,

@@ -37,3 +37,40 @@ test("hovering a titled control shows a themed tooltip, then restores the title"
   await expect(page.locator(".tip")).toHaveCount(0);
   await expect(btn).toHaveAttribute("title", "Collapse sidebar");
 });
+
+test("tooltip survives a re-render of the element under a resting pointer", async ({
+  page,
+}) => {
+  // A warm session re-renders tracked nodes (tool progress, status changes) while
+  // the pointer rests on them. The browser fires mouseout for the removed node but
+  // no mouseover for its replacement; the tooltip must re-acquire the fresh node
+  // and stay up rather than vanish for good.
+  const btn = page.getByRole("button", { name: "Collapse sidebar" });
+  await btn.hover();
+  const tip = page.locator(".tip");
+  await expect(tip).toBeVisible();
+  await expect(tip).toHaveText("Collapse sidebar");
+
+  // Reproduce the exact sequence: fire mouseout for the hovered node (as the
+  // browser does just before removing it), then swap in a fresh clone — one that
+  // carries the original `title`, like a real template re-render — at the same spot.
+  await page.evaluate(() => {
+    const el = document.querySelector(
+      '[aria-label="Collapse sidebar"]',
+    ) as HTMLElement;
+    const r = el.getBoundingClientRect();
+    const cx = Math.round(r.left + r.width / 2);
+    const cy = Math.round(r.top + r.height / 2);
+    const clone = el.cloneNode(true) as HTMLElement;
+    clone.setAttribute("title", "Collapse sidebar");
+    clone.removeAttribute("data-tip-title");
+    el.dispatchEvent(
+      new MouseEvent("mouseout", { bubbles: true, clientX: cx, clientY: cy }),
+    );
+    el.replaceWith(clone);
+  });
+
+  // Still up, still correct — re-acquired onto the replacement node.
+  await expect(tip).toBeVisible();
+  await expect(tip).toHaveText("Collapse sidebar");
+});
