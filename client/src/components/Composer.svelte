@@ -1,8 +1,12 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import type { CommandInfo, FileInfo, ImageContent } from "@pilot/protocol";
+  import type { CommandInfo, FileInfo } from "@pilot/protocol";
   import { store } from "../lib/store.svelte.js";
   import { extractAtQuery } from "../lib/file-autocomplete.js";
+  import {
+    IMAGE_LIMITS,
+    prepareImageFiles,
+  } from "../lib/image-attachments.js";
   import { filterCommands, slashQuery } from "../lib/slash.js";
   import SlashMenu from "./SlashMenu.svelte";
   import FileMenu from "./FileMenu.svelte";
@@ -36,9 +40,15 @@
 
   // Image attachments: picked from the browser file input, read as base64.
   const images = $derived(store.composerImages);
-  const MAX_IMAGES = 10;
   const imageCount = $derived(images.length);
   let submitting = $state(false);
+  let addingImages = $state(false);
+  let attachmentStatus = $state<{
+    kind: "error" | "info";
+    text: string;
+  } | null>(null);
+  let dragDepth = 0;
+  let dragActive = $state(false);
 
   // Ambient widgets above the composer. The "tasklist" widget gets a collapsed
   // pill (parsed from its lines) that expands on hover/click; everything else
@@ -183,7 +193,12 @@
     if (submitting) return;
     const text = store.composerDraft;
     if (!text.trim() && images.length === 0) return;
-    const imgs = images.length > 0 ? [...images] : undefined;
+    // `$state` wraps nested objects in proxies; IndexedDB's structured clone rejects
+    // proxies. Copy each attachment back to a plain JSON object before outbox persistence.
+    const imgs =
+      images.length > 0
+        ? images.map(({ type, data, mimeType }) => ({ type, data, mimeType }))
+        : undefined;
     submitting = true;
     let queued = false;
     try {
@@ -196,6 +211,7 @@
     if (!queued) return;
     editingCwd = false;
     expanded = false;
+    attachmentStatus = null;
     queueMicrotask(autosize);
   }
 
@@ -233,38 +249,91 @@
   }
 
   function openFilePicker() {
+    if (imageCount >= IMAGE_LIMITS.count) {
+      attachmentStatus = {
+        kind: "error",
+        text: `Only ${IMAGE_LIMITS.count} images can be attached.`,
+      };
+      return;
+    }
     fileInput?.click();
   }
 
   /** Drop an attachment by index. */
   function removeImage(i: number) {
     store.composerImages = images.filter((_, idx) => idx !== i);
+    if (attachmentStatus?.kind === "error") attachmentStatus = null;
+  }
+
+  async function addImageFiles(files: readonly File[]) {
+    if (addingImages || files.length === 0) return;
+    addingImages = true;
+    attachmentStatus = null;
+    try {
+      const result = await prepareImageFiles(files, images);
+      if (result.images.length > 0)
+        store.composerImages = [...images, ...result.images];
+      if (result.errors.length > 0) {
+        attachmentStatus = { kind: "error", text: result.errors.join(" ") };
+      } else if (result.compressedCount > 0) {
+        attachmentStatus = {
+          kind: "info",
+          text: `Compressed ${result.compressedCount} oversized image${result.compressedCount === 1 ? "" : "s"} before attaching.`,
+        };
+      }
+    } finally {
+      addingImages = false;
+      ta?.focus();
+    }
   }
 
   async function onFilesSelected(e: Event) {
     const input = e.target as HTMLInputElement;
-    const files = input.files;
-    if (!files) return;
-    const remaining = MAX_IMAGES - images.length;
-    const toRead = Array.from(files).slice(0, remaining);
-    const newImages: ImageContent[] = [];
-    for (const f of toRead) {
-      if (!f.type.startsWith("image/")) continue;
-      const data = await new Promise<string>((resolve) => {
-        const r = new FileReader();
-        r.onload = () => {
-          const raw = r.result;
-          if (raw == null || typeof raw !== "string") { resolve(""); return; }
-          resolve(raw.split(",")[1] ?? "");
-        };
-        r.readAsDataURL(f);
-      });
-      newImages.push({ type: "image", data, mimeType: f.type });
-    }
-    store.composerImages = [...images, ...newImages];
-    // Reset so re-selecting the same file re-fires the change event.
+    const files = input.files ? Array.from(input.files) : [];
+    // Reset first so re-selecting the same file re-fires even if processing rejects it.
     input.value = "";
-    ta?.focus();
+    await addImageFiles(files);
+  }
+
+  function onPaste(e: ClipboardEvent) {
+    const files = e.clipboardData?.files
+      ? Array.from(e.clipboardData.files)
+      : [];
+    if (files.length === 0) return;
+    e.preventDefault();
+    void addImageFiles(files);
+  }
+
+  function hasDraggedFiles(e: DragEvent): boolean {
+    return Array.from(e.dataTransfer?.types ?? []).includes("Files");
+  }
+
+  function onDragEnter(e: DragEvent) {
+    if (!hasDraggedFiles(e)) return;
+    e.preventDefault();
+    dragDepth++;
+    dragActive = true;
+  }
+
+  function onDragOver(e: DragEvent) {
+    if (!hasDraggedFiles(e)) return;
+    e.preventDefault();
+    if (e.dataTransfer) e.dataTransfer.dropEffect = "copy";
+  }
+
+  function onDragLeave(e: DragEvent) {
+    if (!dragActive) return;
+    dragDepth = Math.max(0, dragDepth - 1);
+    if (dragDepth === 0) dragActive = false;
+  }
+
+  function onDrop(e: DragEvent) {
+    const files = Array.from(e.dataTransfer?.files ?? []);
+    if (!hasDraggedFiles(e) && files.length === 0) return;
+    e.preventDefault();
+    dragDepth = 0;
+    dragActive = false;
+    if (files.length > 0) void addImageFiles(files);
   }
 
   function onInput() {
@@ -461,7 +530,22 @@
   });
 </script>
 
-<div class="composer-wrap">
+<div
+  class="composer-wrap"
+  class:drag-active={dragActive}
+  role="group"
+  aria-label="Message composer"
+  aria-busy={addingImages}
+  ondragenter={onDragEnter}
+  ondragover={onDragOver}
+  ondragleave={onDragLeave}
+  ondrop={onDrop}
+>
+  {#if dragActive}
+    <div class="drop-overlay" data-testid="image-drop-overlay">
+      Drop images to attach
+    </div>
+  {/if}
   <div class="col">
     {#each widgets as { w, tasks } (w.key)}
       {#if tasks}
@@ -472,6 +556,18 @@
         </div>
       {/if}
     {/each}
+
+    {#if addingImages}
+      <div class="attachment-status info" role="status">Preparing images…</div>
+    {:else if attachmentStatus}
+      <div
+        class="attachment-status {attachmentStatus.kind}"
+        role={attachmentStatus.kind === "error" ? "alert" : "status"}
+        data-testid="attachment-status"
+      >
+        {attachmentStatus.text}
+      </div>
+    {/if}
 
     <QueueTray />
 
@@ -562,6 +658,7 @@
         bind:value={store.composerDraft}
         oninput={onInput}
         onkeydown={onKeydown}
+        onpaste={onPaste}
         onclick={() => (cursorPos = ta?.selectionStart ?? 0)}
         onkeyup={() => (cursorPos = ta?.selectionStart ?? 0)}
         placeholder={drafting
@@ -578,7 +675,7 @@
       <div class="actions">
         <button
           class="send"
-          disabled={submitting || (!store.composerDraft.trim() && imageCount === 0)}
+          disabled={submitting || addingImages || (!store.composerDraft.trim() && imageCount === 0)}
           onclick={submit}
           aria-label={drafting ? "Create session and send" : "Send"}
           title={drafting ? "Create session and send first message (Enter)" : "Send (Enter)"}
@@ -621,20 +718,25 @@
           tabindex="-1"
         />
         {#if imageCount > 0}
-          <button class="attach-tag" onclick={openFilePicker} title={`${imageCount} image${imageCount > 1 ? "s" : ""} attached — click to add more`}>
+          <button
+            class="attach-tag"
+            disabled={addingImages}
+            onclick={openFilePicker}
+            title={`${imageCount} image${imageCount > 1 ? "s" : ""} attached — add more (⌘⇧F)`}
+          >
             <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
               <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48" />
             </svg>
             {imageCount}
           </button>
           {#each images as img, i (i)}
-            <button class="thumb-chip" onclick={() => removeImage(i)} title="Click to remove this image">
+            <button class="thumb-chip" onclick={() => removeImage(i)} title="Remove this image (Enter)">
               <img src="data:{img.mimeType};base64,{img.data}" alt={`Attachment ${i + 1}`} />
               <span class="thumb-x" aria-hidden="true">×</span>
             </button>
           {/each}
         {:else}
-          <IconButton onclick={openFilePicker} title="Attach images (⌘⇧F)" aria-label="Attach images">
+          <IconButton disabled={addingImages} onclick={openFilePicker} title="Attach images (⌘⇧F)" aria-label="Attach images">
             <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
               <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48" />
             </svg>
@@ -649,10 +751,29 @@
 
 <style>
   .composer-wrap {
+    position: relative;
     border-top: 1px solid var(--border);
     background: color-mix(in srgb, var(--bg) 86%, transparent);
     backdrop-filter: blur(8px);
     padding: 10px 16px calc(12px + env(safe-area-inset-bottom));
+  }
+  .composer-wrap.drag-active {
+    background: color-mix(in srgb, var(--accent) 10%, var(--bg));
+  }
+  .drop-overlay {
+    position: absolute;
+    inset: 6px 12px calc(8px + env(safe-area-inset-bottom));
+    z-index: 20;
+    display: grid;
+    place-items: center;
+    pointer-events: none;
+    border: 2px dashed var(--accent);
+    border-radius: var(--radius);
+    background: color-mix(in srgb, var(--surface) 88%, transparent);
+    color: var(--accent);
+    font-size: 14px;
+    font-weight: 650;
+    backdrop-filter: blur(5px);
   }
   .col {
     max-width: var(--maxw);
@@ -672,6 +793,22 @@
   }
   .wline {
     line-height: 1.5;
+  }
+  .attachment-status {
+    border-radius: var(--radius-xs);
+    padding: 6px 9px;
+    font-size: 12px;
+    line-height: 1.4;
+  }
+  .attachment-status.error {
+    border: 1px solid color-mix(in srgb, var(--danger) 30%, transparent);
+    background: var(--danger-soft);
+    color: var(--danger);
+  }
+  .attachment-status.info {
+    border: 1px solid var(--border);
+    background: var(--surface-sunken);
+    color: var(--text-muted);
   }
   .streamrow {
     display: flex;
@@ -910,6 +1047,10 @@
   }
   .attach-tag:hover {
     filter: brightness(1.05);
+  }
+  .attach-tag:disabled {
+    opacity: 0.5;
+    cursor: default;
   }
   .thumb-chip {
     position: relative;

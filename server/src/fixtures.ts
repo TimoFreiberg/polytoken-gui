@@ -5,6 +5,7 @@
 import type {
   CommandInfo,
   FileInfo,
+  ImageContent,
   ModelDefaults,
   ModelOption,
   ProviderInfo,
@@ -484,7 +485,11 @@ export function markdownShowcase(): ScriptStep[] {
 
 // --- The default streamed reply to any prompt -------------------------------
 
-export function promptReply(userText: string, userId?: string): ScriptStep[] {
+export function promptReply(
+  userText: string,
+  userId?: string,
+  images?: readonly ImageContent[],
+): ScriptStep[] {
   const callId = `t-${ts()}`;
   return [
     {
@@ -494,6 +499,7 @@ export function promptReply(userText: string, userId?: string): ScriptStep[] {
         type: "userMessage",
         id: userId ?? `u-${ts()}`,
         text: userText,
+        images,
       },
     },
     {

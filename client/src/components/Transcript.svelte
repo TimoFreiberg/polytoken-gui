@@ -263,7 +263,20 @@
     {#snippet itemView(item: DisplayItem)}
       {#if item.kind === "user"}
         <div class="row user" class:pending={item.delivery && item.delivery !== "rejected"} class:rejected={item.delivery === "rejected"}>
-          <div class="bubble">{item.text}</div>
+          {#if item.images && item.images.length > 0}
+            <div class="user-images">
+              {#each item.images as image, index (index)}
+                <img
+                  src="data:{image.mimeType};base64,{image.data}"
+                  alt={`Attached image ${index + 1}`}
+                  data-testid="sent-image"
+                />
+              {/each}
+            </div>
+          {/if}
+          {#if item.text}
+            <div class="bubble">{item.text}</div>
+          {/if}
           {#if item.delivery}
             <div class="delivery {item.delivery}" role={item.delivery === "rejected" ? "alert" : "status"}>
               <span>
@@ -598,6 +611,26 @@
     white-space: pre-wrap;
     word-break: break-word;
   }
+  .user-images {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 180px));
+    gap: 6px;
+    max-width: min(86%, 366px);
+    margin-bottom: 5px;
+  }
+  .user-images img {
+    display: block;
+    width: 100%;
+    max-height: 240px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    background: var(--surface-sunken);
+    object-fit: cover;
+  }
+  .user-images img:only-child {
+    grid-column: 1 / -1;
+    max-width: 300px;
+  }
   .assistant {
     gap: 8px;
   }
@@ -740,7 +773,13 @@
   .row.user.pending .bubble {
     opacity: 0.72;
   }
+  .row.user.pending .user-images {
+    opacity: 0.72;
+  }
   .row.user.rejected .bubble {
+    border-color: color-mix(in srgb, var(--danger) 45%, var(--border));
+  }
+  .row.user.rejected .user-images img {
     border-color: color-mix(in srgb, var(--danger) 45%, var(--border));
   }
   .delivery {

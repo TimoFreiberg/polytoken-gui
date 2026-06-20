@@ -61,15 +61,19 @@ See `docs/` siblings for context: `DESIGN.md` (architecture + roadmap), `DECISIO
       Approval resolution remains first-responder-wins. Treat as a bounded protocol/hub
       refactor; do after reliable delivery + attention + queue visibility unless it stops
       being straightforward.
-- [ ] **Paste/drop image attachments + hardening** — the file-picker path is shipped, but
-      the high-frequency screenshot flows are missing. Accept image files pasted into or
-      dropped onto the composer, show the same removable previews, enforce count and byte
-      limits before base64 expansion, compress oversized camera images where practical, and
-      surface rejected/unsupported files visibly. Preserve image-only submission and cover
-      clipboard, drag/drop, limits, and mobile picker behavior. Arbitrary non-image files
-      remain out of scope because pi's prompt attachment contract is image-only. Also decide
-      how queued-image restore should behave: pi's `queue_update`/`clearQueue()` expose text
-      only, so preserving queued images would require Pilot-side attachment metadata.
+- [x] **Paste/drop image attachments + hardening** → done 2026-06-20. Screenshots can
+      now be pasted into the textarea or dropped anywhere on the composer (with a visible
+      drop target), sharing the file picker's removable previews. Validation rejects
+      unsupported/empty/oversized files before base64 work; count, source-file/batch, and
+      processed-file/total byte limits are enforced with visible errors. Oversized raster
+      images are downscaled to 2,048 px and quality-stepped where browser decoding permits;
+      HEIC/HEIF camera inputs must convert to JPEG rather than leaking an unsupported MIME
+      downstream. Image-only sends remain enabled, attachments are copied out of Svelte
+      proxies before IndexedDB persistence, and sent images now render in the transcript
+      instead of becoming an empty bubble. Unit/E2E cover validation, paste, drop/rejection,
+      limits, image-only send, and the mobile picker. **Known pi limitation:** queued-image
+      restore is still text-only because `queue_update`/`clearQueue()` omit attachment data;
+      preserving it would require Pilot-side queue metadata.
 - [x] ~~**Stop default-new-session-in-server-cwd for production usage**~~ → done
       2026-06-19. The server's cwd no longer feeds any logic: it's not a trust anchor
       (no dir is implicitly trusted — every cwd goes through pi's built-in trust:
