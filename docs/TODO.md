@@ -58,9 +58,14 @@ See `docs/` siblings for context: `DESIGN.md` (architecture + roadmap), `DECISIO
       shares one server-global focused transcript, so switching on the phone can switch the
       desktop underneath the user. Move focused session selection and focused snapshots to
       client/subscription scope while keeping durable session state and actions shared.
-      Approval resolution remains first-responder-wins. Treat as a bounded protocol/hub
-      refactor; do after reliable delivery + attention + queue visibility unless it stops
-      being straightforward.
+      Approval resolution remains first-responder-wins. **Assessed 2026-06-20: not a
+      straightforward fast-follow.** The hub currently owns one `focusedId`, one folded
+      `state`, and one switch lock; snapshots, active-session lists, cwd-scoped command
+      lists, and file-query results are all broadcast globally. This needs a dedicated
+      subscription refactor: per-connection focus/folded state plus targeted session,
+      command, and file responses, while shared attention/actions remain global. Keep it
+      isolated from the reliability work above so the invariants get explicit multi-client
+      tests.
 - [x] **Paste/drop image attachments + hardening** → done 2026-06-20. Screenshots can
       now be pasted into the textarea or dropped anywhere on the composer (with a visible
       drop target), sharing the file picker's removable previews. Validation rejects
@@ -282,10 +287,11 @@ the rest._
 - [x] **Edit-and-resubmit a prior prompt** → done 2026-06-19 as session-tree T1.
       “Branch from this prompt” rewinds to the prompt's parent and prefills the composer;
       `⌘/Ctrl+⇧+↑` applies it to the most recent prompt.
-- [ ] **Live activity status line** — derive a one-liner from the in-flight tool
-      ("Reading foo.ts", "Running tests", "Editing bar.rs") and surface it in the
-      sidebar row, the tab title, and optionally the push notification. Turns the
-      pulsing dot into "what is it actually doing right now."
+- [~] **Live activity status line** — partly shipped with cross-session attention:
+      derived one-liners ("Reading foo.ts", "Running tests", "Editing bar.rs") now appear
+      in sidebar rows and failure notifications. The browser tab still shows only the
+      active session title; decide whether live activity belongs there before calling this
+      complete.
 - [ ] **Files-changed-this-turn rollup** — at turn end, a collapsed card summarizing
       every file the agent wrote/edited this turn with `+N/−M` counts, expandable to
       the per-file diffs (reuses the `@pierre/diffs` work already landed).
@@ -304,11 +310,12 @@ the rest._
       `Composer.svelte` re: per-query RPC latency tradeoff.
 - [x] **Per-session prompt draft persistence** _(superseded — completed in 🟡 Important;
       retained here only as historical brainstorm context)_.
-- [~] **Offline prompt queue** — promoted into the urgent reliable prompt-delivery item.
+- [x] **Offline prompt queue** → done 2026-06-20 as part of reliable prompt delivery;
+      IndexedDB persistence survives disconnects, reloads, and tab eviction.
 - [ ] **Voice dictation on mobile** — Web Speech API mic button in the composer; talking
       a prompt into your phone beats thumb-typing a paragraph.
-- [~] **Optimistic user-message echo** — promoted into the urgent reliable
-      prompt-delivery item; it must reconcile against an explicit server acceptance ACK.
+- [x] **Optimistic user-message echo** → done 2026-06-20 as part of reliable prompt
+      delivery, including explicit acceptance/rejection ACK reconciliation.
 
 ### Transcript reading
 - [ ] **In-transcript search (⌘F)** — find-as-you-type across the rendered transcript
@@ -338,7 +345,12 @@ the rest._
 - [ ] **Session emoji / color label** — optional per-session glyph or accent color for
       fast visual ID in the list (stored via `appendCustomEntry`, like the archive flag).
 - [ ] **Session metadata header** — a compact header on the active session showing model,
-      cwd, git branch, message count, started-at — the "where am I" strip.
+      cwd, git branch, message count, started-at — the "where am I" strip. Rechecked
+      against latest `main` (`c49cbf85`) on 2026-06-20: the recent simplification appears
+      to have resolved the mobile crowding concern (model/thinking moved out; bell and
+      connection labels collapse below 480px). The remaining concrete wart is that every
+      active session's subtitle is still the literal `pilot`; discuss whether cwd/project
+      or a richer metadata strip should replace it before implementing.
 - [ ] **Git branch indicator per session** — read the cwd's current branch and show it in
       the row/header; pairs naturally with the worktree-checkbox item.
 - [ ] **"Open in editor" deep link** — a button that opens the session's cwd in
