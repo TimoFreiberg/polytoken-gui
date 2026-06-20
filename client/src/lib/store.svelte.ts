@@ -55,6 +55,13 @@ import {
   send,
 } from "./ws.svelte.js";
 
+/** A transient snackbar. `action` is an optional one-shot affordance (e.g. Undo). */
+export interface Toast {
+  id: number;
+  message: string;
+  action?: { label: string; run: () => void };
+}
+
 class PilotStore {
   session = $state<SessionState>(initialSessionState());
   serverId = $state<string | null>(loadLastServerId());
@@ -175,6 +182,13 @@ class PilotStore {
   // Last server-side error worth showing the user (e.g. a session switch to a bad
   // path failed). Transient — cleared on the next successful switch or by the UI.
   lastError = $state<string | null>(null);
+  // Transient snackbars (archive undo, "resolved on another device", …). Client-only,
+  // never sent upstream; each carries an optional one-shot action and auto-dismisses.
+  toasts = $state<Toast[]>([]);
+  private toastSeq = 0;
+  // Blocking-dialog requestIds this client itself answered, so an echoed `hostUiResolved`
+  // for one of them isn't mistaken for a "resolved on another device" event.
+  private locallyResolved = new Set<string>();
   // Push subscription status for this device. "working" while a subscribe is in flight.
   pushState = $state<PushState | "working">("idle");
   // Settings panel open/closed — per-client view state, never sent upstream.
@@ -374,9 +388,22 @@ class PilotStore {
         // "is it time to build JS windowing?" (see docs/DESIGN.md).
         this.logRenderTiming(msg.state.items.length);
         break;
-      case "event":
-        foldEvent(this.session, msg.event);
+      case "event": {
+        const ev = msg.event;
+        // A blocking dialog this client was showing but didn't answer just vanished —
+        // first-responder-wins resolved it on another device. Surface a transient notice
+        // so the sheet doesn't silently disappear. (qna is inline; handled there.)
+        if (ev.type === "hostUiResolved") {
+          const wasShowing = this.session.pendingApprovals.some(
+            (r) => r.requestId === ev.requestId && r.kind !== "qna",
+          );
+          if (wasShowing && !this.locallyResolved.has(ev.requestId))
+            this.toast("Resolved on another device");
+          this.locallyResolved.delete(ev.requestId);
+        }
+        foldEvent(this.session, ev);
         break;
+      }
       case "sessionList":
         this.sessions = [...msg.sessions];
         this.activeSessionId = msg.activeSessionId;
@@ -815,6 +842,9 @@ class PilotStore {
     this.focusComposer();
   }
   respondUi(response: HostUiResponse): void {
+    // Remember we answered this one, so the echoed hostUiResolved isn't read as a
+    // "resolved on another device" event (see the "event" case).
+    this.locallyResolved.add(response.requestId);
     send({ type: "respondUi", response });
   }
   /** Answer the project-trust card. `choice` indexes the options; null denies. Clears
@@ -1316,11 +1346,35 @@ class PilotStore {
   }
   /** Archive or unarchive a session by path. Optimistic — flips the local flag now so
    *  the row reacts instantly; the server's `sessionList` re-broadcast reconciles. */
+  /** Push a transient snackbar; auto-dismisses after `durationMs` (0 = sticky). */
+  toast(
+    message: string,
+    opts?: { action?: { label: string; run: () => void }; durationMs?: number },
+  ): void {
+    const id = ++this.toastSeq;
+    this.toasts = [...this.toasts, { id, message, action: opts?.action }];
+    const ms = opts?.durationMs ?? 6000;
+    if (ms > 0) setTimeout(() => this.dismissToast(id), ms);
+  }
+  dismissToast(id: number): void {
+    this.toasts = this.toasts.filter((t) => t.id !== id);
+  }
+
   setArchived(path: string, archived: boolean): void {
     this.sessions = this.sessions.map((s) =>
       s.path === path ? { ...s, archived } : s,
     );
     send({ type: "setArchived", path, archived });
+    // Archiving is instant and pulls the row from view — offer a one-tap undo so a
+    // misfire isn't a filter-toggle-then-hunt recovery. (Unarchive needs no toast.)
+    if (archived) {
+      const s = this.sessions.find((x) => x.path === path);
+      const name = s?.displayName || s?.preview || "Session";
+      const label = name.length > 32 ? `${name.slice(0, 31)}…` : name;
+      this.toast(`Archived “${label}”`, {
+        action: { label: "Undo", run: () => this.setArchived(path, false) },
+      });
+    }
   }
   /** Rename a session by path. Optimistic — sets the local displayName now so the row
    *  (and, for the active session, the header) react instantly; the server's

@@ -46,6 +46,29 @@ test("the '{N} hidden' count is itself clickable to reveal everything", async ({
   await expect(sidebar.getByTestId("hidden-count")).toHaveCount(0);
 });
 
+test("archiving offers an Undo toast that restores the session", async ({
+  page,
+}) => {
+  await openSidebar(page);
+  const sidebar = page.getByTestId("sidebar");
+
+  const row = sidebar
+    .locator(".row-wrap")
+    .filter({ hasText: "Explore the fold reducer" });
+  await expect(row).toBeVisible();
+  await row.locator(".row").click({ button: "right" });
+  await sidebar.getByRole("menuitem", { name: "Archive", exact: true }).click();
+
+  // The row vanishes from the active view AND a toast offers a one-tap undo.
+  await expect(sidebar.getByText("Explore the fold reducer")).toHaveCount(0);
+  const toast = page.getByTestId("toast").filter({ hasText: "Archived" });
+  await expect(toast).toBeVisible();
+
+  // Undo restores it (un-archives), and the toast clears.
+  await toast.getByRole("button", { name: "Undo", exact: true }).click();
+  await expect(sidebar.getByText("Explore the fold reducer")).toBeVisible();
+});
+
 test("right-clicking a session row opens its overflow menu", async ({
   page,
 }) => {

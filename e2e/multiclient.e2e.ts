@@ -32,5 +32,10 @@ test("a dialog broadcasts to both clients and resolves on both", async ({
   await expect(p2.getByRole("dialog")).toBeHidden();
   await expect(p2.getByText("Approved — continuing.")).toHaveCount(1);
 
+  // The client that DIDN'T answer (p2) gets a "resolved elsewhere" notice instead of the
+  // sheet silently vanishing; the answering client (p1) does not.
+  await expect(p2.getByText("Resolved on another device")).toBeVisible();
+  await expect(p1.getByText("Resolved on another device")).toHaveCount(0);
+
   await p2.close();
 });

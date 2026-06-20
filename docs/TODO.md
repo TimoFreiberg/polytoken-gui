@@ -205,15 +205,18 @@ code. The high-value quick wins from this pass already shipped (approval a11y, i
 prevention, eager reconnect, transcript/composer polish — see DONE 2026-06-20); these are
 the remainder, roughly ordered by day-to-day leverage._
 
-- [ ] **Archive is instant + irreversible** — `setArchived` flips the flag and the row
-      vanishes from the active view with no toast/undo; recovery is filter-toggle → find → ⋯ →
-      Unarchive. Add an "Archived — Undo" toast. Needs a small toast/snackbar system the app
-      doesn't have yet — build it once and the multi-device notice below reuses it.
-- [ ] **No "resolved on another device" notice** — first-responder-wins drops the loser's
-      answer and the sheet silently vanishes on the other client (`hostUiResolved` carries no
-      outcome). Push a transient "Resolved on another device" when a pending dialog the local
-      client didn't answer disappears. (Pairs with the toast system above; the event would need
-      to carry the outcome to say which way it resolved.)
+- [x] **Archive is instant + irreversible** → done 2026-06-21. Built the **toast/snackbar
+      system** the app lacked: client-only `store.toasts` + `toast(msg, {action, durationMs})`
+      + `dismissToast`, rendered by a new `Toast.svelte` (bottom-center stack, auto-dismiss,
+      per-toast Undo + ×) mounted in `App`. `setArchived(…, true)` now pushes an `Archived "…"`
+      toast whose **Undo** un-archives. `e2e/archive.e2e.ts` covers archive→toast→undo→restored.
+- [x] **No "resolved on another device" notice** → done 2026-06-21. Reuses the toast system.
+      `respondUi` records requestIds this client answered; when a `hostUiResolved` arrives for a
+      dialog still showing locally that this client did NOT answer (first-responder-wins on
+      another device), the store pushes a transient "Resolved on another device" — so the sheet
+      no longer just silently vanishes. `e2e/multiclient.e2e.ts` asserts the non-answering client
+      gets the notice and the answering one doesn't. (Outcome-direction still omitted — the event
+      carries no outcome, matching the original note.)
 - [x] **Tool output trapped in a 320px scrollbox** → done 2026-06-21. The result block in
       `ToolCard.svelte` now carries a compact action bar: **Copy** (clipboard, with a "Copied"
       flash) and an **Expand/Collapse** toggle that drops the 320px cap so a long log reads

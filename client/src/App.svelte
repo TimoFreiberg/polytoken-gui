@@ -15,6 +15,7 @@
   import Settings from "./components/Settings.svelte";
   import TreeView from "./components/TreeView.svelte";
   import Tooltip from "./components/Tooltip.svelte";
+  import Toast from "./components/Toast.svelte";
   import IconButton from "./components/ui/IconButton.svelte";
   import { notifyIfUnfocused } from "./lib/notify.js";
   import { wakeLock } from "./lib/wake-lock.js";
@@ -142,6 +143,10 @@
   </div>
 {/if}
 {/if}
+
+<!-- Transient snackbars (archive undo, resolved-elsewhere). Outside the gate so it overlays
+     the whole app. -->
+<Toast />
 
 <!-- Themed tooltip override for every `title` in the app; works behind the gate too. -->
 <Tooltip />
