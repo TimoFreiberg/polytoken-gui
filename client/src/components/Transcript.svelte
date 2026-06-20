@@ -1,5 +1,7 @@
 <script lang="ts">
   import { onMount } from "svelte";
+  import { slide } from "svelte/transition";
+  import { cubicOut } from "svelte/easing";
   import { store } from "../lib/store.svelte.js";
   import {
     type DisplayItem,
@@ -538,7 +540,16 @@
             <span class="work-label">{turnDone(turn) ? workedLabel(turn) : "Working…"}</span>
           </button>
           {#if workShown(turn)}
-            <div class="work-body" data-testid="work-body">
+            <!-- Slide the working steps closed instead of snapping: when a turn finishes
+                 its closing paragraph the early work autocollapses, and an instant removal
+                 jumped the content below. A short height/opacity glide smooths it (and the
+                 manual toggle). Intro is skipped on initial mount, so settled turns on load
+                 don't animate. -->
+            <div
+              class="work-body"
+              data-testid="work-body"
+              transition:slide={{ duration: 180, easing: cubicOut }}
+            >
               {#each turn.work as it (it.id)}
                 {@render itemView(it)}
               {/each}

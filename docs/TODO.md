@@ -368,9 +368,12 @@ hit a session limit mid-verify; confirm each against the code before acting):_
       header dropdown — the **Settings favorites checklist** was left expanded on purpose: its
       default state is "no favorites = show all," where collapse-by-default would hide every
       model mid-curation; it has its own search. Redirect if that surface was the intent.)_
-- [ ] **Smooth collapse animation for turn-ending autocollapse** — when an agent turn
-      finishes its closing paragraph, the early part of the turn autocollapses with a
-      jarring jump. Find a short, light animation to smooth the transition.
+- [x] **Smooth collapse animation for turn-ending autocollapse** → done 2026-06-21. The
+      per-turn work block's body now uses a Svelte `transition:slide` (180ms, `cubicOut`), so
+      the autocollapse at turn end (and the manual toggle) glides height+opacity instead of
+      snapping and jumping the content below. Svelte skips the intro on initial mount, so
+      already-settled turns on page load don't animate. `working-block` + `polish` (autoscroll)
+      e2e still green.
 - [x] **Hide "Branch from here" on the current leaf** → done 2026-06-20. `Transcript`
       derives `leafEntryId` (the entry id of the active path's tip — the last user/assistant
       item carrying one) and suppresses the turn-final assistant's "Branch from here" when it
