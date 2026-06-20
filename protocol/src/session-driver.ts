@@ -401,6 +401,8 @@ export interface QueuedMessageStartedEvent extends SessionEventBase {
 export interface UserMessageEvent extends SessionEventBase {
   // pilot extension: echo the user's submitted prompt into the transcript
   readonly type: "userMessage";
+  /** Stable client-generated prompt id on the live path. Reusing it lets the client
+   *  reconcile its optimistic row with the authoritative event without a duplicate. */
   readonly id: string;
   readonly text: string;
   readonly images?: readonly ImageContent[];

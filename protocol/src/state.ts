@@ -27,6 +27,10 @@ export interface UserItem {
    *  the server (→ navigateTree). Distinct from `id` (a synthetic {#each} key); undefined
    *  until the live backfill / replay supplies it, in which case no branch button shows. */
   entryId?: string;
+  /** Client-only delivery state for an optimistic prompt row. Authoritative server
+   *  transcript items omit it; the client overlays pending outbox entries at render time. */
+  delivery?: "sending" | "offline" | "rejected";
+  deliveryError?: string;
 }
 export interface AssistantItem {
   readonly kind: "assistant";

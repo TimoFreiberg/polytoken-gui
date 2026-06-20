@@ -88,7 +88,6 @@ function doConnect(): void {
   ws = new WebSocket(url);
 
   ws.onopen = () => {
-    _state = "connected";
     _reconnectAttempt = 0;
     send({ type: "hello", auth: getToken() ?? undefined });
   };
@@ -96,6 +95,9 @@ function doConnect(): void {
   ws.onmessage = (event: MessageEvent) => {
     const msg = parseServerMessage(event.data as string);
     if (!msg) return;
+    // OPEN only means the transport is up. Treat the socket as usable after the
+    // server's authenticated hello, so durable prompts never race ahead of auth.
+    if (msg.type === "hello") _state = "connected";
     for (const listener of listeners) {
       try {
         listener(msg);
@@ -136,8 +138,12 @@ export function forceReconnect(): void {
   doConnect();
 }
 
-export function send(msg: ClientMessage): void {
-  if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(msg));
+/** Send immediately when the authenticated socket is open. Callers that need
+ * reliability keep their own durable queue and retry when this returns false. */
+export function send(msg: ClientMessage): boolean {
+  if (!ws || ws.readyState !== WebSocket.OPEN) return false;
+  ws.send(JSON.stringify(msg));
+  return true;
 }
 
 export function disconnect(): void {
@@ -165,6 +171,10 @@ if (typeof document !== "undefined") {
       scheduleReconnect();
     }
   });
+  // Deterministic e2e hook: simulate a transport loss without taking HTTP/Vite
+  // offline, so the test can close and reopen the page around a durable queued prompt.
+  if (import.meta.env.DEV)
+    window.addEventListener("pilot:test-disconnect", () => disconnect());
 }
 
 export function onMessage(listener: MessageListener): () => void {

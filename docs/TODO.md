@@ -9,20 +9,16 @@ See `docs/` siblings for context: `DESIGN.md` (architecture + roadmap), `DECISIO
 
 ## 🔴 Next (urgent / blocking)
 
-- [ ] **Reliable prompt delivery across disconnects** — sending while the WS is not
-      open currently clears the composer even though `ws.send()` silently drops the
-      message. Make prompt submission lossless end-to-end:
-      - assign every submitted prompt a client-generated id and persist an outbox per
-        Pilot server;
-      - render the user turn optimistically with a `sending`/`queued offline` state;
-      - flush on reconnect and keep entries until the server explicitly acknowledges
-        acceptance;
-      - make the server deduplicate prompt ids so reconnect/retry cannot run a prompt
-        twice;
-      - retain failed/preflight-rejected prompts with a visible Retry/Edit affordance
-        instead of discarding them.
-      Cover online acceptance, offline → reconnect delivery, reload persistence, duplicate
-      resend, and rejection without draft loss.
+- [x] **Reliable prompt delivery across disconnects** → done 2026-06-20. Every normal
+      or create+first prompt gets a client UUID and is saved to an IndexedDB outbox before
+      the composer clears. Pending rows render optimistically as Sending/Queued offline;
+      authenticated reconnect hydrates + resends them. Pi's `preflightResult` now drives a
+      targeted `promptResult` ACK, and the hub memoizes prompt ids (bounded at 2,048) so
+      reconnect races cannot invoke pi or create a session twice. Rejections stay in the
+      transcript with Retry/Edit (including attached images); accepted rows reconcile by
+      sharing the prompt id with the authoritative `userMessage`. E2E covers offline tab
+      eviction → reopen → exactly-once delivery and rejection → edit recovery; hub tests
+      cover duplicate normal/create requests and rejection.
 - [ ] **Cross-session attention state** — background sessions currently expose only a
       running/done dot. A background approval, failure, or useful live activity can be
       invisible while any client remains connected (server push is suppressed whenever

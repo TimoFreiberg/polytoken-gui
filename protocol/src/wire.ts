@@ -137,12 +137,23 @@ export type ServerMessage =
    *  back that prompt's text for re-editing. Sent ONLY to the client that asked to
    *  branch (per-client composer state, never broadcast / folded into shared state). */
   | { type: "editorPrefill"; text: string }
+  /** Acceptance result for a client-generated prompt id. `accepted` means pi's prompt
+   *  preflight accepted/queued/handled it; later run failures still arrive normally. */
+  | {
+      type: "promptResult";
+      promptId: string;
+      accepted: boolean;
+      sessionId?: SessionId;
+      error?: string;
+    }
   | { type: "error"; message: string };
 
 export type ClientMessage =
   | { type: "hello"; auth?: string }
   | {
       type: "prompt";
+      /** Stable client-generated id used for ACK/retry reconciliation and deduplication. */
+      promptId?: string;
       text: string;
       images?: readonly ImageContent[];
       deliverAs?: "steer" | "followUp";
@@ -214,6 +225,8 @@ export type ClientMessage =
       model?: { provider: string; modelId: string };
       thinking?: string;
       prompt?: string;
+      /** Id of the optional first prompt; deduplicates a retried create+send request. */
+      promptId?: string;
       images?: readonly ImageContent[];
     }
   /** Ask the server to re-scan disk and re-broadcast the session list. */

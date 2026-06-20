@@ -34,9 +34,10 @@
   let winH = $state(window.innerHeight);
 
   // Image attachments: picked from the browser file input, read as base64.
-  let images = $state<ImageContent[]>([]);
+  const images = $derived(store.composerImages);
   const MAX_IMAGES = 10;
   const imageCount = $derived(images.length);
+  let submitting = $state(false);
 
   // Ambient widgets above the composer. The "tasklist" widget gets a collapsed
   // pill (parsed from its lines) that expands on hover/click; everything else
@@ -177,13 +178,21 @@
     return () => clearTimeout(stashTimer);
   });
 
-  function submit() {
+  async function submit() {
+    if (submitting) return;
     const text = store.composerDraft;
     if (!text.trim() && images.length === 0) return;
     const imgs = images.length > 0 ? [...images] : undefined;
-    if (drafting) store.submitDraft(text, imgs);
-    else store.prompt(text, streaming ? deliverAs : undefined, imgs);
-    images = [];
+    submitting = true;
+    let queued = false;
+    try {
+      queued = drafting
+        ? await store.submitDraft(text, imgs)
+        : await store.prompt(text, streaming ? deliverAs : undefined, imgs);
+    } finally {
+      submitting = false;
+    }
+    if (!queued) return;
     editingCwd = false;
     expanded = false;
     queueMicrotask(autosize);
@@ -228,7 +237,7 @@
 
   /** Drop an attachment by index. */
   function removeImage(i: number) {
-    images = images.filter((_, idx) => idx !== i);
+    store.composerImages = images.filter((_, idx) => idx !== i);
   }
 
   async function onFilesSelected(e: Event) {
@@ -251,7 +260,7 @@
       });
       newImages.push({ type: "image", data, mimeType: f.type });
     }
-    images = [...images, ...newImages];
+    store.composerImages = [...images, ...newImages];
     // Reset so re-selecting the same file re-fires the change event.
     input.value = "";
     ta?.focus();
@@ -551,7 +560,7 @@
       <div class="actions">
         <button
           class="send"
-          disabled={!store.composerDraft.trim()}
+          disabled={submitting || (!store.composerDraft.trim() && imageCount === 0)}
           onclick={submit}
           aria-label={drafting ? "Create session and send" : "Send"}
           title={drafting ? "Create session and send first message (Enter)" : "Send (Enter)"}

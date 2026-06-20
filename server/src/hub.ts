@@ -82,6 +82,15 @@ export class SessionHub {
   private oauthPending = new Map<string, (value: string | null) => void>();
   private oauthSeq = 0;
   private oauthInFlight = false;
+  // Prompt acceptance is idempotent per client-generated id. The promise is stored
+  // before dispatch so a reconnect/retry racing the original request attaches to the
+  // same result instead of invoking pi twice. Bounded because this is only a short-term
+  // reconnect ledger, not durable session history.
+  private promptResults = new Map<
+    string,
+    Promise<Extract<ServerMessage, { type: "promptResult" }>>
+  >();
+  private static readonly PROMPT_RESULT_CAP = 2048;
 
   constructor(
     private driver: PilotDriver,
@@ -278,6 +287,55 @@ export class SessionHub {
         console.error("[hub] send failed", e);
       }
     }
+  }
+
+  private acceptPrompt(
+    send: Send,
+    promptId: string | undefined,
+    run: () => Promise<SessionId | undefined>,
+  ): void {
+    // Backward compatibility for an older client: dispatch, but there is no id to ACK
+    // or deduplicate. Current clients always send promptId.
+    if (!promptId) {
+      void run().catch((e) =>
+        send({
+          type: "error",
+          message: e instanceof Error ? e.message : String(e),
+        }),
+      );
+      return;
+    }
+
+    let result = this.promptResults.get(promptId);
+    if (!result) {
+      result = run()
+        .then(
+          (sessionId): Extract<ServerMessage, { type: "promptResult" }> => ({
+            type: "promptResult",
+            promptId,
+            accepted: true,
+            sessionId,
+          }),
+        )
+        .catch(
+          (e): Extract<ServerMessage, { type: "promptResult" }> => ({
+            type: "promptResult",
+            promptId,
+            accepted: false,
+            sessionId:
+              e && typeof e === "object" && "sessionId" in e
+                ? (e.sessionId as SessionId | undefined)
+                : undefined,
+            error: e instanceof Error ? e.message : String(e),
+          }),
+        );
+      this.promptResults.set(promptId, result);
+      if (this.promptResults.size > SessionHub.PROMPT_RESULT_CAP) {
+        const oldest = this.promptResults.keys().next().value;
+        if (oldest) this.promptResults.delete(oldest);
+      }
+    }
+    void result.then(send);
   }
 
   /** Fetch + broadcast the models available to switch to (driver-authoritative). */
@@ -640,12 +698,17 @@ export class SessionHub {
       case "ping":
         return;
       case "prompt":
-        this.driver.prompt(
-          msg.text,
-          msg.deliverAs,
-          msg.sessionId ?? this.focusedId ?? undefined,
-          msg.images,
-        );
+        this.acceptPrompt(send, msg.promptId, async () => {
+          const sessionId = msg.sessionId ?? this.focusedId ?? undefined;
+          await this.driver.prompt(
+            msg.text,
+            msg.deliverAs,
+            sessionId,
+            msg.images,
+            msg.promptId,
+          );
+          return sessionId;
+        });
         return;
       case "abort":
         this.driver.abort(msg.sessionId ?? this.focusedId ?? undefined);
@@ -719,24 +782,48 @@ export class SessionHub {
         // message creates the session AND carries its first prompt. Deliver the prompt
         // only after the switch lands (focusedId now points at the new session) — doing
         // it inside the driver's newSession would race the hub's atomic state reset.
-        const firstPrompt = msg.prompt?.trim();
+        const firstPrompt = msg.prompt?.trim() ?? "";
         const firstImages = msg.images;
-        void this.switchTo(() =>
-          this.driver.newSession({
-            cwd: msg.cwd,
-            worktree: msg.worktree,
-            model: msg.model,
-            thinking: msg.thinking,
-          }),
-        ).then((ok) => {
-          if (ok && firstPrompt)
-            this.driver.prompt(
-              firstPrompt,
-              undefined,
-              this.focusedId ?? undefined,
-              firstImages,
-            );
-        });
+        const hasFirstPrompt =
+          firstPrompt.length > 0 || (firstImages?.length ?? 0) > 0;
+        const createAndPrompt = async (): Promise<SessionId | undefined> => {
+          const ok = await this.switchTo(() =>
+            this.driver.newSession({
+              cwd: msg.cwd,
+              worktree: msg.worktree,
+              model: msg.model,
+              thinking: msg.thinking,
+            }),
+          );
+          if (!ok) throw new Error("Could not create the new session");
+          const sessionId = this.focusedId ?? undefined;
+          if (hasFirstPrompt) {
+            try {
+              await this.driver.prompt(
+                firstPrompt,
+                undefined,
+                sessionId,
+                firstImages,
+                msg.promptId,
+              );
+            } catch (e) {
+              const error = e instanceof Error ? e : new Error(String(e));
+              Object.assign(error, { sessionId });
+              throw error;
+            }
+          }
+          return sessionId;
+        };
+        if (hasFirstPrompt) {
+          this.acceptPrompt(send, msg.promptId, createAndPrompt);
+        } else {
+          void createAndPrompt().catch((e) => {
+            send({
+              type: "error",
+              message: e instanceof Error ? e.message : String(e),
+            });
+          });
+        }
         return;
       }
       case "listSessions":

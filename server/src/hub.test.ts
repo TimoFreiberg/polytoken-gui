@@ -66,7 +66,10 @@ class FakeDriver implements PilotDriver {
     _deliverAs?: "steer" | "followUp",
     _sessionId?: string,
     _images?: readonly import("@pilot/protocol").ImageContent[],
-  ) {}
+    _promptId?: string,
+  ) {
+    return Promise.resolve();
+  }
   abort() {}
   respondUi(r: HostUiResponse) {
     this.responded.push(r);
@@ -984,9 +987,10 @@ describe("SessionHub", () => {
         _d?: "steer" | "followUp",
         sessionId?: string,
         _images?: readonly import("@pilot/protocol").ImageContent[],
+        _promptId?: string,
       ) {
         calls.push(sessionId);
-        super.prompt(_t, _d, sessionId, _images);
+        return super.prompt(_t, _d, sessionId, _images, _promptId);
       }
     }
     const d = new RecordingDriver();
@@ -996,6 +1000,116 @@ describe("SessionHub", () => {
     hub.handleClient(() => {}, { type: "prompt", text: "hi" }); // → focused "s"
     hub.handleClient(() => {}, { type: "prompt", text: "yo", sessionId: "s2" });
     expect(calls).toEqual(["s", "s2"]);
+  });
+
+  test("prompt ids deduplicate retries and replay the acceptance result", async () => {
+    let calls = 0;
+    class RecordingDriver extends FakeDriver {
+      override prompt(
+        _t: string,
+        _d?: "steer" | "followUp",
+        _sessionId?: string,
+        _images?: readonly import("@pilot/protocol").ImageContent[],
+        _promptId?: string,
+      ) {
+        calls++;
+        return Promise.resolve();
+      }
+    }
+    const hub = new SessionHub(new RecordingDriver());
+    const a = client();
+    hub.handleClient(a.send, {
+      type: "prompt",
+      promptId: "client-prompt-1",
+      text: "ship it",
+      sessionId: "s",
+    });
+    hub.handleClient(a.send, {
+      type: "prompt",
+      promptId: "client-prompt-1",
+      text: "ship it",
+      sessionId: "s",
+    });
+    await flush();
+
+    expect(calls).toBe(1);
+    expect(
+      a.received.filter(
+        (m) => m.type === "promptResult" && m.promptId === "client-prompt-1",
+      ),
+    ).toEqual([
+      {
+        type: "promptResult",
+        promptId: "client-prompt-1",
+        accepted: true,
+        sessionId: "s",
+      },
+      {
+        type: "promptResult",
+        promptId: "client-prompt-1",
+        accepted: true,
+        sessionId: "s",
+      },
+    ]);
+  });
+
+  test("a preflight rejection is returned to the requesting client", async () => {
+    class RejectingDriver extends FakeDriver {
+      override prompt() {
+        return Promise.reject(new Error("No API key configured"));
+      }
+    }
+    const hub = new SessionHub(new RejectingDriver());
+    const a = client();
+    hub.handleClient(a.send, {
+      type: "prompt",
+      promptId: "client-prompt-rejected",
+      text: "hello",
+      sessionId: "s",
+    });
+    await flush();
+
+    expect(a.received.at(-1)).toEqual({
+      type: "promptResult",
+      promptId: "client-prompt-rejected",
+      accepted: false,
+      error: "No API key configured",
+    });
+  });
+
+  test("a retried create-and-prompt request creates only one session", async () => {
+    let creates = 0;
+    let prompts = 0;
+    class RecordingDriver extends FakeDriver {
+      override async newSession(): Promise<SessionDriverEvent[]> {
+        creates++;
+        return [ev({ type: "sessionOpened", snapshot: snap("new") })];
+      }
+      override prompt() {
+        prompts++;
+        return Promise.resolve();
+      }
+    }
+    const hub = new SessionHub(new RecordingDriver());
+    const a = client();
+    const message = {
+      type: "newSession" as const,
+      promptId: "client-new-1",
+      cwd: "/w",
+      prompt: "start",
+    };
+    hub.handleClient(a.send, message);
+    hub.handleClient(a.send, message);
+    await flush();
+    await flush();
+
+    expect(creates).toBe(1);
+    expect(prompts).toBe(1);
+    expect(
+      a.received.filter(
+        (m) => m.type === "promptResult" && m.promptId === "client-new-1",
+      ).length,
+    ).toBe(2);
   });
 });
 

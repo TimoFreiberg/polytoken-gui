@@ -769,27 +769,53 @@ export async function createPiDriver(
       settleTrust(requestId, choice);
     },
 
-    prompt(text, deliverAs, sessionId, images) {
+    prompt(text, deliverAs, sessionId, images, promptId) {
       const ws = target(sessionId);
-      if (!ws) return;
-      emit({
-        sessionRef: ws.ref,
-        timestamp: now(),
-        type: "userMessage",
-        id: `u-${now()}-${userSeq++}`,
-        text,
-        images,
-      });
+      if (!ws) return Promise.reject(new Error("No target session is open"));
+
+      let preflightSettled = false;
+      let preflightAccepted = false;
       const options: Record<string, unknown> = {};
       if (images && images.length > 0) options.images = images;
       if (ws.session.isStreaming && deliverAs)
         options.streamingBehavior = deliverAs;
-      ws.session.prompt(text, options).catch((e) => {
-        emit({
-          sessionRef: ws.ref,
-          timestamp: now(),
-          type: "runFailed",
-          error: { message: String(e) },
+
+      return new Promise<void>((resolve, reject) => {
+        options.preflightResult = (accepted: boolean) => {
+          if (preflightSettled) return;
+          preflightSettled = true;
+          if (!accepted) {
+            reject(new Error("Prompt was rejected before acceptance"));
+            return;
+          }
+          preflightAccepted = true;
+          emit({
+            sessionRef: ws.ref,
+            timestamp: now(),
+            type: "userMessage",
+            id: promptId ?? `u-${now()}-${userSeq++}`,
+            text,
+            images,
+          });
+          resolve();
+        };
+
+        ws.session.prompt(text, options).catch((e) => {
+          if (!preflightSettled) {
+            preflightSettled = true;
+            reject(e);
+            return;
+          }
+          if (!preflightAccepted) return;
+          // The prompt was accepted and ACKed; later model/tool failures belong in the
+          // normal shared transcript rather than turning an accepted outbox item back
+          // into a rejected submission.
+          emit({
+            sessionRef: ws.ref,
+            timestamp: now(),
+            type: "runFailed",
+            error: { message: String(e) },
+          });
         });
       });
     },

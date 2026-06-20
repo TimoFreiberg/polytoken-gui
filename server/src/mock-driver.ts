@@ -306,8 +306,12 @@ export class MockDriver implements PilotDriver {
     _deliverAs?: "steer" | "followUp",
     _sessionId?: string,
     _images?: readonly import("@pilot/protocol").ImageContent[],
-  ): void {
-    this.play(promptReply(text));
+    promptId?: string,
+  ): Promise<void> {
+    if (text === "__pilot_reject_prompt__")
+      return Promise.reject(new Error("Mock prompt rejected before acceptance"));
+    this.play(promptReply(text, promptId));
+    return Promise.resolve();
   }
 
   abort(): void {

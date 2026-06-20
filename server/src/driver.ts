@@ -57,7 +57,9 @@ export interface PilotDriver {
     deliverAs?: "steer" | "followUp",
     sessionId?: SessionId,
     images?: readonly ImageContent[],
-  ): void;
+    /** Stable client id used as the live userMessage id for optimistic reconciliation. */
+    promptId?: string,
+  ): Promise<void>;
   abort(sessionId?: SessionId): void;
   respondUi(response: HostUiResponse, sessionId?: SessionId): void;
 

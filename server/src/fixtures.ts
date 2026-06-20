@@ -484,7 +484,7 @@ export function markdownShowcase(): ScriptStep[] {
 
 // --- The default streamed reply to any prompt -------------------------------
 
-export function promptReply(userText: string): ScriptStep[] {
+export function promptReply(userText: string, userId?: string): ScriptStep[] {
   const callId = `t-${ts()}`;
   return [
     {
@@ -492,7 +492,7 @@ export function promptReply(userText: string): ScriptStep[] {
       event: {
         ...base(),
         type: "userMessage",
-        id: `u-${ts()}`,
+        id: userId ?? `u-${ts()}`,
         text: userText,
       },
     },

@@ -15,7 +15,7 @@
   import ThinkingBlock from "./ThinkingBlock.svelte";
   import QnaResult from "./QnaResult.svelte";
 
-  const items = $derived(store.session.items);
+  const items = $derived(store.transcriptItems);
 
   // Touch devices have no hover, so the copy footer (hover-revealed on desktop) would be
   // unreachable. Pin it visible on touch-primary devices. Gate on a JS capability check
@@ -262,9 +262,32 @@
          work block or as the visible final response. -->
     {#snippet itemView(item: DisplayItem)}
       {#if item.kind === "user"}
-        <div class="row user">
+        <div class="row user" class:pending={item.delivery && item.delivery !== "rejected"} class:rejected={item.delivery === "rejected"}>
           <div class="bubble">{item.text}</div>
-          {#if item.entryId || item.ts}
+          {#if item.delivery}
+            <div class="delivery {item.delivery}" role={item.delivery === "rejected" ? "alert" : "status"}>
+              <span>
+                {item.delivery === "sending"
+                  ? "Sending…"
+                  : item.delivery === "offline"
+                    ? "Queued offline"
+                    : `Not sent${item.deliveryError ? ` — ${item.deliveryError}` : ""}`}
+              </span>
+              {#if item.delivery === "rejected"}
+                <button
+                  type="button"
+                  title="Try sending this prompt again"
+                  onclick={() => store.retryPending(item.id)}>Retry</button
+                >
+                <button
+                  type="button"
+                  title="Return this prompt and its images to the composer"
+                  onclick={() => store.editPending(item.id)}>Edit</button
+                >
+              {/if}
+            </div>
+          {/if}
+          {#if item.entryId || (item.ts && !item.delivery)}
             <div class="umeta">
               {#if item.entryId}
                 <button
@@ -713,6 +736,33 @@
     color: var(--warning);
     background: var(--warning-soft);
     border-color: color-mix(in srgb, var(--warning) 30%, transparent);
+  }
+  .row.user.pending .bubble {
+    opacity: 0.72;
+  }
+  .row.user.rejected .bubble {
+    border-color: color-mix(in srgb, var(--danger) 45%, var(--border));
+  }
+  .delivery {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 7px;
+    margin-top: 4px;
+    font-size: 11.5px;
+    color: var(--text-faint);
+  }
+  .delivery.rejected {
+    color: var(--danger);
+  }
+  .delivery button {
+    border: 0;
+    border-radius: 999px;
+    padding: 2px 7px;
+    background: color-mix(in srgb, currentColor 10%, transparent);
+    color: inherit;
+    font: inherit;
+    cursor: pointer;
   }
   .nactions {
     display: inline-flex;

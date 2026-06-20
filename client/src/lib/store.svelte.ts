@@ -18,6 +18,7 @@ import {
   type SessionConfig,
   type SessionListEntry,
   type SessionState,
+  type TranscriptItem,
   type TrustRequest,
 } from "@pilot/protocol";
 import { clearToken, getToken, setToken } from "./auth.js";
@@ -36,6 +37,12 @@ import {
   sendTestPush,
 } from "./push.js";
 import {
+  deletePendingPrompt,
+  loadPendingPrompts,
+  type PendingPrompt,
+  savePendingPrompt,
+} from "./prompt-outbox.js";
+import {
   connect,
   type ConnectionState,
   connectionState,
@@ -47,7 +54,7 @@ import {
 
 class PilotStore {
   session = $state<SessionState>(initialSessionState());
-  serverId = $state<string | null>(null);
+  serverId = $state<string | null>(loadLastServerId());
   ready = $state(false);
   unauthorized = $state(false);
 
@@ -118,6 +125,11 @@ class PilotStore {
 
   // per-client view state — local only (never sent upstream; see D5)
   composerDraft = $state("");
+  composerImages = $state<ImageContent[]>([]);
+  // Durable client outbox. Entries remain until the server explicitly ACKs pi's prompt
+  // preflight; reconnect/reload resends queued entries by stable promptId.
+  pendingPrompts = $state<PendingPrompt[]>([]);
+  private hydratedOutboxServerId: string | null = null;
   // Per-session (and per new-session-draft) unsent prompt text, persisted in localStorage
   // so switching sessions — or reloading — preserves whatever you were typing. Keyed by
   // `s:<sessionId>` for an existing session and `n:<cwd>` for a pending new-session draft
@@ -206,6 +218,37 @@ class PilotStore {
   get connection(): ConnectionState {
     return connectionState();
   }
+  /** Authoritative transcript plus this client's optimistic outbox rows for the focused
+   *  session. A server userMessage with the same prompt id suppresses the overlay before
+   *  its ACK arrives, so event/ACK ordering never flashes a duplicate. */
+  get transcriptItems(): TranscriptItem[] {
+    const sessionId = this.session.ref?.sessionId;
+    const existing = new Set(this.session.items.map((item) => item.id));
+    const optimistic = this.pendingPrompts
+      .filter(
+        (prompt) =>
+          prompt.kind === "prompt" &&
+          prompt.sessionId === sessionId &&
+          !existing.has(prompt.promptId),
+      )
+      .map(
+        (prompt): TranscriptItem => ({
+          kind: "user",
+          id: prompt.promptId,
+          text: prompt.text,
+          images: prompt.images,
+          ts: prompt.createdAt,
+          delivery:
+            prompt.state === "rejected"
+              ? "rejected"
+              : this.connection === "connected" && prompt.state === "sending"
+                ? "sending"
+                : "offline",
+          deliveryError: prompt.error,
+        }),
+      );
+    return [...this.session.items, ...optimistic];
+  }
   /** True when a turn is in flight for the FOCUSED session — the robust signal that
    *  drives the stop pill, the working indicator, and the composer's steer/queue mode.
    *
@@ -287,6 +330,8 @@ class PilotStore {
     switch (msg.type) {
       case "hello":
         this.serverId = msg.serverId;
+        persistLastServerId(msg.serverId);
+        void this.hydrateOutbox(msg.serverId);
         break;
       case "snapshot":
         this.session = msg.state;
@@ -356,6 +401,9 @@ class PilotStore {
         // doesn't touch, so order between them doesn't matter.
         this.composerDraft = msg.text;
         this.focusComposer();
+        break;
+      case "promptResult":
+        void this.settlePrompt(msg);
         break;
       case "providerList":
         this.providers = [...msg.providers];
@@ -451,13 +499,140 @@ class PilotStore {
     forceReconnect();
   }
 
-  prompt(
+  private async hydrateOutbox(serverId: string): Promise<void> {
+    if (this.hydratedOutboxServerId === serverId) {
+      this.flushOutbox();
+      return;
+    }
+    try {
+      const stored = await loadPendingPrompts(serverId);
+      const liveById = new Map(
+        this.pendingPrompts
+          .filter((prompt) => prompt.serverId === serverId)
+          .map((prompt) => [prompt.promptId, prompt]),
+      );
+      for (const prompt of stored)
+        if (!liveById.has(prompt.promptId))
+          liveById.set(prompt.promptId, prompt);
+      this.pendingPrompts = [...liveById.values()].sort((a, b) =>
+        a.createdAt.localeCompare(b.createdAt),
+      );
+      this.hydratedOutboxServerId = serverId;
+      this.flushOutbox();
+    } catch (e) {
+      this.lastError = `couldn't restore pending prompts: ${errorText(e)}`;
+    }
+  }
+
+  private flushOutbox(): void {
+    if (this.connection !== "connected") return;
+    for (const prompt of this.pendingPrompts)
+      if (prompt.state !== "rejected") this.sendPendingPrompt(prompt.promptId);
+  }
+
+  private sendPendingPrompt(promptId: string): void {
+    const prompt = this.pendingPrompts.find((item) => item.promptId === promptId);
+    if (!prompt || prompt.state === "rejected") return;
+    const sent =
+      prompt.kind === "prompt"
+        ? send({
+            type: "prompt",
+            promptId: prompt.promptId,
+            text: prompt.text,
+            images: prompt.images,
+            deliverAs: prompt.deliverAs,
+            sessionId: prompt.sessionId,
+          })
+        : send({
+            type: "newSession",
+            promptId: prompt.promptId,
+            cwd: prompt.newSession?.cwd,
+            worktree: prompt.newSession?.worktree,
+            model: prompt.newSession?.model,
+            thinking: prompt.newSession?.thinking,
+            prompt: prompt.text,
+            images: prompt.images,
+          });
+    const state = sent ? "sending" : "queued";
+    if (prompt.state !== state) {
+      this.pendingPrompts = this.pendingPrompts.map((item) =>
+        item.promptId === promptId ? { ...item, state } : item,
+      );
+      void savePendingPrompt({ ...prompt, state }).catch((e) => {
+        this.lastError = `couldn't update the prompt outbox: ${errorText(e)}`;
+      });
+    }
+  }
+
+  private async enqueuePrompt(
+    prompt: Omit<PendingPrompt, "promptId" | "serverId" | "createdAt" | "state">,
+  ): Promise<boolean> {
+    const serverId = this.serverId ?? loadLastServerId();
+    if (!serverId) {
+      this.lastError = "Still connecting — your prompt is still in the composer.";
+      return false;
+    }
+    const pending: PendingPrompt = {
+      ...prompt,
+      promptId: createPromptId(),
+      serverId,
+      createdAt: new Date().toISOString(),
+      state: "queued",
+    };
+    try {
+      // Durability comes before clearing the composer or touching the socket.
+      await savePendingPrompt(pending);
+    } catch (e) {
+      this.lastError = `couldn't save the prompt locally: ${errorText(e)}`;
+      return false;
+    }
+    this.pendingPrompts = [...this.pendingPrompts, pending];
+    this.sendPendingPrompt(pending.promptId);
+    return true;
+  }
+
+  private async settlePrompt(
+    result: Extract<ServerMessage, { type: "promptResult" }>,
+  ): Promise<void> {
+    const prompt = this.pendingPrompts.find(
+      (item) => item.promptId === result.promptId,
+    );
+    if (!prompt) return;
+    if (result.accepted) {
+      try {
+        await deletePendingPrompt(result.promptId);
+        this.pendingPrompts = this.pendingPrompts.filter(
+          (item) => item.promptId !== result.promptId,
+        );
+      } catch (e) {
+        this.lastError = `prompt was accepted, but its local outbox entry couldn't be cleared: ${errorText(e)}`;
+      }
+      return;
+    }
+    const rejected: PendingPrompt = {
+      ...prompt,
+      kind: result.sessionId ? "prompt" : prompt.kind,
+      sessionId: result.sessionId ?? prompt.sessionId,
+      state: "rejected",
+      error: result.error ?? "The server rejected this prompt",
+    };
+    this.pendingPrompts = this.pendingPrompts.map((item) =>
+      item.promptId === result.promptId ? rejected : item,
+    );
+    try {
+      await savePendingPrompt(rejected);
+    } catch (e) {
+      this.lastError = `couldn't persist the rejected prompt: ${errorText(e)}`;
+    }
+  }
+
+  async prompt(
     text: string,
     deliverAs?: "steer" | "followUp",
     images?: ImageContent[],
-  ): void {
+  ): Promise<boolean> {
     const t = text.trim();
-    if (!t) return;
+    if (!t && (!images || images.length === 0)) return false;
     this.lastPrompt = t;
     // This call is a user gesture — the moment to ask for notification permission
     // (tab-open path) and register a Web Push subscription (closed-phone path).
@@ -465,10 +640,19 @@ class PilotStore {
     void ensurePushSubscription().then((s) => {
       this.pushState = s;
     });
-    send({ type: "prompt", text: t, images, deliverAs });
+    const accepted = await this.enqueuePrompt({
+      kind: "prompt",
+      text: t,
+      images,
+      deliverAs,
+      sessionId: this.session.ref?.sessionId ?? undefined,
+    });
+    if (!accepted) return false;
     // The draft was consumed — clear the live text AND its stored copy.
     this.clearStoredDraft(this.composerDraftKey);
     this.composerDraft = "";
+    this.composerImages = [];
+    return true;
   }
   abort(): void {
     send({ type: "abort" });
@@ -480,7 +664,55 @@ class PilotStore {
   }
   /** Re-send the last prompt after a run-failed (the error card's Retry). */
   retryLast(): void {
-    if (this.lastPrompt) this.prompt(this.lastPrompt);
+    if (this.lastPrompt) void this.prompt(this.lastPrompt);
+  }
+  async retryPending(promptId: string): Promise<void> {
+    const old = this.pendingPrompts.find((item) => item.promptId === promptId);
+    if (!old || old.state !== "rejected") return;
+    try {
+      await deletePendingPrompt(promptId);
+    } catch (e) {
+      this.lastError = `couldn't update the prompt outbox: ${errorText(e)}`;
+      return;
+    }
+    this.pendingPrompts = this.pendingPrompts.filter(
+      (item) => item.promptId !== promptId,
+    );
+    const queued = await this.enqueuePrompt({
+      kind: old.kind,
+      text: old.text,
+      images: old.images,
+      deliverAs: old.deliverAs,
+      sessionId: old.sessionId,
+      newSession: old.newSession,
+    });
+    if (!queued) {
+      try {
+        await savePendingPrompt(old);
+        this.pendingPrompts = [...this.pendingPrompts, old];
+      } catch {
+        // enqueuePrompt already surfaced the storage failure; keep the copy in the
+        // composer as the final no-loss fallback.
+        this.composerDraft = old.text;
+        this.composerImages = old.images ? [...old.images] : [];
+      }
+    }
+  }
+  async editPending(promptId: string): Promise<void> {
+    const old = this.pendingPrompts.find((item) => item.promptId === promptId);
+    if (!old || old.state !== "rejected") return;
+    try {
+      await deletePendingPrompt(promptId);
+    } catch (e) {
+      this.lastError = `couldn't update the prompt outbox: ${errorText(e)}`;
+      return;
+    }
+    this.pendingPrompts = this.pendingPrompts.filter(
+      (item) => item.promptId !== promptId,
+    );
+    this.composerDraft = old.text;
+    this.composerImages = old.images ? [...old.images] : [];
+    this.focusComposer();
   }
   respondUi(response: HostUiResponse): void {
     send({ type: "respondUi", response });
@@ -675,30 +907,38 @@ class PilotStore {
   }
   /** Commit the draft: create the session and deliver its first prompt in one
    *  message. Mirrors prompt()'s permission/push gesture since this IS the first turn. */
-  submitDraft(text: string, images?: ImageContent[]): void {
+  async submitDraft(
+    text: string,
+    images?: ImageContent[],
+  ): Promise<boolean> {
     const d = this.draft;
-    if (!d) return;
+    if (!d) return false;
     const t = text.trim();
-    if (!t) return;
+    if (!t && (!images || images.length === 0)) return false;
     this.lastPrompt = t;
     ensurePermission();
     void ensurePushSubscription().then((s) => {
       this.pushState = s;
     });
+    const queued = await this.enqueuePrompt({
+      kind: "newSession",
+      text: t,
+      images,
+      newSession: {
+        cwd: d.cwd.trim() || undefined,
+        worktree: d.worktree || undefined,
+        model: d.model,
+        thinking: d.thinking,
+      },
+    });
+    if (!queued) return false;
     // The pending new-session draft is consumed — drop its stored copy (key is n:cwd
     // while the draft is still set).
     this.clearStoredDraft(this.composerDraftKey);
-    send({
-      type: "newSession",
-      cwd: d.cwd.trim() || undefined,
-      worktree: d.worktree || undefined,
-      model: d.model,
-      thinking: d.thinking,
-      prompt: t,
-      images,
-    });
     this.draft = null;
     this.composerDraft = "";
+    this.composerImages = [];
+    return true;
   }
   /** PWA: a newer service worker installed — raise the refresh prompt (set from sw.ts). */
   markUpdateReady(): void {
@@ -987,6 +1227,35 @@ function persistHideThinking(hide: boolean): void {
 
 const DRAFTS_KEY = "pilot.composerDrafts";
 const LAST_SESSION_PREFIX = "pilot.lastSession.";
+const LAST_SERVER_KEY = "pilot.lastServerId";
+
+function loadLastServerId(): string | null {
+  if (typeof window === "undefined") return null;
+  try {
+    return localStorage.getItem(LAST_SERVER_KEY);
+  } catch {
+    return null;
+  }
+}
+
+function persistLastServerId(serverId: string): void {
+  if (typeof window === "undefined") return;
+  try {
+    localStorage.setItem(LAST_SERVER_KEY, serverId);
+  } catch {
+    // Best effort — this only enables pre-hello recovery after a reload.
+  }
+}
+
+function createPromptId(): string {
+  if (typeof crypto !== "undefined" && "randomUUID" in crypto)
+    return crypto.randomUUID();
+  return `prompt-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+}
+
+function errorText(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
 
 function lastSessionKey(serverId: string): string {
   return `${LAST_SESSION_PREFIX}${serverId}`;
