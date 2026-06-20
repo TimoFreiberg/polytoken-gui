@@ -91,9 +91,24 @@ interface ClientConn {
   // The session this connection is viewing (null = the empty landing). Points into
   // `sessionStates`; null until the client adopts the default or opens a session.
   focusedId: SessionId | null;
-  // Single-flight per connection: a swap can block for minutes on a trust card, so a
-  // second open/new arriving meanwhile on THIS connection is refused (others are free).
+  // Single-flight per connection: a swap can block (warming pi, or a trust card awaiting
+  // input), so only one runs at a time on THIS connection (others are free). A second
+  // request arriving meanwhile isn't rejected — it's coalesced into `pendingSwitch` and
+  // run when the current one finishes (see switchTo). This kills the boot-restore-vs-click
+  // race: a click during the fresh-start restore warm used to draw a misleading "answer
+  // the trust prompt first" error and drop the click; now the click just wins.
   switchInFlight: boolean;
+  // The latest switch queued behind an in-flight one (depth 1 — a newer request supersedes
+  // an older queued one, so the operator's last gesture wins). `resolve` settles the
+  // promise switchTo handed its caller, with the eventual session id (or null if the swap
+  // failed / this request got superseded before it ran).
+  pendingSwitch: PendingSwitch | null;
+}
+
+interface PendingSwitch {
+  swap: () => Promise<SessionDriverEvent[]>;
+  opts: { reseed?: boolean };
+  resolve: (sid: SessionId | null) => void;
 }
 
 export class SessionHub {
@@ -883,9 +898,12 @@ export class SessionHub {
    * Switch ONE client's focus to the session a driver swap resolves to. The swap warms +
    * seeds the target; we fold that seed into the target's shared state (unless it's
    * already live — see below), point this connection at it, and re-snapshot. Other
-   * clients are untouched: focus is per-connection. Single-flight per connection (a
-   * trust card can block the swap for minutes). The session LIST re-broadcasts to all
-   * (its content may have changed, e.g. a new session) but each keeps its own
+   * clients are untouched: focus is per-connection. Single-flight per connection (a swap
+   * can block for seconds warming pi, or minutes on a trust card): a second request
+   * arriving mid-swap is coalesced (queued, latest wins) and run when this one finishes,
+   * not rejected — so an operator clicking a session during the fresh-start boot-restore
+   * warm lands on it instead of getting a spurious error. The session LIST re-broadcasts
+   * to all (its content may have changed, e.g. a new session) but each keeps its own
    * activeSessionId; commands are cwd-scoped, so only the switcher gets them.
    *
    * `reseed` (branch): rebuild the state even if the session is already live and
@@ -900,12 +918,14 @@ export class SessionHub {
     opts: { reseed?: boolean } = {},
   ): Promise<SessionId | null> {
     if (conn.switchInFlight) {
-      conn.send({
-        type: "error",
-        message:
-          "a session switch is already in progress — answer the trust prompt first",
+      // A swap is mid-flight on this connection. Queue this one (depth 1, latest wins)
+      // and run it from the in-flight swap's `finally`; hand the caller a promise that
+      // settles with the eventual session id. A previously-queued request is superseded
+      // — resolve it null so any awaiter (e.g. newSession) unblocks.
+      conn.pendingSwitch?.resolve(null);
+      return new Promise<SessionId | null>((resolve) => {
+        conn.pendingSwitch = { swap, opts, resolve };
       });
-      return null;
     }
     conn.switchInFlight = true;
     try {
@@ -943,6 +963,11 @@ export class SessionHub {
         this.sessionStates.set(sid, built);
         if (metaChanged) this.broadcastSessionStatus();
       }
+      // A newer switch queued up while this one was warming (the boot-restore-vs-click
+      // race). Don't move focus or push this now-superseded snapshot — the queued switch,
+      // dispatched from `finally`, sends the authoritative view. The warm session is still
+      // cached above, and skipping the send avoids a flash of the transcript being left.
+      if (conn.pendingSwitch) return sid;
       conn.focusedId = sid;
       // On a reseed (branch) the shared transcript changed for everyone viewing it; else
       // only the requester moved its focus.
@@ -957,6 +982,15 @@ export class SessionHub {
       return sid;
     } finally {
       conn.switchInFlight = false;
+      // Run whatever queued up while we were busy. Runs on every exit path (success,
+      // swap failure, no-session) so a coalesced request is never stranded. switchInFlight
+      // was just cleared, so the recursive call starts its swap immediately; its outcome
+      // settles the promise the queued caller is awaiting.
+      const next = conn.pendingSwitch;
+      if (next) {
+        conn.pendingSwitch = null;
+        void this.switchTo(conn, next.swap, next.opts).then(next.resolve);
+      }
     }
   }
 
@@ -968,6 +1002,7 @@ export class SessionHub {
       send,
       focusedId: this.defaultFocusId,
       switchInFlight: false,
+      pendingSwitch: null,
     };
     this.clients.set(send, conn);
     this.everConnected = true;
@@ -1007,6 +1042,10 @@ export class SessionHub {
     // leaving the last viewer stops it).
     this.syncLiveRefresh();
     return () => {
+      // Settle any switch queued behind an in-flight one so a caller awaiting it (e.g. a
+      // newSession that got coalesced) doesn't hang on a now-dead connection.
+      conn.pendingSwitch?.resolve(null);
+      conn.pendingSwitch = null;
       this.clients.delete(send);
       this.syncLiveRefresh();
     };
@@ -1020,6 +1059,7 @@ export class SessionHub {
       send,
       focusedId: this.defaultFocusId,
       switchInFlight: false,
+      pendingSwitch: null,
     };
     switch (msg.type) {
       case "hello":
@@ -1286,6 +1326,8 @@ export class SessionHub {
     for (const conn of this.clients.values()) {
       conn.focusedId = this.defaultFocusId;
       conn.switchInFlight = false;
+      conn.pendingSwitch?.resolve(null);
+      conn.pendingSwitch = null;
       conn.send({ type: "snapshot", state: this.snapshotOf(conn.focusedId) });
     }
     this.broadcastSessionStatus();

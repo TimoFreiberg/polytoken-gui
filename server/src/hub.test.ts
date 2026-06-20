@@ -529,31 +529,53 @@ describe("SessionHub", () => {
       expect(c.received.some((m) => m.type === "trustResolved")).toBe(true);
   });
 
-  test("a session switch is single-flight while one is pending", async () => {
-    // A swap that never resolves models a trust card awaiting human input.
-    let release: (v: SessionDriverEvent[]) => void = () => {};
-    const pending = new Promise<SessionDriverEvent[]>((r) => {
-      release = r;
-    });
+  test("a switch arriving mid-swap is coalesced, not rejected (boot-restore-vs-click)", async () => {
+    // A swap that doesn't resolve until released models pi warming on a fresh start (or a
+    // trust card awaiting input). Each openSession call gets its OWN release, so we can
+    // tell the queued second swap actually ran after the first finished.
+    const releases: ((v: SessionDriverEvent[]) => void)[] = [];
     const d = new FakeDriver();
     // biome-ignore lint/suspicious/noExplicitAny: test stub override
-    (d as any).openSession = () => pending;
+    (d as any).openSession = () =>
+      new Promise<SessionDriverEvent[]>((r) => releases.push(r));
     const hub = new SessionHub(d);
     const a = client();
     hub.addClient(a.send);
 
+    // First open (the auto boot-restore) starts warming; a second (the operator's click)
+    // arrives before it finishes. Only the first swap is invoked so far — the second is
+    // queued behind it.
     hub.handleClient(a.send, { type: "openSession", path: "/a.jsonl" });
     hub.handleClient(a.send, { type: "openSession", path: "/b.jsonl" });
     await flush();
+    expect(releases.length).toBe(1);
 
-    // The second open is rejected, not run concurrently.
+    // No misleading "already in progress / answer the trust prompt" error — the click is
+    // honored, not dropped.
     expect(
       a.received.some(
         (m) => m.type === "error" && /already in progress/.test(m.message),
       ),
-    ).toBe(true);
+    ).toBe(false);
 
-    release([ev({ type: "sessionOpened", snapshot: snap("s") })]);
+    // Release the first (boot-restore) swap. Its now-superseded snapshot is suppressed,
+    // and the queued second swap is dispatched.
+    releases[0]([ev({ type: "sessionOpened", snapshot: snap("a") })]);
+    await flush();
+    expect(releases.length).toBe(2);
+
+    // Release the second (the click). The client lands on "b" — the last gesture wins —
+    // and never saw an "a" focus snapshot flash by.
+    releases[1]([ev({ type: "sessionOpened", snapshot: snap("b") })]);
+    await flush();
+    const snaps = a.received.filter((m) => m.type === "snapshot");
+    const last = snaps.at(-1);
+    expect(last?.type === "snapshot" && last.state.ref?.sessionId).toBe("b");
+    expect(
+      snaps.some(
+        (m) => m.type === "snapshot" && m.state.ref?.sessionId === "a",
+      ),
+    ).toBe(false);
   });
 
   test("only a client's focused session reaches its transcript stream", () => {
