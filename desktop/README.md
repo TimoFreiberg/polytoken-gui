@@ -90,6 +90,37 @@ opens Script Editor instead of Pilot.
 `launchctl setenv` / `LSEnvironment` entry — they're mainly here for running the pieces
 by hand.)
 
+## WKWebView host capabilities (the web ↔ native bridge)
+
+`WKWebView` gives the web client the whole web platform for free (DOM, fetch, WS,
+IndexedDB, `localStorage`, clipboard on `localhost`, drag/drop, paste). But anything that
+**hands off to the OS** is gated behind a delegate the host app must implement — and if it
+doesn't, the behavior is *silently a no-op*. It works in a browser (the OS surface is
+native there) and passes the headless-Chromium e2e, then does nothing in the packaged app.
+That's how the image-attach button shipped broken.
+
+There's no blanket switch, but the set is short and enumerable. **Rule of thumb: if a web
+feature opens an OS surface (a panel, a new window, a permission prompt, a saved file) and
+it "works in a browser but does nothing in `Pilot.app`", the bridge is missing here, not in
+the web code.** All current bridges live in `AppDelegate.swift`'s delegate extensions.
+
+| Web behavior | Native hook | Status |
+|---|---|---|
+| `<input type=file>` | `WKUIDelegate.runOpenPanelWith` → `NSOpenPanel` | ✅ wired (image-only filter) |
+| `target=_blank` / `window.open` | `WKUIDelegate.createWebViewWith` → `NSWorkspace.open` | ✅ wired (→ system browser) |
+| External link click | `WKNavigationDelegate.decidePolicyFor(navigationAction)` | ✅ wired (off-origin → system browser) |
+| Downloads (`<a download>`, attachment, un-renderable MIME) | `WKNavigationDelegate` `.download` + `WKDownloadDelegate` → `NSSavePanel` | ✅ wired (generic, all downloads) |
+| Camera / mic (`getUserMedia`, e.g. voice dictation) | `WKUIDelegate.requestMediaCapturePermissionFor` + `NSCameraUsageDescription`/`NSMicrophoneUsageDescription` in `Info.plist` | ⬜ add when needed |
+| JS `alert` / `confirm` / `prompt` | `WKUIDelegate.runJavaScript*Panel` | ⬜ not used (app has its own dialogs) |
+| Web Notifications / Push | n/a — handled natively via `UNUserNotificationCenter` + the watcher | — |
+
+Downloads and links are **generic-once**: the delegate doesn't care which feature triggers
+it, so one implementation covers every future use. File-pick and media permissions are
+per-surface. Downloads are wired ahead of any in-app download feature so the first one that
+ships just works; if you serve a real download from the pilot server, give it a
+non-renderable content type (or trigger it via `<a download>`) so it routes to the save
+panel instead of rendering inline.
+
 ## Not done yet
 
 - **Code-signing/notarization** for frictionless installs.

@@ -278,6 +278,18 @@ hit a session limit mid-verify; confirm each against the code before acting):_
       implement `runOpenPanelWith` to drive a native `NSOpenPanel` (sheet on the window,
       restricted to image content types to mirror the input's `accept="image/*"`). Verified
       with `swiftc -typecheck`; behavioral confirmation is a desktop rebuild + click (owner).
+- [x] **Desktop WKWebView host-bridge hardening (links + downloads)** → done 2026-06-20.
+      Same root-cause class as the attach bug: any web behavior that hands off to the OS is a
+      silent no-op in the packaged app until the shell bridges it. Found while preparing for
+      it: **external links in agent output were already dead** (`target=_blank` →
+      `createWebViewWith`, which we didn't implement). Now `AppDelegate.swift` adds a
+      `WKNavigationDelegate` (off-origin link clicks → system browser via `NSWorkspace`;
+      un-renderable responses + `<a download>` → downloads) and a `WKDownloadDelegate` (generic
+      `NSSavePanel` save for ALL downloads, ahead of any in-app download feature), plus
+      `createWebViewWith` → system browser. `desktop/README.md` now carries a "WKWebView host
+      capabilities" checklist (status per surface + the rule of thumb) so the next
+      host-mediated feature gets bridged on purpose. `swiftc -typecheck` clean; behavioral
+      confirmation is a desktop rebuild (owner).
 - [ ] **Sidebar visuals → match Codex** — redesign the sidebar look to follow Codex's
       style. Needs a Codex screenshot for reference.
 - [ ] **"New session" draft stays visible in sidebar while draft exists** — when a

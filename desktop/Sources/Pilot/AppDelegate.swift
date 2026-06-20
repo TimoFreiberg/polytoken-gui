@@ -104,10 +104,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
 
         let wv = WKWebView(frame: w.contentView!.bounds, configuration: conf)
         wv.autoresizingMask = [.width, .height]
-        // Without a uiDelegate, WKWebView silently swallows every `<input type="file">`
-        // click — the composer's image-attach button does nothing. We present the file
-        // picker ourselves in runOpenPanelWith (below).
+        // WKWebView hands OS-mediated behaviors to its delegates and silently drops them
+        // otherwise: the uiDelegate covers the file picker (`<input type=file>`) + new
+        // windows (`target=_blank`/`window.open`); the navigationDelegate routes external
+        // links to the system browser and turns un-renderable responses into downloads.
+        // See the "WKWebView host capabilities" checklist in desktop/README.md.
         wv.uiDelegate = self
+        wv.navigationDelegate = self
         w.contentView!.addSubview(wv)
 
         webView = wv
@@ -270,7 +273,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     }
 }
 
-// MARK: - File picker (WKUIDelegate)
+/// True for the app's own origin (the local pilot server). Off-origin navigations are
+/// external links we hand to the system browser rather than load in the chromeless window.
+private func isAppLocal(_ url: URL?) -> Bool {
+    guard let host = url?.host else { return false }
+    return host == "127.0.0.1" || host == "localhost"
+}
+
+// MARK: - File picker + new windows (WKUIDelegate)
 
 extension AppDelegate: WKUIDelegate {
     /// Bridge `<input type="file">` to a native NSOpenPanel. WKWebView does NOT show a
@@ -301,5 +311,116 @@ extension AppDelegate: WKUIDelegate {
         } else {
             panel.begin(completionHandler: finish)
         }
+    }
+
+    /// `target="_blank"` links + `window.open` ask WKWebView for a NEW web view. We have no
+    /// multi-window UI, so returning nil (the default) silently drops them — that's why
+    /// links in agent output do nothing in the packaged app. Open them in the system
+    /// browser instead. (Same-origin pop-ups don't occur in this app; everything here is
+    /// an outbound link.)
+    func webView(
+        _ webView: WKWebView,
+        createWebViewWith configuration: WKWebViewConfiguration,
+        for navigationAction: WKNavigationAction,
+        windowFeatures: WKWindowFeatures
+    ) -> WKWebView? {
+        if let url = navigationAction.request.url, url.scheme == "http" || url.scheme == "https" {
+            NSWorkspace.shared.open(url)
+        }
+        return nil
+    }
+}
+
+// MARK: - Navigation routing + downloads (WKNavigationDelegate)
+
+extension AppDelegate: WKNavigationDelegate {
+    /// Keep the chromeless window on the app's own origin. A user-clicked external link
+    /// opens in the system browser; an `<a download>` (shouldPerformDownload) becomes a
+    /// native download. Everything else — the initial load, reloads, same-origin nav,
+    /// redirects, form posts — is allowed through untouched.
+    func webView(
+        _ webView: WKWebView,
+        decidePolicyFor navigationAction: WKNavigationAction,
+        decisionHandler: @escaping (WKNavigationActionPolicy) -> Void
+    ) {
+        if navigationAction.shouldPerformDownload {
+            decisionHandler(.download)
+            return
+        }
+        if navigationAction.navigationType == .linkActivated,
+            let url = navigationAction.request.url, !isAppLocal(url),
+            url.scheme == "http" || url.scheme == "https"
+        {
+            NSWorkspace.shared.open(url)
+            decisionHandler(.cancel)
+            return
+        }
+        decisionHandler(.allow)
+    }
+
+    /// A response the web view can't render (zip, octet-stream, …) is a download, not a
+    /// blank page. NOTE: a renderable MIME served with `Content-Disposition: attachment`
+    /// still renders inline here — pilot's own server should serve real downloads with a
+    /// non-renderable type or trigger them via `<a download>` (handled above).
+    func webView(
+        _ webView: WKWebView,
+        decidePolicyFor navigationResponse: WKNavigationResponse,
+        decisionHandler: @escaping (WKNavigationResponsePolicy) -> Void
+    ) {
+        decisionHandler(navigationResponse.canShowMIMEType ? .allow : .download)
+    }
+
+    func webView(
+        _ webView: WKWebView,
+        navigationAction: WKNavigationAction,
+        didBecome download: WKDownload
+    ) {
+        download.delegate = self
+    }
+
+    func webView(
+        _ webView: WKWebView,
+        navigationResponse: WKNavigationResponse,
+        didBecome download: WKDownload
+    ) {
+        download.delegate = self
+    }
+}
+
+// MARK: - Download destination (WKDownloadDelegate)
+
+extension AppDelegate: WKDownloadDelegate {
+    /// Generic for ALL downloads, whatever triggers them: ask the user where to save via a
+    /// native NSSavePanel (defaulting to ~/Downloads + the suggested filename). WKDownload
+    /// fails if the destination already exists, so clear any existing file first. Returning
+    /// nil cancels the download (user hit Cancel).
+    func download(
+        _ download: WKDownload,
+        decideDestinationUsing response: URLResponse,
+        suggestedFilename: String,
+        completionHandler: @escaping (URL?) -> Void
+    ) {
+        let panel = NSSavePanel()
+        panel.nameFieldStringValue = suggestedFilename
+        panel.directoryURL = FileManager.default.urls(
+            for: .downloadsDirectory, in: .userDomainMask
+        ).first
+        let finish: (NSApplication.ModalResponse) -> Void = { resp in
+            guard resp == .OK, let url = panel.url else {
+                completionHandler(nil)
+                return
+            }
+            try? FileManager.default.removeItem(at: url)
+            completionHandler(url)
+        }
+        if let window {
+            panel.beginSheetModal(for: window, completionHandler: finish)
+        } else {
+            panel.begin(completionHandler: finish)
+        }
+    }
+
+    func download(_ download: WKDownload, didFailWithError error: Error, resumeData: Data?) {
+        NSLog("Pilot: download failed: \(error.localizedDescription)")
     }
 }
