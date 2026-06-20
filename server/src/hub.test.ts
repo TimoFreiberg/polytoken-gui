@@ -566,13 +566,13 @@ describe("SessionHub", () => {
 
     // Release the first (boot-restore) swap. Its now-superseded snapshot is suppressed,
     // and the queued second swap is dispatched.
-    releases[0]([ev({ type: "sessionOpened", snapshot: snap("a") })]);
+    releases[0]!([ev({ type: "sessionOpened", snapshot: snap("a") })]);
     await flush();
     expect(releases.length).toBe(2);
 
     // Release the second (the click). The client lands on "b" — the last gesture wins —
     // and never saw an "a" focus snapshot flash by.
-    releases[1]([ev({ type: "sessionOpened", snapshot: snap("b") })]);
+    releases[1]!([ev({ type: "sessionOpened", snapshot: snap("b") })]);
     await flush();
     const snaps = a.received.filter((m) => m.type === "snapshot");
     const last = snaps.at(-1);
@@ -820,7 +820,6 @@ describe("SessionHub", () => {
           kind: "input",
           requestId: "bg-input",
           title: "Need a value",
-          message: "Value?",
         },
       }),
     );

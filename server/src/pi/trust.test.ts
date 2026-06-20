@@ -82,16 +82,16 @@ describe("buildTrustOptions", () => {
       updates: [{ path: resolve(cwd), decision: true }],
     });
     // Trust parent → trust the parent, clear any narrower decision.
-    expect(opts[1].label).toContain(dirname(resolve(cwd)));
-    expect(opts[1].updates).toEqual([
+    expect(opts[1]!.label).toContain(dirname(resolve(cwd)));
+    expect(opts[1]!.updates).toEqual([
       { path: dirname(resolve(cwd)), decision: true },
       { path: resolve(cwd), decision: null },
     ]);
     // The two "this session only" options decide now but persist nothing.
-    expect(opts[2].updates).toEqual([]);
-    expect(opts[4].updates).toEqual([]);
+    expect(opts[2]!.updates).toEqual([]);
+    expect(opts[4]!.updates).toEqual([]);
     // Don't trust → persist a false.
-    expect(opts[3].updates).toEqual([{ path: resolve(cwd), decision: false }]);
+    expect(opts[3]!.updates).toEqual([{ path: resolve(cwd), decision: false }]);
   });
 
   test("omits the parent option at the filesystem root", () => {

@@ -104,7 +104,7 @@ export function historyToEvents(
   const out: SessionDriverEvent[] = [];
 
   for (let i = 0; i < messages.length; i++) {
-    const m = messages[i];
+    const m = messages[i]!;
     const entryId = entryIds?.[i];
     switch (m.role) {
       case "user":

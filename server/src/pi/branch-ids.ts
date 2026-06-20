@@ -30,8 +30,8 @@ export function correlateEntryIds(
   let mi = messages.length - 1;
   let ei = entries.length - 1;
   while (mi >= 0 && ei >= 0) {
-    const m = messages[mi];
-    const e = entries[ei];
+    const m = messages[mi]!;
+    const e = entries[ei]!;
     if (m.role === e.role && m.text === e.text) {
       ids[mi] = e.id;
       mi -= 1;

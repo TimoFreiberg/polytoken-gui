@@ -95,7 +95,7 @@ describe("historyToEvents", () => {
 
   test("a message without a timestamp falls back to a synthetic marker", () => {
     const items = transcript([{ role: "user", content: "hi" }]);
-    expect(items[0]?.ts).toMatch(/^h-\d+$/);
+    expect((items[0] as { ts?: unknown })?.ts).toMatch(/^h-\d+$/);
   });
 
   test("a user image attachment survives reload as typed image data (no [image] text)", () => {
