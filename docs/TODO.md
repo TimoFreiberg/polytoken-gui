@@ -231,18 +231,23 @@ the remainder, roughly ordered by day-to-day leverage._
       `contextfull` dev-bar script (→ `MOCK_USAGE_FULL` 91%) drives it deterministically;
       `e2e/context-meter.e2e.ts` asserts it's absent at the 24% baseline and appears (with the
       danger tone + 91% ring) once driven.
-- [ ] **Sidebar search has no focus-on-open / Enter / Esc** — opening the drawer doesn't focus
-      the search box; Enter doesn't open the top match, Esc doesn't clear/close. (Focus-on-open
-      is a mobile tradeoff — pops the soft keyboard every open — so gate it to desktop or make
-      it opt-in; Enter/Esc are unambiguous wins.)
+- [x] **Sidebar search has no focus-on-open / Enter / Esc** → done 2026-06-21. Enter opens the
+      top match (first session of the first group — the visual top); Esc clears a non-empty query
+      (and `stopPropagation`s so it doesn't also trip the app-wide Esc handlers), else blurs.
+      Focus-on-open is gated to desktop and fires only on a closed→open transition (`prev` seeded
+      to the current state) so it never steals focus from the composer on initial load or pops
+      the soft keyboard on a phone. `e2e/sessions.e2e.ts` covers Enter-opens, Esc-clears, and
+      desktop reopen-focuses.
 - [ ] **New-session dir input has no validation or recent dirs** — a typo only surfaces as a
       thrown error after the first prompt (creation is deferred, validated server-side). Add a
       recent-cwds dropdown (cheap — distinct cwds already live in `store.sessions`) and,
       optionally, an inline exists/is-dir hint (needs a small server probe; the client can't stat).
-- [ ] **"N hidden" count isn't clickable** — `session-filter` hides archived + >7d-stale
-      sessions in the default view; the only cue is a non-interactive "{N} hidden" span beside
-      the filter toggle. Make the count itself flip to "Showing all"; consider skipping the 7d
-      cutoff when the list is short so a handful of week-old sessions stay visible.
+- [x] **"N hidden" count isn't clickable** → done 2026-06-21. The "{N} hidden" hint is now a
+      button that toggles to show-all on click (it then vanishes, and the adjacent toggle reads
+      "Showing all"), with a count-aware tooltip and a focus ring. `e2e/archive.e2e.ts` covers
+      the click revealing archived + stale. _(Deferred the optional "skip the 7d cutoff when the
+      list is short" — it changes filter semantics as the count crosses a threshold; the clickable
+      count already addresses the stated friction, so it's parked rather than half-baked.)_
 - [ ] **Stop button no-ops silently while offline** — the pill stays clickable (`turnActive`
       rides the last snapshot); `abort()` is a bare send that's dropped when the socket's down,
       with no feedback (unlike `restoreQueue`, which sets `lastError`). Mirror that, or disable
@@ -263,10 +268,11 @@ the remainder, roughly ordered by day-to-day leverage._
       renders plain buttons (Tab-focusable, but no `radiogroup`/`radio` roles or ↑/↓ roving).
       Rare path (binary → Yes/No card, trust → TrustCard), but bring it to QnaForm's level if it
       shows up. (Esc / ⌘↵ / focus-on-open already landed this session.)
-- [ ] **Background "done" reads too like plain "unread"** — a finished-while-away session gets a
-      faint ring + "Done" line, but the dot fill matches plain unread and there's no
-      `data-state="done"` activity styling; waiting/failed get bold colored badges. Give "done" a
-      slightly stronger glyph/accent pill so a just-finished run stands out at a glance.
+- [x] **Background "done" reads too like plain "unread"** → done 2026-06-21. A finished-while-away
+      row now renders a check (✓) badge in an accent pill — same badge language as waiting/failed,
+      a clear step up from plain unread's neutral dot (which it used to share). The "Done" activity
+      line gets matching `data-state="done"` accent styling. `e2e/status-indicators.e2e.ts` asserts
+      the check badge appears on the done row.
 - [ ] **Overflowing tables/code give no at-rest scroll hint on touch** — wide tables + `pre`
       scroll horizontally, but mobile overlay scrollbars hide at rest, so cut-off columns are
       invisible until you swipe. Add a right-edge fade/shadow mask when `scrollWidth >

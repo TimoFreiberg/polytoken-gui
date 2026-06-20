@@ -269,6 +269,49 @@ test("the session search filters by name, preview, and path", async ({
   await expect(sidebar.getByText("quick scratch session")).toBeVisible();
 });
 
+test("search Enter opens the top match; Esc clears the query", async ({
+  page,
+}) => {
+  await openSidebar(page);
+  const sidebar = page.getByTestId("sidebar");
+  const search = sidebar.getByPlaceholder("Search sessions…");
+
+  // Filter to a single match, then Enter opens it (becomes the active row).
+  await search.fill("fold");
+  await search.press("Enter");
+  await expect(sidebar.locator(".row.active")).toContainText(
+    "Explore the fold reducer",
+  );
+
+  // Esc on a non-empty query clears it (and restores the full list) rather than closing.
+  await search.fill("fold");
+  await expect(sidebar.getByText("Wire up the WebSocket bridge")).toHaveCount(
+    0,
+  );
+  await search.press("Escape");
+  await expect(search).toHaveValue("");
+  await expect(sidebar.getByText("Wire up the WebSocket bridge")).toBeVisible();
+});
+
+test("reopening the sidebar focuses the search box (desktop)", async ({
+  page,
+}) => {
+  await openSidebar(page);
+  const search = page
+    .getByTestId("sidebar")
+    .getByPlaceholder("Search sessions…");
+
+  // Close, then reopen — the closed→open transition lands focus in the search box so a
+  // keyboard user can filter immediately. (On a phone this is suppressed; desktop only.)
+  await page.getByTestId("sidebar-toggle").click();
+  await expect(page.getByTestId("sidebar")).toHaveAttribute(
+    "data-open",
+    "false",
+  );
+  await page.getByTestId("sidebar-toggle").click();
+  await expect(search).toBeFocused();
+});
+
 test("clicking the project chip focuses the path input", async ({ page }) => {
   await openSidebar(page);
   await page.getByTestId("sidebar").getByText("New session…").click();

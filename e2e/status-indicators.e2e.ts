@@ -33,8 +33,10 @@ test("a background session shows running, then done, then clears on open", async
   await expect(statusOf(page, BG)).toHaveAttribute("data-state", "running");
   await expect(statusOf(page, ACTIVE)).toHaveAttribute("data-state", "read");
 
-  // When the background turn finishes it becomes done (new since last viewed).
+  // When the background turn finishes it becomes done (new since last viewed). Done
+  // renders a distinct check badge (not the plain unread dot) so it stands out at a glance.
   await expect(statusOf(page, BG)).toHaveAttribute("data-state", "done");
+  await expect(statusOf(page, BG).locator(".attention-symbol")).toHaveText("✓");
 
   // Opening it marks it read again.
   await page.getByTestId("sidebar").locator(".row", { hasText: BG }).click();

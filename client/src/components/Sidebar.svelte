@@ -36,6 +36,41 @@
   const hiddenCount = $derived(filtered.hiddenCount);
   const draft = $derived(store.draft);
 
+  // Search-box keyboard: Enter opens the top match (first session of the first group —
+  // the visual top of the list), Esc clears a non-empty query (else blurs). The ref also
+  // lets us focus the box when the drawer opens.
+  let searchInput = $state<HTMLInputElement | null>(null);
+  const topMatch = $derived(filteredGroups[0]?.items[0] ?? null);
+  function onSearchKeydown(e: KeyboardEvent): void {
+    if (e.key === "Enter") {
+      if (query.trim() && topMatch) {
+        e.preventDefault();
+        pick(topMatch);
+      }
+    } else if (e.key === "Escape") {
+      if (query) {
+        // Clear the filter first; don't also trip the app-wide Esc handlers.
+        e.preventDefault();
+        e.stopPropagation();
+        query = "";
+      } else {
+        searchInput?.blur();
+      }
+    }
+  }
+
+  // Focus the search box on a closed→open transition so a keyboard user lands ready to
+  // filter. Desktop only — on a phone this pops the soft keyboard on every open, an
+  // unwanted surprise. `prev` seeds to the current state so this never fires on initial
+  // mount (where the desktop sidebar starts open) and steals focus from the composer.
+  let prevSidebarOpen = store.sidebarOpen;
+  $effect(() => {
+    const open = store.sidebarOpen;
+    if (open && !prevSidebarOpen && !isPhone())
+      void tick().then(() => searchInput?.focus());
+    prevSidebarOpen = open;
+  });
+
   // Per-row actions menu (the ⋯ overflow) — a floating popover anchored under the ⋯ trigger
   // (right-aligned to it) or at the cursor on right-click. Positioned in viewport coords so
   // it overlays the list instead of shoving rows down. `menuFor` holds the open session's
@@ -279,12 +314,14 @@
         class="search-input"
         type="text"
         placeholder="Search sessions…"
-        title="Search sessions by name, preview, or path"
+        title="Search sessions by name, preview, or path (Enter opens the top match, Esc clears)"
         aria-label="Search sessions"
         spellcheck="false"
         autocapitalize="off"
         autocorrect="off"
+        bind:this={searchInput}
         bind:value={query}
+        onkeydown={onSearchKeydown}
       />
     </div>
     <div class="filter">
@@ -300,7 +337,14 @@
         {store.showArchived ? "Showing all" : "Active only"}
       </button>
       {#if !store.showArchived && hiddenCount > 0}
-        <span class="hidden-count">{hiddenCount} hidden</span>
+        <button
+          class="hidden-count"
+          data-testid="hidden-count"
+          title="{hiddenCount} archived or inactive session{hiddenCount === 1
+            ? ''
+            : 's'} hidden — click to show all"
+          onclick={() => store.toggleShowArchived()}>{hiddenCount} hidden</button
+        >
       {/if}
     </div>
   {/if}
@@ -441,6 +485,8 @@
                           <i class="attention-symbol">!</i>
                         {:else if st === "failed"}
                           <i class="attention-symbol">×</i>
+                        {:else if st === "done"}
+                          <i class="attention-symbol">✓</i>
                         {:else}
                           <i class="dot"></i>
                         {/if}
@@ -727,6 +773,21 @@
   .hidden-count {
     font-size: 11px;
     color: var(--text-faint);
+    background: none;
+    border: 0;
+    padding: 2px 4px;
+    cursor: pointer;
+    text-decoration: underline dotted;
+    text-underline-offset: 2px;
+  }
+  .hidden-count:hover {
+    color: var(--text-muted);
+  }
+  .hidden-count:focus-visible {
+    outline: none;
+    color: var(--text);
+    border-radius: var(--radius-xs);
+    box-shadow: 0 0 0 1.5px var(--accent);
   }
 
   .list {
@@ -993,12 +1054,6 @@
     height: 8px;
     background: var(--unread);
   }
-  .status[data-state="done"] .dot {
-    width: 8px;
-    height: 8px;
-    background: var(--unread);
-    box-shadow: 0 0 0 2px color-mix(in srgb, var(--unread) 16%, transparent);
-  }
   .status .attention-symbol {
     display: inline-flex;
     align-items: center;
@@ -1020,6 +1075,13 @@
     color: var(--danger);
     background: var(--danger-soft);
     border: 1px solid color-mix(in srgb, var(--danger) 38%, transparent);
+  }
+  /* done — a finished-while-away run. A check badge in the accent reads "ready for
+     you", a clear step up from plain unread's neutral dot (which it used to share). */
+  .status[data-state="done"] .attention-symbol {
+    color: var(--accent);
+    background: color-mix(in srgb, var(--accent) 14%, transparent);
+    border: 1px solid color-mix(in srgb, var(--accent) 45%, transparent);
   }
   /* running — three dots in a left-to-right pulse, echoing the mockup's "···". */
   .status[data-state="running"] .dot {
@@ -1108,6 +1170,10 @@
   }
   .activity[data-state="failed"] {
     color: var(--danger);
+  }
+  .activity[data-state="done"] {
+    color: var(--accent);
+    font-weight: 550;
   }
   .row.active .name {
     color: var(--accent);

@@ -28,6 +28,24 @@ test("active-only filter hides archived + stale sessions; show-all reveals them"
   await expect(sidebar.getByText(/hidden/)).toHaveCount(0);
 });
 
+test("the '{N} hidden' count is itself clickable to reveal everything", async ({
+  page,
+}) => {
+  await openSidebar(page);
+  const sidebar = page.getByTestId("sidebar");
+
+  // Default active-only view hides the archived + stale fixtures behind the count.
+  const hint = sidebar.getByTestId("hidden-count");
+  await expect(hint).toHaveText(/2 hidden/);
+  await expect(sidebar.getByText("Archived experiment")).toHaveCount(0);
+
+  // Clicking the count (not the separate filter toggle) reveals them.
+  await hint.click();
+  await expect(sidebar.getByText("Archived experiment")).toBeVisible();
+  await expect(sidebar.getByText("Old spike")).toBeVisible();
+  await expect(sidebar.getByTestId("hidden-count")).toHaveCount(0);
+});
+
 test("right-clicking a session row opens its overflow menu", async ({
   page,
 }) => {
