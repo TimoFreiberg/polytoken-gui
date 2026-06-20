@@ -286,7 +286,12 @@ and its resolution note. Latest completions first.
   render` log (gated behind `?dev`, `store.logRenderTiming`) reports item count +
   paint time so the trend is visible; real JS windowing — render last N turns +
   "load older", which can preserve scroll on prepend — is the proper fix when that
-  number grows. Regression pinned in `e2e/transcript.e2e.ts`.)_
+  number grows. Regression pinned in `e2e/transcript.e2e.ts`. **2026-06-21:** the
+  `content-visibility` rules came back onto `.row`/`.tool`/`.turn-work`/`.summary` in a later
+  refactor — and an autoscroll feature was since built on top of them: removing them leaves the
+  pinned scroll ~150px short of the bottom (`e2e/polish.e2e.ts`). So they're now **kept
+  intentionally** and re-documented as such (load-bearing, with a residual scroll-up drift
+  tradeoff), rather than reverted. The `store.logRenderTiming` comment carries the rationale.)_
 
 - [x] **PNG / maskable icons** — proper app icons for installed PWA
   _(done: 192/512 + maskable-512 (safe-zone padded) + 180 apple-touch, rasterized

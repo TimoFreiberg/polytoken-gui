@@ -281,11 +281,17 @@ the remainder, roughly ordered by day-to-day leverage._
       scroll horizontally, but mobile overlay scrollbars hide at rest, so cut-off columns are
       invisible until you swipe. Add a right-edge fade/shadow mask when `scrollWidth >
       clientWidth`. (Desktop has a persistent styled scrollbar; this is touch-only.)
-- [ ] **`content-visibility` code/doc mismatch** — DONE.md + `store.svelte.ts` say the
-      `content-visibility: auto` virtualization was removed for viewport drift, but it's still
-      live on `.row`/`.tool`/`.turn-work`/`.summary` (estimate `auto 120px` vs expanded cards
-      far taller). Either finish the revert or re-document it as intentional and tune
-      `contain-intrinsic-size`; today the code and the design log disagree.
+- [x] **`content-visibility` code/doc mismatch** → done 2026-06-21. **Re-documented as intentional**
+      (vs finishing the revert). I first removed the rules to honor the documented no-drift
+      invariant — but the e2e caught that they're **load-bearing for the autoscroll pin**: without
+      `content-visibility` the just-sent prompt's pinned scroll settles ~150px short of the bottom
+      (`e2e/polish.e2e.ts`). The autoscroll feature was built on top of the (reintroduced) rules, so
+      removing them is a real regression, not a clean perf revert. Kept them and rewrote the
+      `store.svelte.ts` comment + DONE.md to say so explicitly: intentional, load-bearing, with a
+      residual scroll-up drift tradeoff accepted; real JS windowing (preserve scroll on prepend) is
+      the proper fix when item counts climb. Code and design log now agree. _(Surfacing the tradeoff
+      for the owner: the drift the original revert chased is still theoretically possible scrolling
+      up past tall not-yet-painted rows — not observed in tests; revisit if it bites.)_
 
 **Mobile findings — surfaced but NOT yet verified** _(the survey's mobile + status dimensions
 hit a session limit mid-verify; confirm each against the code before acting):_
