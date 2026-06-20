@@ -326,6 +326,23 @@ test("clicking the project chip focuses the path input", async ({ page }) => {
   ).toBeFocused();
 });
 
+test("the new-session path input offers recent project dirs", async ({
+  page,
+}) => {
+  await openSidebar(page);
+  await page.getByTestId("sidebar").getByText("New session…").click();
+  await page.locator(".chips .chip").first().click();
+
+  // The path input is backed by a datalist populated from distinct session cwds, so a
+  // known project is one pick rather than a full retype.
+  const options = page.locator("#recent-cwds option");
+  await expect(options.first()).toBeAttached();
+  const values = await options.evaluateAll((els) =>
+    els.map((e) => (e as HTMLOptionElement).value),
+  );
+  expect(values).toContain("/Users/timo/src/scratch");
+});
+
 test("the worktree chip creates the session in an isolated worktree dir, grouped under its parent project", async ({
   page,
 }) => {

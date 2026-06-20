@@ -86,6 +86,22 @@
   );
   // Inline path editor for the project chip (collapsed → chip, expanded → text input).
   let editingCwd = $state(false);
+  // Distinct project dirs from existing sessions, most-recent first — offered as a datalist
+  // on the new-session path input so a known path is one pick, not a full retype.
+  const recentCwds = $derived.by(() => {
+    const seen = new Set<string>();
+    const out: string[] = [];
+    for (const s of [...store.sessions].sort((a, b) =>
+      b.updatedAt.localeCompare(a.updatedAt),
+    )) {
+      const dir = s.worktree?.base ?? s.cwd;
+      if (dir && !seen.has(dir)) {
+        seen.add(dir);
+        out.push(dir);
+      }
+    }
+    return out;
+  });
   const cwdBase = $derived.by(() => {
     const c = store.draft?.cwd?.replace(/\/+$/, "") ?? "";
     return c ? (c.split("/").pop() ?? c) : "home";
@@ -648,11 +664,12 @@
             class="cwd-input"
             type="text"
             value={store.draft.cwd}
+            list="recent-cwds"
             placeholder="/absolute/path/to/project (blank = home)"
             spellcheck="false"
             autocapitalize="off"
             autocorrect="off"
-            title="Project directory for this new session"
+            title="Project directory for this new session (pick a recent one or type a path)"
             aria-label="Project directory"
             oninput={(e) => store.setDraftCwd(e.currentTarget.value)}
             onkeydown={(e) => {
@@ -664,6 +681,9 @@
             onblur={() => (editingCwd = false)}
             use:focusOnMount
           />
+          <datalist id="recent-cwds">
+            {#each recentCwds as dir (dir)}<option value={dir}></option>{/each}
+          </datalist>
         {:else}
           <button
             class="chip"

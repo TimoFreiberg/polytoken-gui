@@ -241,10 +241,12 @@ the remainder, roughly ordered by day-to-day leverage._
       to the current state) so it never steals focus from the composer on initial load or pops
       the soft keyboard on a phone. `e2e/sessions.e2e.ts` covers Enter-opens, Esc-clears, and
       desktop reopen-focuses.
-- [ ] **New-session dir input has no validation or recent dirs** — a typo only surfaces as a
-      thrown error after the first prompt (creation is deferred, validated server-side). Add a
-      recent-cwds dropdown (cheap — distinct cwds already live in `store.sessions`) and,
-      optionally, an inline exists/is-dir hint (needs a small server probe; the client can't stat).
+- [~] **New-session dir input has no validation or recent dirs** → recent-dirs done 2026-06-21.
+      The new-session path input is now backed by a `<datalist>` of distinct project dirs from
+      `store.sessions` (worktree sessions contribute their `base`), most-recent first — a known
+      project is one pick, not a retype. `e2e/sessions.e2e.ts` asserts it's populated. _(Still
+      open: the optional inline exists/is-dir hint — needs a small server stat probe the client
+      can't do; deferred as lower-value than the dropdown.)_
 - [x] **"N hidden" count isn't clickable** → done 2026-06-21. The "{N} hidden" hint is now a
       button that toggles to show-all on click (it then vanishes, and the adjacent toggle reads
       "Showing all"), with a count-aware tooltip and a focus ring. `e2e/archive.e2e.ts` covers
