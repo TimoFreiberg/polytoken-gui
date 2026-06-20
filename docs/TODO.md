@@ -248,10 +248,12 @@ the remainder, roughly ordered by day-to-day leverage._
       the click revealing archived + stale. _(Deferred the optional "skip the 7d cutoff when the
       list is short" — it changes filter semantics as the count crosses a threshold; the clickable
       count already addresses the stated friction, so it's parked rather than half-baked.)_
-- [ ] **Stop button no-ops silently while offline** — the pill stays clickable (`turnActive`
-      rides the last snapshot); `abort()` is a bare send that's dropped when the socket's down,
-      with no feedback (unlike `restoreQueue`, which sets `lastError`). Mirror that, or disable
-      Stop while `connection !== "connected"`. (The offline banner softens this today.)
+- [x] **Stop button no-ops silently while offline** → done 2026-06-21. Both halves: the Stop
+      pill is now `disabled` while `connection !== "connected"` (inert + a "can't stop while
+      offline — the agent keeps running" tooltip), and `abort()` mirrors `restoreQueue` — a
+      dropped send sets `lastError`, so the Esc-abort path still gives feedback offline.
+      `e2e/stop-turn.e2e.ts` drives a streaming turn, drops the socket, and asserts the pill
+      goes disabled with the explanatory title.
 - [x] **Optimistic prompt reads "Queued offline" while merely connecting** → done 2026-06-21.
       The delivery label now keys off the live socket, not the outbox sub-state (which sits at
       "queued" for both a dead socket AND one mid-reconnect — the actual root cause). New pure
@@ -260,14 +262,16 @@ the remainder, roughly ordered by day-to-day leverage._
       offline", rejected overrides. Unit test covers the full matrix; a new `pilot:test-reconnecting`
       DEV hook freezes the socket in "reconnecting" so `e2e/prompt-delivery.e2e.ts` proves the
       mid-reconnect label appears and "Queued offline" does not.
-- [ ] **Backdrop tap discards a dirty input/editor dialog** — `scrimClick` unconditionally
-      cancels; deny-safe, but a stray tap on a phone loses typed text in the input/editor kinds
-      (the editor has no timeout, so the scrim is its only non-button dismissal). Guard dismissal
-      when the field differs from its `initialValue`.
-- [ ] **Non-binary select dialog lacks arrow-key roving** — `ApprovalLayer`'s 3+ option select
-      renders plain buttons (Tab-focusable, but no `radiogroup`/`radio` roles or ↑/↓ roving).
-      Rare path (binary → Yes/No card, trust → TrustCard), but bring it to QnaForm's level if it
-      shows up. (Esc / ⌘↵ / focus-on-open already landed this session.)
+- [x] **Backdrop tap discards a dirty input/editor dialog** → done 2026-06-21. `scrimClick` now
+      no-ops when an input/editor dialog is dirty (live value differs from `initialValue`) — the
+      buttons are the deliberate dismissal there. A clean dialog still dismisses on tap.
+      `e2e/approvals.e2e.ts` covers both: typing then a backdrop tap keeps the text, restoring the
+      initial value re-enables tap-to-dismiss.
+- [x] **Non-binary select dialog lacks arrow-key roving** → done 2026-06-21. The 3+ option select
+      is now a `radiogroup` of `role="radio"` options with roving tabindex: ↑/↓ move focus
+      (wrapping), Home/End jump to ends, the focused option marks itself `aria-checked`, and
+      Enter/Space/click submits it. New `selectmany` mock script/fixture + dev-bar button drive a
+      3-option select; `e2e/approvals.e2e.ts` covers arrow roving, the checked state, and submit.
 - [x] **Background "done" reads too like plain "unread"** → done 2026-06-21. A finished-while-away
       row now renders a check (✓) badge in an accent pill — same badge language as waiting/failed,
       a clear step up from plain unread's neutral dot (which it used to share). The "Done" activity

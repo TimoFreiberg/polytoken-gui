@@ -28,8 +28,17 @@
     if (!current) return;
     store.respondUi({ requestId: current.requestId, cancelled: true });
   }
-  // These dialogs are all cheap to reopen, so a backdrop tap dismisses.
+  // An input/editor with unsaved edits — a stray backdrop tap shouldn't nuke typed text.
+  const isDirty = $derived.by(() => {
+    const c = current;
+    if (!c || (c.kind !== "input" && c.kind !== "editor")) return false;
+    return inputValue !== (c.initialValue ?? "");
+  });
+  // These dialogs are cheap to reopen, so a backdrop tap dismisses — EXCEPT a dirty
+  // input/editor, where a stray tap (common on a phone) would lose what you typed; there
+  // the buttons are the deliberate dismissal.
   function scrimClick() {
+    if (isDirty) return;
     cancel();
   }
   function confirm(value: boolean) {
@@ -149,6 +158,32 @@
     else if (c.kind === "select" && binarySelect) submitValue(binarySelect.affirmative);
   }
 
+  // Arrow-key roving for the non-binary select (a radiogroup). ↑/↓ move focus between
+  // options (wrapping), Home/End jump to ends; the focused option's `onfocus` marks it
+  // selected. Clicking or Enter/Space (native button activation) submits that option.
+  function onOptionsKeydown(e: KeyboardEvent): void {
+    if (!["ArrowDown", "ArrowUp", "Home", "End"].includes(e.key)) return;
+    e.preventDefault();
+    const els = [
+      ...(e.currentTarget as HTMLElement).querySelectorAll<HTMLElement>(".opt"),
+    ];
+    if (els.length === 0) return;
+    const idx = els.findIndex((el) => el === document.activeElement);
+    const next =
+      e.key === "Home"
+        ? 0
+        : e.key === "End"
+          ? els.length - 1
+          : e.key === "ArrowDown"
+            ? idx < 0
+              ? 0
+              : (idx + 1) % els.length
+            : idx < 0
+              ? els.length - 1
+              : (idx - 1 + els.length) % els.length;
+    els[next]?.focus();
+  }
+
   function onSheetKeydown(e: KeyboardEvent): void {
     if (e.key === "Escape") {
       e.preventDefault();
@@ -215,9 +250,24 @@
           >
         </div>
       {:else}
-        <div class="options">
+        <div
+          class="options"
+          role="radiogroup"
+          aria-labelledby="approval-title"
+          tabindex="-1"
+          onkeydown={onOptionsKeydown}
+        >
           {#each current.options as opt (opt)}
-            <button class="opt" class:sel={selectedOption === opt} title={`Choose: ${opt}`} onclick={() => submitValue(opt)}>{opt}</button>
+            <button
+              class="opt"
+              class:sel={selectedOption === opt}
+              role="radio"
+              aria-checked={selectedOption === opt}
+              tabindex={(selectedOption ?? current.options[0]) === opt ? 0 : -1}
+              title={`Choose: ${opt}`}
+              onclick={() => submitValue(opt)}
+              onfocus={() => (selectedOption = opt)}>{opt}</button
+            >
           {/each}
         </div>
         <div class="actions"><Button variant="secondary" size="lg" block title="Cancel this request" onclick={cancel}>Cancel</Button></div>

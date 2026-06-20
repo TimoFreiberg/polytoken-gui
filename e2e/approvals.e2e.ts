@@ -64,6 +64,52 @@ test("input dialog submits a value", async ({ page }) => {
   await expect(page.getByText("Received: My commit")).toBeVisible();
 });
 
+test("a 3+ option select is an arrow-navigable radiogroup", async ({
+  page,
+}) => {
+  await drive(page, "selectmany");
+  const dialog = page.getByRole("dialog");
+  await expect(dialog.getByRole("radiogroup")).toBeVisible();
+  const options = dialog.getByRole("radio");
+  await expect(options).toHaveCount(3);
+
+  // The first option is the roving tab stop; ArrowDown moves focus + checks the next.
+  await options.first().focus();
+  await page.keyboard.press("ArrowDown");
+  await expect(options.nth(1)).toBeFocused();
+  await expect(options.nth(1)).toHaveAttribute("aria-checked", "true");
+  await expect(options.nth(0)).toHaveAttribute("aria-checked", "false");
+
+  // Wrap past the bottom back to the top, then Enter submits the focused radio.
+  await page.keyboard.press("ArrowDown"); // canary
+  await page.keyboard.press("ArrowDown"); // wraps to staging
+  await expect(options.nth(0)).toBeFocused();
+  await page.keyboard.press("Enter");
+  await expect(page.getByRole("dialog")).toBeHidden();
+  await expect(page.getByText("Received: staging")).toBeVisible();
+});
+
+test("a backdrop tap is ignored once an input dialog is dirty", async ({
+  page,
+}) => {
+  await drive(page, "input");
+  const dialog = page.getByRole("dialog");
+  const field = dialog.getByRole("textbox");
+  await expect(field).toHaveValue("Add /health route"); // the initial value
+
+  // Dirty: typing diverges from the initial value, so a stray backdrop tap is swallowed
+  // and the half-typed text survives.
+  await field.fill("half-typed commit");
+  await page.locator(".scrim[role=\"presentation\"]").click({ position: { x: 5, y: 5 } });
+  await expect(dialog).toBeVisible();
+  await expect(field).toHaveValue("half-typed commit");
+
+  // Restore the field to its initial value → no longer dirty → the backdrop dismisses.
+  await field.fill("Add /health route");
+  await page.locator(".scrim[role=\"presentation\"]").click({ position: { x: 5, y: 5 } });
+  await expect(page.getByRole("dialog")).toBeHidden();
+});
+
 test("the approval sheet is a labelled modal (aria-modal + accessible name)", async ({
   page,
 }) => {

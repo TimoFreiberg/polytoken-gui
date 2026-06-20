@@ -746,7 +746,11 @@ class PilotStore {
     return true;
   }
   abort(): void {
-    send({ type: "abort" });
+    // A bare send is dropped while the socket's down. Mirror restoreQueue and surface it,
+    // so an Esc-abort offline gives feedback instead of silently no-opping (the Stop pill
+    // itself is disabled while disconnected).
+    if (!send({ type: "abort" }))
+      this.lastError = "Can't stop the agent while offline — it keeps running.";
   }
   /** Pi-parity dequeue: atomically clear every steer/follow-up and return it here. */
   restoreQueue(): void {

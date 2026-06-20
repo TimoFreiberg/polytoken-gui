@@ -1432,6 +1432,26 @@ export function yesNoSelect(): ScriptStep[] {
   ];
 }
 
+/** A 3-option select (non-binary, so it renders the radiogroup option list rather than a
+ *  Yes/No card) — drives the arrow-key roving + radio semantics. */
+export function selectMany(): ScriptStep[] {
+  return [
+    {
+      wait: 0,
+      event: {
+        ...base(),
+        type: "hostUiRequest",
+        request: {
+          kind: "select",
+          requestId: "req-select-many-1",
+          title: "Which environment should I deploy to?",
+          options: ["staging", "production", "canary"],
+        },
+      },
+    },
+  ];
+}
+
 /** A newly-created session that is still WARMING UP: it surfaces in the `initializing`
  *  phase (model load / history replay / trust resolution), dwells there long enough to
  *  screenshot the distinct spinner, then transitions to idle once "ready". Drives the

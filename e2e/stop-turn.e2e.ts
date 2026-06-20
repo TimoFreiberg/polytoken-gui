@@ -13,6 +13,25 @@ test("the Stop pill + working indicator show while a normal turn streams", async
   await expect(page.locator(".composer-wrap .stop")).toBeVisible();
 });
 
+test("the Stop pill disables while offline (a remote turn can't be stopped)", async ({
+  page,
+}) => {
+  await drive(page, "streamhold"); // goes running and stays running
+  const stop = page.locator(".composer-wrap .stop");
+  await expect(stop).toBeEnabled();
+
+  // Drop the socket: the turn keeps running server-side, so the pill stays visible but
+  // goes inert (a dead click would silently no-op) with an explanatory tooltip.
+  await page.evaluate(() =>
+    window.dispatchEvent(new Event("pilot:test-disconnect")),
+  );
+  await expect(stop).toBeDisabled();
+  await expect(stop).toHaveAttribute(
+    "title",
+    "Can't stop while offline — the agent keeps running",
+  );
+});
+
 test("the Stop pill survives a stray mid-turn idle snapshot (turn still in flight)", async ({
   page,
 }) => {

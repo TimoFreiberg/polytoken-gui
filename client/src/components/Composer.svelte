@@ -628,7 +628,14 @@
     {#if streaming}
       <div class="streamrow">
         <SegmentedControl size="sm" ariaLabel="Delivery mode" options={deliverModes} bind:value={deliverAs} />
-        <button class="stop" onclick={() => store.abort()} title="Stop the agent (Esc)">■ Stop</button>
+        <button
+          class="stop"
+          onclick={() => store.abort()}
+          disabled={store.connection !== "connected"}
+          title={store.connection === "connected"
+            ? "Stop the agent (Esc)"
+            : "Can't stop while offline — the agent keeps running"}>■ Stop</button
+        >
       </div>
     {/if}
 
@@ -897,6 +904,12 @@
     font-weight: 550;
     padding: 5px 14px;
     border-radius: 999px;
+  }
+  /* Offline: a remote turn can't be stopped from a dead socket, so the pill reads inert
+     rather than inviting a dead click (the offline banner explains the agent keeps going). */
+  .stop:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
   }
   .chips {
     display: flex;
