@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { onDestroy } from "svelte";
   import type { ToolItem } from "@pilot/protocol";
 
   let { item }: { item: ToolItem } = $props();
@@ -26,12 +27,25 @@
 
   // Measure overflow while collapsed (scrollHeight exceeds the capped clientHeight). Keep
   // the toggle once expanded so it can always be collapsed back; re-measures when the
-  // output text changes (e.g. a streamed result settling).
+  // output text changes (e.g. a streamed result settling). Overflow is width-dependent
+  // (the text wraps), so a ResizeObserver re-measures on rotation/resize too — otherwise
+  // the affordance goes stale. The callback never reads outOverflows, so there's no loop.
   $effect(() => {
     void outBodyText;
     const el = outPre;
-    if (el && !outExpanded) outOverflows = el.scrollHeight > el.clientHeight + 1;
+    if (!el) return;
+    const measure = () => {
+      if (!outExpanded) outOverflows = el.scrollHeight > el.clientHeight + 1;
+    };
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    return () => ro.disconnect();
   });
+
+  // A pending "Copied" flash could outlive the card (transcript re-render / session switch
+  // within 1.5s); clear it on teardown so the timer never fires into a destroyed instance.
+  onDestroy(() => clearTimeout(copyTimer));
 
   function preview(input: unknown): string {
     if (input == null) return "";
@@ -390,6 +404,7 @@
                 <button
                   type="button"
                   class="out-action"
+                  aria-expanded={outExpanded}
                   title={outExpanded
                     ? "Collapse the output back to a scrollbox"
                     : "Expand the output to full height"}

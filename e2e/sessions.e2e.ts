@@ -276,8 +276,11 @@ test("search Enter opens the top match; Esc clears the query", async ({
   const sidebar = page.getByTestId("sidebar");
   const search = sidebar.getByPlaceholder("Search sessions…");
 
-  // Filter to a single match, then Enter opens it (becomes the active row).
+  // Filter to a single match, then Enter opens it (becomes the active row). Assert the
+  // single-match premise explicitly so a future fixture that adds another "fold" session
+  // doesn't silently weaken this into "Enter opens *some* row".
   await search.fill("fold");
+  await expect(sidebar.locator(".row-wrap")).toHaveCount(1);
   await search.press("Enter");
   await expect(sidebar.locator(".row.active")).toContainText(
     "Explore the fold reducer",
