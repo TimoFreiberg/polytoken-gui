@@ -147,6 +147,15 @@ export const MOCK_USAGE_HIGH: SessionUsage = {
   percent: 82,
 };
 
+/** A window in the danger band (91%), past the composer's ≥85% context-pressure cue
+ *  threshold. Driven by the `contextfull` dev script so screenshots/e2e can exercise the
+ *  "Context nearly full" nudge + its red tone. */
+export const MOCK_USAGE_FULL: SessionUsage = {
+  tokens: 182000,
+  contextWindow: 200000,
+  percent: 91,
+};
+
 /** The mock's starting model selection (matches the greeting snapshot). */
 export const MOCK_DEFAULT_CONFIG: SessionConfig = {
   provider: "anthropic",
@@ -927,6 +936,18 @@ export function ambient(): ScriptStep[] {
           level: "info",
         },
       },
+    },
+  ];
+}
+
+/** Push the focused session's context meter into the danger band (91%) via a lone
+ *  `usageUpdated` — the same mid-turn refresh shape the hub emits — so the composer's
+ *  ≥85% context-pressure cue lights up for screenshots/e2e. */
+export function contextFull(): ScriptStep[] {
+  return [
+    {
+      wait: 0,
+      event: { ...base(), type: "usageUpdated", usage: MOCK_USAGE_FULL },
     },
   ];
 }

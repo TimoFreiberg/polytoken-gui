@@ -209,10 +209,14 @@ the remainder, roughly ordered by day-to-day leverage._
       at 320px / diff at 420px with no copy-output, expand/drop-the-cap, or "show all" control;
       a long log is a nested scroll-trap on touch. Add copy + an inline expand. (Distinct from
       the per-code-block copy brainstorm item, which is markdown fences, not tool cards.)
-- [ ] **No "running low on context" cue** — the only context-fill signal is the 18px ring +
-      %; color escalates (amber/orange/red) but there's no text warning at any level. At ≥~85%
-      surface a one-line cue near the composer ("Context nearly full — consider /compact or a
-      fresh session"), reusing the attachment-status `role="status"` row pattern.
+- [x] **No "running low on context" cue** → done 2026-06-20. Once the focused session's
+      context window is ≥85% full, the composer surfaces a one-line `role="status"` cue above
+      the input ("Context N% full — consider /compact or a fresh session"), reusing the
+      attachment-status row pattern. Tone tracks the meter ring (accent 85–89%, danger 90%+) so
+      the words and the ring agree; drafts carry no usage, so it stays hidden there. New
+      `contextfull` dev-bar script (→ `MOCK_USAGE_FULL` 91%) drives it deterministically;
+      `e2e/context-meter.e2e.ts` asserts it's absent at the 24% baseline and appears (with the
+      danger tone + 91% ring) once driven.
 - [ ] **Sidebar search has no focus-on-open / Enter / Esc** — opening the drawer doesn't focus
       the search box; Enter doesn't open the top match, Esc doesn't clear/close. (Focus-on-open
       is a mobile tradeoff — pops the soft keyboard every open — so gate it to desktop or make

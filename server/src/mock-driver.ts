@@ -37,6 +37,7 @@ import {
   errorRun,
   GREETING_PROMPT,
   greeting,
+  contextFull,
   idleNoComplete,
   imageReply,
   initializingSession,
@@ -790,6 +791,7 @@ export class MockDriver implements PilotDriver {
     }
     const map: Record<string, () => ScriptStep[]> = {
       confirm: confirmDialog,
+      contextfull: contextFull,
       input: inputDialog,
       qna: qnaDialog,
       ambient,

@@ -8,6 +8,7 @@
     prepareImageFiles,
   } from "../lib/image-attachments.js";
   import { filterCommands, slashQuery } from "../lib/slash.js";
+  import { contextTone } from "../lib/context-tone.js";
   import SlashMenu from "./SlashMenu.svelte";
   import FileMenu from "./FileMenu.svelte";
   import ModelPicker from "./ModelPicker.svelte";
@@ -73,6 +74,16 @@
   // Drafting a brand-new session: the composer doubles as the new-session form (config
   // chips above, first prompt below). Send creates the session + delivers the prompt.
   const drafting = $derived(store.draft != null);
+  // Context-window pressure cue: the meter ring escalates by color but never says
+  // "you're running out" in words. Once the active session's window is ≥85% full, surface
+  // a one-line nudge above the composer toward /compact or a fresh session. Drafts carry no
+  // usage, so it stays hidden there; the tone tracks the ring (accent 85–89, danger 90+).
+  const contextPct = $derived(store.session.usage?.percent ?? null);
+  const contextCue = $derived(
+    contextPct !== null && contextPct >= 85
+      ? { pct: Math.round(contextPct), tone: contextTone(contextPct) }
+      : null,
+  );
   // Inline path editor for the project chip (collapsed → chip, expanded → text input).
   let editingCwd = $state(false);
   const cwdBase = $derived.by(() => {
@@ -602,6 +613,16 @@
       </div>
     {/if}
 
+    {#if contextCue}
+      <div
+        class="attachment-status context-cue {contextCue.tone}"
+        role="status"
+        data-testid="context-cue"
+      >
+        Context {contextCue.pct}% full — consider <code>/compact</code> or a fresh session.
+      </div>
+    {/if}
+
     <QueueTray />
 
     {#if streaming}
@@ -842,6 +863,25 @@
     border: 1px solid var(--border);
     background: var(--surface-sunken);
     color: var(--text-muted);
+  }
+  /* Context-pressure cue. Colors mirror the meter ring's bands so the words and the
+     ring agree: blue accent at 85–89%, escalating to red at 90%+. */
+  .attachment-status.context-cue.accent {
+    border: 1px solid color-mix(in srgb, var(--accent) 35%, transparent);
+    background: var(--accent-soft);
+    color: var(--accent);
+  }
+  .attachment-status.context-cue.danger {
+    border: 1px solid color-mix(in srgb, var(--danger) 35%, transparent);
+    background: var(--danger-soft);
+    color: var(--danger);
+  }
+  .attachment-status.context-cue code {
+    font-family: var(--font-mono);
+    font-size: 0.92em;
+    background: color-mix(in srgb, currentColor 12%, transparent);
+    padding: 0 4px;
+    border-radius: var(--radius-xs);
   }
   .streamrow {
     display: flex;
