@@ -60,9 +60,25 @@
     }
     return out;
   });
-  // Flat list of the visible model rows, in render order — arrow-key navigation
-  // walks this, and `sel` indexes into it.
-  const flatModelItems = $derived(filteredGroups.flatMap((g) => g.items));
+  // Per-provider collapse. The list grows long with many providers, so groups start
+  // collapsed — only the active model's provider is seeded open (so your current pick stays
+  // visible). A non-empty search query auto-expands every matching group.
+  let expandedProviders = $state<Set<string>>(new Set());
+  function isExpanded(provider: string): boolean {
+    return mq !== "" || expandedProviders.has(provider);
+  }
+  function toggleProvider(provider: string): void {
+    const next = new Set(expandedProviders);
+    if (next.has(provider)) next.delete(provider);
+    else next.add(provider);
+    expandedProviders = next;
+    sel = 0; // the visible list changed; keep the highlight valid
+  }
+  // Flat list of the VISIBLE model rows (expanded groups only), in render order —
+  // arrow-key navigation walks this, and `sel` indexes into it.
+  const flatModelItems = $derived(
+    filteredGroups.flatMap((g) => (isExpanded(g.provider) ? g.items : [])),
+  );
 
   // Keyboard-highlight index into the open menu's item list (model rows or levels).
   let sel = $state(0);
@@ -78,9 +94,26 @@
   $effect(() => {
     if (open !== "model") modelQuery = "";
   });
-  // Keep the highlight in range as filtering shrinks the list under the cursor.
+  // Seed the active model's provider open whenever the menu opens (so your current pick is
+  // visible); everything else starts collapsed. Falls back to the first group if no active
+  // provider. Picking a model closes the menu first, so this never re-collapses mid-use.
   $effect(() => {
-    if (sel >= flatModelItems.length) sel = 0;
+    if (open !== "model") return;
+    // A favorites-filtered or single-provider list is already short — collapsing it would
+    // hide the very models you curated (or leave just a lone header), so expand everything.
+    if (filtering || groups.length <= 1) {
+      expandedProviders = new Set(groups.map((g) => g.provider));
+    } else {
+      const seed = cfg.provider || groups[0]?.provider;
+      expandedProviders = new Set(seed ? [seed] : []);
+    }
+  });
+  // Keep the highlight in range as filtering/collapsing shrinks the model list under the
+  // cursor. Gated to the model menu: `sel` is shared with the thinking menu, and the model
+  // list can now be empty (all providers collapsed), which would otherwise clamp the
+  // thinking highlight to 0.
+  $effect(() => {
+    if (open === "model" && sel >= flatModelItems.length) sel = 0;
   });
   // Scroll the keyboard-highlighted model row into view as the user arrows past the fold.
   $effect(() => {
@@ -208,29 +241,44 @@
             onkeydown={onModelKeydown}
           />
           {#each filteredGroups as g (g.provider)}
-            <div class="group-title">{g.provider}</div>
-            {#each g.items as opt (opt.modelId)}
-              {@const active =
-                opt.provider === cfg.provider && opt.modelId === cfg.modelId}
-              <button
-                class="item"
-                class:active
-                class:hl={flatModelItems[sel] === opt}
-                title={active ? `${opt.label} (current model)` : `Switch to ${opt.label}`}
-                onclick={() => pickModel(opt.provider, opt.modelId, openedViaKeyboard)}
-              >
-                <span class="item-label">{opt.label}</span>
-                {#if active}
-                  <span class="item-meta"
-                    >active{#if filtering && !store.isFavorite(opt.provider, opt.modelId)}<span
-                        class="off"
-                        title="Not in favorites — switch from Settings to manage the list"
-                        > · not favorited</span
-                      >{/if}</span
-                  >
-                {/if}
-              </button>
-            {/each}
+            {@const expanded = isExpanded(g.provider)}
+            <button
+              class="group-title"
+              type="button"
+              aria-expanded={expanded}
+              title={expanded
+                ? `Collapse ${g.provider}`
+                : `Expand ${g.provider} (${g.items.length} model${g.items.length === 1 ? "" : "s"})`}
+              onclick={() => toggleProvider(g.provider)}
+            >
+              <span class="group-chev" class:open={expanded}>▸</span>
+              <span class="group-name">{g.provider}</span>
+              <span class="group-count">{g.items.length}</span>
+            </button>
+            {#if expanded}
+              {#each g.items as opt (opt.modelId)}
+                {@const active =
+                  opt.provider === cfg.provider && opt.modelId === cfg.modelId}
+                <button
+                  class="item"
+                  class:active
+                  class:hl={flatModelItems[sel] === opt}
+                  title={active ? `${opt.label} (current model)` : `Switch to ${opt.label}`}
+                  onclick={() => pickModel(opt.provider, opt.modelId, openedViaKeyboard)}
+                >
+                  <span class="item-label">{opt.label}</span>
+                  {#if active}
+                    <span class="item-meta"
+                      >active{#if filtering && !store.isFavorite(opt.provider, opt.modelId)}<span
+                          class="off"
+                          title="Not in favorites — switch from Settings to manage the list"
+                          > · not favorited</span
+                        >{/if}</span
+                    >
+                  {/if}
+                </button>
+              {/each}
+            {/if}
           {/each}
           {#if filteredGroups.length === 0}
             <div class="model-empty">No models match</div>
@@ -379,11 +427,42 @@
     text-align: center;
   }
   .group-title {
-    padding: 6px 8px 3px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    width: 100%;
+    padding: 6px 8px 5px;
+    background: none;
+    border: 0;
     font-size: 11px;
     color: var(--text-faint);
     text-transform: uppercase;
     letter-spacing: 0.04em;
+    cursor: pointer;
+  }
+  .group-title:hover {
+    color: var(--text-muted);
+  }
+  .group-title:focus-visible {
+    outline: none;
+    color: var(--text);
+    border-radius: var(--radius-xs);
+    box-shadow: inset 0 0 0 1.5px var(--accent);
+  }
+  .group-chev {
+    font-size: 9px;
+    transition: transform 0.15s ease;
+  }
+  .group-chev.open {
+    transform: rotate(90deg);
+  }
+  .group-name {
+    flex: 1;
+    text-align: left;
+  }
+  .group-count {
+    font-variant-numeric: tabular-nums;
+    opacity: 0.75;
   }
   .item {
     display: flex;

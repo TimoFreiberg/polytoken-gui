@@ -333,10 +333,18 @@ hit a session limit mid-verify; confirm each against the code before acting):_
       not float independently. The project-switcher button above the composer is
       reportedly finicky — if a cleaner way to change the target project falls out,
       take it; otherwise just the grouping change.
-- [ ] **Model list: collapsible provider headers, collapsed by default** — the model
-      dropdown in Settings is too long. Group models under provider headers that are
-      collapsed by default. Typing a search query should auto-uncollapse matching
-      results.
+- [x] **Model list: collapsible provider headers, collapsed by default** → done 2026-06-21.
+      The header model dropdown (`ModelPicker`) now has collapsible provider headers (chevron +
+      model count, `aria-expanded`): groups start collapsed except the active model's provider
+      (seeded open so your current pick stays visible), a non-empty search auto-expands every
+      matching group, and arrow-key nav only walks VISIBLE rows. Favorites-filtered or
+      single-provider lists expand fully (already short — collapsing would hide the curated set
+      or leave a lone header). `e2e/models.e2e.ts` covers collapse-default, expand-to-pick, and
+      search-auto-expand. (Subtle fix found via the thinking-picker test: the shared `sel` clamp
+      had to be gated to the model menu, since the model list can now be empty.) _(Scoped to the
+      header dropdown — the **Settings favorites checklist** was left expanded on purpose: its
+      default state is "no favorites = show all," where collapse-by-default would hide every
+      model mid-curation; it has its own search. Redirect if that surface was the intent.)_
 - [ ] **Smooth collapse animation for turn-ending autocollapse** — when an agent turn
       finishes its closing paragraph, the early part of the turn autocollapses with a
       jarring jump. Find a short, light animation to smooth the transition.

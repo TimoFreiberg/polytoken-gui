@@ -21,14 +21,44 @@ test("the model picker lists models and switches the active one", async ({
 
   await modelBadge.click();
 
-  // The dropdown groups available models by provider.
-  await expect(page.getByText("DeepSeek V4 Flash")).toBeVisible();
-  await page.getByText("DeepSeek V4 Flash").click();
+  // Providers are collapsible and start collapsed except the active one (anthropic), so a
+  // non-active provider's models are hidden until you expand its header.
+  const panel = page.locator(".mp .panel");
+  await expect(panel.getByText("DeepSeek V4 Flash")).toHaveCount(0);
+  await panel.locator(".group-title").filter({ hasText: "deepseek" }).click();
+  await expect(panel.getByText("DeepSeek V4 Flash")).toBeVisible();
+  await panel.getByText("DeepSeek V4 Flash").click();
 
   // The badge reflects the switched-to model (server round-trip → folded config).
   await expect(
     page.locator(".mp .badge").filter({ hasText: "DeepSeek V4 Flash" }),
   ).toBeVisible();
+});
+
+test("provider groups collapse by default and a search auto-expands matches", async ({
+  page,
+}) => {
+  await page
+    .locator(".mp .badge")
+    .filter({ hasText: "Claude Opus 4.8" })
+    .click();
+  const panel = page.locator(".mp .panel");
+
+  // The active provider (anthropic) is seeded open; the others start collapsed.
+  await expect(panel.getByText("Claude Opus 4.8")).toBeVisible();
+  await expect(panel.getByText("GPT-5")).toHaveCount(0);
+  await expect(
+    panel.locator(".group-title").filter({ hasText: "openai" }),
+  ).toHaveAttribute("aria-expanded", "false");
+
+  // Typing a query auto-expands every matching group without a manual click.
+  const search = panel.getByPlaceholder("Search models…");
+  await search.fill("gpt");
+  await expect(panel.getByText("GPT-5")).toBeVisible();
+
+  // Clearing the query re-collapses back to the seeded state.
+  await search.fill("");
+  await expect(panel.getByText("GPT-5")).toHaveCount(0);
 });
 
 test("the thinking picker switches the level", async ({ page }) => {
