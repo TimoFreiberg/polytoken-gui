@@ -155,7 +155,7 @@ async function openToolCard(page: Page) {
   await expandWork(page);
   // One tool in the turn → a "1 tool" summary card; expand it, then the inner card.
   const card = page.locator(".tool.summary");
-  await expect(card.locator(".head .name")).toHaveText("1 tool");
+  await expect(card.locator(".head .label")).toHaveText("Used render_mockup");
   await card.locator(":scope > .head").click();
   const inner = card.locator(":scope > .body > .tool");
   await expect(inner).toHaveCount(1);
