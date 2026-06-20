@@ -293,6 +293,10 @@ hit a session limit mid-verify; confirm each against the code before acting):_
 - [ ] **Smooth collapse animation for turn-ending autocollapse** — when an agent turn
       finishes its closing paragraph, the early part of the turn autocollapses with a
       jarring jump. Find a short, light animation to smooth the transition.
+- [ ] **Hide "Branch from here" on the current leaf** — the most recent agent
+      paragraph (the current leaf) shows a "Branch from here" button, but branching
+      from the tip of the tree is a no-op. Suppress the button on the final visible
+      paragraph.
 
 ## 🔵 Later
 
