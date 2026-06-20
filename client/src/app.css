@@ -15,10 +15,13 @@
   --text-faint: #9a968f;
   --border: #e7e3da;
   --border-strong: #d8d3c8;
-  --accent: #c15f3c;
-  --accent-hover: #a84e2f;
-  --accent-soft: #f6e7e0;
+  --accent: #4f63bf;
+  --accent-hover: #44569f;
+  --accent-soft: #e7eaf7;
   --accent-text: #ffffff;
+  /* Monochrome selection highlight (no accent) — choice cards / progress dots. */
+  --select-bg: #f0ede6;
+  --select-border: #a8a39a;
   --danger: #b4413a;
   --danger-soft: #f6e0de;
   --warning: #9a6a1f;
@@ -45,7 +48,8 @@
 }
 
 :root[data-theme="dark"] {
-  /* Neutral charcoal surfaces with indigo reserved for active/actionable states. */
+  /* Neutral charcoal surfaces; the periwinkle accent is reserved for primary
+     actions and focus — selection stays monochrome. */
   --bg: #242522;
   --bg-elevated: #292a27;
   --surface: #302f2c;
@@ -55,10 +59,13 @@
   --text-faint: #777871;
   --border: #3b3b36;
   --border-strong: #504d47;
-  --accent: #8487d8;
-  --accent-hover: #9699e5;
-  --accent-soft: #3b3a48;
-  --accent-text: #171725;
+  --accent: #6f8ad9;
+  --accent-hover: #8499e0;
+  --accent-soft: #363e54;
+  --accent-text: #14181f;
+  /* Monochrome selection highlight (no accent) — choice cards / progress dots. */
+  --select-bg: #37362f;
+  --select-border: #bdb9b0;
   --danger: #e0786f;
   --danger-soft: #3a2422;
   --warning: #d4a857;

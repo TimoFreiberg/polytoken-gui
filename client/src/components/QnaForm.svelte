@@ -279,6 +279,12 @@
                 class:on={a.selectedOptionIndices.includes(j)}
                 aria-hidden="true">{a.selectedOptionIndices.includes(j) ? "✓" : ""}</span
               >
+            {:else}
+              <span
+                class="radio"
+                class:on={a.selectedOptionIndices.includes(j)}
+                aria-hidden="true"
+              ></span>
             {/if}
             <span class="lbl">
               <span class="lbl-main">{opt.label}</span>
@@ -456,8 +462,8 @@
     cursor: pointer;
   }
   .opt.sel {
-    border-color: var(--accent);
-    background: var(--accent-soft);
+    border-color: var(--select-border);
+    background: var(--select-bg);
   }
   .check {
     flex: 0 0 auto;
@@ -474,9 +480,31 @@
     color: var(--text);
   }
   .check.on {
-    background: var(--accent);
-    border-color: var(--accent);
-    color: var(--text);
+    /* Monochrome filled checkbox — high contrast, no accent. */
+    background: var(--text);
+    border-color: var(--text);
+    color: var(--bg);
+  }
+  .radio {
+    flex: 0 0 auto;
+    width: 18px;
+    height: 18px;
+    margin-top: 1px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border: 1px solid var(--border-strong);
+    border-radius: 50%;
+  }
+  .radio.on {
+    border-color: var(--select-border);
+  }
+  .radio.on::after {
+    content: "";
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--text);
   }
   .lbl {
     display: flex;
@@ -502,9 +530,11 @@
     font-family: inherit;
     outline: none;
   }
-  .field:focus,
-  .field.sel {
+  .field:focus {
     border-color: var(--accent);
+  }
+  .field.sel {
+    border-color: var(--select-border);
   }
   .field.area {
     resize: vertical;
@@ -526,11 +556,11 @@
     padding: 0;
   }
   .dot.done {
-    background: color-mix(in srgb, var(--accent) 45%, var(--surface-sunken));
+    background: color-mix(in srgb, var(--text) 35%, var(--surface-sunken));
   }
   .dot.active {
-    background: var(--accent);
-    border-color: var(--accent);
+    background: var(--text);
+    border-color: var(--text);
     transform: scale(1.25);
   }
   .actions {
