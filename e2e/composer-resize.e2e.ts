@@ -66,7 +66,7 @@ test("composer: expand toggle grows the cap and carries a tooltip", async ({
   const collapsed = await metrics(page);
 
   const expand = page.locator(".composer-wrap .expand");
-  await expect(expand).toHaveAttribute("title", "Expand composer (⌥↑)");
+  await expect(expand).toHaveAttribute("title", "Expand composer (⌥⇧↑)");
 
   await expand.click();
   await expect
@@ -74,7 +74,7 @@ test("composer: expand toggle grows the cap and carries a tooltip", async ({
     .toBeGreaterThan(collapsed.clientH + 50);
 
   // Collapsing restores the lower cap; tooltip flips too.
-  await expect(expand).toHaveAttribute("title", "Collapse composer (⌥↓)");
+  await expect(expand).toHaveAttribute("title", "Collapse composer (⌥⇧↓)");
   await expand.click();
   await expect
     .poll(async () => (await metrics(page)).clientH)

@@ -29,7 +29,7 @@ test("a background approval stays obvious and opens the right session", async ({
 
   await row.click();
   await expect(
-    page.getByText("Review background change", { exact: true }),
+    page.getByRole("heading", { name: "Review background change" }),
   ).toBeVisible();
   await expect(page.getByText("Apply the queued background edit?")).toBeVisible();
 });
