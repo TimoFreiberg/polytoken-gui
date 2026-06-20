@@ -60,7 +60,8 @@ test("tool card expands to show output", async ({ page }) => {
   await summary.locator(":scope > .head").click();
   const innerHead = summary.locator(":scope > .body > .tool > .head");
   await expect(innerHead).toBeVisible();
-  await innerHead.click({ force: true });
+  await innerHead.click();
+  await expect(innerHead).toHaveAttribute("aria-expanded", "true");
   await expect(page.getByText("server/src/index.ts:14")).toBeVisible();
 });
 
@@ -70,7 +71,8 @@ test("tool card expands to show the full arguments", async ({ page }) => {
   await summary.locator(":scope > .head").click();
   const innerHead = summary.locator(":scope > .body > .tool > .head");
   await expect(innerHead).toBeVisible();
-  await innerHead.click({ force: true });
+  await innerHead.click();
+  await expect(innerHead).toHaveAttribute("aria-expanded", "true");
   // The args block labels each input key and shows its full value in a <pre> —
   // the collapsed header only renders a truncated single-line preview.
   const args = page.locator(".tool .args");
