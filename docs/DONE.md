@@ -5,6 +5,38 @@ and its resolution note. Latest completions first.
 
 ---
 
+- [x] **UX-survey polish batch — approval a11y, iOS zoom, eager reconnect, transcript/composer
+  polish** → done 2026-06-20. A multi-dimension survey of the client (each finding verified
+  against current code) drove a sweep of high-value quick wins; the remainder is filed under
+  TODO's "Jank / polish found in the 2026-06-20 UX survey". Landed in five focused commits:
+  - **Approval dialogs are now keyboard- and screen-reader-operable** (`ApprovalLayer.svelte`):
+    Esc cancels (deny-safe), ⌘/Ctrl+Enter submits (bare Enter in a single-line input too),
+    focus moves into the sheet on open (the input/editor field, else the sheet root — never an
+    affirmative button, so a stray Enter can't approve a destructive command), Tab is trapped,
+    and the sheet carries `aria-modal` + an `aria-labelledby` accessible name. Previously it had
+    none of these — the most-frequent blocking interaction was mouse-only.
+  - **Prevent iOS focus-zoom** (`app.css`): a global `@media (pointer: coarse)` rule forces every
+    `input`/`textarea`/`select` to 16px (`!important`, to beat Svelte scoped styles). iOS
+    auto-zooms on focusing a sub-16px control and offers no way back; nearly every input
+    (model-picker / sidebar search, cwd input, settings, …) was 12–13.5px. Prevention over
+    restoration — there's no API to read/set visual zoom, and `maximum-scale` would kill
+    pinch-zoom (D14). Guarded by a Playwright mobile-project assertion that an input computes ≥16px.
+  - **Eager reconnect** (`ws.svelte.ts`): tab-refocus and the window `online` event now reset the
+    backoff and reconnect immediately instead of routing through `scheduleReconnect` (up to ~15s)
+    — the felt lag on a waking phone / cell↔wifi flap.
+  - **Transcript** (`Transcript.svelte`): autoscroll now follows a streaming tool's output
+    (`contentSize` counted only assistant deltas before — invisible vs the mock, real vs pi);
+    `⌘/Ctrl+↓` jumps to the live bottom (inverse of the existing `⌘↑`), advertised in the pill tooltip.
+  - **Quick wins**: focus-visible accent rings on the `Button`/`IconButton` primitives;
+    queued-message rows show a hover tooltip + two readable lines (was one clipped line); the
+    token gate distinguishes a mid-session expiry ("rejected or expired") from a cold first-run
+    prompt (`store.unauthorizedReason`).
+
+  Gate: `tsc` + `svelte-check` clean, 334 unit + 154 e2e green (4 new specs: approval
+  aria-modal / Esc-cancel / keyboard-submit, mobile inputs ≥16px), plus a live preview drive of
+  the dialogs/queue. Note: the streaming-tool autoscroll fix isn't e2e-covered (the mock doesn't
+  stream tool text) — verified by code reasoning.
+
 - [x] **Agent turn cancelled when client disconnects?** — closed 2026-06-19, **not
   reproduced**; kept here as a watch-item for context if the owner sees it again. Original
   report: firing off a prompt on the Mac Mini, then fully exiting the phone view (closing

@@ -189,6 +189,83 @@ See `docs/` siblings for context: `DESIGN.md` (architecture + roadmap), `DECISIO
       session-namer pi extension's gap, not pilot's to defend against — owner declined a
       pilot-side strip.)_
 
+### Jank / polish found in the 2026-06-20 UX survey
+
+_Surfaced by a multi-dimension survey of the client, each finding verified against current
+code. The high-value quick wins from this pass already shipped (approval a11y, iOS-zoom
+prevention, eager reconnect, transcript/composer polish — see DONE 2026-06-20); these are
+the remainder, roughly ordered by day-to-day leverage._
+
+- [ ] **Archive is instant + irreversible** — `setArchived` flips the flag and the row
+      vanishes from the active view with no toast/undo; recovery is filter-toggle → find → ⋯ →
+      Unarchive. Add an "Archived — Undo" toast. Needs a small toast/snackbar system the app
+      doesn't have yet — build it once and the multi-device notice below reuses it.
+- [ ] **No "resolved on another device" notice** — first-responder-wins drops the loser's
+      answer and the sheet silently vanishes on the other client (`hostUiResolved` carries no
+      outcome). Push a transient "Resolved on another device" when a pending dialog the local
+      client didn't answer disappears. (Pairs with the toast system above; the event would need
+      to carry the outcome to say which way it resolved.)
+- [ ] **Tool output trapped in a 320px scrollbox** — `ToolCard.svelte` caps the output `<pre>`
+      at 320px / diff at 420px with no copy-output, expand/drop-the-cap, or "show all" control;
+      a long log is a nested scroll-trap on touch. Add copy + an inline expand. (Distinct from
+      the per-code-block copy brainstorm item, which is markdown fences, not tool cards.)
+- [ ] **No "running low on context" cue** — the only context-fill signal is the 18px ring +
+      %; color escalates (amber/orange/red) but there's no text warning at any level. At ≥~85%
+      surface a one-line cue near the composer ("Context nearly full — consider /compact or a
+      fresh session"), reusing the attachment-status `role="status"` row pattern.
+- [ ] **Sidebar search has no focus-on-open / Enter / Esc** — opening the drawer doesn't focus
+      the search box; Enter doesn't open the top match, Esc doesn't clear/close. (Focus-on-open
+      is a mobile tradeoff — pops the soft keyboard every open — so gate it to desktop or make
+      it opt-in; Enter/Esc are unambiguous wins.)
+- [ ] **New-session dir input has no validation or recent dirs** — a typo only surfaces as a
+      thrown error after the first prompt (creation is deferred, validated server-side). Add a
+      recent-cwds dropdown (cheap — distinct cwds already live in `store.sessions`) and,
+      optionally, an inline exists/is-dir hint (needs a small server probe; the client can't stat).
+- [ ] **"N hidden" count isn't clickable** — `session-filter` hides archived + >7d-stale
+      sessions in the default view; the only cue is a non-interactive "{N} hidden" span beside
+      the filter toggle. Make the count itself flip to "Showing all"; consider skipping the 7d
+      cutoff when the list is short so a handful of week-old sessions stay visible.
+- [ ] **Stop button no-ops silently while offline** — the pill stays clickable (`turnActive`
+      rides the last snapshot); `abort()` is a bare send that's dropped when the socket's down,
+      with no feedback (unlike `restoreQueue`, which sets `lastError`). Mirror that, or disable
+      Stop while `connection !== "connected"`. (The offline banner softens this today.)
+- [ ] **Optimistic prompt reads "Queued offline" while merely connecting** — the delivery label
+      is "sending" only when fully connected, else "offline", so a prompt about to go out during
+      the connecting/reconnecting window reads as more stuck than it is. Add a "connecting" state
+      → "Sending when reconnected…", reserving "Queued offline" for a truly disconnected socket.
+- [ ] **Backdrop tap discards a dirty input/editor dialog** — `scrimClick` unconditionally
+      cancels; deny-safe, but a stray tap on a phone loses typed text in the input/editor kinds
+      (the editor has no timeout, so the scrim is its only non-button dismissal). Guard dismissal
+      when the field differs from its `initialValue`.
+- [ ] **Non-binary select dialog lacks arrow-key roving** — `ApprovalLayer`'s 3+ option select
+      renders plain buttons (Tab-focusable, but no `radiogroup`/`radio` roles or ↑/↓ roving).
+      Rare path (binary → Yes/No card, trust → TrustCard), but bring it to QnaForm's level if it
+      shows up. (Esc / ⌘↵ / focus-on-open already landed this session.)
+- [ ] **Background "done" reads too like plain "unread"** — a finished-while-away session gets a
+      faint ring + "Done" line, but the dot fill matches plain unread and there's no
+      `data-state="done"` activity styling; waiting/failed get bold colored badges. Give "done" a
+      slightly stronger glyph/accent pill so a just-finished run stands out at a glance.
+- [ ] **Overflowing tables/code give no at-rest scroll hint on touch** — wide tables + `pre`
+      scroll horizontally, but mobile overlay scrollbars hide at rest, so cut-off columns are
+      invisible until you swipe. Add a right-edge fade/shadow mask when `scrollWidth >
+      clientWidth`. (Desktop has a persistent styled scrollbar; this is touch-only.)
+- [ ] **`content-visibility` code/doc mismatch** — DONE.md + `store.svelte.ts` say the
+      `content-visibility: auto` virtualization was removed for viewport drift, but it's still
+      live on `.row`/`.tool`/`.turn-work`/`.summary` (estimate `auto 120px` vs expanded cards
+      far taller). Either finish the revert or re-document it as intentional and tune
+      `contain-intrinsic-size`; today the code and the design log disagree.
+
+**Mobile findings — surfaced but NOT yet verified** _(the survey's mobile + status dimensions
+hit a session limit mid-verify; confirm each against the code before acting):_
+- [ ] **Safe-area insets** — confirm the header clears the notch and the composer sits above the
+      home indicator (`env(safe-area-inset-*)`); the approval sheet already uses it.
+- [ ] **Wake lock during a run** — keep the screen awake while a turn streams so the phone
+      doesn't sleep mid-watch (`navigator.wakeLock`).
+- [ ] **Tap-target audit (≥44px)** — `IconButton` already enforces 44px on coarse pointers;
+      audit the rest (sidebar rows, chips, dialog options) for sub-44px touch targets.
+- [ ] **PWA status-bar / theme-color chrome** — verify the installed PWA's status bar /
+      `theme-color` tracks the active light/dark theme.
+
 ## 🔵 Later
 
 - [ ] **gondolin egress containment** (D10) — for the autonomous Mac Mini
