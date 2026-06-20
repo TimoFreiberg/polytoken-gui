@@ -923,6 +923,15 @@ export async function createPiDriver(
       SessionManager.open(path).appendSessionInfo(next);
     },
 
+    defaultSeed() {
+      // Per-client focus: a freshly-connecting client adopts the driver's current
+      // session if there is one. At boot there is none (empty landing) — the client
+      // then restores its own last-focused session — so this returns null until a
+      // session is opened/created. Read synchronously; seedFor is in-memory.
+      const ws = currentId ? warm.get(currentId) : undefined;
+      return ws ? seedFor(ws) : null;
+    },
+
     async openSession(path: string) {
       // Already warm (matched by session file)? Just refocus — never open a second
       // AgentSession on the same JSONL; that would double-write the file. This is the

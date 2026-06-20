@@ -90,6 +90,11 @@ process.on("unhandledRejection", (reason) => {
 
 interface WsData {
   authed: boolean;
+  // One stable send closure per connection, minted in authenticate(). The hub keys its
+  // per-connection focus map by this exact reference, so addClient + handleClient MUST
+  // receive the same closure (a fresh `(m) => send(ws, m)` per message would look like a
+  // different client and lose this connection's focus).
+  send: ((msg: ServerMessage) => void) | null;
   unsub: (() => void) | null;
 }
 
@@ -107,6 +112,9 @@ if (process.env.PILOT_DRIVER === "mock") {
   driver = await createPiDriver();
 }
 const push = new PushService();
+// Arm the greeting as the landing fixture BEFORE the hub is built — the hub seeds its
+// landing default from driver.defaultSeed() at construction.
+mock?.bootstrap();
 const hub = new SessionHub(
   driver,
   (n) => {
@@ -115,14 +123,17 @@ const hub = new SessionHub(
   config.liveRefreshMs,
   serverId,
 );
-mock?.bootstrap(); // replay the greeting fixture now that the hub is subscribed
 
-const send = (ws: ServerWebSocket<WsData>, msg: ServerMessage) =>
+const rawSend = (ws: ServerWebSocket<WsData>, msg: ServerMessage) =>
   ws.send(JSON.stringify(msg));
 
 function authenticate(ws: ServerWebSocket<WsData>): void {
   ws.data.authed = true;
-  ws.data.unsub = hub.addClient((m) => send(ws, m));
+  // Mint one stable send closure for this connection and reuse it for both addClient
+  // and every handleClient — the hub identifies the connection by this reference.
+  const send = (m: ServerMessage) => rawSend(ws, m);
+  ws.data.send = send;
+  ws.data.unsub = hub.addClient(send);
   log.info("client connected", { clients: hub.clientCount() });
 }
 
@@ -135,7 +146,11 @@ const server = Bun.serve<WsData>({
     const url = new URL(req.url);
 
     if (url.pathname === "/ws") {
-      if (server.upgrade(req, { data: { authed: false, unsub: null } }))
+      if (
+        server.upgrade(req, {
+          data: { authed: false, send: null, unsub: null },
+        })
+      )
         return undefined;
       return new Response("websocket upgrade failed", { status: 426 });
     }
@@ -242,18 +257,20 @@ const server = Bun.serve<WsData>({
       if (!ws.data.authed) {
         if (msg.type === "hello" && tokenOk(msg.auth)) authenticate(ws);
         else {
-          send(ws, { type: "error", message: "unauthorized" });
+          rawSend(ws, { type: "error", message: "unauthorized" });
           ws.close();
         }
         return;
       }
       if (msg.type === "hello") return; // already authed
-      hub.handleClient((m) => send(ws, m), msg);
+      // Reuse this connection's stable send so the hub matches it to its focus state.
+      if (ws.data.send) hub.handleClient(ws.data.send, msg);
     },
     close(ws) {
       const wasAuthed = ws.data.authed;
       ws.data.unsub?.();
       ws.data.unsub = null;
+      ws.data.send = null;
       if (wasAuthed)
         log.info("client disconnected", { clients: hub.clientCount() });
     },

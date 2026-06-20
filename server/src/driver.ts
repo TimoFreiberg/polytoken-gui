@@ -63,9 +63,10 @@ export interface PilotDriver {
   ): Promise<void>;
   abort(sessionId?: SessionId): void;
   /** Atomically clear and return the targeted session's text-only pi queues. */
-  clearQueue?(
-    sessionId?: SessionId,
-  ): { steering: string[]; followUp: string[] };
+  clearQueue?(sessionId?: SessionId): {
+    steering: string[];
+    followUp: string[];
+  };
   respondUi(response: HostUiResponse, sessionId?: SessionId): void;
 
   /** Sessions on disk available to open (D13: pi's .jsonl files are authoritative).
@@ -98,6 +99,15 @@ export interface PilotDriver {
    * via `subscribe` — the hub orchestrates the reset so the swap is atomic.
    */
   openSession(path: string): Promise<SessionDriverEvent[]>;
+  /** The landing session a freshly-connecting client adopts when it has no focus of
+   *  its own yet (per-client focus): the seed for the driver's current/default session,
+   *  or null for an empty landing. The mock returns its bootstrap greeting; the pi
+   *  driver returns the current warm session's seed (null at boot — it starts empty).
+   *  Read synchronously by the hub on connect/reset, so it must not block. The events
+   *  must NOT also be emitted via `subscribe` — the hub folds this once. Optional: a bare
+   *  driver omits it and the hub treats every fresh connection as an empty landing. */
+  defaultSeed?(): SessionDriverEvent[] | null;
+
   /** Create a fresh session and make it active; resolves with its seed events (an
    *  empty `sessionOpened`). `cwd` (an absolute dir) picks the workspace per D12;
    *  omit it for $HOME. `worktree`: create an isolated jj/git

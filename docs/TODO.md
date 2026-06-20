@@ -54,18 +54,27 @@ See `docs/` siblings for context: `DESIGN.md` (architecture + roadmap), `DECISIO
 
 ## 🟡 Important
 
-- [ ] **Per-client session focus** — sessions already run independently, but every browser
-      shares one server-global focused transcript, so switching on the phone can switch the
-      desktop underneath the user. Move focused session selection and focused snapshots to
-      client/subscription scope while keeping durable session state and actions shared.
-      Approval resolution remains first-responder-wins. **Assessed 2026-06-20: not a
-      straightforward fast-follow.** The hub currently owns one `focusedId`, one folded
-      `state`, and one switch lock; snapshots, active-session lists, cwd-scoped command
-      lists, and file-query results are all broadcast globally. This needs a dedicated
-      subscription refactor: per-connection focus/folded state plus targeted session,
-      command, and file responses, while shared attention/actions remain global. Keep it
-      isolated from the reliability work above so the invariants get explicit multi-client
-      tests.
+- [x] **Per-client session focus** → done 2026-06-20. The hub no longer owns one
+      server-global `focusedId` + folded `state`: it holds a `Map<sessionId, SessionState>`
+      (folded only for sessions someone is viewing, plus the bootstrap landing) and each
+      connection carries its own `focusedId` + single-flight switch lock. Live events fold
+      into the shared per-session state and route ONLY to the connections focused there;
+      snapshots, `sessionList.activeSessionId`, cwd-scoped command lists, and `@`-mention
+      file results are now per-connection (targeted), while attention/running, the session
+      list CONTENT, models/providers/defaults, trust, OAuth, and update status stay global.
+      `switchTo` moves one connection's focus (branch reseeds + re-snapshots every viewer,
+      since navigateTree mutates the shared session); approval resolution stays
+      first-responder-wins on the targeted session's shared pending list. The driver needed
+      no change — it already streams every warm session concurrently — beyond a synchronous
+      `defaultSeed()` for the landing a fresh connection adopts (the mock's bootstrap is now
+      seed-based, not a live replay, so two clients adopt it without racing). The client is
+      unchanged: the wire shapes were the same, only the routing went from broadcast to
+      targeted. Unit tests cover per-connection focus, independent switching, and
+      session-scoped approval; `e2e/per-client-focus.e2e.ts` proves (two browser contexts)
+      that one client switching sessions doesn't move another. **Known limitation:** the
+      driver's warm-cap LRU eviction is global, not viewer-aware — with more than
+      `PILOT_WARM_CAP` (default 8) sessions open across clients, a session one client is
+      actively viewing could be evicted by another client's opens; benign for 1–2 devices.
 - [x] **Paste/drop image attachments + hardening** → done 2026-06-20. Screenshots can
       now be pasted into the textarea or dropped anywhere on the composer (with a visible
       drop target), sharing the file picker's removable previews. Validation rejects

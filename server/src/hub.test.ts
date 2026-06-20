@@ -129,6 +129,12 @@ class FakeDriver implements PilotDriver {
   async renameSession(path: string, name: string) {
     this.renameCalls.push({ path, name });
   }
+  // The landing session a fresh client adopts (mirrors the mock's bootstrap). Makes
+  // session "s" the default focus, so single-default tests behave like the old global
+  // focus while per-client tests can switch individual connections off it.
+  defaultSeed(): SessionDriverEvent[] {
+    return [ev({ type: "sessionOpened", snapshot: snap("s") })];
+  }
   async openSession(_path: string): Promise<SessionDriverEvent[]> {
     return [
       ev({ type: "sessionOpened", snapshot: snap("s2") }),
@@ -550,12 +556,11 @@ describe("SessionHub", () => {
     release([ev({ type: "sessionOpened", snapshot: snap("s") })]);
   });
 
-  test("only the focused session broadcasts to clients (D8 global focus)", () => {
+  test("only a client's focused session reaches its transcript stream", () => {
     const d = new FakeDriver();
     const hub = new SessionHub(d);
-    d.emit(ev({ type: "assistantDelta", text: "focused", channel: "text" })); // focus "s"
     const a = client();
-    hub.addClient(a.send);
+    hub.addClient(a.send); // adopts the landing default "s"
     a.received.length = 0; // drop hello/snapshot
 
     // A background session's event must NOT reach the client's transcript stream.
@@ -567,6 +572,77 @@ describe("SessionHub", () => {
     // A focused-session event still does.
     d.emit(ev({ type: "assistantDelta", text: "more", channel: "text" }));
     expect(a.received.some((m) => m.type === "event")).toBe(true);
+  });
+
+  test("focus is per-connection: one client's switch doesn't move another", async () => {
+    const d = new FakeDriver();
+    const hub = new SessionHub(d);
+    const a = client();
+    const b = client();
+    hub.addClient(a.send); // both adopt the landing default "s"
+    hub.addClient(b.send);
+
+    hub.handleClient(a.send, { type: "openSession", path: "/s2.jsonl" });
+    await flush();
+
+    // a's view + list highlight move to s2; b stays on s.
+    const aSnap = a.received.filter((m) => m.type === "snapshot").at(-1);
+    const bSnap = b.received.filter((m) => m.type === "snapshot").at(-1);
+    expect(aSnap?.type === "snapshot" && aSnap.state.ref?.sessionId).toBe("s2");
+    expect(bSnap?.type === "snapshot" && bSnap.state.ref?.sessionId).toBe("s");
+    const aList = a.received.filter((m) => m.type === "sessionList").at(-1);
+    const bList = b.received.filter((m) => m.type === "sessionList").at(-1);
+    expect(aList?.type === "sessionList" && aList.activeSessionId).toBe("s2");
+    expect(bList?.type === "sessionList" && bList.activeSessionId).toBe("s");
+
+    // A live event for s reaches only b; one for s2 reaches only a.
+    a.received.length = 0;
+    b.received.length = 0;
+    d.emit(evFor("s", { type: "assistantDelta", text: "x", channel: "text" }));
+    expect(a.received.some((m) => m.type === "event")).toBe(false);
+    expect(b.received.some((m) => m.type === "event")).toBe(true);
+
+    a.received.length = 0;
+    b.received.length = 0;
+    d.emit(evFor("s2", { type: "assistantDelta", text: "y", channel: "text" }));
+    expect(a.received.some((m) => m.type === "event")).toBe(true);
+    expect(b.received.some((m) => m.type === "event")).toBe(false);
+  });
+
+  test("a dialog is answerable only by clients viewing that session", async () => {
+    const d = new FakeDriver();
+    const hub = new SessionHub(d);
+    const a = client();
+    const b = client();
+    hub.addClient(a.send); // both adopt "s"
+    hub.addClient(b.send);
+
+    // b moves to s2; a stays on s.
+    hub.handleClient(b.send, { type: "openSession", path: "/s2.jsonl" });
+    await flush();
+
+    // A dialog arrives on s (a's session).
+    d.emit(
+      ev({
+        type: "hostUiRequest",
+        request: { kind: "confirm", requestId: "r9", title: "t", message: "m" },
+      }),
+    );
+
+    // b (viewing s2) cannot answer it — it isn't pending in b's focused session.
+    hub.handleClient(b.send, {
+      type: "respondUi",
+      response: { requestId: "r9", confirmed: true },
+    });
+    expect(d.responded).toHaveLength(0);
+
+    // a (viewing s) can.
+    hub.handleClient(a.send, {
+      type: "respondUi",
+      response: { requestId: "r9", confirmed: false },
+    });
+    expect(d.responded).toHaveLength(1);
+    expect(d.responded[0]).toMatchObject({ confirmed: false });
   });
 
   test("a background turn finishing while away still notifies", () => {

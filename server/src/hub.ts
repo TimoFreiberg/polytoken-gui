@@ -44,7 +44,10 @@ function clipped(value: string, max = 72): string {
   return oneLine.length > max ? `${oneLine.slice(0, max - 1)}…` : oneLine;
 }
 
-function inputString(input: unknown, keys: readonly string[]): string | undefined {
+function inputString(
+  input: unknown,
+  keys: readonly string[],
+): string | undefined {
   if (!input || typeof input !== "object") return undefined;
   const values = input as Record<string, unknown>;
   for (const key of keys) {
@@ -72,22 +75,37 @@ function toolActivity(
 }
 
 function requestTitle(
-  request: Extract<
-    SessionDriverEvent,
-    { type: "hostUiRequest" }
-  >["request"],
+  request: Extract<SessionDriverEvent, { type: "hostUiRequest" }>["request"],
 ): string {
   if ("title" in request && request.title) return clipped(request.title);
   if ("message" in request && request.message) return clipped(request.message);
   return request.kind === "qna" ? "Questions need answers" : "Waiting on you";
 }
 
+/** One connected client (WS connection). Focus is per-connection: each browser picks
+ *  which session it's looking at independently, so the phone switching can't move the
+ *  desktop underneath it. Durable session state + actions stay shared. Keyed in the hub
+ *  by its stable `send` closure (index.ts gives each connection exactly one). */
+interface ClientConn {
+  send: Send;
+  // The session this connection is viewing (null = the empty landing). Points into
+  // `sessionStates`; null until the client adopts the default or opens a session.
+  focusedId: SessionId | null;
+  // Single-flight per connection: a swap can block for minutes on a trust card, so a
+  // second open/new arriving meanwhile on THIS connection is refused (others are free).
+  switchInFlight: boolean;
+}
+
 export class SessionHub {
-  // The FOCUSED session's folded state — what every client sees (D8: global focus).
-  // Background sessions stream live inside the driver (kept warm); they reach the hub
-  // only so a finished background turn can still notify a closed phone.
-  private state: SessionState = initialSessionState();
-  private focusedId: SessionId | null = null;
+  // Folded transcript state per session, for every session a client is viewing (plus
+  // the bootstrap landing default). Multiple clients on the same session share one
+  // entry. Background sessions nobody opened are tracked only via running/attention
+  // below — their transcript stays private to the driver until someone focuses them.
+  private sessionStates = new Map<SessionId, SessionState>();
+  // The landing session a freshly-connecting client with no focus of its own adopts:
+  // the mock's bootstrap greeting, or null for pi's empty startup landing. Established
+  // from the driver's defaultSeed() on construction + reset.
+  private defaultFocusId: SessionId | null = null;
   // Session ids with a live turn right now — tracked across ALL sessions, not just
   // the focused one (a background turn never folds into `state`/broadcasts events,
   // but the client still needs its running/done indicator). Pushed as `sessionStatus`
@@ -102,7 +120,7 @@ export class SessionHub {
   // driver; this map carries only enough state to route the operator's attention.
   private attention = new Map<SessionId, AttentionRecord>();
   private sessionTitles = new Map<SessionId, string>();
-  private clients = new Set<Send>();
+  private clients = new Map<Send, ClientConn>();
   // Whether any client has connected since startup. Gates push so replayed history
   // — the mock's bootstrap greeting, or the pi driver's on-load session replay
   // (both can end in runCompleted while clientCount is 0) — doesn't buzz a stored
@@ -110,13 +128,6 @@ export class SessionHub {
   // events (D13): cold-start seeds fold before anyone connects, and switchTo folds
   // its seed directly rather than through onEvent, so neither reaches maybeNotify.
   private everConnected = false;
-  // True only during a session swap: ignore stray driver events while we reset and
-  // re-fold the new session's seed, so a half-switched state is never broadcast.
-  private switching = false;
-  // Single-flight guard for switchTo. The trust card (D12) can keep a swap awaiting
-  // human input for minutes; without this, a second open/new arriving meanwhile would
-  // race two swaps over the one `switching` flag and the focused state.
-  private switchInFlight = false;
   // Debounced live-refresh ticker. While a turn runs, the only events that fire are
   // deltas/tool/user — none carries fresh `usage` and none re-lists sessions, so the
   // composer's context meter AND the sidebar rows (message count / name / preview)
@@ -170,30 +181,68 @@ export class SessionHub {
         this.broadcast({ type: "trustRequest", ...ev.request });
       else this.broadcast({ type: "trustResolved", requestId: ev.requestId });
     });
+    this.seedDefault();
+  }
+
+  /** Establish the landing session a fresh client adopts: fold the driver's
+   *  defaultSeed() into a shared session state and record it as `defaultFocusId`.
+   *  No-op (empty landing) when the driver has no default — pi at boot, or the mock
+   *  reset with bootstrap:false. Called on construction + after reset. */
+  private seedDefault(): void {
+    const seed = this.driver.defaultSeed?.();
+    const sid = seed?.[0]?.sessionRef.sessionId;
+    if (!seed || seed.length === 0 || !sid) return;
+    const st = initialSessionState();
+    for (const e of seed) {
+      foldEvent(st, e);
+      this.trackRunning(e.sessionRef.sessionId, e);
+      this.trackAttention(e.sessionRef.sessionId, e);
+    }
+    this.sessionStates.set(sid, st);
+    this.defaultFocusId = sid;
+  }
+
+  /** A JSON-safe snapshot of one session's folded state (or the empty landing). */
+  private snapshotOf(sid: SessionId | null): SessionState {
+    const st = sid ? this.sessionStates.get(sid) : undefined;
+    return structuredClone(st ?? initialSessionState());
+  }
+
+  /** Whether any connected client is currently focused on a session. */
+  private hasViewer(sid: SessionId): boolean {
+    for (const conn of this.clients.values())
+      if (conn.focusedId === sid) return true;
+    return false;
   }
 
   private onEvent(ev: SessionDriverEvent): void {
     const sid = ev.sessionRef.sessionId;
-    // Track the running set across every session — including mid-swap and for
-    // background sessions whose events are never broadcast. A session's turn/terminal
-    // events are authoritative about whether it's running regardless of focus or an
-    // in-flight switch. In particular, LRU eviction (pi-driver) disposes a warm session
-    // *inside* a swap and emits a synthetic sessionClosed for it; that must clear the
-    // running set here or the evicted session shows a perpetual running indicator. The
-    // `switching` guard below only protects the focused-transcript fold + broadcast,
-    // which the swap re-seeds — it must not gate cross-session running tracking.
+    // Cross-session tracking is GLOBAL and runs for every event regardless of focus —
+    // a background turn never folds into a transcript, but the running/attention
+    // indicators must still update. LRU eviction (pi-driver) disposes a warm session
+    // inside another client's swap and emits a synthetic sessionClosed for it; that
+    // must clear the running set here regardless of who is focused where.
     const statusChanged = this.trackRunning(sid, ev);
     const attentionChanged = this.trackAttention(sid, ev);
     if (statusChanged || attentionChanged) this.broadcastSessionStatus();
-    if (this.switching) return; // the swap orchestrates its own reset + re-fold
-    // The first session to surface becomes the focus (e.g. the resumed session at
-    // startup). Only the focused session folds into `state` and broadcasts; other
-    // (warm, background) sessions reach maybeNotify but not the focused transcript.
-    if (this.focusedId === null) this.focusedId = sid;
-    if (sid === this.focusedId) {
-      foldEvent(this.state, ev);
-      this.broadcast({ type: "event", event: ev });
+    // Fold + route only for a session someone is viewing (or the landing default).
+    // Background sessions nobody opened are tracked above, but their transcript stays
+    // private — folded only once a client focuses them (switchTo seeds it then).
+    const st = this.sessionStates.get(sid);
+    if (st) {
+      foldEvent(st, ev);
+      for (const conn of this.clients.values())
+        if (conn.focusedId === sid) conn.send({ type: "event", event: ev });
     }
+    // A closed/evicted session drops its folded transcript once nobody is viewing it
+    // (a current viewer keeps its last transcript rather than blanking mid-look). The
+    // landing default is kept so a fresh connection still has something to adopt.
+    if (
+      ev.type === "sessionClosed" &&
+      sid !== this.defaultFocusId &&
+      !this.hasViewer(sid)
+    )
+      this.sessionStates.delete(sid);
     this.maybeNotify(ev);
   }
 
@@ -337,7 +386,8 @@ export class SessionHub {
         }
         break;
       case "hostUiResolved":
-        if (record?.pending.delete(ev.requestId)) record.updatedAt = ev.timestamp;
+        if (record?.pending.delete(ev.requestId))
+          record.updatedAt = ev.timestamp;
         break;
       case "sessionClosed":
         this.attention.delete(sid);
@@ -398,29 +448,32 @@ export class SessionHub {
   }
 
   /** One live-refresh pass: a fresh session list for every client (running rows' counts
-   *  / names / previews climb) + the focused session's current context usage. */
+   *  / names / previews climb) + every running, viewed session's current context usage. */
   private liveTick(): void {
     void this.broadcastSessionList();
     this.refreshUsage();
   }
 
-  /** Emit the focused session's current context usage as a `usageUpdated` event (folded
-   *  into state + broadcast). No-op unless the focused session is the one running and the
-   *  driver can report usage. A dedicated event (not a full snapshot) so a mid-turn
-   *  refresh touches only `usage`, never the streaming transcript / queued / config. */
+  /** Emit each running, currently-viewed session's context usage as a `usageUpdated`
+   *  event (folded into its shared state + routed to its viewers). A dedicated event
+   *  (not a full snapshot) so a mid-turn refresh touches only `usage`, never the
+   *  streaming transcript / queued / config. Sessions nobody is viewing are skipped —
+   *  there is no transcript to refresh. */
   private refreshUsage(): void {
-    const ref = this.state.ref;
-    if (!ref || !this.running.has(ref.sessionId)) return;
-    const usage = this.driver.getUsage?.(ref.sessionId);
-    if (!usage) return;
-    const ev: SessionDriverEvent = {
-      type: "usageUpdated",
-      sessionRef: ref,
-      timestamp: new Date().toISOString(),
-      usage,
-    };
-    foldEvent(this.state, ev);
-    this.broadcast({ type: "event", event: ev });
+    for (const [sid, st] of this.sessionStates) {
+      if (!this.running.has(sid)) continue;
+      const usage = this.driver.getUsage?.(sid);
+      if (!usage) continue;
+      const ev: SessionDriverEvent = {
+        type: "usageUpdated",
+        sessionRef: st.ref ?? { workspaceId: sid, sessionId: sid },
+        timestamp: new Date().toISOString(),
+        usage,
+      };
+      foldEvent(st, ev);
+      for (const conn of this.clients.values())
+        if (conn.focusedId === sid) conn.send({ type: "event", event: ev });
+    }
   }
 
   // Mirror of the client's tab-open notify rules (App.svelte), but server-side and
@@ -469,9 +522,9 @@ export class SessionHub {
   }
 
   private broadcast(msg: ServerMessage): void {
-    for (const send of this.clients) {
+    for (const conn of this.clients.values()) {
       try {
-        send(msg);
+        conn.send(msg);
       } catch (e) {
         console.error("[hub] send failed", e);
       }
@@ -537,31 +590,48 @@ export class SessionHub {
     }
   }
 
-  /** Fetch + broadcast the focused session's slash commands (for the composer
-   *  typeahead). Re-run on session switch since the set is cwd-scoped. */
-  private async broadcastCommandList(): Promise<void> {
+  /** Fetch + send ONE client its focused session's slash commands (for the composer
+   *  typeahead). Per-connection because the set is cwd-scoped and focus is per-client;
+   *  re-sent on that client's connect + session switch. */
+  private async sendCommandList(conn: ClientConn): Promise<void> {
     try {
       const commands = await this.driver.listCommands(
-        this.focusedId ?? undefined,
+        conn.focusedId ?? undefined,
       );
-      this.broadcast({ type: "commandList", commands });
+      conn.send({ type: "commandList", commands });
     } catch (e) {
       console.error("[hub] listCommands failed", e);
     }
   }
 
-  /** Fetch + broadcast the focused session's branch tree (pi's /tree) for the tree view.
-   *  Sent on demand when a client opens the view, and re-broadcast after a branch so an
-   *  open view refreshes. No-op if the driver can't read a tree. The `sessionId` lets a
-   *  client that switched away ignore a late tree. */
-  private async broadcastTree(): Promise<void> {
+  /** Fetch + send ONE client files matching its composer @-mention query. Triggered on
+   *  each keystroke after `@` (debounced client-side ~150ms); the server runs `fd`
+   *  (fast, .gitignore-aware) and echoes the query so the client can ignore stale
+   *  responses. Searches the requesting client's focused session's cwd. */
+  private async sendFileList(conn: ClientConn, query: string): Promise<void> {
+    try {
+      const files = await this.driver.listFiles(
+        query,
+        conn.focusedId ?? undefined,
+      );
+      conn.send({ type: "fileList", query, files });
+    } catch (e) {
+      console.error("[hub] listFiles failed", e);
+    }
+  }
+
+  /** Fetch + send ONE client its focused session's branch tree (pi's /tree) for the tree
+   *  view. Per-connection (scoped to the requester's focus, like the command/file lists),
+   *  so a client opening the tree view sees ITS session, not whatever another client is on.
+   *  No-op if the driver can't read a tree. */
+  private async sendTree(conn: ClientConn): Promise<void> {
     if (!this.driver.getTree) return;
     try {
-      const tree = await this.driver.getTree(this.focusedId ?? undefined);
+      const tree = await this.driver.getTree(conn.focusedId ?? undefined);
       if (!tree) return;
-      this.broadcast({
+      conn.send({
         type: "treeState",
-        sessionId: this.focusedId,
+        sessionId: conn.focusedId,
         nodes: tree.nodes,
         leafId: tree.leafId,
       });
@@ -570,19 +640,24 @@ export class SessionHub {
     }
   }
 
-  /** Fetch + broadcast files matching a composer @-mention query. Triggered on each
-   *  client keystroke after `@` (debounced client-side ~150ms); the server runs `fd`
-   *  (fast, .gitignore-aware) and echoes the query so the client can ignore stale
-   *  responses. Searches the focused session's cwd. */
-  private async broadcastFileList(query: string): Promise<void> {
+  /** Re-send the branch tree to every client viewing `sid` after a branch moved its leaf
+   *  (or added an abandoned-branch summary), so an open tree view refreshes. The branch
+   *  mutated the shared session, so all its viewers — not just the brancher — must update. */
+  private async refreshTreeForViewers(sid: SessionId): Promise<void> {
+    if (!this.driver.getTree) return;
     try {
-      const files = await this.driver.listFiles(
-        query,
-        this.focusedId ?? undefined,
-      );
-      this.broadcast({ type: "fileList", query, files });
+      const tree = await this.driver.getTree(sid);
+      if (!tree) return;
+      for (const conn of this.clients.values())
+        if (conn.focusedId === sid)
+          conn.send({
+            type: "treeState",
+            sessionId: sid,
+            nodes: tree.nodes,
+            leafId: tree.leafId,
+          });
     } catch (e) {
-      console.error("[hub] listFiles failed", e);
+      console.error("[hub] getTree failed", e);
     }
   }
 
@@ -784,85 +859,124 @@ export class SessionHub {
     await this.broadcastSessionList();
   }
 
-  /** Re-scan available sessions and broadcast the list + the active session id
-   *  (derived from the folded state, so the picker's "active" row is authoritative). */
+  /** Re-scan available sessions and send the list to every client. The list CONTENT is
+   *  shared (one disk scan), but `activeSessionId` is per-connection — each client
+   *  highlights its OWN focused row, so one client switching never moves another's
+   *  highlight. */
   private async broadcastSessionList(): Promise<void> {
     try {
       const sessions = await this.driver.listSessions();
-      this.broadcast({
-        type: "sessionList",
-        sessions,
-        activeSessionId: this.focusedId,
-        defaultNewSessionCwd: homedir(),
-      });
+      const defaultNewSessionCwd = homedir();
+      for (const conn of this.clients.values())
+        conn.send({
+          type: "sessionList",
+          sessions,
+          activeSessionId: conn.focusedId,
+          defaultNewSessionCwd,
+        });
     } catch (e) {
       console.error("[hub] listSessions failed", e);
     }
   }
 
   /**
-   * Atomically switch the active session: run the driver swap (which resolves with
-   * the new session's seed events), reset state, fold the seed, then re-snapshot all
-   * clients and refresh the list. `switching` suppresses any stray events meanwhile.
-   * The swap is server-authoritative — every connected client follows along.
+   * Switch ONE client's focus to the session a driver swap resolves to. The swap warms +
+   * seeds the target; we fold that seed into the target's shared state (unless it's
+   * already live — see below), point this connection at it, and re-snapshot. Other
+   * clients are untouched: focus is per-connection. Single-flight per connection (a
+   * trust card can block the swap for minutes). The session LIST re-broadcasts to all
+   * (its content may have changed, e.g. a new session) but each keeps its own
+   * activeSessionId; commands are cwd-scoped, so only the switcher gets them.
+   *
+   * `reseed` (branch): rebuild the state even if the session is already live and
+   * re-snapshot EVERY viewer — navigateTree mutated the shared session, so the new
+   * branch transcript is authoritative for everyone looking at it. Without it, opening
+   * an already-viewed session reuses the live state (which may hold an in-flight
+   * streaming bubble the seed's committed-history view would drop).
    */
   private async switchTo(
+    conn: ClientConn,
     swap: () => Promise<SessionDriverEvent[]>,
-  ): Promise<boolean> {
-    if (this.switchInFlight) {
-      this.broadcast({
+    opts: { reseed?: boolean } = {},
+  ): Promise<SessionId | null> {
+    if (conn.switchInFlight) {
+      conn.send({
         type: "error",
         message:
           "a session switch is already in progress — answer the trust prompt first",
       });
-      return false;
+      return null;
     }
-    this.switchInFlight = true;
-    this.switching = true;
+    conn.switchInFlight = true;
     try {
       let seed: SessionDriverEvent[];
       try {
         seed = await swap();
       } catch (e) {
-        this.switching = false;
-        this.broadcast({
-          type: "error",
-          message: `session switch failed: ${e}`,
-        });
-        return false;
+        conn.send({ type: "error", message: `session switch failed: ${e}` });
+        return null;
       }
-      this.state = initialSessionState();
+      // Fold into a fresh state to learn the authoritative session id — the seed's
+      // sessionOpened snapshot ref, which is what the focus + list highlight key off.
+      const built = initialSessionState();
       let metaChanged = false;
-      for (const ev of seed) {
-        foldEvent(this.state, ev);
-        metaChanged = this.trackRunning(ev.sessionRef.sessionId, ev) || metaChanged;
+      for (const e of seed) {
+        foldEvent(built, e);
         metaChanged =
-          this.trackAttention(ev.sessionRef.sessionId, ev) || metaChanged;
+          this.trackRunning(e.sessionRef.sessionId, e) || metaChanged;
+        metaChanged =
+          this.trackAttention(e.sessionRef.sessionId, e) || metaChanged;
       }
-      // Focus follows the swapped-to session; its id rides the seed's sessionOpened.
-      this.focusedId = this.state.ref?.sessionId ?? this.focusedId;
-      this.switching = false;
-      if (metaChanged) this.broadcastSessionStatus();
-      this.broadcast({ type: "snapshot", state: this.snapshot() });
+      const sid = built.ref?.sessionId ?? seed[0]?.sessionRef.sessionId ?? null;
+      if (!sid) {
+        conn.send({
+          type: "error",
+          message: "session switch returned no session",
+        });
+        return null;
+      }
+      // (Re)build the shared state from this authoritative seed when the session isn't
+      // already live, or always on a branch reseed. If another client is already viewing
+      // it, its shared state is current (and may hold an in-flight streaming bubble the
+      // seed's committed-history view would drop) — reuse it rather than clobber.
+      if (opts.reseed || !this.sessionStates.has(sid)) {
+        this.sessionStates.set(sid, built);
+        if (metaChanged) this.broadcastSessionStatus();
+      }
+      conn.focusedId = sid;
+      // On a reseed (branch) the shared transcript changed for everyone viewing it; else
+      // only the requester moved its focus.
+      if (opts.reseed)
+        for (const viewer of this.clients.values()) {
+          if (viewer.focusedId === sid)
+            viewer.send({ type: "snapshot", state: this.snapshotOf(sid) });
+        }
+      else conn.send({ type: "snapshot", state: this.snapshotOf(sid) });
       await this.broadcastSessionList();
-      // Commands are cwd-scoped — the swapped-to session may expose a different set.
-      await this.broadcastCommandList();
-      return true;
+      await this.sendCommandList(conn);
+      return sid;
     } finally {
-      this.switchInFlight = false;
+      conn.switchInFlight = false;
     }
   }
 
-  /** Register a client. Synchronously sends hello + snapshot, then live events. */
+  /** Register a client. Synchronously sends hello + a snapshot of the session this
+   *  connection focuses (the landing default; a brand-new pi client has none and lands
+   *  empty, then restores its own last-focused session). Focus is per-connection. */
   addClient(send: Send): () => void {
-    this.clients.add(send);
+    const conn: ClientConn = {
+      send,
+      focusedId: this.defaultFocusId,
+      switchInFlight: false,
+    };
+    this.clients.set(send, conn);
     this.everConnected = true;
     send({
       type: "hello",
       protocolVersion: PROTOCOL_VERSION,
       serverId: this.serverId,
     });
-    send({ type: "snapshot", state: this.snapshot() });
+    send({ type: "snapshot", state: this.snapshotOf(conn.focusedId) });
     // Tell the fresh client what's already running / warming up (in-memory, synchronous).
     send({
       type: "sessionStatus",
@@ -886,7 +1000,7 @@ export class SessionHub {
     // first.
     void this.broadcastSessionList();
     void this.broadcastModelList();
-    void this.broadcastCommandList();
+    void this.sendCommandList(conn);
     void this.broadcastProviderList();
     void this.broadcastModelDefaults();
     // A client arriving while a turn is already running starts the ticker (and one
@@ -899,13 +1013,21 @@ export class SessionHub {
   }
 
   handleClient(send: Send, msg: ClientMessage): void {
+    // Resolve the connection so session-scoped commands fall back to ITS focus, not a
+    // global one. A transient stand-in (focus = the landing default) covers tests that
+    // drive handleClient without addClient — none of those switch focus.
+    const conn = this.clients.get(send) ?? {
+      send,
+      focusedId: this.defaultFocusId,
+      switchInFlight: false,
+    };
     switch (msg.type) {
       case "hello":
       case "ping":
         return;
       case "prompt":
         this.acceptPrompt(send, msg.promptId, async () => {
-          const sessionId = msg.sessionId ?? this.focusedId ?? undefined;
+          const sessionId = msg.sessionId ?? conn.focusedId ?? undefined;
           await this.driver.prompt(
             msg.text,
             msg.deliverAs,
@@ -917,59 +1039,64 @@ export class SessionHub {
         });
         return;
       case "abort":
-        this.driver.abort(msg.sessionId ?? this.focusedId ?? undefined);
+        this.driver.abort(msg.sessionId ?? conn.focusedId ?? undefined);
         return;
       case "restoreQueue": {
         if (!this.driver.clearQueue) {
-          send({ type: "error", message: "queue restore isn't supported here" });
+          send({
+            type: "error",
+            message: "queue restore isn't supported here",
+          });
           return;
         }
         const restored = this.driver.clearQueue(
-          msg.sessionId ?? this.focusedId ?? undefined,
+          msg.sessionId ?? conn.focusedId ?? undefined,
         );
         send({ type: "queueRestored", ...restored });
         return;
       }
       case "respondUi": {
         // First-responder-wins: only the first answer for a still-pending dialog
-        // reaches the driver. A second device answering the same id is dropped, so
-        // the real pi session never gets a double resolution. The dialog lives in
-        // the focused session's state (the only one clients can see + answer).
+        // reaches the driver. A second device (or co-viewer of the same session)
+        // answering the same id is dropped, so the real pi session never gets a double
+        // resolution. The dialog lives in the targeted session's shared state.
+        const sid = msg.sessionId ?? conn.focusedId ?? undefined;
+        const st = sid ? this.sessionStates.get(sid) : undefined;
         const id = msg.response.requestId;
-        if (!this.state.pendingApprovals.some((p) => p.requestId === id))
-          return;
-        this.driver.respondUi(
-          msg.response,
-          msg.sessionId ?? this.focusedId ?? undefined,
-        );
+        if (!st?.pendingApprovals.some((p) => p.requestId === id)) return;
+        this.driver.respondUi(msg.response, sid);
         return;
       }
       case "setModel":
         this.driver.setModel(
           msg.provider,
           msg.modelId,
-          msg.sessionId ?? this.focusedId ?? undefined,
+          msg.sessionId ?? conn.focusedId ?? undefined,
         );
         return;
       case "setThinking":
         this.driver.setThinking(
           msg.level,
-          msg.sessionId ?? this.focusedId ?? undefined,
+          msg.sessionId ?? conn.focusedId ?? undefined,
         );
         return;
       case "openSession":
-        void this.switchTo(() => this.driver.openSession(msg.path));
+        void this.switchTo(conn, () => this.driver.openSession(msg.path));
         return;
       case "branch": {
         if (!this.driver.branchFrom) {
           send({ type: "error", message: "branching isn't supported here" });
           return;
         }
+        const targetId = msg.sessionId ?? conn.focusedId ?? undefined;
         // A navigate mid-turn would interleave the in-flight run into the new branch.
-        // Gate on the FOCUSED session's status — the only transcript a client can branch.
+        // Gate on the target session's status — the transcript this client is branching.
+        const targetState = targetId
+          ? this.sessionStates.get(targetId)
+          : undefined;
         if (
-          this.state.status === "running" ||
-          this.state.status === "initializing"
+          targetState?.status === "running" ||
+          targetState?.status === "initializing"
         ) {
           send({
             type: "error",
@@ -977,23 +1104,27 @@ export class SessionHub {
           });
           return;
         }
-        // Re-seed every client through the same atomic path openSession uses; the
-        // editorText (a user-prompt branch's re-editable text) is per-client, so it goes
-        // ONLY to the requester after the swap lands.
+        // navigateTree mutates the shared session's leaf, so reseed re-snapshots every
+        // viewer of it. The editorText (a user-prompt branch's re-editable text) is
+        // per-client, so it goes ONLY to the requester after the swap lands.
         let prefill: string | undefined;
-        void this.switchTo(async () => {
-          const r = await this.driver.branchFrom!(
-            msg.entryId,
-            { summarize: msg.summarize },
-            msg.sessionId ?? this.focusedId ?? undefined,
-          );
-          prefill = r.editorText;
-          return r.seed;
-        }).then((ok) => {
-          if (ok && prefill) send({ type: "editorPrefill", text: prefill });
-          // The leaf moved (and an abandoned-branch summary may have appeared), so refresh
-          // any open tree view — on this client and any other watching the same session.
-          if (ok) void this.broadcastTree();
+        void this.switchTo(
+          conn,
+          async () => {
+            const r = await this.driver.branchFrom!(
+              msg.entryId,
+              { summarize: msg.summarize },
+              targetId,
+            );
+            prefill = r.editorText;
+            return r.seed;
+          },
+          { reseed: true },
+        ).then((sid) => {
+          if (sid && prefill) send({ type: "editorPrefill", text: prefill });
+          // The leaf moved (and an abandoned-branch summary may have appeared), so
+          // refresh any open tree view on every client viewing this session.
+          if (sid) void this.refreshTreeForViewers(sid);
         });
         return;
       }
@@ -1007,7 +1138,7 @@ export class SessionHub {
         const hasFirstPrompt =
           firstPrompt.length > 0 || (firstImages?.length ?? 0) > 0;
         const createAndPrompt = async (): Promise<SessionId | undefined> => {
-          const ok = await this.switchTo(() =>
+          const sid = await this.switchTo(conn, () =>
             this.driver.newSession({
               cwd: msg.cwd,
               worktree: msg.worktree,
@@ -1015,8 +1146,8 @@ export class SessionHub {
               thinking: msg.thinking,
             }),
           );
-          if (!ok) throw new Error("Could not create the new session");
-          const sessionId = this.focusedId ?? undefined;
+          if (!sid) throw new Error("Could not create the new session");
+          const sessionId = sid;
           if (hasFirstPrompt) {
             try {
               await this.driver.prompt(
@@ -1059,13 +1190,13 @@ export class SessionHub {
         void this.applyWorktreeCleanup(send, msg.path, msg.force);
         return;
       case "listCommands":
-        void this.broadcastCommandList();
+        void this.sendCommandList(conn);
         return;
       case "queryTree":
-        void this.broadcastTree();
+        void this.sendTree(conn);
         return;
       case "queryFiles":
-        void this.broadcastFileList(msg.query);
+        void this.sendFileList(conn, msg.query);
         return;
       case "listProviders":
         void this.broadcastProviderList();
@@ -1138,11 +1269,12 @@ export class SessionHub {
     }
   }
 
-  /** Dev/test-only: clear state, optionally replay the mock's initial fixture, and
-   *  re-snapshot clients. `bootstrap:false` exposes the production empty landing. */
+  /** Dev/test-only: clear all session state, optionally re-seed the mock's landing
+   *  fixture, and re-point + re-snapshot every connected client. `bootstrap:false`
+   *  exposes the production empty landing. */
   reset(opts: { bootstrap?: boolean } = {}): void {
-    this.state = initialSessionState();
-    this.focusedId = null;
+    this.sessionStates.clear();
+    this.defaultFocusId = null;
     this.running.clear();
     this.initializing.clear();
     this.attention.clear();
@@ -1150,13 +1282,22 @@ export class SessionHub {
     this.updateSha = null;
     this.applying = false;
     this.driver.reset?.(opts);
-    this.broadcast({ type: "snapshot", state: this.snapshot() });
+    this.seedDefault();
+    for (const conn of this.clients.values()) {
+      conn.focusedId = this.defaultFocusId;
+      conn.switchInFlight = false;
+      conn.send({ type: "snapshot", state: this.snapshotOf(conn.focusedId) });
+    }
     this.broadcastSessionStatus();
+    void this.broadcastSessionList();
+    for (const conn of this.clients.values()) void this.sendCommandList(conn);
   }
 
-  /** A JSON-safe deep copy of current state (foldEvent mutates in place). */
+  /** A JSON-safe deep copy of the landing session's folded state (foldEvent mutates in
+   *  place). Per-client focus means there's no single global view; this reports the
+   *  landing default — what a fresh client sees, and what /debug/state surfaces. */
   snapshot(): SessionState {
-    return structuredClone(this.state);
+    return this.snapshotOf(this.defaultFocusId);
   }
 
   clientCount(): number {

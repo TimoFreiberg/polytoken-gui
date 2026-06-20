@@ -174,6 +174,10 @@ export class MockDriver implements PilotDriver {
   // An overlay — not a mutation of the fixture count — so idle and reset() restore baseline.
   private liveCountBumps = new Map<string, number>();
   private queues = new Map<string, SessionQueuedMessage[]>();
+  // Whether the bootstrap greeting is the landing session. The hub reads it via
+  // defaultSeed() to give a freshly-connecting client the demo transcript without a
+  // live replay (per-client focus: each connection adopts the default on its own).
+  private bootstrapped = false;
 
   subscribe(listener: (ev: SessionDriverEvent) => void): () => void {
     this.listeners.add(listener);
@@ -299,9 +303,21 @@ export class MockDriver implements PilotDriver {
     }
   }
 
-  /** Emit the initial conversation so a fresh server isn't blank. */
+  /** Make the greeting the landing session so a fresh server isn't blank. The
+   *  transcript is delivered via defaultSeed() (folded once per connecting client),
+   *  not a live replay — so two clients can adopt it independently without racing or
+   *  double-folding a streaming greeting. */
   bootstrap(): void {
-    this.play(greeting());
+    this.bootstrapped = true;
+  }
+
+  /** The landing session's seed (the greeting) when bootstrapped, else null (the
+   *  empty production landing). Same events as openSession(demo) / a live greeting, so
+   *  folding it yields the identical transcript. */
+  defaultSeed(): SessionDriverEvent[] | null {
+    return this.bootstrapped
+      ? mockSessionSeed("/sessions/demo-session.jsonl")
+      : null;
   }
 
   /** Cancel everything in flight and optionally replay the initial fixture. Skipping
@@ -319,7 +335,7 @@ export class MockDriver implements PilotDriver {
       favorites: [...MOCK_MODEL_DEFAULTS.favorites],
     };
     this.liveUsageTokens = MOCK_USAGE.tokens ?? 0;
-    if (opts.bootstrap !== false) this.bootstrap();
+    this.bootstrapped = opts.bootstrap !== false;
   }
 
   prompt(
@@ -330,7 +346,9 @@ export class MockDriver implements PilotDriver {
     promptId?: string,
   ): Promise<void> {
     if (text === "__pilot_reject_prompt__")
-      return Promise.reject(new Error("Mock prompt rejected before acceptance"));
+      return Promise.reject(
+        new Error("Mock prompt rejected before acceptance"),
+      );
     this.play(promptReply(text, promptId, images));
     return Promise.resolve();
   }
