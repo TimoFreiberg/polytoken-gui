@@ -14,6 +14,7 @@ import type {
   SessionSnapshot,
   SessionStatus,
 } from "@pilot/protocol";
+import { queueMessages } from "./queue-map.js";
 
 export interface MapCtx {
   ref: SessionRef;
@@ -207,6 +208,15 @@ export function mapPiEvent(
         },
       ];
 
+    case "queue_update":
+      return [
+        {
+          ...meta,
+          type: "queueUpdated",
+          messages: queueMessages(ev.steering, ev.followUp, meta.timestamp),
+        },
+      ];
+
     case "auto_retry_start":
       return [
         {
@@ -236,7 +246,7 @@ export function mapPiEvent(
       ];
 
     default:
-      // turn_start/turn_end, queue_update, compaction_end, auto_retry_end,
+      // turn_start/turn_end, compaction_end, auto_retry_end,
       // thinking_level_changed, message_end, and assistant start/done are
       // intentionally not surfaced — the reducer derives what it needs from deltas.
       // (message_start IS surfaced, but only for role:"custom" — see above.)

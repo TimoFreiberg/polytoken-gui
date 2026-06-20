@@ -45,6 +45,35 @@ describe("foldEvent", () => {
     expect(s.items[0]).toMatchObject({ kind: "user", text: "hi", ts: "t1" });
   });
 
+  test("queueUpdated replaces the full queue and omitted snapshots preserve it", () => {
+    const queued = {
+      id: "q1",
+      mode: "steer" as const,
+      text: "Inspect first",
+      createdAt: "t1",
+      updatedAt: "t1",
+    };
+    const s = initialSessionState();
+    foldEvent(s, base({ type: "queueUpdated", messages: [queued] }));
+    expect(s.queued).toEqual([queued]);
+    foldEvent(
+      s,
+      base({
+        type: "sessionUpdated",
+        snapshot: {
+          ref,
+          workspace: { workspaceId: "w", path: "/w" },
+          title: "T",
+          status: "running",
+          updatedAt: "t2",
+        },
+      }),
+    );
+    expect(s.queued).toEqual([queued]);
+    foldEvent(s, base({ type: "queueUpdated", messages: [] }));
+    expect(s.queued).toEqual([]);
+  });
+
   test("customMessage folds to an inject item and closes the open assistant", () => {
     const s = foldAll([
       base({ type: "assistantDelta", text: "final", channel: "text" }),

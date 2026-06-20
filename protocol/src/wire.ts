@@ -160,6 +160,13 @@ export type ServerMessage =
       sessionId?: SessionId;
       error?: string;
     }
+  /** Text returned after atomically clearing pi's steering/follow-up queues. Sent only
+   *  to the client that requested restore; the shared empty queue arrives as an event. */
+  | {
+      type: "queueRestored";
+      steering: readonly string[];
+      followUp: readonly string[];
+    }
   | { type: "error"; message: string };
 
 export type ClientMessage =
@@ -174,6 +181,9 @@ export type ClientMessage =
       sessionId?: SessionId;
     }
   | { type: "abort"; sessionId?: SessionId }
+  /** Clear every pending steering/follow-up message and restore their text to this
+   *  client's editor (Pi parity: Alt+Up). */
+  | { type: "restoreQueue"; sessionId?: SessionId }
   | { type: "respondUi"; response: HostUiResponse; sessionId?: SessionId }
   /** Switch a session's model. Omit sessionId to target the focused session. */
   | {

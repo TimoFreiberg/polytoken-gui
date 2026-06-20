@@ -285,10 +285,28 @@ describe("mapPiEvent", () => {
     });
   });
 
+  test("queue_update replaces the full steering/follow-up queue", () => {
+    const out = mapPiEvent(
+      pi({
+        type: "queue_update",
+        steering: ["Inspect the failure"],
+        followUp: ["Summarize afterward"],
+      }),
+      ctx,
+    );
+    expect(out).toHaveLength(1);
+    expect(out[0]).toMatchObject({
+      type: "queueUpdated",
+      messages: [
+        { mode: "steer", text: "Inspect the failure" },
+        { mode: "followUp", text: "Summarize afterward" },
+      ],
+    });
+    if (out[0]?.type === "queueUpdated")
+      expect(new Set(out[0].messages.map((message) => message.id)).size).toBe(2);
+  });
+
   test("ignored events map to nothing", () => {
     expect(mapPiEvent(pi({ type: "turn_start" }), ctx)).toEqual([]);
-    expect(
-      mapPiEvent(pi({ type: "queue_update", steering: [], followUp: [] }), ctx),
-    ).toEqual([]);
   });
 });

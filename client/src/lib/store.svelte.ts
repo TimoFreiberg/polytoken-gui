@@ -411,6 +411,16 @@ class PilotStore {
         this.composerDraft = msg.text;
         this.focusComposer();
         break;
+      case "queueRestored": {
+        const restored = [...msg.steering, ...msg.followUp].join("\n\n");
+        if (restored) {
+          this.composerDraft = [restored, this.composerDraft]
+            .filter((text) => text.trim())
+            .join("\n\n");
+          this.focusComposer();
+        }
+        break;
+      }
       case "promptResult":
         void this.settlePrompt(msg);
         break;
@@ -665,6 +675,11 @@ class PilotStore {
   }
   abort(): void {
     send({ type: "abort" });
+  }
+  /** Pi-parity dequeue: atomically clear every steer/follow-up and return it here. */
+  restoreQueue(): void {
+    if (!send({ type: "restoreQueue" }))
+      this.lastError = "Can't restore queued messages while offline.";
   }
   /** Apply the staged desktop update now (the sidebar card's button). The server marks
    *  it applying; the watcher pulls/rebuilds/restarts and the card clears on reconnect. */

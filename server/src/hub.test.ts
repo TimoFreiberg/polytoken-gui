@@ -71,6 +71,17 @@ class FakeDriver implements PilotDriver {
     return Promise.resolve();
   }
   abort() {}
+  queue = {
+    steering: ["Steer one"],
+    followUp: ["Follow up"],
+  };
+  readonly clearQueueCalls: (string | undefined)[] = [];
+  clearQueue(sessionId?: string) {
+    this.clearQueueCalls.push(sessionId);
+    const restored = this.queue;
+    this.queue = { steering: [], followUp: [] };
+    return restored;
+  }
   respondUi(r: HostUiResponse) {
     this.responded.push(r);
     this.emit(ev({ type: "hostUiResolved", requestId: r.requestId }));
@@ -303,6 +314,42 @@ describe("SessionHub", () => {
 
     expect(d.responded).toHaveLength(1);
     expect(d.responded[0]).toMatchObject({ confirmed: true });
+  });
+
+  test("restoreQueue clears the target once and replies only to the requester", () => {
+    const d = new FakeDriver();
+    const hub = new SessionHub(d);
+    const a = client();
+    const b = client();
+    hub.addClient(a.send);
+    hub.addClient(b.send);
+    a.received.length = 0;
+    b.received.length = 0;
+
+    hub.handleClient(a.send, { type: "restoreQueue", sessionId: "s2" });
+
+    expect(d.clearQueueCalls).toEqual(["s2"]);
+    expect(a.received).toContainEqual({
+      type: "queueRestored",
+      steering: ["Steer one"],
+      followUp: ["Follow up"],
+    });
+    expect(b.received.some((message) => message.type === "queueRestored")).toBe(
+      false,
+    );
+  });
+
+  test("restoreQueue returns an empty result without changing the editor contract", () => {
+    const d = new FakeDriver();
+    d.queue = { steering: [], followUp: [] };
+    const hub = new SessionHub(d);
+    const a = client();
+    hub.handleClient(a.send, { type: "restoreQueue" });
+    expect(a.received.at(-1)).toEqual({
+      type: "queueRestored",
+      steering: [],
+      followUp: [],
+    });
   });
 
   test("a connecting client eventually receives the session list", async () => {

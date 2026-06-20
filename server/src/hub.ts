@@ -899,6 +899,17 @@ export class SessionHub {
       case "abort":
         this.driver.abort(msg.sessionId ?? this.focusedId ?? undefined);
         return;
+      case "restoreQueue": {
+        if (!this.driver.clearQueue) {
+          send({ type: "error", message: "queue restore isn't supported here" });
+          return;
+        }
+        const restored = this.driver.clearQueue(
+          msg.sessionId ?? this.focusedId ?? undefined,
+        );
+        send({ type: "queueRestored", ...restored });
+        return;
+      }
       case "respondUi": {
         // First-responder-wins: only the first answer for a still-pending dialog
         // reaches the driver. A second device answering the same id is dropped, so

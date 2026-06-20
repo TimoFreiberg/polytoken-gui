@@ -57,6 +57,7 @@ import type {
 } from "../driver.js";
 import { correlateEntryIds } from "./branch-ids.js";
 import { mapPiEvent } from "./event-map.js";
+import { queueMessages } from "./queue-map.js";
 import {
   contentToText,
   type HistoryMessage,
@@ -411,6 +412,11 @@ export async function createPiDriver(
         availableThinkingLevels: ws.session.getAvailableThinkingLevels(),
       },
       usage: usageFor(ws),
+      queuedMessages: queueMessages(
+        ws.session.getSteeringMessages(),
+        ws.session.getFollowUpMessages(),
+        now(),
+      ),
     };
   };
 
@@ -824,6 +830,11 @@ export async function createPiDriver(
       target(sessionId)
         ?.session.abort()
         .catch(() => {});
+    },
+
+    clearQueue(sessionId) {
+      const ws = target(sessionId);
+      return ws?.session.clearQueue() ?? { steering: [], followUp: [] };
     },
 
     respondUi(response: HostUiResponse, sessionId) {

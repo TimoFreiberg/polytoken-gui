@@ -61,6 +61,10 @@ export interface PilotDriver {
     promptId?: string,
   ): Promise<void>;
   abort(sessionId?: SessionId): void;
+  /** Atomically clear and return the targeted session's text-only pi queues. */
+  clearQueue?(
+    sessionId?: SessionId,
+  ): { steering: string[]; followUp: string[] };
   respondUi(response: HostUiResponse, sessionId?: SessionId): void;
 
   /** Sessions on disk available to open (D13: pi's .jsonl files are authoritative).

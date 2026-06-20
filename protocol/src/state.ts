@@ -220,7 +220,10 @@ export function foldEvent(
       // (e.g. the mock's abort) doesn't blank a known meter value. A defined usage
       // with tokens:null is still meaningful (window known, count pending).
       if (s.usage) state.usage = s.usage;
-      state.queued = s.queuedMessages ? [...s.queuedMessages] : [];
+      // Queue changes have their own authoritative `queueUpdated` event. A snapshot that
+      // carries the queue replaces it (including []); an older/partial snapshot that omits
+      // the field must not erase live queue state.
+      if (s.queuedMessages) state.queued = [...s.queuedMessages];
       // Close any open assistant when the turn ends. runCompleted always ends a
       // turn; a sessionUpdated/runCompleted snapshot whose status is no longer
       // "running" (idle or failed) also ends it. Without this, an idle
@@ -289,6 +292,10 @@ export function foldEvent(
       state.queued = state.queued.filter((q) => q.id !== ev.message.id);
       return state;
     }
+
+    case "queueUpdated":
+      state.queued = [...ev.messages];
+      return state;
 
     case "assistantDelta": {
       const open = openAssistant(state.items);

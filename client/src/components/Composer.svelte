@@ -11,6 +11,7 @@
   import SegmentedControl from "./ui/SegmentedControl.svelte";
   import IconButton from "./ui/IconButton.svelte";
   import TaskList from "./TaskList.svelte";
+  import QueueTray from "./QueueTray.svelte";
   import { parseTasklist } from "../lib/tasklist.js";
 
   let deliverAs = $state<"steer" | "followUp">("steer");
@@ -312,9 +313,24 @@
   }
 
   function onKeydown(e: KeyboardEvent) {
-    // Alt+Up/Down resize the composer (checked before the slash menu's bare
-    // Arrow handling, which has no modifier).
-    if (e.altKey && (e.key === "ArrowUp" || e.key === "ArrowDown")) {
+    // Pi parity: Alt+Up restores every queued steer/follow-up to the editor. Keep the
+    // composer's expand/collapse hotkey on Alt+Shift+Up/Down so the actions don't collide.
+    if (
+      e.altKey &&
+      !e.shiftKey &&
+      e.key === "ArrowUp" &&
+      !drafting &&
+      store.session.queued.length > 0
+    ) {
+      e.preventDefault();
+      store.restoreQueue();
+      return;
+    }
+    if (
+      e.altKey &&
+      e.shiftKey &&
+      (e.key === "ArrowUp" || e.key === "ArrowDown")
+    ) {
       e.preventDefault();
       expanded = e.key === "ArrowUp";
       queueMicrotask(autosize);
@@ -457,6 +473,8 @@
       {/if}
     {/each}
 
+    <QueueTray />
+
     {#if streaming}
       <div class="streamrow">
         <SegmentedControl size="sm" ariaLabel="Delivery mode" options={deliverModes} bind:value={deliverAs} />
@@ -536,7 +554,7 @@
         onclick={toggleExpand}
         aria-pressed={expanded}
         aria-label={expanded ? "Collapse composer" : "Expand composer"}
-        title={expanded ? "Collapse composer (⌥↓)" : "Expand composer (⌥↑)"}
+        title={expanded ? "Collapse composer (⌥⇧↓)" : "Expand composer (⌥⇧↑)"}
         tabindex="-1"
       >{expanded ? "⌄" : "⌃"}</button>
       <textarea

@@ -16,6 +16,7 @@ import {
   type SessionConfig,
   type SessionDriverEvent,
   type SessionListEntry,
+  type SessionQueuedMessage,
   type SessionUsage,
 } from "@pilot/protocol";
 import type {
@@ -168,6 +169,7 @@ export class MockDriver implements PilotDriver {
   // on runCompleted so an idle row shows its true operator-turn count (sidebar-context.e2e).
   // An overlay — not a mutation of the fixture count — so idle and reset() restore baseline.
   private liveCountBumps = new Map<string, number>();
+  private queues = new Map<string, SessionQueuedMessage[]>();
 
   subscribe(listener: (ev: SessionDriverEvent) => void): () => void {
     this.listeners.add(listener);
@@ -187,6 +189,19 @@ export class MockDriver implements PilotDriver {
         console.error("[mock] listener error", e);
       }
     }
+  }
+
+  private emitQueue(sessionId: string): void {
+    const sessionRef =
+      sessionId === SESSION_REF.sessionId
+        ? SESSION_REF
+        : { workspaceId: SESSION_REF.workspaceId, sessionId };
+    this.emit({
+      sessionRef,
+      timestamp: String(Date.now()),
+      type: "queueUpdated",
+      messages: this.queues.get(sessionId) ?? [],
+    });
   }
 
   private emitTrust(ev: TrustEvent): void {
@@ -289,6 +304,7 @@ export class MockDriver implements PilotDriver {
    *  bootstrap exposes the real driver's empty startup landing for focused e2e tests. */
   reset(opts: { bootstrap?: boolean } = {}): void {
     this.cancelTimers();
+    this.queues.clear();
     this.sessions = SESSION_LIST.map((s) => ({ ...s }));
     this.liveCountBumps.clear();
     this.worktrees = seedWorktrees(SESSION_LIST);
@@ -346,6 +362,23 @@ export class MockDriver implements PilotDriver {
         updatedAt: String(Date.now()),
       },
     });
+  }
+
+  clearQueue(sessionId = SESSION_REF.sessionId): {
+    steering: string[];
+    followUp: string[];
+  } {
+    const queued = this.queues.get(sessionId) ?? [];
+    this.queues.set(sessionId, []);
+    this.emitQueue(sessionId);
+    return {
+      steering: queued
+        .filter((message) => message.mode === "steer")
+        .map((message) => message.text),
+      followUp: queued
+        .filter((message) => message.mode === "followUp")
+        .map((message) => message.text),
+    };
   }
 
   respondUi(response: HostUiResponse): void {
@@ -479,6 +512,19 @@ export class MockDriver implements PilotDriver {
   async openSession(path: string): Promise<SessionDriverEvent[]> {
     const seed = mockSessionSeed(path);
     const sessionId = seed[0]?.sessionRef.sessionId;
+    const queued = sessionId ? (this.queues.get(sessionId) ?? []) : [];
+    const withQueue = seed.map((event): SessionDriverEvent => {
+      if (
+        event.type !== "sessionOpened" &&
+        event.type !== "sessionUpdated" &&
+        event.type !== "runCompleted"
+      )
+        return event;
+      return {
+        ...event,
+        snapshot: { ...event.snapshot, queuedMessages: queued },
+      };
+    });
     const pending = [...this.pendingDialogs.values()]
       .filter((p) => p.sessionRef.sessionId === sessionId)
       .map(
@@ -489,7 +535,7 @@ export class MockDriver implements PilotDriver {
           request: p.request,
         }),
       );
-    return [...seed, ...pending];
+    return [...withQueue, ...pending];
   }
 
   /** Deterministic stand-in for pi's navigateTree. A user-prompt target (e-u1) rewinds
@@ -669,6 +715,40 @@ export class MockDriver implements PilotDriver {
       const req = mockTrustRequest();
       this.pendingTrust.add(req.requestId);
       this.emitTrust({ kind: "request", request: req });
+      return;
+    }
+    if (name === "queue") {
+      this.queues.set(SESSION_REF.sessionId, [
+        {
+          id: "queue-steer-fixture",
+          mode: "steer",
+          text: "Please inspect the failing test first.",
+          createdAt: "queue-1",
+          updatedAt: "queue-1",
+        },
+        {
+          id: "queue-followup-fixture",
+          mode: "followUp",
+          text: "Then summarize the fix and remaining risks.",
+          createdAt: "queue-2",
+          updatedAt: "queue-2",
+        },
+      ]);
+      this.emitQueue(SESSION_REF.sessionId);
+      return;
+    }
+    if (name === "deliverqueue") {
+      const queued = this.queues.get(SESSION_REF.sessionId) ?? [];
+      const [next, ...remaining] = queued;
+      if (!next) return;
+      this.queues.set(SESSION_REF.sessionId, remaining);
+      this.emit({
+        sessionRef: SESSION_REF,
+        timestamp: String(Date.now()),
+        type: "queuedMessageStarted",
+        message: next,
+      });
+      this.emitQueue(SESSION_REF.sessionId);
       return;
     }
     const map: Record<string, () => ScriptStep[]> = {

@@ -29,13 +29,15 @@ See `docs/` siblings for context: `DESIGN.md` (architecture + roadmap), `DECISIO
       approval is immediately actionable. Unit tests cover activity/wait/failure/reconnect
       state; E2E covers background approval → project indicator → one-tap focus, deep-link
       boot routing, and running → done → read.
-- [ ] **Queued-message tray + restore/edit flow** — pi emits the complete
-      `queue_update {steering, followUp}` state and exposes `clearQueue()`, but Pilot drops
-      the event even though `SessionState.queued` already exists. Map queue updates into
-      the shared state, show queued steering/follow-up messages above the composer, and
-      add Pi-parity “restore queued messages to editor” (`Alt+Up`) that atomically clears
-      the queues and returns their text. Preserve delivery mode visually; cover queue,
-      delivery/removal, restore, empty restore, reconnect/refocus, and multi-client sync.
+- [x] **Queued-message tray + restore/edit flow** → done 2026-06-20. Pi's complete
+      `queue_update {steering, followUp}` now replaces shared folded queue state, and live
+      snapshots seed the current queue on reconnect/refocus. A compact tray above the
+      composer preserves Steer vs Follow-up labels. “Edit all” / `Alt+Up` calls pi's
+      atomic `clearQueue()`, clears every client through the shared event, and restores
+      steering-then-follow-up text only into the requesting editor (matching pi's `\n\n`
+      join behavior); an empty restore is a no-op. Unit tests cover mapping/folding and
+      targeted restore. E2E covers labels, delivery/removal, reload, refocus, hotkey
+      restore, and two-client synchronization.
 - [x] **Missing stop-turn interface when a session is running** → done 2026-06-19. Root
       cause: the stop pill + working indicator derived solely from the folded
       `session.status === "running"`, which only changes on snapshot events. An out-of-band
@@ -65,7 +67,9 @@ See `docs/` siblings for context: `DESIGN.md` (architecture + roadmap), `DECISIO
       limits before base64 expansion, compress oversized camera images where practical, and
       surface rejected/unsupported files visibly. Preserve image-only submission and cover
       clipboard, drag/drop, limits, and mobile picker behavior. Arbitrary non-image files
-      remain out of scope because pi's prompt attachment contract is image-only.
+      remain out of scope because pi's prompt attachment contract is image-only. Also decide
+      how queued-image restore should behave: pi's `queue_update`/`clearQueue()` expose text
+      only, so preserving queued images would require Pilot-side attachment metadata.
 - [x] ~~**Stop default-new-session-in-server-cwd for production usage**~~ → done
       2026-06-19. The server's cwd no longer feeds any logic: it's not a trust anchor
       (no dir is implicitly trusted — every cwd goes through pi's built-in trust:
@@ -245,9 +249,9 @@ See `docs/` siblings for context: `DESIGN.md` (architecture + roadmap), `DECISIO
       toggle needs per-session load config or a session restart, not a flag.
 
 - [ ] **Right-side session minimap** (nebulous, OP8)
-- [~] **Queued-messages editing** — promoted to the urgent queued-message tray +
-      restore/edit item above. Start with Pi-parity whole-queue restore; individual
-      replacement can follow only if dogfooding still wants it.
+- [x] **Queued-messages editing** → whole-queue restore/edit shipped in the urgent item
+      above. Individual replacement remains intentionally unbuilt unless dogfooding shows
+      it is worth a second queue mutation API.
 
 - [ ] **Per-session system-prompt override** _(deprioritized 2026-06-18 — owner doesn't
       expect to need this soon; parked at the back of the backlog)_. Let a new session

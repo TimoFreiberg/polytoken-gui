@@ -398,6 +398,11 @@ export interface QueuedMessageStartedEvent extends SessionEventBase {
   readonly type: "queuedMessageStarted";
   readonly message: SessionQueuedMessage;
 }
+export interface QueueUpdatedEvent extends SessionEventBase {
+  /** Complete pending queue after a change. Replaces, rather than patches, folded state. */
+  readonly type: "queueUpdated";
+  readonly messages: readonly SessionQueuedMessage[];
+}
 export interface UserMessageEvent extends SessionEventBase {
   // pilot extension: echo the user's submitted prompt into the transcript
   readonly type: "userMessage";
@@ -507,6 +512,7 @@ export type SessionDriverEvent =
   | SessionUpdatedEvent
   | AssistantDeltaEvent
   | QueuedMessageStartedEvent
+  | QueueUpdatedEvent
   | UserMessageEvent
   | CustomMessageEvent
   | ToolStartedEvent
