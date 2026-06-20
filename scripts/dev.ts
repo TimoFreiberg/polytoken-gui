@@ -13,9 +13,9 @@ import { join } from "node:path";
 import { createServer } from "node:net";
 import type { AddressInfo } from "node:net";
 
-// Ask the OS for an unused TCP port (bind :0, read it back, release). Used only on the
-// Claude_Preview auto-port path, so two worktree sessions don't fight over one hardcoded
-// port; `bun run dev` and e2e still pin explicit ports below.
+// Ask the OS for an unused TCP port (bind :0, read it back, release). Used on the auto-port
+// paths (Claude_Preview's $PORT, e2e's PILOT_AUTO_PORT) so parallel — or leaked — instances
+// never fight over one hardcoded port; bare `bun run dev` still pins 8787 below.
 function freePort(): Promise<number> {
   return new Promise((res, rej) => {
     const srv = createServer();
@@ -27,18 +27,54 @@ function freePort(): Promise<number> {
   });
 }
 
+// Is something already listening on this port? A CONNECT probe, not a bind probe: on macOS
+// Bun.serve (and Bun's node:net) will happily bind a port an orphan already holds
+// (SO_REUSEADDR/REUSEPORT across 0.0.0.0 vs 127.0.0.1), so a bind test gives a false negative
+// for exactly the orphan we're hunting — and you'd end up with TWO listeners the kernel
+// load-balances between (fresh server + stale orphan). A successful TCP connect is
+// unambiguous: someone's there.
+function portInUse(port: number): Promise<boolean> {
+  return Bun.connect({
+    hostname: "127.0.0.1",
+    port,
+    socket: { data() {} },
+  })
+    .then((sock) => {
+      sock.end();
+      return true;
+    })
+    .catch(() => false);
+}
+
 // Vite's port: under Claude_Preview `autoPort` the harness assigns one and passes it as
 // $PORT; otherwise honor VITE_PORT, else Vite's own default (5173).
 const vitePort = process.env.PORT ?? process.env.VITE_PORT;
 
-// Backend port: an explicit PILOT_PORT always wins (e2e + real dev pin it). Otherwise,
-// on the auto-port preview path ($PORT present) grab a free port too, so the whole stack
-// is collision-free across parallel worktrees; bare `bun run dev` keeps the 8787 default.
+// Backend port. An explicit PILOT_PORT always wins. Otherwise, when auto-port is requested —
+// Claude_Preview passes $PORT; the e2e suite sets PILOT_AUTO_PORT=1 — grab an OS-assigned free
+// port so the stack is collision-free across parallel worktrees AND immune to leaked orphans
+// (a stale server squatting on a fixed port can never be silently proxied to). Bare
+// `bun run dev` keeps the 8787 default.
+const autoPort =
+  process.env.PORT != null || process.env.PILOT_AUTO_PORT === "1";
 const backendPort = process.env.PILOT_PORT
   ? process.env.PILOT_PORT
-  : process.env.PORT
+  : autoPort
     ? String(await freePort())
     : "8787";
+
+// A freePort() result is guaranteed free; a pinned port (explicit PILOT_PORT, or the 8787
+// default) might be held by an orphan — probe it so we fail loud rather than starting a
+// second listener Vite then proxies to ambiguously. (Skip when we grabbed a free port.)
+const usedFreePort = !process.env.PILOT_PORT && autoPort;
+if (!usedFreePort && (await portInUse(Number(backendPort)))) {
+  console.error(
+    `[dev] backend port ${backendPort} is already in use — likely an orphaned pilot ` +
+      `server from an interrupted run, or another dev/preview instance. Find + kill it:\n` +
+      `        lsof -ti:${backendPort} | xargs kill`,
+  );
+  process.exit(1);
+}
 
 const SERVER = process.env.PILOT_SERVER ?? `http://localhost:${backendPort}`;
 // Bun-run Vite can hang proxy WebSocket upgrades; point the client at the backend
@@ -104,11 +140,34 @@ const vite = Bun.spawn(["bun", ...viteArgs], {
 
 const procs = [server, vite];
 
-function shutdown() {
+let shuttingDown = false;
+function shutdown(code: number): never {
+  shuttingDown = true;
   for (const p of procs) p.kill();
-  process.exit(0);
+  process.exit(code);
 }
-process.on("SIGINT", shutdown);
-process.on("SIGTERM", shutdown);
+process.on("SIGINT", () => shutdown(0));
+process.on("SIGTERM", () => shutdown(0));
+// Last-resort: kill children even on an uncaught throw / plain exit, so dev.ts never leaves a
+// detached `bun --hot` server behind (that orphan is exactly what poisons the next e2e run).
+process.on("exit", () => {
+  for (const p of procs) p.kill();
+});
+
+// If either child exits on its own — a crash, or a port collision the preflight didn't catch —
+// tear the whole stack down with a non-zero code instead of lingering as a half-running (and
+// possibly stale) dev server.
+void server.exited.then((c) => {
+  if (!shuttingDown) {
+    console.error(`[dev] backend exited (code ${c}) — shutting down`);
+    shutdown(1);
+  }
+});
+void vite.exited.then((c) => {
+  if (!shuttingDown) {
+    console.error(`[dev] vite exited (code ${c}) — shutting down`);
+    shutdown(1);
+  }
+});
 
 await Promise.all(procs.map((p) => p.exited));
