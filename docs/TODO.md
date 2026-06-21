@@ -438,14 +438,17 @@ hit a session limit mid-verify; confirm each against the code before acting):_
       the composer lifts + restores. _(The actual visualViewport→keyboard step can't be driven by
       Playwright — no real soft keyboard — so real-device iOS confirmation is still owner's.)_
 
-- [ ] **Active session unread when new text lands below the viewport** — builds on
-      the status indicators. Today the active (focused) session is always
-      "read". Refine: if the agent appends content while you're scrolled up (content
-      exists below the visible transcript), mark the active session unread too;
-      clear it when you scroll to the bottom. Needs the transcript scroll container
-      to report "not at bottom + grew" back to the store (the classic "new messages ↓"
-      pill signal), and an exception to the active-session-is-read rule in
-      `store.svelte.ts`'s `sessionStatus`/`markRead` paths. Low priority.
+- [x] **Active session unread when new text lands below the viewport** → already implemented;
+      verified + covered 2026-06-21. The chain was already wired (it landed folded into the
+      status-indicators work, the checkbox just wasn't ticked): `Transcript.svelte` calls
+      `store.markActiveUnread()` when content grew while not pinned to the bottom, clears it on
+      scroll-to-bottom/switch/send; `store.activeUnread` + `sessionStatus()` return "unread" for
+      the active session (the exception to active-is-read); the sidebar row renders the dot from
+      `sessionStatus`. The one real gap was a dedicated test — added `e2e/active-unread.e2e.ts`:
+      build a tall transcript, scroll up, drive a new turn, assert the "New messages ↓" pill
+      appears AND the active row flips to `data-state="unread"`, then jump-to-bottom clears both.
+      _(Owner asked to weigh in: verified working against the mock; if you saw it stay stubbornly
+      "read" in practice — e.g. a mobile-specific timing — flag it and I'll chase that case.)_
 - [ ] **Session context indicator** — a small color-coded circle (or similar badge)
       in the session list / header showing how much context the session has consumed,
       analogous to the Claude app's colored circle (green → yellow → red as the
