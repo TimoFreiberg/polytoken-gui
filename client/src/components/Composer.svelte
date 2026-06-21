@@ -501,7 +501,7 @@
     // New-session draft shortcuts: ⌥W toggles the worktree chip; Escape (with an empty
     // prompt and no slash menu open) abandons the draft.
     if (drafting) {
-      if (e.altKey && (e.key === "w" || e.key === "W")) {
+      if (e.altKey && e.code === "KeyW") {
         e.preventDefault();
         store.toggleDraftWorktree();
         return;
