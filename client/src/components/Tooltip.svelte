@@ -206,7 +206,7 @@
 <style>
   .tip {
     position: fixed;
-    z-index: 1000; /* above every modal/toast (max in-app is 80) */
+    z-index: 1000; /* above every modal/toast/lightbox (max in-app is the lightbox at 90) */
     max-width: 280px;
     padding: 5px 9px;
     font-family: var(--font-sans);

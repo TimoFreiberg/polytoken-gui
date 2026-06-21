@@ -58,6 +58,50 @@ test("pasting a screenshot attaches it and image-only send stays visible", async
   await expect(page.getByTestId("sent-image")).toBeVisible();
 });
 
+test("a thumbnail opens a full-screen preview that walks the batch and dismisses", async ({
+  page,
+}) => {
+  await dispatchFiles(page, "paste", [
+    { name: "a.png", type: "image/png", base64: PNG },
+    { name: "b.png", type: "image/png", base64: PNG },
+  ]);
+  await expect(page.locator(".thumb-chip img")).toHaveCount(2);
+
+  // Click a thumbnail's image (not its × badge) to enlarge it.
+  await page.locator(".thumb-chip").first().locator(".thumb-preview").click();
+  const lightbox = page.getByTestId("image-lightbox");
+  await expect(lightbox).toBeVisible();
+  await expect(lightbox.locator(".counter")).toHaveText("1 / 2");
+
+  // → / next button advances; the counter follows.
+  await lightbox.getByRole("button", { name: "Next image" }).click();
+  await expect(lightbox.locator(".counter")).toHaveText("2 / 2");
+
+  // Escape dismisses and returns focus to the composer.
+  await page.keyboard.press("Escape");
+  await expect(lightbox).toHaveCount(0);
+  await expect(page.locator("textarea")).toBeFocused();
+});
+
+test("the × badge removes a single attachment without sending", async ({
+  page,
+}) => {
+  await dispatchFiles(page, "paste", [
+    { name: "a.png", type: "image/png", base64: PNG },
+    { name: "b.png", type: "image/png", base64: PNG },
+  ]);
+  await expect(page.locator(".thumb-chip img")).toHaveCount(2);
+
+  await page
+    .locator(".thumb-chip")
+    .first()
+    .getByRole("button", { name: /Remove attachment/ })
+    .click();
+  await expect(page.locator(".thumb-chip img")).toHaveCount(1);
+  // Removing an attachment must not open the preview.
+  await expect(page.getByTestId("image-lightbox")).toHaveCount(0);
+});
+
 test("drag/drop shows a target and visibly rejects unsupported files", async ({
   page,
 }) => {

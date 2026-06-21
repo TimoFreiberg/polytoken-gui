@@ -11,6 +11,7 @@
   import { contextTone } from "../lib/context-tone.js";
   import SlashMenu from "./SlashMenu.svelte";
   import FileMenu from "./FileMenu.svelte";
+  import ImageLightbox from "./ImageLightbox.svelte";
   import ModelPicker from "./ModelPicker.svelte";
   import ContextMeter from "./ContextMeter.svelte";
   import SegmentedControl from "./ui/SegmentedControl.svelte";
@@ -42,6 +43,8 @@
   // Image attachments: picked from the browser file input, read as base64.
   const images = $derived(store.composerImages);
   const imageCount = $derived(images.length);
+  // Index of the attachment shown full-screen, or null when the lightbox is closed.
+  let lightboxIndex = $state<number | null>(null);
   let submitting = $state(false);
   let addingImages = $state(false);
   let attachmentStatus = $state<{
@@ -323,6 +326,19 @@
   function removeImage(i: number) {
     store.composerImages = images.filter((_, idx) => idx !== i);
     if (attachmentStatus?.kind === "error") attachmentStatus = null;
+    // Keep the lightbox pointed at a valid attachment (or close it when the last goes).
+    if (lightboxIndex !== null) {
+      const next = store.composerImages.length;
+      if (next === 0) lightboxIndex = null;
+      else if (lightboxIndex >= next) lightboxIndex = next - 1;
+      else if (i < lightboxIndex) lightboxIndex -= 1;
+    }
+    ta?.focus();
+  }
+
+  function closeLightbox() {
+    lightboxIndex = null;
+    ta?.focus();
   }
 
   async function addImageFiles(files: readonly File[]) {
@@ -550,6 +566,9 @@
   // sidebar inputs.
   onMount(() => {
     function onWindowKeydown(e: KeyboardEvent) {
+      // The lightbox owns the keyboard while open (Esc/←/→) — don't steal focus or
+      // re-open the picker underneath it.
+      if (lightboxIndex !== null) return;
       // ⌘⇧F / Ctrl+Shift+F: open the file picker for image attachments.
       if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key === "F") {
         e.preventDefault();
@@ -811,10 +830,30 @@
             {imageCount}
           </button>
           {#each images as img, i (i)}
-            <button class="thumb-chip" onclick={() => removeImage(i)} title="Remove this image (Enter)">
-              <img src="data:{img.mimeType};base64,{img.data}" alt={`Attachment ${i + 1}`} />
-              <span class="thumb-x" aria-hidden="true">×</span>
-            </button>
+            <span class="thumb-chip">
+              <button
+                class="thumb-preview"
+                onclick={() => (lightboxIndex = i)}
+                title="Preview image full screen (Enter)"
+                aria-label={`Preview attachment ${i + 1} full screen`}
+              >
+                <img src="data:{img.mimeType};base64,{img.data}" alt={`Attachment ${i + 1}`} />
+              </button>
+              <button
+                class="thumb-remove"
+                onclick={() => removeImage(i)}
+                onkeydown={(e) => {
+                  if (e.key === "Backspace" || e.key === "Delete") {
+                    e.preventDefault();
+                    removeImage(i);
+                  }
+                }}
+                title="Remove this image (Delete)"
+                aria-label={`Remove attachment ${i + 1}`}
+              >
+                <span aria-hidden="true">×</span>
+              </button>
+            </span>
           {/each}
         {:else}
           <IconButton disabled={addingImages} onclick={openFilePicker} title="Attach images (⌘⇧F)" aria-label="Attach images">
@@ -829,6 +868,15 @@
 
   </div>
 </div>
+
+{#if lightboxIndex !== null}
+  <ImageLightbox
+    {images}
+    index={lightboxIndex}
+    onClose={closeLightbox}
+    onIndex={(i) => (lightboxIndex = i)}
+  />
+{/if}
 
 <style>
   .composer-wrap {
@@ -1164,43 +1212,80 @@
     opacity: 0.5;
     cursor: default;
   }
+  /* A thumbnail is two stacked controls: the image (click to preview full screen) and a
+     small × badge pinned top-right (click to remove). The badge overhangs the chip a touch
+     so it doesn't eat the previewable image area. */
   .thumb-chip {
     position: relative;
     display: inline-flex;
-    align-items: center;
-    justify-content: center;
     width: 28px;
     height: 28px;
     flex-shrink: 0;
+  }
+  .thumb-preview {
+    display: block;
+    width: 100%;
+    height: 100%;
     padding: 0;
     background: var(--surface-sunken);
     border: 1px solid var(--border);
     border-radius: var(--radius-xs);
-    cursor: pointer;
+    cursor: zoom-in;
     overflow: hidden;
   }
-  .thumb-chip:hover {
-    border-color: var(--danger);
+  .thumb-preview:hover {
+    border-color: var(--accent);
   }
-  .thumb-chip img {
+  .thumb-preview:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 1px;
+  }
+  .thumb-preview img {
+    display: block;
     width: 100%;
     height: 100%;
     object-fit: cover;
   }
-  .thumb-chip:hover .thumb-x {
-    opacity: 1;
-  }
-  .thumb-x {
+  .thumb-remove {
     position: absolute;
-    inset: 0;
+    top: -5px;
+    right: -5px;
     display: grid;
     place-items: center;
-    background: color-mix(in srgb, var(--danger) 75%, transparent);
-    color: white;
-    font-size: 14px;
+    width: 15px;
+    height: 15px;
+    padding: 0;
+    font-size: 12px;
     font-weight: 700;
+    line-height: 1;
+    color: white;
+    background: color-mix(in srgb, var(--danger) 88%, black 12%);
+    border: 1px solid var(--bg);
+    border-radius: 999px;
+    cursor: pointer;
+    /* Hidden until the chip is hovered/focused on desktop; always shown on touch. */
     opacity: 0;
-    transition: opacity 0.1s;
-    pointer-events: none;
+    transition:
+      opacity 0.1s,
+      transform 0.1s;
+  }
+  .thumb-chip:hover .thumb-remove,
+  .thumb-preview:focus-visible + .thumb-remove,
+  .thumb-remove:focus-visible {
+    opacity: 1;
+  }
+  .thumb-remove:hover {
+    transform: scale(1.12);
+  }
+  .thumb-remove:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 1px;
+  }
+  @media (pointer: coarse) {
+    .thumb-remove {
+      width: 18px;
+      height: 18px;
+      opacity: 1;
+    }
   }
 </style>
