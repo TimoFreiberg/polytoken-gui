@@ -55,15 +55,23 @@ fall back to `~/src/pilot` (a concurrent session may be committing there; two
 agents on one working copy scramble each other's commits). A fresh worktree
 starts without `node_modules` (gitignored), so run `bun install` in it before
 building/testing. The e2e suite runs fully inside one checkout — it boots its own
-dev server — so a worktree can run it standalone. Its **backend runs on an
-OS-assigned free port** (`PILOT_AUTO_PORT=1`), so a leaked/orphaned `bun --hot`
-server from an interrupted run can never be silently proxied to — each run gets a
-fresh backend. Only Vite is on a fixed port; to run alongside another e2e run,
-override `PILOT_E2E_VITE_PORT` (see `playwright.config.ts`). The e2e mock server
-also takes the **data-dir lock** (`~/Library/Application Support/Pilot`); if the
-harness's own pilot or another checkout already holds it, the e2e server aborts
-with "data dir already locked". Give the run its own store:
-`PILOT_DATA_DIR=$(mktemp -d) bun run test:e2e`.
+dev server — so a worktree can run it standalone.
+
+**Auto-port self-isolation (why `bun run test:e2e` and the preview "just work"):**
+the e2e suite (`PILOT_AUTO_PORT=1`) and the mock preview (`scripts/dev.ts` with
+`$PORT` set) run in **auto-port mode**, which deliberately **ignores any inherited
+`PILOT_PORT` / `PILOT_DATA_DIR`** and grabs its own OS-assigned free backend port +
+a per-port data dir. This matters because the live pilot **desktop app exports both
+vars into every shell it spawns** (so an agent session running inside it inherits
+`PILOT_PORT=<app port>` and the app's data dir). Auto-port mode means a run launched
+from inside the app never aims at — nor fights the PID lock of — the running app's
+backend/data dir, and two concurrent agent sessions never collide either. So just run
+`bun run test:e2e` / launch the preview as-is; **no `env -u` or `PILOT_DATA_DIR=$(mktemp -d)`
+scrubbing needed.** (Only Vite stays on a fixed port — Playwright health-checks it as a
+known URL and re-evaluates the config per worker, so it can't be a random free port;
+override `PILOT_E2E_VITE_PORT` to run two e2e suites at literally the same time.)
+Bare, non-auto `bun run dev` still honors an explicit `PILOT_PORT` (default 8787) —
+but note it would *also* inherit the app's, so prefer the auto-port preview for UI work.
 
 ## Verifying the UI (agent-legible introspection)
 

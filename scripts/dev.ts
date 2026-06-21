@@ -3,8 +3,15 @@
 // /debug to PILOT_SERVER). Used by `bun run dev` and by the Claude_Preview launch
 // config so an agent can boot the app in one shot.
 //
+// ISOLATION NOTE: the live pilot desktop app (desktop/Config.swift) exports its own
+// PILOT_PORT + PILOT_DATA_DIR into the environment of every process it spawns — which
+// includes agent sessions. So a preview/e2e launched from inside the running app inherits
+// those. Auto-port mode (below) deliberately IGNORES the inherited PILOT_PORT/PILOT_DATA_DIR
+// and self-isolates, so an agent instance never aims at — or fights the lock of — the live
+// app or a concurrent session. Only an explicit, non-auto `bun run dev` honors them.
+//
 // Env vars:
-//   PILOT_PORT   — server listen port (default 8787)
+//   PILOT_PORT   — server listen port (default 8787; ignored in auto-port mode)
 //   VITE_PORT    — Vite dev-server port (default 5173)
 //   PILOT_SERVER — WS backend URL that Vite proxies to (default http://localhost:8787)
 
@@ -50,23 +57,26 @@ function portInUse(port: number): Promise<boolean> {
 // $PORT; otherwise honor VITE_PORT, else Vite's own default (5173).
 const vitePort = process.env.PORT ?? process.env.VITE_PORT;
 
-// Backend port. An explicit PILOT_PORT always wins. Otherwise, when auto-port is requested —
-// Claude_Preview passes $PORT; the e2e suite sets PILOT_AUTO_PORT=1 — grab an OS-assigned free
-// port so the stack is collision-free across parallel worktrees AND immune to leaked orphans
-// (a stale server squatting on a fixed port can never be silently proxied to). Bare
-// `bun run dev` keeps the 8787 default.
+// Auto-port is requested when Claude_Preview passes $PORT (for Vite) or the e2e suite sets
+// PILOT_AUTO_PORT=1. Its whole point is an ISOLATED, collision-free instance.
 const autoPort =
   process.env.PORT != null || process.env.PILOT_AUTO_PORT === "1";
-const backendPort = process.env.PILOT_PORT
-  ? process.env.PILOT_PORT
-  : autoPort
-    ? String(await freePort())
-    : "8787";
 
-// A freePort() result is guaranteed free; a pinned port (explicit PILOT_PORT, or the 8787
-// default) might be held by an orphan — probe it so we fail loud rather than starting a
-// second listener Vite then proxies to ambiguously. (Skip when we grabbed a free port.)
-const usedFreePort = !process.env.PILOT_PORT && autoPort;
+// Backend port. In auto-port mode, grab an OS-assigned FREE port and IGNORE any inherited
+// PILOT_PORT: the live desktop app exports its own into the shell (see ISOLATION NOTE), so
+// honoring it would aim this preview/e2e instance at the LIVE backend (or a concurrent
+// session's) instead of a fresh one — and a free port is also immune to leaked orphans
+// squatting a fixed port. Outside auto-port (bare `bun run dev`) an explicit PILOT_PORT
+// wins, else the 8787 default.
+const backendPort = autoPort
+  ? String(await freePort())
+  : (process.env.PILOT_PORT ?? "8787");
+
+// A freePort() result is guaranteed free; a pinned port (explicit/inherited PILOT_PORT, or
+// the 8787 default) might be held by an orphan or the live app — probe it so we fail loud
+// rather than starting a second listener Vite then proxies to ambiguously. (Skipped in
+// auto-port mode, where the port was just freshly reserved.)
+const usedFreePort = autoPort;
 if (!usedFreePort && (await portInUse(Number(backendPort)))) {
   console.error(
     `[dev] backend port ${backendPort} is already in use — likely an orphaned pilot ` +
@@ -82,17 +92,19 @@ const SERVER = process.env.PILOT_SERVER ?? `http://localhost:${backendPort}`;
 const wsUrl = new URL("/ws", SERVER);
 wsUrl.protocol = wsUrl.protocol === "https:" ? "wss:" : "ws:";
 
-// Each dev/preview/e2e instance gets its OWN data dir, keyed by port, unless
-// PILOT_DATA_DIR is set explicitly. The server's PID lock guards one data dir against
-// two servers (so two real servers can't corrupt the shared archive/push/VAPID state);
-// without per-port dirs that lock would stop you running several pilot instances at once
-// (preview-mock, preview-real, e2e, …), which would otherwise all contend for the
-// default dir. The production server runs via `server start` on the default XDG dir, so
-// the lock still protects that.
+// Each dev/preview/e2e instance gets its OWN data dir, keyed by port. In auto-port mode we
+// IGNORE any inherited PILOT_DATA_DIR for the same reason as the port: the live app exports
+// its data dir into the shell, and sharing it means fighting the running app (and other
+// agent sessions) over the single PID lock — "data dir already locked". Keyed by the free
+// port, concurrent previews / e2e runs / the live app never collide. Outside auto-port an
+// explicit PILOT_DATA_DIR still wins (else the same per-port default). The PID lock guards
+// one data dir against two servers; production `server start` uses the default XDG dir.
 const stateHome =
   process.env.XDG_STATE_HOME?.trim() || join(homedir(), ".local", "state");
 const dataDir =
-  process.env.PILOT_DATA_DIR ?? join(stateHome, "pilot-dev", backendPort);
+  !autoPort && process.env.PILOT_DATA_DIR
+    ? process.env.PILOT_DATA_DIR
+    : join(stateHome, "pilot-dev", backendPort);
 
 const viteArgs = ["run", "dev"];
 if (vitePort) viteArgs.push("--port", vitePort);

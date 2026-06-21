@@ -4,9 +4,17 @@ import { defineConfig, devices } from "@playwright/test";
 // command below) rather than a fixed one. This is deliberate: a fixed backend port has no
 // Playwright reuse-guard (that only watches `url`, i.e. Vite), so a leaked/orphaned server
 // squatting on it gets silently proxied to — every test then runs against stale code. A fresh
-// free port per run makes orphans harmless. Only Vite needs a known, fixed port (Playwright
-// health-checks it as `url`); it's overridable so a second checkout can run e2e concurrently
-// without fighting over 15173 (e.g. PILOT_E2E_VITE_PORT=25173).
+// free port per run makes orphans harmless. dev.ts ALSO ignores any inherited PILOT_PORT /
+// PILOT_DATA_DIR in auto-port mode (PILOT_AUTO_PORT=1 here), so a run launched from inside
+// the live desktop app — which exports both into the shell — never aims at, nor fights the
+// PID lock of, the running app's backend or data dir. That makes `bun run test:e2e` safe to
+// run as-is from an agent session; no env scrubbing needed.
+//
+// Vite needs a port Playwright knows up front (it health-checks `url`), and the config is
+// re-evaluated per worker process, so this MUST be deterministic — a freshly-picked free
+// port would differ between the webServer launcher and the workers. So it's a fixed default,
+// overridable via PILOT_E2E_VITE_PORT so a second checkout can run e2e concurrently without
+// fighting over 15173 (e.g. PILOT_E2E_VITE_PORT=25173).
 const VITE_PORT = Number(process.env.PILOT_E2E_VITE_PORT) || 15173;
 
 // The mock server holds a single shared session, so specs run serially and
