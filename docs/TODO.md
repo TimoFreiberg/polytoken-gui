@@ -54,14 +54,13 @@ See `docs/` siblings for context: `DESIGN.md` (architecture + roadmap), `DECISIO
 
 ## 🟡 Important
 
-- [ ] **Bump Vite 6 → 8 + @sveltejs/vite-plugin-svelte 5 → 7**
-      Vite 8 (released 2026-03-12) replaces esbuild+Rollup with Rolldown (unified Rust
-      bundler, 10–30× faster builds). vite-plugin-svelte v7 requires Vite 8 + Svelte 5.46.4+
-      (we're on 5.56.3 ✅). Our vite config is simple — no custom rollup/esbuild options or
-      manualChunks to migrate. Node v26.3.0 ✅. Inspector is now built-in (drop
-      `@sveltejs/vite-plugin-svelte-inspector`). Risk: Rolldown + svelte() plugin interaction.
-      Research done 2026-06-20; ready to execute. Vite 7 was skipped entirely (v6→v8 is the
-      supported path).
+- [x] **Bump Vite 6 → 8 + @sveltejs/vite-plugin-svelte 5 → 7** → done 2026-06-21.
+      Resolved to Vite 8.0.16 + vite-plugin-svelte 7.1.2; the lockfile now uses Rolldown
+      instead of esbuild+Rollup, and the old inspector package disappeared with the v5
+      plugin dependency chain. No config changes were needed: the custom build-sha plugin,
+      dev proxy (including WebSockets), and production bundle all work unchanged. Verified
+      with the production build, Svelte check, protocol typecheck, 349 unit tests, and all
+      172 desktop/mobile Playwright tests.
 
 - [x] **Per-client session focus** → done 2026-06-20. The hub no longer owns one
       server-global `focusedId` + folded `state`: it holds a `Map<sessionId, SessionState>`
