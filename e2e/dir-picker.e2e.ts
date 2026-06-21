@@ -69,3 +69,45 @@ test("a recent project is a one-tap pick from the browser", async ({
   await expect(picker(page)).toBeHidden();
   await expect(projectChip(page)).toContainText("scratch");
 });
+
+test("the go-to-path input jumps to a typed directory", async ({ page }) => {
+  await openDraft(page);
+  await projectChip(page).click();
+  await expect(picker(page)).toBeVisible();
+
+  // The ✎ button swaps the breadcrumb for a path box — the escape hatch for dirs that
+  // are tedious to click to. Type an absolute path and Enter navigates there.
+  await picker(page).locator(".edit-path").click();
+  const input = picker(page).getByLabel("Go to path");
+  await expect(input).toBeFocused();
+  await input.fill("/Users/timo/src/pi");
+  await input.press("Enter");
+
+  await expect(picker(page).locator(".bc")).toContainText("pi");
+  await expect(
+    picker(page).locator(".row[data-i] .name").filter({ hasText: "examples" }),
+  ).toBeVisible();
+
+  // And the jumped-to folder can be used.
+  await picker(page).locator(".use").click();
+  await expect(picker(page)).toBeHidden();
+  await expect(projectChip(page)).toContainText("pi");
+});
+
+test("Escape in the path box cancels the edit without closing the browser", async ({
+  page,
+}) => {
+  await openDraft(page);
+  await projectChip(page).click();
+  await expect(picker(page)).toBeVisible();
+
+  await picker(page).locator(".edit-path").click();
+  const input = picker(page).getByLabel("Go to path");
+  await expect(input).toBeVisible();
+  await input.press("Escape");
+
+  // The path box closes, the breadcrumb returns, and the picker stays open.
+  await expect(input).toBeHidden();
+  await expect(picker(page).locator(".bc .crumb").first()).toBeVisible();
+  await expect(picker(page)).toBeVisible();
+});

@@ -34,6 +34,13 @@
   let lastPath = $state("");
   let root = $state<HTMLDivElement>();
 
+  // "Go to path" escape hatch: the breadcrumb swaps to a text input you can type/paste a
+  // path into (server-resolved, incl. `~`), for dirs that are tedious to click to. Enter
+  // navigates there; the listing then renders like any other (a bad path shows the error
+  // hint). Mouse: the ✎ button. Keyboard: "/".
+  let editing = $state(false);
+  let pathInput = $state("");
+
   $effect(() => {
     if (showing && showing.path !== lastPath) {
       lastPath = showing.path;
@@ -42,12 +49,36 @@
   });
 
   function go(path: string) {
+    editing = false; // any navigation leaves the path-edit box
     store.queryDir(path);
     refocus();
   }
 
   function refocus() {
     queueMicrotask(() => root?.focus());
+  }
+
+  function startEdit() {
+    pathInput = showing?.path ?? "";
+    editing = true;
+  }
+
+  function focusSelect(node: HTMLInputElement) {
+    node.focus();
+    node.select();
+  }
+
+  function onPathKeydown(e: KeyboardEvent) {
+    // Keep input keystrokes (arrows/Backspace/Enter) from bubbling to the picker's nav.
+    e.stopPropagation();
+    if (e.key === "Enter") {
+      e.preventDefault();
+      go(pathInput);
+    } else if (e.key === "Escape") {
+      e.preventDefault();
+      editing = false;
+      refocus();
+    }
   }
 
   function descend(name: string) {
@@ -91,10 +122,18 @@
   }
 
   function onkeydown(e: KeyboardEvent) {
+    // While the path box is open it owns the keyboard (its own handler stops propagation);
+    // this is just belt-and-suspenders so nav never fires underneath it.
+    if (editing) return;
     if (e.key === "Escape") {
       e.preventDefault();
       e.stopPropagation();
       onclose();
+      return;
+    }
+    if (e.key === "/") {
+      e.preventDefault();
+      startEdit();
       return;
     }
     if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
@@ -148,24 +187,51 @@
   {onkeydown}
 >
   <div class="bc" aria-label="Current path">
-    {#each crumbs as c (c.path)}
+    {#if editing}
+      <input
+        class="path-input"
+        type="text"
+        value={pathInput}
+        placeholder="/absolute/path  (~ = home)"
+        spellcheck="false"
+        autocapitalize="off"
+        autocorrect="off"
+        aria-label="Go to path"
+        title="Type or paste a path, then Enter to go (Esc to cancel)"
+        oninput={(e) => (pathInput = e.currentTarget.value)}
+        onkeydown={onPathKeydown}
+        onblur={() => (editing = false)}
+        use:focusSelect
+      />
+    {:else}
+      {#each crumbs as c (c.path)}
+        <button
+          class="crumb"
+          title={`Go to ${c.path}`}
+          onmousedown={(e) => {
+            e.preventDefault();
+            go(c.path);
+          }}>{c.label}</button
+        >{#if c.path !== "/"}<span class="crumb-sep" aria-hidden="true">/</span>{/if}
+      {/each}
       <button
-        class="crumb"
-        title={`Go to ${c.path}`}
+        class="edit-path"
+        title="Type or paste a path (press /)"
+        aria-label="Type or paste a path"
         onmousedown={(e) => {
           e.preventDefault();
-          go(c.path);
-        }}>{c.label}</button
-      >{#if c.path !== "/"}<span class="crumb-sep" aria-hidden="true">/</span>{/if}
-    {/each}
-    <button
-      class="home-btn"
-      title={`Go to home (${defaultCwd})`}
-      onmousedown={(e) => {
-        e.preventDefault();
-        go(defaultCwd);
-      }}>⌂ home</button
-    >
+          startEdit();
+        }}>✎</button
+      >
+      <button
+        class="home-btn"
+        title={`Go to home (${defaultCwd})`}
+        onmousedown={(e) => {
+          e.preventDefault();
+          go(defaultCwd);
+        }}>⌂ home</button
+      >
+    {/if}
   </div>
 
   {#if recentShortcuts.length}
@@ -279,8 +345,34 @@
     color: var(--text-faint);
     font-size: 11px;
   }
-  .home-btn {
+  .path-input {
+    flex: 1;
+    min-width: 0;
+    font-size: 12.5px;
+    font-family: var(--font-mono);
+    color: var(--text);
+    background: var(--surface-sunken);
+    border: 1px solid var(--accent);
+    border-radius: 999px;
+    padding: 4px 12px;
+    outline: none;
+  }
+  .edit-path {
     margin-left: auto;
+    background: transparent;
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    padding: 2px 9px;
+    font-size: 12px;
+    color: var(--text-muted);
+    cursor: pointer;
+  }
+  .edit-path:hover {
+    color: var(--text);
+    border-color: var(--border-strong);
+  }
+  .home-btn {
+    margin-left: 4px;
     background: transparent;
     border: 1px solid var(--border);
     border-radius: 999px;
