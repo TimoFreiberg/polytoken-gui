@@ -62,14 +62,18 @@
     return undefined;
   });
   // Two view-model passes (pure, unit-tested in transcript-view.test.ts):
-  //   1. mergeTools — uninterrupted runs of every tool except write/edit fold into
-  //      one summary card. With thinking hidden, thinking-only assistant items render
-  //      nothing, so they're skipped too — tool runs separated only by hidden thinking
-  //      merge into one card instead of fragmenting around invisible gaps.
+  //   1. mergeTools — runs of summarizable tools fold into one summary card, but
+  //      only once a non-tool item (text) seals the run. During an active turn
+  //      (mergeTrailing=false) trailing tools stay as individual cards so each one
+  //      lands visibly; when the turn settles, the trailing seal collapses them.
+  //      Write/edit/answer/image tools stay standalone and don't seal runs.
   //   2. groupTurns — each turn (user → next user) splits into a collapsible "work"
   //      portion (tools + intermediate narration) and the turn-final response that
   //      stays visible. That's the "Worked for Ns" block below.
-  const displayItems = $derived(mergeTools(items, store.hideThinking));
+  // mergeTrailing=false while a turn is active: trailing tools stay as individual
+  // cards so the user sees each one land rather than collapsing into a summary
+  // before the model's text arrives to seal the run.
+  const displayItems = $derived(mergeTools(items, store.hideThinking, !store.turnActive));
   // While the last turn is active, its trailing text is only a candidate final
   // response — another tool can still follow. Keep the whole turn inline until the
   // lifecycle says it settled, then expose the collapse affordance.
@@ -520,7 +524,7 @@
       {:else if item.kind === "mergedTools"}
         <ToolSummary
           {item}
-          open={mergedOpen[item.id] ?? false}
+          open={mergedOpen[item.id] ?? !item.sealed}
           ontoggle={() => toggleMerged(item.id)}
         />
       {:else if item.kind === "tool" && item.name === "answer"}

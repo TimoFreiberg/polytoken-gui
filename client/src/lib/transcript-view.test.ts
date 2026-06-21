@@ -7,6 +7,7 @@ import type {
 import { describe, expect, test } from "bun:test";
 import {
   type DisplayItem,
+  type MergedToolsItem,
   formatWorkedDuration,
   groupTurns,
   injectText,
@@ -150,6 +151,81 @@ describe("mergeTools", () => {
       "assistant",
       "mergedTools",
     ]);
+  });
+
+  // ── sealed flag ─────────────────────────────────────────────────────────
+
+  test("mergeTrailing=true (default): trailing tools are sealed", () => {
+    const out = mergeTools([tool("b1", "bash"), tool("r1", "read")]);
+    expect(out).toHaveLength(1);
+    expect((out[0] as MergedToolsItem).sealed).toBe(true);
+  });
+
+  test("mergeTrailing=false: trailing tools are unsealed", () => {
+    const out = mergeTools(
+      [tool("b1", "bash"), tool("r1", "read")],
+      false,
+      false,
+    );
+    expect(out).toHaveLength(1);
+    expect((out[0] as MergedToolsItem).sealed).toBe(false);
+  });
+
+  test("a non-tool item seals the preceding run", () => {
+    const out = mergeTools([
+      tool("r1", "read"),
+      tool("b1", "bash"),
+      asst("a1"),
+    ]);
+    expect(out.map((i) => i.kind)).toEqual(["mergedTools", "assistant"]);
+    expect((out[0] as MergedToolsItem).sealed).toBe(true);
+    expect((out[0] as MergedToolsItem).tools).toHaveLength(2);
+  });
+
+  test("a non-tool item seals the run even when standalone tools sit between them", () => {
+    // Timeline case: read+bash, then write, then text. Read+bash should be sealed
+    // because text eventually follows, even though write broke the run.
+    const out = mergeTools([
+      tool("r1", "read"),
+      tool("b1", "bash"),
+      tool("w1", "write"),
+      asst("a1"),
+    ]);
+    expect(out.map((i) => i.kind)).toEqual([
+      "mergedTools",
+      "tool",
+      "assistant",
+    ]);
+    expect((out[0] as MergedToolsItem).sealed).toBe(true);
+    expect((out[0] as MergedToolsItem).names).toEqual(["read", "bash"]);
+    expect((out[1] as ToolItem).name).toBe("write");
+  });
+
+  test("without a non-tool item and mergeTrailing=false, the run stays unsealed", () => {
+    // Streaming: read+bash then write, no text yet.
+    const out = mergeTools(
+      [tool("r1", "read"), tool("b1", "bash"), tool("w1", "write")],
+      false,
+      false,
+    );
+    expect(out.map((i) => i.kind)).toEqual(["mergedTools", "tool"]);
+    expect((out[0] as MergedToolsItem).sealed).toBe(false);
+  });
+
+  test("standalone tools stay standalone and don't seal adjacent runs", () => {
+    // answer between two summarizable runs — neither should seal the other.
+    const out = mergeTools(
+      [tool("r1", "read"), tool("a1", "answer"), tool("b1", "bash")],
+      false,
+      false,
+    );
+    expect(out.map((i) => i.kind)).toEqual([
+      "mergedTools",
+      "tool",
+      "mergedTools",
+    ]);
+    expect((out[0] as MergedToolsItem).sealed).toBe(false);
+    expect((out[2] as MergedToolsItem).sealed).toBe(false);
   });
 });
 

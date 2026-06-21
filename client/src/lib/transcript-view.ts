@@ -17,9 +17,16 @@ import type {
 } from "@pilot/protocol";
 
 // ── Pass 1: summarize sequential tools ───────────────────────────────────────
-// Every uninterrupted run of tools collapses into ONE summary card, including a
-// one-tool run. Write/edit are the only exceptions: their side effects and diffs
-// should stay visible as standalone cards, and each one breaks the surrounding run.
+// Every uninterrupted run of summarizable tools folds into ONE summary card,
+// including a one-tool run. Write/edit/answer/image tools stay standalone and
+// break the run (their side effects should be visible as separate cards).
+//
+// Each MergedToolsItem carries a `sealed` flag: true when a non-tool item
+// (assistant text, user message, inject) has closed the run, or when
+// mergeTrailing seals trailing tools at end-of-array. A sealed run shows the
+// programmatic prose summary; an unsealed run shows individual tool entries
+// so the user can watch each tool land while the turn is still in flight.
+//
 // A thinking-only assistant item normally breaks the run too — but when the "hide
 // thinking" toggle is on it renders nothing, so `mergeTools(items, true)` skips it and
 // the tool runs on either side fold together (no fragmenting around an invisible gap).
@@ -51,6 +58,10 @@ export interface MergedToolsItem {
   /** Distinct tool names in the run, in first-appearance order. */
   names: string[];
   tools: ToolItem[];
+  /** True when a non-tool item (text, user message, inject) has closed this run,
+   *  or when mergeTrailing sealed it at end-of-array. A sealed run shows the
+   *  programmatic prose summary; an unsealed run shows individual tool entries. */
+  sealed: boolean;
 }
 
 /** A transcript item after the merge pass — either an original item or a merged run. */
@@ -84,35 +95,79 @@ export function isWorkTool(i: DisplayItem): boolean {
 export function mergeTools(
   items: readonly TranscriptItem[],
   hideThinking = false,
+  /** When true (default), summarizable tools at the end of the array are sealed
+   *  into a prose summary — the right call for a settled turn. When false, trailing
+   *  tools stay in an unsealed card showing individual entries so streaming doesn't
+   *  collapse them to prose before the model's text arrives. */
+  mergeTrailing = true,
 ): DisplayItem[] {
+  // ── Pass 1: group consecutive summarizable tools ──────────────────────────
+  // Standalone tools break runs; everything starts unsealed.
   const result: DisplayItem[] = [];
   let pending: ToolItem[] = [];
+  const buildMerged = (): MergedToolsItem => ({
+    kind: "mergedTools",
+    id: pending[0]!.id,
+    names: [...new Set(pending.map((t) => t.name))],
+    tools: pending,
+    sealed: false, // Pass 2 will promote to true where warranted
+  });
   const flush = () => {
     if (pending.length === 0) return;
-    const first = pending[0]!;
-    result.push({
-      kind: "mergedTools",
-      id: first.id,
-      names: [...new Set(pending.map((t) => t.name))],
-      tools: pending,
-    });
+    result.push(buildMerged());
     pending = [];
   };
+
   for (const item of items) {
     if (isSummarizedTool(item)) {
       pending.push(item);
     } else if (hideThinking && isHiddenOnlyThinking(item)) {
-      // Thinking is fully hidden, so this item is an invisible gap: drop it (don't flush)
-      // so the tool runs on either side merge into one card. With thinking VISIBLE it
-      // falls through to the else and breaks the run, as a visible block should.
       continue;
     } else {
+      // Any non-summarizable-tool item (standalone tool, or non-tool) breaks the
+      // run. Don't seal yet — Pass 2 decides that based on what follows.
       flush();
       result.push(item);
     }
   }
   flush();
+
+  // ── Pass 2: seal runs that are followed by non-tool content ──────────────
+  // A merged run is "sealed" when a non-tool item (text, user message, inject)
+  // eventually follows it — the model emitted something after those tools. Standalone
+  // tool cards (write/edit/…) between the run and the text don't prevent sealing;
+  // they're more tools, not model prose.
+  for (let i = 0; i < result.length; i++) {
+    const item = result[i]!;
+    if (item.kind !== "mergedTools" || item.sealed) continue;
+    // Look ahead for a non-tool, non-mergedTools item. Skip past any standalone
+    // tools (write/edit/answer/images) and past other merged runs.
+    let seal = false;
+    for (let j = i + 1; j < result.length; j++) {
+      const next = result[j]!;
+      if (next.kind === "mergedTools") continue;
+      if (next.kind !== "tool") {
+        seal = true;
+        break;
+      }
+      // Standalone tool — keep looking
+    }
+    // mergeTrailing seals the very last run even if nothing follows.
+    if (!seal && mergeTrailing && i === lastMergedIndex(result)) {
+      seal = true;
+    }
+    if (seal) result[i] = { ...item, sealed: true };
+  }
+
   return result;
+}
+
+/** Index of the rightmost MergedToolsItem in the array, or -1. */
+function lastMergedIndex(result: DisplayItem[]): number {
+  for (let i = result.length - 1; i >= 0; i--) {
+    if (result[i]!.kind === "mergedTools") return i;
+  }
+  return -1;
 }
 
 // ── Skill-load detection ─────────────────────────────────────────────────────

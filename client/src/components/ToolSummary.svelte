@@ -25,22 +25,40 @@
   const dot = $derived(
     status === "running" ? "○" : status === "error" ? "✕" : null,
   );
+
+  // Unsealed runs show entries (always expanded); the header lists tool names
+  // instead of prose so the user watches each call land.
+  const names = $derived(item.names.join(", "));
 </script>
 
 <!-- Deliberately the OPPOSITE of ToolCard's shell: a merged run is ambient noise, so it
      renders as a borderless grey disclosure row (matching the "Worked for Ns" header and
      the nudge pill), not a highlighted card. The high-signal tools (write/edit) stay as
-     standalone bordered cards; everything else recedes into this line. -->
-<div class="tool summary {status}">
+     standalone bordered cards; everything else recedes into this line.
+
+     When unsealed (the turn is still live and no text has arrived yet), the row defaults
+     to expanded and the header shows tool names rather than prose — a single accumulating
+     card with visible entries. Once sealed, it collapses to the prose summary. -->
+<div class="tool summary {status}" class:sealed={item.sealed} class:unsealed={!item.sealed}>
   <button
     class="head"
-    title={`${open ? "Collapse" : "Expand"} — ${summary} (Enter)`}
+    title={item.sealed
+      ? `${open ? "Collapse" : "Expand"} — ${summary} (Enter)`
+      : `Working — ${names} (Enter to toggle)`}
     onclick={ontoggle}
     aria-expanded={open}
   >
-    <span class="chev" class:open>▸</span>
+    {#if item.sealed}
+      <span class="chev" class:open>▸</span>
+    {:else}
+      <span class="chev unsealed-chev">▸</span>
+    {/if}
     {#if dot}<span class="status" aria-hidden="true">{dot}</span>{/if}
-    <span class="label">{summary}</span>
+    {#if item.sealed}
+      <span class="label">{summary}</span>
+    {:else}
+      <span class="label unsealed-label">{names}</span>
+    {/if}
   </button>
   {#if open}
     <div class="body">

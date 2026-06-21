@@ -44,9 +44,9 @@ test("the Stop pill survives a stray mid-turn idle snapshot (turn still in fligh
     page.getByText("kicking off a command", { exact: false }),
   ).toBeVisible();
   const summary = page.locator(".tool.summary");
-  await expect(summary.locator(":scope > .head .label")).toHaveText(
-    "Ran a command",
-  );
+  // While the turn is still live, the tool run is unsealed — the header shows the
+  // tool name rather than the programmatic prose summary.
+  await expect(summary.locator(":scope > .head .label")).toHaveText("bash");
   await expect(summary).toHaveClass(/running/);
   // A running run keeps a status dot (the one signal a subdued row still shows).
   await expect(summary.locator(":scope > .head .status")).toHaveText("○");
