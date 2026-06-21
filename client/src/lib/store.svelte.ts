@@ -85,6 +85,15 @@ class PilotStore {
   // If the disk entry disappears between list + open, the switch error clears the stale
   // preference and falls back to the normal $HOME draft instead of leaving a blank pane.
   private bootRestoreInFlight = false;
+  // Reconnect focus recovery. A dropped socket (Tailscale flap on a phone) reconnects as a
+  // brand-new connection, which the hub registers focused on the empty landing — so without
+  // this you'd be reading a session, the link blips, and the view snaps to a blank pane.
+  // `booted` flips true after the first hello; every hello after that is a reconnect, and we
+  // stash the session we were viewing in `reconnectFocusId` so the bootstrap session list can
+  // re-assert it. (A new-session draft survives a reconnect on its own — it's client state
+  // rendered ahead of the snapshot — so it's deliberately not captured.)
+  private booted = false;
+  private reconnectFocusId: string | null = null;
   // Session ids with a live turn right now (server-pushed via `sessionStatus`).
   runningIds = $state<Set<string>>(new Set());
   // Session ids warming up (created/opened, not yet streaming) — server-pushed in the
@@ -375,6 +384,12 @@ class PilotStore {
         this.serverId = msg.serverId;
         persistLastServerId(msg.serverId);
         void this.hydrateOutbox(msg.serverId);
+        // A hello after the first is a reconnect: the hub will re-snapshot us onto the
+        // landing, so remember the session we're viewing (captured now, before the
+        // bootstrap snapshot overwrites `session`) to re-assert once the list arrives.
+        if (this.booted && !this.draft)
+          this.reconnectFocusId = this.session.ref?.sessionId ?? null;
+        this.booted = true;
         break;
       case "snapshot":
         this.session = msg.state;
@@ -422,6 +437,9 @@ class PilotStore {
         // The session you're now viewing can't be unread.
         if (msg.activeSessionId) this.markRead(msg.activeSessionId);
         this.maybeOpenBootDraft();
+        // Re-assert the pre-reconnect session now that the list (and the server's actual
+        // new focus via activeSessionId) is in hand, so openSession's switch check fires.
+        this.maybeRestoreFocus();
         break;
       case "sessionStatus": {
         // A session leaving the running set = a turn just finished. If it's a
@@ -1073,6 +1091,21 @@ class PilotStore {
       // doesn't lose a half-typed prompt.
       this.loadDraft(`s:${this.activeSessionId}`);
     }
+  }
+
+  /** After a reconnect, jump back to the session we were reading. A fresh socket re-
+   *  registers server-side focused on the empty landing (hub.addClient), so a phone whose
+   *  link blips would otherwise land on a blank pane mid-session. `hello` stashed the viewed
+   *  session id; re-open it unless we've since started a draft, or the server happened to
+   *  keep us there (e.g. the landing IS that session, as in the mock). Idempotent: openSession
+   *  triggers another snapshot/list, but reconnectFocusId is already cleared so it no-ops. */
+  private maybeRestoreFocus(): void {
+    const want = this.reconnectFocusId;
+    this.reconnectFocusId = null;
+    if (!want || this.draft) return;
+    if (this.session.ref?.sessionId === want) return;
+    const target = this.sessions.find((s) => s.sessionId === want);
+    if (target) this.openSession(target.path);
   }
 
   /** Open the new-session draft. `cwd` prefills the project (the sidebar passes the

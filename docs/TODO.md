@@ -408,10 +408,21 @@ hit a session limit mid-verify; confirm each against the code before acting):_
       (`Composer.svelte` keydown). The slash/file typeaheads still consume their own Enter
       first, and desktop Enter-to-send is unchanged. The send tooltip names the touch shortcut.
       `e2e/composer.mobile.e2e.ts` (Pixel 7) covers newline-not-send + button-still-sends.
-- [ ] **Mobile: sending a prompt resets view to default new-draft session** — when
-      you send a prompt on mobile, the session view snaps back to the new-draft
-      state (blank session) instead of staying on the active session. The sent
-      message lands but you're looking at the wrong session.
+- [x] **Mobile: sending a prompt resets view to default new-draft session** → done 2026-06-21.
+      Root cause was **connectivity, not the send** (owner's instinct): a dropped socket (a
+      Tailscale flap on a phone) reconnects as a brand-new WS, and `hub.addClient` registers
+      every connection focused on the empty landing (`defaultFocusId`) — connections are
+      anonymous, so the server can't know it's the same client. Client-side nothing re-asserted
+      focus on reconnect (`maybeOpenBootDraft` is gated by `bootDraftHandled`), so the view
+      snapped to a blank pane mid-session; the send itself was incidental (the prompt carries
+      its own `sessionId` and lands fine). Fix: the store captures the viewed session on each
+      reconnect `hello` (before the bootstrap snapshot overwrites it) and re-opens it once the
+      session list lands (`reconnectFocusId` + `maybeRestoreFocus`). A draft survives a reconnect
+      on its own (client state rendered ahead of the snapshot), so it's left alone.
+      `e2e/reconnect-focus.e2e.ts` opens a non-landing session, drops the socket, reconnects, and
+      asserts we land back on it (verified it fails without the fix — the view snaps to the
+      greeting). _(Broader mobile connectivity hardening — flaky-link queue behavior etc. — is a
+      separate thread; this fixes the specific focus-loss symptom.)_
 - [ ] **Mobile: composer should be pinned above the keyboard** — when the virtual
       keyboard is visible on mobile, the text edit box can scroll upward off-screen
       instead of staying pinned just above the keyboard. Likely a viewport / visual
