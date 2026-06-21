@@ -5,6 +5,22 @@ test.beforeEach(async ({ page }) => {
   await gotoFresh(page);
 });
 
+/** Open the project chip's directory browser and choose `/Users/timo/src/<name>`. The
+ *  picker opens at the active fixture session's cwd (`/Users/timo/src/pilot` — a stable
+ *  path regardless of the suite's $HOME), so we step up to `.../src` and into `name`. */
+async function chooseProjectDir(
+  page: import("@playwright/test").Page,
+  name: string,
+): Promise<void> {
+  await page.locator(".chips .chip").first().click();
+  const picker = page.getByTestId("dir-picker");
+  await expect(picker).toBeVisible();
+  await picker.locator(".row.up").click(); // /Users/timo/src/pilot -> /Users/timo/src
+  await picker.locator(".row[data-i]", { hasText: name }).click(); // -> .../<name>
+  await picker.locator(".use").click();
+  await expect(picker).toBeHidden();
+}
+
 test("the sidebar groups sessions by project and switches the active one", async ({
   page,
 }) => {
@@ -203,24 +219,21 @@ test("a project's + button opens a new-session draft for that dir", async ({
   ).toBeVisible();
 });
 
-test("a session can be started in an arbitrary typed directory", async ({
+test("a session can be started in a directory chosen via the browser", async ({
   page,
 }) => {
   await openSidebar(page);
   const sidebar = page.getByTestId("sidebar");
 
   await sidebar.getByText("New session…").click();
-  // The project lives as a chip in the composer; click it to edit the path inline.
-  await page.locator(".chips .chip").first().click();
-  await page
-    .getByPlaceholder(/absolute\/path\/to\/project/)
-    .fill("/Users/timo/src/elsewhere");
+  // The project lives as a chip in the composer; click it to browse for the directory.
+  await chooseProjectDir(page, "elsewhere");
   // Sending the first prompt is what actually creates the session (atomic).
   const composer = page.getByPlaceholder("Describe a task or ask a question…");
   await composer.fill("kick things off");
   await composer.press("Enter");
 
-  // A new project group appears for the typed dir.
+  // A new project group appears for the chosen dir.
   await openSidebar(page); // (closed by afterNavigate on the mobile drawer)
   await expect(
     page.getByTestId("sidebar").getByText("elsewhere", { exact: true }),
@@ -315,32 +328,15 @@ test("reopening the sidebar focuses the search box (desktop)", async ({
   await expect(search).toBeFocused();
 });
 
-test("clicking the project chip focuses the path input", async ({ page }) => {
-  await openSidebar(page);
-  await page.getByTestId("sidebar").getByText("New session…").click();
-  await page.locator(".chips .chip").first().click();
-  // Focused via a mount action (the autofocus attr is unreliable here), so you can
-  // type a path immediately without a second click.
-  await expect(
-    page.getByPlaceholder(/absolute\/path\/to\/project/),
-  ).toBeFocused();
-});
-
-test("the new-session path input offers recent project dirs", async ({
+test("clicking the project chip opens the directory browser", async ({
   page,
 }) => {
   await openSidebar(page);
   await page.getByTestId("sidebar").getByText("New session…").click();
   await page.locator(".chips .chip").first().click();
-
-  // The path input is backed by a datalist populated from distinct session cwds, so a
-  // known project is one pick rather than a full retype.
-  const options = page.locator("#recent-cwds option");
-  await expect(options.first()).toBeAttached();
-  const values = await options.evaluateAll((els) =>
-    els.map((e) => (e as HTMLOptionElement).value),
-  );
-  expect(values).toContain("/Users/timo/src/scratch");
+  // The chip opens a server-side directory browser (the full browse/pick flow lives in
+  // dir-picker.e2e.ts); here we only assert the chip is what surfaces it.
+  await expect(page.getByTestId("dir-picker")).toBeVisible();
 });
 
 test("the worktree chip creates the session in an isolated worktree dir, grouped under its parent project", async ({
@@ -349,17 +345,13 @@ test("the worktree chip creates the session in an isolated worktree dir, grouped
   await openSidebar(page);
   const sidebar = page.getByTestId("sidebar");
   await sidebar.getByText("New session…").click();
-  // Toggle the worktree chip on first (before editing the path, so the inline path
-  // editor's blur doesn't reflow the chip row under the pointer), then set the dir.
+  // Toggle the worktree chip on, then choose the project via the directory browser.
   await page.getByRole("button", { name: "worktree" }).click();
   await expect(page.getByRole("button", { name: "worktree" })).toHaveAttribute(
     "aria-pressed",
     "true",
   );
-  await page.locator(".chips .chip").first().click();
-  await page
-    .getByPlaceholder(/absolute\/path\/to\/project/)
-    .fill("/Users/timo/src/demo");
+  await chooseProjectDir(page, "demo");
   // Sending the first prompt creates the session.
   const composer = page.getByPlaceholder("Describe a task or ask a question…");
   await composer.fill("get started");
@@ -386,10 +378,7 @@ async function createWorktreeSession(page: import("@playwright/test").Page) {
   await openSidebar(page);
   await page.getByTestId("sidebar").getByText("New session…").click();
   await page.getByRole("button", { name: "worktree" }).click();
-  await page.locator(".chips .chip").first().click();
-  await page
-    .getByPlaceholder(/absolute\/path\/to\/project/)
-    .fill("/Users/timo/src/demo");
+  await chooseProjectDir(page, "demo");
   const composer = page.getByPlaceholder("Describe a task or ask a question…");
   await composer.fill("get started");
   await composer.press("Enter");

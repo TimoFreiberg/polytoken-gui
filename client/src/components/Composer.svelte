@@ -11,6 +11,7 @@
   import { contextTone } from "../lib/context-tone.js";
   import SlashMenu from "./SlashMenu.svelte";
   import FileMenu from "./FileMenu.svelte";
+  import DirPicker from "./DirPicker.svelte";
   import ImageLightbox from "./ImageLightbox.svelte";
   import ModelPicker from "./ModelPicker.svelte";
   import ContextMeter from "./ContextMeter.svelte";
@@ -94,10 +95,15 @@
       ? { pct: Math.round(contextPct), tone: contextTone(contextPct) }
       : null,
   );
-  // Inline path editor for the project chip (collapsed → chip, expanded → text input).
-  let editingCwd = $state(false);
-  // Distinct project dirs from existing sessions, most-recent first — offered as a datalist
-  // on the new-session path input so a known path is one pick, not a full retype.
+  // Project chip → server-side directory browser (DirPicker). The path is chosen on the
+  // server's filesystem because pi runs server-side; a native picker would see the client.
+  let pickingCwd = $state(false);
+  // Never carry an open picker across drafts (it would auto-pop on the next new session).
+  $effect(() => {
+    if (!drafting) pickingCwd = false;
+  });
+  // Distinct project dirs from existing sessions, most-recent first — surfaced as one-tap
+  // shortcuts atop the directory browser so a known project is a pick, not a full retype.
   const recentCwds = $derived.by(() => {
     const seen = new Set<string>();
     const out: string[] = [];
@@ -289,18 +295,12 @@
       submitting = false;
     }
     if (!queued) return;
-    editingCwd = false;
+    pickingCwd = false;
     expanded = false;
     attachmentStatus = null;
     queueMicrotask(autosize);
   }
 
-  // Focus (and select) the cwd input the moment it mounts — `autofocus` is unreliable
-  // for inputs that appear via {#if}, same pattern as the sidebar's old new-dir field.
-  function focusOnMount(node: HTMLElement) {
-    node.focus();
-    if (node instanceof HTMLInputElement) node.select();
-  }
 
   // Esc while a turn runs: abort it. If the agent hasn't produced any output yet AND the
   // composer is empty (not mid-typing a queued/steer message), pull the just-sent prompt
@@ -590,6 +590,9 @@
       // The lightbox owns the keyboard while open (Esc/←/→) — don't steal focus or
       // re-open the picker underneath it.
       if (lightboxIndex !== null) return;
+      // The directory picker owns the keyboard while open (arrows / Enter / Esc to
+      // navigate); don't pull focus back to the textarea on a keystroke.
+      if (pickingCwd) return;
       // ⌘⇧F / Ctrl+Shift+F: open the file picker for image attachments.
       if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key === "F") {
         e.preventDefault();
@@ -699,41 +702,16 @@
       <!-- New-session config chips (project · worktree). Model + effort live in the
            footer toolbar below, rebound to the draft via store.composerConfig. -->
       <div class="chips">
-        {#if editingCwd}
-          <input
-            class="cwd-input"
-            type="text"
-            value={store.draft.cwd}
-            list="recent-cwds"
-            placeholder="/absolute/path/to/project (blank = home)"
-            spellcheck="false"
-            autocapitalize="off"
-            autocorrect="off"
-            title="Project directory for this new session (pick a recent one or type a path)"
-            aria-label="Project directory"
-            oninput={(e) => store.setDraftCwd(e.currentTarget.value)}
-            onkeydown={(e) => {
-              if (e.key === "Enter" || e.key === "Escape") {
-                e.preventDefault();
-                editingCwd = false;
-              }
-            }}
-            onblur={() => (editingCwd = false)}
-            use:focusOnMount
-          />
-          <datalist id="recent-cwds">
-            {#each recentCwds as dir (dir)}<option value={dir}></option>{/each}
-          </datalist>
-        {:else}
-          <button
-            class="chip"
-            title={`Project: ${store.draft.cwd || "home"} — click to change`}
-            onclick={() => (editingCwd = true)}
-          >
-            <span class="chip-ico" aria-hidden="true">▸</span>
-            {cwdBase}
-          </button>
-        {/if}
+        <button
+          class="chip"
+          aria-haspopup="dialog"
+          aria-expanded={pickingCwd}
+          title={`Project: ${store.draft.cwd || "home"} — click to browse for a directory`}
+          onclick={() => (pickingCwd = !pickingCwd)}
+        >
+          <span class="chip-ico" aria-hidden="true">▸</span>
+          {cwdBase}
+        </button>
         <button
           class="chip toggle-chip"
           class:on={store.draft.worktree}
@@ -748,6 +726,22 @@
     {/if}
 
     <div class="box-wrap">
+      {#if pickingCwd && drafting && store.draft}
+        <DirPicker
+          recents={recentCwds}
+          current={store.draft.cwd}
+          defaultCwd={store.defaultNewSessionCwd}
+          onpick={(p) => {
+            store.setDraftCwd(p);
+            pickingCwd = false;
+            ta?.focus();
+          }}
+          onclose={() => {
+            pickingCwd = false;
+            ta?.focus();
+          }}
+        />
+      {/if}
       {#if slashOpen}
         <SlashMenu
           items={slashItems}
@@ -1050,18 +1044,6 @@
     width: 12px;
     font-size: 11px;
     line-height: 1;
-  }
-  .cwd-input {
-    flex: 1;
-    min-width: 0;
-    font-size: 13px;
-    font-family: var(--font-mono);
-    color: var(--text);
-    background: var(--surface);
-    border: 1px solid var(--accent);
-    border-radius: 999px;
-    padding: 4px 12px;
-    outline: none;
   }
   .draft-hint {
     font-size: 11.5px;

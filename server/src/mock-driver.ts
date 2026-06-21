@@ -2,9 +2,12 @@
 // session so the whole UI pipeline can be built and screenshot-verified without a
 // live model or API keys.
 
+import { homedir } from "node:os";
+import { dirname, join, resolve } from "node:path";
 import {
   isDialogRequest,
   type CommandInfo,
+  type DirListing,
   type FileInfo,
   type HostUiRequest,
   type HostUiResponse,
@@ -127,6 +130,37 @@ function formatQnaText(
   }
   return parts.join("\n").trim();
 }
+
+/** Child layout (relative to a root) for the mock's synthetic directory tree. "" is the
+ *  root itself. */
+const MOCK_DIR_LAYOUT: Readonly<Record<string, readonly string[]>> = {
+  "": ["src", "Documents", "Downloads", "Projects", ".config"],
+  // `demo` / `elsewhere` are empty project dirs the e2e suite navigates into to start a
+  // session (incl. worktree creation) somewhere other than the seeded sessions' cwds.
+  src: ["pilot", "pi", "pi-gui", "kellercomm", "scratch", "demo", "elsewhere"],
+  "src/pilot": ["client", "server", "protocol", "e2e", "docs"],
+  "src/pi": ["src", "docs", "examples"],
+  Documents: ["notes", "receipts"],
+  Projects: ["website"],
+  ".config": ["pi", "fish"],
+};
+
+/** A small synthetic directory tree for the new-session picker, instantiated under two
+ *  roots so the picker has content for both the paths the mock hands out: the real $HOME
+ *  (the hub's `defaultNewSessionCwd` + the "home" shortcut) and `/Users/timo` (the prefix
+ *  the fixture sessions' cwds hardcode — see fixtures.ts). On a dev mac these coincide; on
+ *  CI ($HOME differs) keying both keeps the preview + e2e deterministic without touching
+ *  the real disk. Child names are stable regardless of the actual home path. */
+const MOCK_DIR_TREE: ReadonlyMap<string, readonly string[]> = (() => {
+  const roots = [...new Set([homedir(), "/Users/timo"])];
+  const tree = new Map<string, readonly string[]>();
+  for (const root of roots) {
+    for (const [rel, kids] of Object.entries(MOCK_DIR_LAYOUT)) {
+      tree.set(rel ? join(root, rel) : root, kids);
+    }
+  }
+  return tree;
+})();
 
 export class MockDriver implements PilotDriver {
   private listeners = new Set<(ev: SessionDriverEvent) => void>();
@@ -669,6 +703,20 @@ export class MockDriver implements PilotDriver {
       .sort((a, b) => a.path.length - b.path.length)
       .map((f) => ({ ...f }))
       .slice(0, 20);
+  }
+
+  async listDir(path?: string): Promise<DirListing> {
+    // Empty -> $HOME (the picker's default open). The fixture tree is keyed by absolute
+    // path; unknown dirs come back empty (the mock never touches the real disk).
+    const dir = path?.trim() ? resolve(path.trim()) : homedir();
+    const parent = dirname(dir);
+    const parentOrNull = parent === dir ? null : parent;
+    const entries = MOCK_DIR_TREE.get(dir);
+    return {
+      path: dir,
+      parent: parentOrNull,
+      entries: entries ? [...entries] : [],
+    };
   }
 
   setModel(provider: string, modelId: string): void {

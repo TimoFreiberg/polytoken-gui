@@ -4,6 +4,7 @@
 
 import {
   type CommandInfo,
+  type DirListing,
   type FileInfo,
   foldEvent,
   type HostUiResponse,
@@ -136,6 +137,12 @@ class PilotStore {
     query: "",
     items: [],
   });
+  // New-session directory picker: the server-side listing for the directory it's currently
+  // showing (entries are child dir names). The server resolves paths on ITS filesystem, so
+  // this browses the server, not the client device. Null until the picker first queries.
+  dirListing = $state<DirListing | null>(null);
+  // True while a `queryDir` is in flight, for the picker's loading hint.
+  dirLoading = $state(false);
   // Interactive project-trust card (D12). Out-of-band, not part of the folded session
   // state: trust is decided per-cwd before a session exists. Null when none pending.
   trustRequest = $state<TrustRequest | null>(null);
@@ -481,6 +488,15 @@ class PilotStore {
         break;
       case "fileList":
         this.files = { query: msg.query, items: [...msg.files] };
+        break;
+      case "dirListing":
+        this.dirListing = {
+          path: msg.path,
+          parent: msg.parent,
+          entries: [...msg.entries],
+          error: msg.error,
+        };
+        this.dirLoading = false;
         break;
       case "editorPrefill":
         // A branch landed on a user prompt — its text comes back to re-edit. Per-client
@@ -883,6 +899,13 @@ class PilotStore {
    *  draft's project dir (no session exists yet); omitted -> the focused session's cwd. */
   queryFiles(query: string, cwd?: string): void {
     send({ type: "queryFiles", query, cwd });
+  }
+  /** Browse a directory on the SERVER's filesystem for the new-session project picker.
+   *  Empty/omitted -> the server's $HOME. The reply arrives as a `dirListing` message
+   *  (it echoes the resolved `path` so the picker can drop a stale response). */
+  queryDir(path?: string): void {
+    this.dirLoading = true;
+    send({ type: "queryDir", path });
   }
   /** Jump the session to a prior tree entry and branch from it (pi's /tree). The server
    *  re-seeds every client's transcript to the new branch; if `entryId` was a user

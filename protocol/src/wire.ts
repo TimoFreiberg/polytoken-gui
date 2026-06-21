@@ -46,6 +46,26 @@ export interface TrustRequest {
   readonly options: readonly TrustRequestOption[];
 }
 
+/** A directory's browsable contents for the new-session project picker. The server
+ *  resolves `path` on ITS OWN filesystem (pi runs server-side), so the picker browses
+ *  the server, not whichever device the client runs on — a native browser file picker
+ *  can't do that (it only sees the client device, and never yields a real path string).
+ *  Files are omitted: you're choosing a working directory, so only child directories
+ *  matter. The client sends {@link queryDir} and renders this as {@link dirListing}. */
+export interface DirListing {
+  /** The resolved absolute directory actually listed. Echoes the request so a client
+   *  that has since navigated elsewhere can drop a stale response. */
+  readonly path: string;
+  /** The parent directory, or null when `path` is the filesystem root. */
+  readonly parent: string | null;
+  /** Child directory basenames, sorted (non-hidden first). Tap one to descend. */
+  readonly entries: readonly string[];
+  /** True when `path` couldn't be read (missing / not a directory / no permission).
+   *  `entries` is then empty and the client surfaces the failure instead of showing
+   *  it as an empty folder. */
+  readonly error?: boolean;
+}
+
 /** Compact cross-session state for attention routing without broadcasting background
  * transcripts. `waiting` overrides the underlying run phase while dialogs are pending;
  * `done` remains useful until each client marks that session read locally. */
@@ -118,6 +138,10 @@ export type ServerMessage =
    *  (debounced); the `query` field echoes the request so stale responses are dropped.
    *  Merged into the local matches, deduped by path. See {@link FileInfo}. */
   | { type: "fileList"; query: string; files: readonly FileInfo[] }
+  /** A directory listing for the new-session project picker, in reply to {@link queryDir}.
+   *  Carries the resolved `path` so a client that navigated on can drop a stale response.
+   *  See {@link DirListing}. */
+  | ({ type: "dirListing" } & DirListing)
   /** The model providers pilot can manage credentials for (curated key-capable +
    *  already-connected), server-authoritative like `modelList`. No secrets — see
    *  {@link ProviderInfo}. */
@@ -299,6 +323,10 @@ export type ClientMessage =
    *  so its @-mentions must search the soon-to-be project dir, not the previously focused
    *  session's cwd (which the pushed index reflects). Omitted -> the focused session's cwd. */
   | { type: "queryFiles"; query: string; cwd?: string }
+  /** Browse a directory on the SERVER's filesystem for the new-session project picker.
+   *  `path` omitted/empty -> the server's $HOME; `~`/relative segments are resolved
+   *  server-side. The server responds with {@link dirListing}. */
+  | { type: "queryDir"; path?: string }
   /** Answer a project-trust card (D12). `choice` indexes the request's `options`;
    *  null denies (cancel / dismiss). */
   | { type: "trustResponse"; requestId: string; choice: number | null }

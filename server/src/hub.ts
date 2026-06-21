@@ -655,6 +655,21 @@ export class SessionHub {
     }
   }
 
+  /** Fetch + send ONE client a directory listing for the new-session project picker. Not
+   *  focus-scoped (a new session has no cwd yet) — it browses absolute server paths the
+   *  client navigates to. `path` empty -> the server's $HOME. See {@link DirListing}. */
+  private async sendDirListing(
+    conn: ClientConn,
+    path: string | undefined,
+  ): Promise<void> {
+    try {
+      const listing = await this.driver.listDir(path);
+      conn.send({ type: "dirListing", ...listing });
+    } catch (e) {
+      console.error("[hub] listDir failed", e);
+    }
+  }
+
   /** Fetch + send ONE client its focused session's branch tree (pi's /tree) for the tree
    *  view. Per-connection (scoped to the requester's focus, like the command/file lists),
    *  so a client opening the tree view sees ITS session, not whatever another client is on.
@@ -1259,6 +1274,9 @@ export class SessionHub {
         return;
       case "queryFiles":
         void this.sendFileList(conn, msg.query, msg.cwd);
+        return;
+      case "queryDir":
+        void this.sendDirListing(conn, msg.path);
         return;
       case "listProviders":
         void this.broadcastProviderList();

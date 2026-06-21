@@ -4,6 +4,7 @@
 
 import type {
   CommandInfo,
+  DirListing,
   FileInfo,
   HostUiResponse,
   ImageContent,
@@ -180,6 +181,14 @@ export interface PilotDriver {
     sessionId?: SessionId,
     cwd?: string,
   ): Promise<FileInfo[]>;
+  /** List a directory's child directories for the new-session project picker. `path`
+   *  omitted/empty -> $HOME; `~` and relative segments are resolved. Resolution and the
+   *  read happen on the SERVER's filesystem (pi runs server-side), so the picker browses
+   *  the server regardless of which device the client is on. The real driver reads disk;
+   *  the mock returns a fixture tree. Unreadable paths come back with `error: true` and
+   *  no entries — never a silent empty listing. Not session-scoped (a new session has no
+   *  cwd yet); it browses absolute paths. See {@link DirListing}. */
+  listDir(path?: string): Promise<DirListing>;
   /** Switch a session's model. The driver emits a `sessionUpdated` reflecting it.
    *  sessionId omitted -> the driver's current session. */
   setModel(provider: string, modelId: string, sessionId?: SessionId): void;
