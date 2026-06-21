@@ -58,6 +58,20 @@ test("the sidebar groups sessions by project and switches the active one", async
   );
 });
 
+test("the header subtitle shows the active session's project (cwd basename)", async ({
+  page,
+}) => {
+  const subtitle = page.locator("header .sub .path");
+  // The greeting session lives in /Users/timo/src/pilot → project "pilot",
+  // proving the subtitle reads the cwd rather than the old hardcoded "pilot".
+  await expect(subtitle).toHaveText("pilot");
+
+  // Switching to a session in a different project updates the subtitle.
+  await openSidebar(page);
+  await page.getByTestId("sidebar").getByText("quick scratch session").click();
+  await expect(subtitle).toHaveText("scratch");
+});
+
 test("an empty launch restores this client's last-focused session", async ({
   page,
 }) => {

@@ -1,5 +1,6 @@
 <script lang="ts">
   import { store } from "../lib/store.svelte.js";
+  import { sessionSubtitle } from "../lib/session-subtitle.js";
   import IconButton from "./ui/IconButton.svelte";
 
   let hotkeyN = $state(0);
@@ -39,6 +40,26 @@
   // The active session's title (folded snapshot is authoritative; ambient title wins).
   const title = $derived(
     drafting ? "New session" : s.ambient.title || s.title || "pilot",
+  );
+
+  // The "where am I" subtitle. The folded snapshot carries no cwd/worktree, so we
+  // read the active session's list entry (same lookup the sidebar uses) — its cwd
+  // is the project, its worktree.base the parent repo for worktree sessions.
+  const entry = $derived(
+    store.sessions.find((e) => e.sessionId === s.ref?.sessionId),
+  );
+  const subtitle = $derived(
+    drafting
+      ? draftDir || "new session"
+      : sessionSubtitle({ cwd: entry?.cwd, worktreeBase: entry?.worktree?.base }),
+  );
+  // Hover reveals the full path(s) the basename(s) elide.
+  const subtitleTitle = $derived(
+    drafting || !entry?.cwd
+      ? undefined
+      : entry.worktree
+        ? `Worktree ${entry.cwd} (of ${entry.worktree.base})`
+        : entry.cwd,
   );
 
   const push = $derived(store.pushState);
@@ -95,13 +116,7 @@
       <span class="title">{title}</span>
     </span>
     <div class="sub">
-      <span class="path"
-        >{drafting
-          ? draftDir || "new session"
-          : s.ref?.workspaceId
-            ? "pilot"
-            : "no session"}</span
-      >
+      <span class="path" title={subtitleTitle}>{subtitle}</span>
       {#each statuses as [key, text] (key)}
         <span class="dot-sep">·</span>
         <span class="amb">{text}</span>

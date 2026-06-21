@@ -454,9 +454,21 @@ hit a session limit mid-verify; confirm each against the code before acting):_
       analogous to the Claude app's colored circle (green → yellow → red as the
       context window fills). Color could map to token-budget thresholds from the
       snapshot's `config`/usage fields; exact threshold values TBD
-- [ ] **(discussion needed) Auto session titling via cheapest model** — run a
-      lightweight model on session start to generate a title from the first user
-      prompt, instead of showing "New Session" indefinitely
+- [x] ~~**(discussion needed) Auto session titling via cheapest model**~~ → resolved
+      2026-06-21 as **won't-build (pi already owns it)**. pi's `session-namer.ts`
+      extension already does exactly this: on the first prompt of an unnamed session it
+      asks the cheap `text-summary` role for a ≤40-char title and sets it fire-and-forget
+      (zero first-token latency), riding `session_info_changed` → `sessionUpdated` into the
+      sidebar live. Pilot already runs pi as `mode: "rpc"` with `hasUI` true
+      (`pi-driver.ts:617`), which is exactly the condition the namer needs to fire — same
+      seam that made the `answer`/qna tool work. Building a pilot-side titler would
+      duplicate and fight pi, against the pi-only/deep-SDK lane (cf. the line-197 call to
+      leave auto-title cleanup to the namer extension, not pilot). A live session that
+      isn't named yet shows its first prompt as preview, not "New session" — that label is
+      only the unsent-draft placeholder. _(Loose end: not re-verified against a live
+      real-pi run this session — if titles ever sit stuck on the raw prompt, that's a
+      broken `text-summary` role / missing auth on the Mac Mini, i.e. a pi-seam debug, not
+      a pilot build.)_
 - [x] **Realistic mock tool-event timestamps** → already satisfied (verified 2026-06-21).
       `server/src/fixtures.ts` already routes every *finished* tool fixture through `toolSpan`,
       which calls `advanceTs(durationMs)` between stamping the start/finish events so the gap is
@@ -666,13 +678,17 @@ the rest._
       the sidebar, above the project groups.
 - [ ] **Session emoji / color label** — optional per-session glyph or accent color for
       fast visual ID in the list (stored via `appendCustomEntry`, like the archive flag).
-- [ ] **Session metadata header** — a compact header on the active session showing model,
-      cwd, git branch, message count, started-at — the "where am I" strip. Rechecked
-      against latest `main` (`c49cbf85`) on 2026-06-20: the recent simplification appears
-      to have resolved the mobile crowding concern (model/thinking moved out; bell and
-      connection labels collapse below 480px). The remaining concrete wart is that every
-      active session's subtitle is still the literal `pilot`; discuss whether cwd/project
-      or a richer metadata strip should replace it before implementing.
+- [x] **Session metadata header** → done 2026-06-21 (minimal, owner's call). The mobile
+      crowding that gated this was already resolved (model/thinking moved out of the header);
+      the only live wart was the subtitle reading the hardcoded literal `pilot` for every
+      session. `StatusHeader` now derives the subtitle from the active session's list entry
+      (the folded snapshot carries no cwd): the project name (cwd basename), and
+      `project · worktree` when the session runs in a pilot-created worktree (cwd ≠ parent
+      repo). Pure `lib/session-subtitle.ts` helper (unit-tested incl. the worktree + degenerate
+      cases); `e2e/sessions.e2e.ts` proves it tracks cwd (switch project → subtitle changes).
+      Hover shows the full path. _(Scoped down from the wishlist strip: git branch stays its
+      own item below; model/thinking deliberately not re-added to the header; count/started-at
+      parked unless dogfooding asks.)_
 - [ ] **Git branch indicator per session** — read the cwd's current branch and show it in
       the row/header; pairs naturally with the worktree-checkbox item.
 - [ ] **"Open in editor" deep link** — a button that opens the session's cwd in
