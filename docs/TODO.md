@@ -526,9 +526,11 @@ the rest._
 - [ ] **One-off bash affordance** (DESIGN LATER) — a way to run a single shell command
       whose result lands in the transcript and enters next-turn context, without a full
       prompt. Useful for "what's the branch / git status" mid-session.
-- [ ] **"Keep going" / continue button** — one-tap canned follow-up ("continue",
-      "keep going") on an idle session, for the common case of nudging a paused agent
-      from your phone without typing.
+- [ ] **"Keep going" / continue button** ⚠️ _questionable — discuss before building_ —
+      one-tap canned follow-up ("continue", "keep going") on an idle session, for the
+      common case of nudging a paused agent from your phone without typing. _(2026-06-21:
+      owner doesn't want this now and may never — don't pick it up on spec; revisit only
+      if dogfooding surfaces a concrete need.)_
 
 ### Composer & input
 - [x] **@-file mention autocomplete** — done 2026-06-19. Type `@` in the composer
@@ -591,8 +593,21 @@ the rest._
 ### Mobile / PWA
 - [ ] **Swipe gestures** — edge-swipe to open/close the sidebar drawer; optionally
       swipe-between-sessions. Native-feeling on the phone PWA.
-- [ ] **Pull-to-refresh → force reconnect + snapshot** — the universal mobile gesture for
-      "I think this is stale," wired to drop and re-establish the WS.
+- [x] **Pull-to-refresh → force reconnect + snapshot** → done 2026-06-21. Pulling the
+      **transcript** or the **sidebar session list** down from the top (touch only) fires
+      `store.reconnect()` → `forceReconnect()`, which drops + re-establishes the WS; the
+      reconnect re-runs the hello→snapshot flow, so the "+ snapshot" half comes free.
+      Gesture math is a DOM-free `PullTracker` (`lib/pull-to-refresh.ts`, unit-tested:
+      arm threshold, resistance, top-edge-only, upward/lost-edge collapse); a Svelte
+      action wires touch events (non-passive `touchmove` so it preventDefaults the native
+      pull), and a reactive controller (`lib/pull-to-refresh.svelte.ts`) holds the spinner
+      until connected with a min-visible floor so a fast reconnect never flashes. A
+      minimal `PullIndicator.svelte` (arrow → flips to "release" when armed → spinner)
+      overlays each surface. Touch-gated via `maxTouchPoints`; desktop keeps Reconnect
+      (Alt+R). `e2e/pull-to-refresh.mobile.e2e.ts` (Pixel 7) covers past-threshold →
+      reconnect and a sub-threshold no-op. _(Eyeballed in the desktop preview for layout
+      + zero console errors; the touch gesture itself is covered by the Pixel 7 e2e, not
+      yet finger-tested on a real phone.)_
 - [ ] **Haptic feedback** — `navigator.vibrate` on approval-needed and turn-complete so a
       pocketed phone signals without a sound.
 - [ ] **App-icon unread badge** — Badging API (`navigator.setAppBadge`) to show an unread

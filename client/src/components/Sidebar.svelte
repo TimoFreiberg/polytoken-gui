@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { tick } from "svelte";
+  import { onDestroy, tick } from "svelte";
   import { slide } from "svelte/transition";
   import type { SessionListEntry } from "@pilot/protocol";
   import { store } from "../lib/store.svelte.js";
@@ -13,6 +13,18 @@
   // getting full" cue. Below it the ring is noise on a single line, so it stays hidden.
   const RING_THRESHOLD = 66;
   import IconButton from "./ui/IconButton.svelte";
+  import PullIndicator from "./PullIndicator.svelte";
+  import { pullToRefresh } from "../lib/pull-to-refresh.js";
+  import { createPullRefresh } from "../lib/pull-to-refresh.svelte.js";
+
+  // Pull-to-refresh (touch only): pulling the session list down from the top forces a
+  // reconnect + re-snapshot, same gesture as the transcript.
+  const pull = createPullRefresh();
+  onDestroy(() => pull.dispose());
+
+  // Touch-primary devices only — desktop has the Reconnect button (Alt+R).
+  const isTouch =
+    typeof navigator !== "undefined" && navigator.maxTouchPoints > 0;
 
   function basename(p: string): string {
     const parts = p.replace(/\/+$/, "").split("/");
@@ -354,7 +366,16 @@
     </div>
   {/if}
 
-  <nav class="list">
+  <div class="list-wrap">
+  <PullIndicator snap={pull.snap} refreshing={pull.refreshing} testid="ptr-sidebar" />
+  <nav
+    class="list"
+    use:pullToRefresh={{
+      enabled: isTouch && !pull.refreshing,
+      onRefresh: pull.trigger,
+      onChange: pull.onChange,
+    }}
+  >
     {#if draft}
       <div class="draft-row">
         <button
@@ -652,6 +673,7 @@
       {/each}
     {/if}
   </nav>
+  </div>
 
   <!-- Desktop auto-update card: shown when a new origin/main is staged but deferred
        because we're connected (server pushes `updateStatus`). One action, no dismiss —
@@ -815,9 +837,18 @@
     box-shadow: 0 0 0 1.5px var(--accent);
   }
 
+  .list-wrap {
+    position: relative;
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+  }
   .list {
     flex: 1;
+    min-height: 0;
     overflow-y: auto;
+    overscroll-behavior: contain;
     padding: 4px 6px 14px 2px;
   }
   /* Quiet build stamp pinned at the bottom of the sidebar. */

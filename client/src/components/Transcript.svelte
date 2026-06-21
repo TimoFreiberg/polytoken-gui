@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount } from "svelte";
+  import { onDestroy, onMount } from "svelte";
   import { slide } from "svelte/transition";
   import { cubicOut } from "svelte/easing";
   import { store } from "../lib/store.svelte.js";
@@ -16,8 +16,16 @@
   import ToolSummary from "./ToolSummary.svelte";
   import ThinkingBlock from "./ThinkingBlock.svelte";
   import QnaResult from "./QnaResult.svelte";
+  import PullIndicator from "./PullIndicator.svelte";
+  import { pullToRefresh } from "../lib/pull-to-refresh.js";
+  import { createPullRefresh } from "../lib/pull-to-refresh.svelte.js";
 
   const items = $derived(store.transcriptItems);
+
+  // Pull-to-refresh (touch only): pulling the transcript down from the top forces a
+  // reconnect + re-snapshot — the universal mobile "I think this is stale" gesture.
+  const pull = createPullRefresh();
+  onDestroy(() => pull.dispose());
 
   // Touch devices have no hover, so the copy footer (hover-revealed on desktop) would be
   // unreachable. Pin it visible on touch-primary devices. Gate on a JS capability check
@@ -283,7 +291,18 @@
 </script>
 
 <div class="transcript-wrap">
-<div class="scroller" class:touch={isTouch} bind:this={scroller} onscroll={onScroll}>
+<PullIndicator snap={pull.snap} refreshing={pull.refreshing} testid="ptr-transcript" />
+<div
+  class="scroller"
+  class:touch={isTouch}
+  bind:this={scroller}
+  onscroll={onScroll}
+  use:pullToRefresh={{
+    enabled: isTouch && !pull.refreshing,
+    onRefresh: pull.trigger,
+    onChange: pull.onChange,
+  }}
+>
   <div class="col">
     <!-- Branch ("jump here") affordance — a git-fork glyph. Reused on user prompts and
          turn-final assistant paragraphs. -->
