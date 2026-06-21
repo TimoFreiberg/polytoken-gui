@@ -17,7 +17,9 @@ test("a background approval stays obvious and opens the right session", async ({
   const row = sidebar.locator(".row", { hasText: BG });
   const status = row.getByTestId("session-status");
   await expect(status).toHaveAttribute("data-state", "waiting");
-  await expect(row).toContainText("Review background change");
+  // The single-line redesign moved the activity detail off a second row and into the
+  // row's hover tooltip; the visible attention signal is the waiting badge above.
+  await expect(row).toHaveAttribute("title", /Review background change/);
 
   const project = sidebar.locator(".group", { hasText: "pilot" });
   await project.locator(".group-toggle").click();
@@ -31,10 +33,14 @@ test("a background approval stays obvious and opens the right session", async ({
   await expect(
     page.getByRole("heading", { name: "Review background change" }),
   ).toBeVisible();
-  await expect(page.getByText("Apply the queued background edit?")).toBeVisible();
+  await expect(
+    page.getByText("Apply the queued background edit?"),
+  ).toBeVisible();
 });
 
-test("a notification deep link focuses its target session", async ({ page }) => {
+test("a notification deep link focuses its target session", async ({
+  page,
+}) => {
   await page.request.get("/debug/reset");
   await page.goto("/?session=older-session");
   await expect(

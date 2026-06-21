@@ -138,12 +138,13 @@ test("rows show a relative last-activity timestamp; the count appears only when 
   await openSidebar(page);
   const sidebar = page.getByTestId("sidebar");
 
-  // Each row carries a relative "time since last activity" label below the name.
+  // Each row carries a compact "time since last activity" label at the end of its line
+  // (the unified status slot resolves to the timestamp when the session is idle/read).
   const demoRow = sidebar
     .locator(".row-wrap")
     .filter({ hasText: "Wire up the WebSocket" });
   await expect(demoRow.locator(".time")).toHaveText(
-    /(\d+(m|h|d|w|mo|y) ago|just now)/,
+    /^(\d+(m|h|d|w|mo|y)|now)$/,
   );
 
   // The session count is hidden while a group is expanded…
@@ -171,15 +172,14 @@ test("relative timestamps tick forward as time passes", async ({ page }) => {
     .filter({ hasText: "Wire up the WebSocket" })
     .locator(".time");
   const minutes = async (): Promise<number> => {
-    const m = (await time.textContent())?.match(/^(\d+)m ago$/);
-    if (!m)
-      throw new Error(`expected "Nm ago", got "${await time.textContent()}"`);
+    const m = (await time.textContent())?.match(/^(\d+)m$/);
+    if (!m) throw new Error(`expected "Nm", got "${await time.textContent()}"`);
     return Number(m[1]);
   };
 
   const before = await minutes();
   await page.clock.runFor(5 * 60_000); // five minutes, firing the 1-minute interval
-  await expect(time).toHaveText(`${before + 5}m ago`);
+  await expect(time).toHaveText(`${before + 5}m`);
 });
 
 test("a project's + button opens a new-session draft for that dir", async ({

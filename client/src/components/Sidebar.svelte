@@ -1,11 +1,11 @@
 <script lang="ts">
   import { tick } from "svelte";
+  import { slide } from "svelte/transition";
   import type { SessionListEntry } from "@pilot/protocol";
   import { store } from "../lib/store.svelte.js";
   import { filterSessions } from "../lib/session-filter.js";
-  import { relativeTime } from "../lib/relative-time.js";
+  import { compactTime, relativeTime } from "../lib/relative-time.js";
   import { buildHash, buildDate, buildLabel } from "../lib/build-info.js";
-  import ContextRing from "./ContextRing.svelte";
   import Button from "./ui/Button.svelte";
   import IconButton from "./ui/IconButton.svelte";
 
@@ -359,14 +359,10 @@
             if (draft) startDraft(draft.cwd);
           }}
         >
-          <span class="status" data-state="draft" title="New session draft" aria-label="draft">
-            <span class="draft-marker">+</span>
-          </span>
-          <span class="row-body">
-            <span class="name">New session</span>
-            <span class="meta">
-              <span class="msg-count">{draft.cwd ? basename(draft.cwd) : "home"}</span>
-            </span>
+          <span class="draft-marker" title="New session draft" aria-label="draft">+</span>
+          <span class="name">New session</span>
+          <span class="meta">
+            <span class="tag">{draft.cwd ? basename(draft.cwd) : "home"}</span>
           </span>
         </button>
       </div>
@@ -411,11 +407,12 @@
             >
           </div>
           {#if !collapsed[g.cwd]}
-            <ul>
+            <ul transition:slide={{ duration: 160 }}>
               {#each g.items as s (s.path)}
                 {@const st = store.sessionStatus(s.sessionId)}
                 {@const activity = store.sessionActivity(s.sessionId)}
-                {@const rel = relativeTime(s.updatedAt, now)}
+                {@const rel = compactTime(s.updatedAt, now)}
+                {@const relLong = relativeTime(s.updatedAt, now)}
                 <li class="row-wrap">
                   {#if renamingFor === s.path}
                     <form
@@ -469,80 +466,69 @@
                       oncontextmenu={(e) => openMenu(e, s.path)}
                     >
                       <span
-                        class="status"
-                        data-state={st}
-                        data-testid="session-status"
-                        title={st === "initializing"
-                          ? "initializing — warming up"
-                          : activity ?? st}
-                        aria-label={`status: ${st}`}
+                        class="name"
+                        data-tip-single
+                        title={s.displayName ?? (s.preview ? s.preview.split('\n')[0] : '(untitled)')}
+                        >{s.displayName || s.preview || "(untitled)"}</span
                       >
-                        {#if st === "running"}
-                          <i class="dot"></i><i class="dot"></i><i class="dot"></i>
-                        {:else if st === "initializing"}
-                          <i class="spinner"></i>
-                        {:else if st === "waiting"}
-                          <i class="attention-symbol">!</i>
-                        {:else if st === "failed"}
-                          <i class="attention-symbol">×</i>
-                        {:else if st === "done"}
-                          <i class="attention-symbol">✓</i>
-                        {:else}
-                          <i class="dot"></i>
+                      <span class="meta">
+                        {#if s.archived}
+                          <span class="tag">archived</span>
                         {/if}
-                      </span>
-                      <span class="row-body">
-                        <span
-                          class="name"
-                          data-tip-single
-                          title={s.displayName ?? (s.preview ? s.preview.split('\n')[0] : '(untitled)')}
-                          >{s.displayName || s.preview || "(untitled)"}</span
-                        >
-                        {#if activity}
-                          <span class="activity" data-state={st}>{activity}</span>
-                        {/if}
-                        <span class="meta">
-                          <span class="msg-count"
-                            >{s.userMessageCount} msg{#if s.archived} ·
-                              archived{/if}{#if s.worktree}
-                              ·
-                              <span
-                                class="wt"
-                                title={`Worktree: ${s.worktree.path}`}
-                                aria-label="worktree"
-                              >
-                                <svg
-                                  viewBox="0 0 24 24"
-                                  width="11"
-                                  height="11"
-                                  fill="none"
-                                  stroke="currentColor"
-                                  stroke-width="2"
-                                  stroke-linecap="round"
-                                  stroke-linejoin="round"
-                                  aria-hidden="true"
-                                >
-                                  <line x1="6" y1="3" x2="6" y2="15" />
-                                  <circle cx="18" cy="6" r="3" />
-                                  <circle cx="6" cy="18" r="3" />
-                                  <path d="M18 9a9 9 0 0 1-9 9" />
-                                </svg>
-                              </span>{/if}</span
+                        {#if s.worktree}
+                          <span
+                            class="wt"
+                            title={`Worktree: ${s.worktree.path}`}
+                            aria-label="worktree"
                           >
-                          <span class="meta-end">
-                            {#if s.usage}
-                              <ContextRing
-                                usage={s.usage}
-                                size={12}
-                                showLabel={false}
-                              />
-                            {/if}
-                            {#if rel}
-                              <span class="time" title={`Last activity ${rel}`}
-                                >{rel}</span
-                              >
-                            {/if}
+                            <svg
+                              viewBox="0 0 24 24"
+                              width="12"
+                              height="12"
+                              fill="none"
+                              stroke="currentColor"
+                              stroke-width="2"
+                              stroke-linecap="round"
+                              stroke-linejoin="round"
+                              aria-hidden="true"
+                            >
+                              <line x1="6" y1="3" x2="6" y2="15" />
+                              <circle cx="18" cy="6" r="3" />
+                              <circle cx="6" cy="18" r="3" />
+                              <path d="M18 9a9 9 0 0 1-9 9" />
+                            </svg>
                           </span>
+                        {/if}
+                        <!-- Unified right-edge slot: attention badge, in-progress spinner,
+                             unread dot, or — when idle/read — the last-activity timestamp.
+                             One slot, so the title gets the full row width. -->
+                        <span
+                          class="status"
+                          data-state={st}
+                          data-testid="session-status"
+                          title={st === "initializing"
+                            ? "initializing — warming up"
+                            : (activity ??
+                              (st === "read" && relLong
+                                ? `Last activity ${relLong}`
+                                : st))}
+                          aria-label={st === "read"
+                            ? `last activity ${relLong || "unknown"}`
+                            : `status: ${st}`}
+                        >
+                          {#if st === "waiting"}
+                            <i class="attention-symbol">!</i>
+                          {:else if st === "failed"}
+                            <i class="attention-symbol">×</i>
+                          {:else if st === "running" || st === "initializing"}
+                            <i class="spinner"></i>
+                          {:else if st === "done"}
+                            <i class="attention-symbol">✓</i>
+                          {:else if st === "unread"}
+                            <i class="dot"></i>
+                          {:else if rel}
+                            <span class="time">{rel}</span>
+                          {/if}
                         </span>
                       </span>
                     </button>
@@ -663,7 +649,7 @@
   .sidebar {
     display: flex;
     flex-direction: column;
-    width: 264px;
+    width: 288px;
     flex-shrink: 0;
     height: 100%;
     height: 100dvh;
@@ -793,7 +779,7 @@
   .list {
     flex: 1;
     overflow-y: auto;
-    padding: 4px 6px 14px;
+    padding: 4px 6px 14px 2px;
   }
   /* Quiet build stamp pinned at the bottom of the sidebar. */
   .app-update {
@@ -912,9 +898,10 @@
   ul {
     list-style: none;
     /* Indent the whole session list under its project header so the parent-child
-       relationship reads at a glance (no tree rail — indentation only). */
+       relationship reads at a glance (no tree rail — indentation only). Kept tight so
+       the single-line titles get as much width as possible. */
     margin: 0 0 2px;
-    padding: 0 0 0 12px;
+    padding: 0 0 0 6px;
   }
   /* A row + its overflow (⋯) button on one line; the inline actions menu drops below. */
   .row-line {
@@ -933,7 +920,7 @@
     background: transparent;
     border: none;
     border-radius: var(--radius-sm);
-    padding: 7px 10px;
+    padding: 6px 8px;
   }
   .row:hover {
     background: var(--surface);
@@ -1022,33 +1009,20 @@
   .menu-item.danger:hover {
     background: var(--danger-soft);
   }
-  .row-body {
-    display: flex;
-    flex-direction: column;
-    gap: 1px;
-    flex: 1;
-    min-width: 0;
-  }
-  /* Status indicator gutter (running / unread / read), left of the title. */
+  /* Unified status/time slot at the row's right edge: an attention badge, the in-progress
+     spinner, the unread dot, or — at rest — the last-activity timestamp. One at a time, so
+     the title gets the rest of the row. Sizes to content (the timestamp is the widest). */
   .status {
     display: inline-flex;
     align-items: center;
-    justify-content: center;
-    gap: 2px;
-    width: 18px;
+    justify-content: flex-end;
+    min-width: 14px;
     flex-shrink: 0;
   }
   .status .dot {
     border-radius: 50%;
   }
-  /* read / idle — a hollow ring. */
-  .status[data-state="read"] .dot {
-    width: 7px;
-    height: 7px;
-    background: transparent;
-    border: 1.5px solid var(--text-faint);
-  }
-  /* unread — a filled dot (new content since last viewed). */
+  /* unread — a filled dot, standing in for the timestamp to flag new content. */
   .status[data-state="unread"] .dot {
     width: 8px;
     height: 8px;
@@ -1083,19 +1057,6 @@
     background: color-mix(in srgb, var(--accent) 14%, transparent);
     border: 1px solid color-mix(in srgb, var(--accent) 45%, transparent);
   }
-  /* running — three dots in a left-to-right pulse, echoing the mockup's "···". */
-  .status[data-state="running"] .dot {
-    width: 4px;
-    height: 4px;
-    background: var(--text-muted);
-    animation: dotPulse 1.1s ease-in-out infinite;
-  }
-  .status[data-state="running"] .dot:nth-child(2) {
-    animation-delay: 0.18s;
-  }
-  .status[data-state="running"] .dot:nth-child(3) {
-    animation-delay: 0.36s;
-  }
   /* Draft row — pinned above the session list while composing a new session.
      Reuses .row + .row.active; only the status marker is custom. */
   .draft-row {
@@ -1113,11 +1074,12 @@
     color: var(--accent);
     line-height: 1;
   }
-  /* initializing — a small rotating ring (a session warming up, pre-stream). Distinct
-     from the running pulse so the two phases read apart at a glance. */
+  /* in-progress — a small rotating ring in the timestamp slot, for both a warming-up
+     session and a live turn. Same glyph for both phases; the tooltip carries the detail. */
+  .status[data-state="running"] .spinner,
   .status[data-state="initializing"] .spinner {
-    width: 9px;
-    height: 9px;
+    width: 11px;
+    height: 11px;
     border-radius: 50%;
     border: 1.5px solid var(--border-strong);
     border-top-color: var(--accent);
@@ -1139,79 +1101,62 @@
     }
   }
   @media (prefers-reduced-motion: reduce) {
-    .status[data-state="running"] .dot,
     .group-attention[data-state="running"] {
       animation: none;
       opacity: 0.7;
     }
+    .status[data-state="running"] .spinner,
     .status[data-state="initializing"] .spinner {
       animation: none;
     }
   }
   .name {
-    font-size: 13.5px;
-    letter-spacing: -0.01em;
+    flex: 1;
+    min-width: 0;
+    font-size: 14px;
+    line-height: 1.3;
+    letter-spacing: -0.006em;
     color: var(--text);
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
   }
-  .activity {
-    overflow: hidden;
-    color: var(--text-muted);
-    font-size: 11.5px;
-    line-height: 1.25;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-  .activity[data-state="waiting"] {
-    color: var(--warning);
-    font-weight: 550;
-  }
-  .activity[data-state="failed"] {
-    color: var(--danger);
-  }
-  .activity[data-state="done"] {
-    color: var(--accent);
-    font-weight: 550;
-  }
   .row.active .name {
     color: var(--accent);
     font-weight: 600;
   }
+  /* Right-edge cluster: worktree glyph, optional tag, and the status/time slot. Shrinks
+     to its content so the title takes the rest of the line. */
   .meta {
-    display: flex;
-    align-items: baseline;
-    justify-content: space-between;
-    gap: 8px;
-    font-size: 11px;
-    color: var(--text-faint);
-    font-family: var(--font-mono);
-  }
-  .msg-count {
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-  }
-  /* Right side of the meta line: the optional context-fill ring + the timestamp. */
-  .meta-end {
     display: flex;
     align-items: center;
     gap: 6px;
     flex-shrink: 0;
+    font-size: 11.5px;
+    color: var(--text-faint);
   }
-  /* Last-activity timestamp ("15m ago"), right-aligned under the name. */
+  /* Last-activity timestamp ("2d"), the resting state of the status slot. */
   .time {
     flex-shrink: 0;
+    color: var(--text-faint);
+    font-variant-numeric: tabular-nums;
   }
-  /* Worktree marker in the meta line — a compact tinted git-branch glyph (the title
-     carries the full path; aria-label names it for screen readers). */
+  /* Faint label chip — the "archived" marker and the draft row's target dir. */
+  .tag {
+    flex-shrink: 0;
+    max-width: 96px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: var(--text-faint);
+  }
+  /* Worktree marker — a compact tinted git-branch glyph (the title carries the full
+     path; aria-label names it for screen readers). */
   .wt {
     display: inline-flex;
     align-items: center;
     color: var(--accent);
     cursor: help;
-    vertical-align: middle;
   }
 
   /* Phone: the sidebar becomes a slide-over drawer above the transcript. */
