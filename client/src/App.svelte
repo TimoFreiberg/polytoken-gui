@@ -19,6 +19,7 @@
   import IconButton from "./components/ui/IconButton.svelte";
   import { notifyIfUnfocused } from "./lib/notify.js";
   import { wakeLock } from "./lib/wake-lock.js";
+  import { trackKeyboardInset } from "./lib/keyboard-inset.js";
 
   // Dev affordance: ?dev shows buttons that drive the mock to any UI state, so the
   // screenshot harness can reach approval/ambient/error states deterministically.
@@ -26,6 +27,10 @@
   const scripts = ["reply", "markdown", "search", "thinkingtools", "skill", "confirm", "trust", "input", "qna", "ambient", "compat", "bgrun", "bgwait", "queue", "deliverqueue", "initializing", "editdiff", "images", "error", "idle", "streamhold", "staleidle", "pendinghold", "timeout", "yesno", "journalnudge", "contextfull", "longoutput", "selectmany"];
 
   onMount(() => store.start());
+
+  // Publish the on-screen keyboard's overlap as --keyboard-inset so the composer stays pinned
+  // above it on a phone (the CSS below applies it on touch). No-op without visualViewport.
+  onMount(() => trackKeyboardInset());
 
   // Keep the screen awake while the focused session's turn streams, so a phone you're
   // watching doesn't sleep mid-run. Released the moment the turn settles.
@@ -166,6 +171,17 @@
     flex-direction: column;
     height: 100%;
     height: 100dvh;
+  }
+  /* On touch devices, shrink the app by the on-screen keyboard's overlap (--keyboard-inset,
+     published by lib/keyboard-inset.ts from the visualViewport) so the bottom-anchored
+     composer stays pinned just above the keyboard instead of sliding behind it / scrolling
+     off. Desktop (fine pointer) is untouched, so trackpad pinch-zoom never shrinks the layout;
+     the var defaults to 0 when no keyboard is up. */
+  @media (pointer: coarse) {
+    .shell,
+    .app {
+      height: calc(100dvh - var(--keyboard-inset, 0px));
+    }
   }
   .chat {
     position: relative;

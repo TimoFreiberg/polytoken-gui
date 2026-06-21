@@ -423,10 +423,20 @@ hit a session limit mid-verify; confirm each against the code before acting):_
       asserts we land back on it (verified it fails without the fix — the view snaps to the
       greeting). _(Broader mobile connectivity hardening — flaky-link queue behavior etc. — is a
       separate thread; this fixes the specific focus-loss symptom.)_
-- [ ] **Mobile: composer should be pinned above the keyboard** — when the virtual
-      keyboard is visible on mobile, the text edit box can scroll upward off-screen
-      instead of staying pinned just above the keyboard. Likely a viewport / visual
-      viewport handling issue (iOS Safari's `visualViewport` API or `env(safe-area-inset-bottom)`).
+- [x] **Mobile: composer should be pinned above the keyboard** → done 2026-06-21. New
+      `lib/keyboard-inset.ts` reads the on-screen keyboard's overlap from the `visualViewport`
+      (`innerHeight − visualViewport.height − offsetTop`, clamped ≥0) and publishes it as a
+      `--keyboard-inset` CSS var on `<html>`, updated on viewport resize/scroll. On touch
+      (`@media (pointer: coarse)`) the app shrinks by it (`height: calc(100dvh − var(...))`), so
+      the bottom-anchored composer rides just above the keyboard instead of sliding behind it /
+      scrolling off. Desktop (fine pointer) is untouched — trackpad pinch-zoom never shrinks the
+      layout — and the var defaults to 0 where `visualViewport` is absent (progressive
+      enhancement). Also added `interactive-widget=resizes-content` to the viewport meta so
+      Chrome Android resizes the layout for the keyboard natively; iOS Safari ignores it and
+      uses the tracker. `keyboard-inset.test.ts` covers the inset math + tracker subscribe/reset;
+      `e2e/keyboard-inset.mobile.e2e.ts` (Pixel 7) drives the var and asserts the app shrinks +
+      the composer lifts + restores. _(The actual visualViewport→keyboard step can't be driven by
+      Playwright — no real soft keyboard — so real-device iOS confirmation is still owner's.)_
 
 - [ ] **Active session unread when new text lands below the viewport** — builds on
       the status indicators. Today the active (focused) session is always
