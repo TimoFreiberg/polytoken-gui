@@ -854,6 +854,17 @@ export async function createPiDriver(
       updatedAt: nowIso,
       createdAt: nowIso,
       archived: archiveStore.has(path),
+      // Carry the worktree flag from the moment of creation (keyed by the worktree dir
+      // == ws.cwd), identical to toEntry. Without it the sidebar groups a brand-new
+      // worktree session under its own cwd until pi persists the .jsonl on the first
+      // assistant message and the disk entry supersedes this placeholder — a visible
+      // few-second jump into the parent project. worktreeStore has the meta now.
+      worktree: (() => {
+        const meta = worktreeStore.get(ws.cwd);
+        return meta
+          ? { path: meta.path, base: meta.base, name: meta.name }
+          : undefined;
+      })(),
     };
   };
 
