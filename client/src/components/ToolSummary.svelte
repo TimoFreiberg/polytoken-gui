@@ -94,6 +94,10 @@
   .head:hover {
     color: var(--text);
   }
+  .head:hover :global(.chevron),
+  .head:focus-visible :global(.chevron) {
+    color: var(--text-muted);
+  }
   .head:focus-visible {
     outline: 2px solid var(--accent);
     outline-offset: 2px;

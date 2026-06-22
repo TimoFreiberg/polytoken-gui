@@ -1068,6 +1068,10 @@
   .inject-pill:hover {
     color: var(--text-muted);
   }
+  .inject-pill:hover :global(.chevron),
+  .inject-pill:focus-visible :global(.chevron) {
+    color: var(--text-muted);
+  }
   .inject-label {
     font-family: var(--font-mono);
     font-size: 11px;

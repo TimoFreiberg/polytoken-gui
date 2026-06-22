@@ -33,6 +33,10 @@
     color: var(--text-muted);
     font-size: 13px;
   }
+  .head:hover :global(.chevron),
+  .head:focus-visible :global(.chevron) {
+    color: var(--text-muted);
+  }
   .label {
     font-style: italic;
   }

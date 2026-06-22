@@ -460,6 +460,10 @@
   .head:hover {
     background: var(--surface-sunken);
   }
+  .head:hover :global(.chevron),
+  .head:focus-visible :global(.chevron) {
+    color: var(--text-muted);
+  }
   .head:focus-visible {
     outline: none;
     background: var(--surface-sunken);
