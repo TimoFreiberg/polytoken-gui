@@ -507,8 +507,21 @@ hit a session limit mid-verify; confirm each against the code before acting):_
       Tailscale callback needed, which sidestepped the original cost). `oauth-dialog` +
       `e2e/settings.e2e.ts` cover sign-in/cancel/sign-out. Left partial pending real-world use;
       reopen if the flow shows jank.
-- [ ] **Extensions enable/disable view** + compatibility-issue surfacing _(owner, 2026-06-22:
-      would be neat — possibly as a submenu within the Settings panel)_
+- [x] **Extensions enable/disable view** + compatibility-issue surfacing → done 2026-06-22.
+      New collapsible "Extensions" section in the Settings panel lists the focused session's
+      pi extensions (name, source scope, tool/command counts) from `resourceLoader.getExtensions()`,
+      surfaces each one's load error inline (the compat-issue half), and offers a per-extension
+      On/Off toggle. Toggling writes a `-<resolvedPath>` force-exclude override to pi's user
+      settings (`SettingsManager.getExtensionPaths`/`setExtensionPaths`) — so it **applies on the
+      session's next start** (pi loads extensions at start; the section says so), and disabled
+      rows are reconstructed from those overrides so they stay re-enableable. New protocol
+      `ExtensionInfo` + `queryExtensions`/`extensionList`/`setExtensionEnabled` wire messages,
+      `PilotDriver.listExtensions`/`setExtensionEnabled` in both drivers, hub routing, store
+      state, `MOCK_EXTENSIONS` fixtures. Covered by `e2e/settings.e2e.ts` (collapse-default,
+      list+counts+error, toggle+reconcile) + a hub unit test. _(Known limit: a user-scope
+      override reliably toggles user-scope extensions; project-scope ones depend on pi applying
+      user patterns across scopes — see the `setExtensionEnabled` comment. A truly LIVE toggle
+      is still out — see the toggle item in 🔵 Later, now narrowed to just that.)_
 - [x] **Unarchive action in the sidebar** → already built; verified 2026-06-22. The session
       row's `⋯` menu item already toggles on `s.archived`: it reads "Unarchive"/"Archive"
       (`Sidebar.svelte:695`), the `A` hotkey + tooltip flip with it, and `toggleArchive` calls
