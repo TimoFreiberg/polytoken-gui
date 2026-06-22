@@ -735,11 +735,10 @@
   >
     <header class="phead">
       <h2>Signing in</h2>
-      <button
-        class="x"
-        aria-label="Close sign-in"
+      <IconButton
         title="Cancel sign-in"
-        onclick={() => store.oauthCancel()}>✕</button
+        aria-label="Close sign-in"
+        onclick={() => store.oauthCancel()}>✕</IconButton
       >
     </header>
     <div class="oauth-body">
