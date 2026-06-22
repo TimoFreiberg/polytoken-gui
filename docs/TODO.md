@@ -468,13 +468,11 @@ hit a session limit mid-verify; confirm each against the code before acting):_
       appears AND the active row flips to `data-state="unread"`, then jump-to-bottom clears both.
       _(Owner asked to weigh in: verified working against the mock; if you saw it stay stubbornly
       "read" in practice — e.g. a mobile-specific timing — flag it and I'll chase that case.)_
-- [ ] **Session context indicator** _(owner endorsed 2026-06-22 — "is good imo"; kept on
-      the backlog as a wanted feature, not closed)_ — a small color-coded circle (or similar
-      badge) in the session list / header showing how much context the session has consumed,
-      analogous to the Claude app's colored circle (green → yellow → red as the
-      context window fills). Color could map to token-budget thresholds from the
-      snapshot's `config`/usage fields; exact threshold values TBD. Complements the shipped
-      85%-full composer cue (a one-line warning) with an at-a-glance dot.
+- [x] ~~**Session context indicator**~~ → won't-build (owner, 2026-06-22 — "i think the
+      current state is good"; the earlier "is good imo" meant the current state, not "keep the
+      idea"). The shipped surfaces — the meter ring + the 85%-full composer cue — cover the need;
+      no separate green→yellow→red sidebar/header dot. _(Reopen if an at-a-glance per-row dot is
+      wanted later; the token-budget thresholds from snapshot usage are the data source.)_
 - [x] ~~**(discussion needed) Auto session titling via cheapest model**~~ → resolved
       2026-06-21 as **won't-build (pi already owns it)**. pi's `session-namer.ts`
       extension already does exactly this: on the first prompt of an unnamed session it
@@ -498,11 +496,11 @@ hit a session limit mid-verify; confirm each against the code before acting):_
       the `staleidle` regression), so they have no duration to render. `ToolCard.svelte` derives
       the badge from those `startedAt`/`finishedAt` timestamps. Checkbox was stale — no code
       change needed.
-- [ ] **`/tree` command → open the native tree modal** _(reframed 2026-06-22)_ — pilot
-      already renders the session tree natively (the T2 modal, opened via the header button
-      or `⌘⇧T`). Wire a client-side `/tree` command so typing `/tree` in the composer opens
-      that modal locally **instead of** forwarding it to the pi SDK as a prompt. Pure
-      client-side intercept in the slash-command path; no protocol/driver change.
+- [x] **`/tree` command → open the native tree modal** → already built; verified 2026-06-22.
+      `Composer.svelte:275` intercepts `text.trim() === "/tree"` in `submit()` before send: it
+      clears the box, calls `store.openTree()`, and early-returns so it never forwards to pi.
+      Exactly the spec. Covered by `e2e/tree.e2e.ts` ("typing /tree opens the view instead of
+      sending it"). Backlog item was stale — no build needed.
 - [~] **Provider OAuth login** → ~done (owner, 2026-06-22 — "i'll get back to it if there's
       jank"). Sign-in / sign-out for OAuth-capable providers ships in the Settings panel via
       the remote paste-the-code flow (open the auth page, paste the code/redirect back — no
@@ -511,10 +509,13 @@ hit a session limit mid-verify; confirm each against the code before acting):_
       reopen if the flow shows jank.
 - [ ] **Extensions enable/disable view** + compatibility-issue surfacing _(owner, 2026-06-22:
       would be neat — possibly as a submenu within the Settings panel)_
-- [ ] **Unarchive action in the sidebar** _(reframed 2026-06-22 — rename + archive already
-      ship)_ — the remaining gap is the toggle: when a session is already archived, the
-      sidebar's archive action should read (and behave as) **Unarchive** rather than only
-      offering archive. (The undo-toast on archive exists; this is the explicit per-row reverse.)
+- [x] **Unarchive action in the sidebar** → already built; verified 2026-06-22. The session
+      row's `⋯` menu item already toggles on `s.archived`: it reads "Unarchive"/"Archive"
+      (`Sidebar.svelte:695`), the `A` hotkey + tooltip flip with it, and `toggleArchive` calls
+      `store.setArchived(s.path, !s.archived)`. Archived rows surface once you toggle the sidebar
+      to "Showing all". Covered by `e2e/archive.e2e.ts`. Backlog item was stale — no build needed.
+      _(If the gap you felt was *discoverability* — hard to reach an archived row to unarchive —
+      say so and I'll add a more direct affordance; the toggle logic itself is done.)_
 
 ## 🔵 Later
 
