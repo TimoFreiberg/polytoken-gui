@@ -15,8 +15,10 @@
        smart-quote technical text (markstream defaults it on). `md` is contextually typed.
      - renderCodeBlocksAsPre: plain <pre> code blocks (no Monaco peer, themed in app.css). -->
 <!-- The wrapper hosts the copy-code action: it decorates each rendered code block with a
-     pinned "copy" button (markstream owns the <pre>, so we enhance the DOM post-render). -->
-<div use:copyCodeButtons>
+     pinned "copy" button (markstream owns the <pre>, so we enhance the DOM post-render).
+     `.md-host` is the real direct child of the transcript's `.row.assistant`; the wide-row
+     break-out CSS there targets this class to make the markdown body fill the row (Transcript.svelte). -->
+<div class="md-host" use:copyCodeButtons>
   <MarkdownRender
     {content}
     {final}

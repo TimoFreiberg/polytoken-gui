@@ -284,10 +284,14 @@
     lastSendN = n;
     pinned = true;
     store.clearActiveUnread();
-    // Defer so the optimistic user bubble is in the DOM before we measure scrollHeight.
-    queueMicrotask(
-      () => scroller && scroller.scrollTo({ top: scroller.scrollHeight }),
-    );
+    // Re-assert across frames (not a single scrollTo): sending while scrolled up jumps
+    // from the top, where the rows between were `content-visibility`-skipped and reporting
+    // their estimated `contain-intrinsic-size`. A one-shot scroll lands at the ESTIMATED
+    // bottom; as those rows paint and firm up to real heights, scrollHeight grows, a gap
+    // opens below, and `onScroll` would unpin (gap > 80) before the reply even streams.
+    // snapToBottom chases the true bottom for a few frames so the pin holds. (Same reason
+    // session-switch uses it.)
+    snapToBottom();
   });
 
   /** Jump to the newest content and clear the unread flag (the "new messages ↓" pill). */
@@ -738,13 +742,17 @@
     max-width: var(--maxw);
     margin-inline: auto;
   }
-  /* The markdown body fills the wide row. markstream wraps every block in
-     `.node-slot > .node-content > <element>` (its streaming/typewriter shell), so the
-     measure cap goes on the LEAF element, not the wrappers — let those fill the row.
-     Coupled to markstream's wrapper classes; if they ever change, breakout just stops
-     (text stays at the measure), it doesn't break. */
-  .row.assistant > :global(.markstream-svelte.markdown-renderer) {
+  /* The markdown body fills the wide row so its fenced code / tables can break out; the
+     leaf `.node-content > *` rules below re-cap prose at the measure. `<Markdown>` wraps
+     markstream in a `.md-host` div (it hosts the copy-code action), so THAT wrapper — the
+     real direct child of the row — is what must fill the row. Targeting the inner
+     `.markstream-svelte.markdown-renderer` (a grandchild) misses, and the body then
+     shrink-wraps to its widest block — which on a narrow viewport overflows the row
+     instead of letting a wide table scroll. `min-width: 0` stops this flex item blowing
+     out to a wide table's min-content. */
+  .row.assistant > :global(.md-host) {
     width: 100%;
+    min-width: 0;
     max-width: none;
     margin-inline: 0;
   }
