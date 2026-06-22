@@ -36,6 +36,7 @@ import {
 import type {
   CommandInfo,
   DirListing,
+  ExtensionInfo,
   FileInfo,
   HostUiResponse,
   ModelDefaults,
@@ -1406,6 +1407,81 @@ export async function createPiDriver(
         availableModelLikes(),
       );
       globalSettings.setEnabledModels(patterns);
+      await globalSettings.flush();
+    },
+
+    async listExtensions(sessionId): Promise<ExtensionInfo[]> {
+      const ws = target(sessionId);
+      if (!ws) return [];
+      // Loaded (enabled) extensions, projected JSON-safe. The heavy handler/tool Maps
+      // become counts; sourceInfo.scope/origin become a short origin label.
+      const { extensions, errors } = ws.session.resourceLoader.getExtensions();
+      const byPath = new Map<string, ExtensionInfo>();
+      for (const ext of extensions)
+        byPath.set(ext.resolvedPath, {
+          resolvedPath: ext.resolvedPath,
+          name: basename(ext.sourceInfo.path),
+          source:
+            ext.sourceInfo.origin === "package"
+              ? `${ext.sourceInfo.scope} · package`
+              : ext.sourceInfo.scope,
+          enabled: true,
+          toolCount: ext.tools.size,
+          commandCount: ext.commands.size,
+        });
+      // A load error either annotates its (partially) loaded row or stands alone as a
+      // broken-but-present row, so the problems are visible rather than silently missing.
+      for (const e of errors) {
+        const existing = byPath.get(e.path);
+        byPath.set(
+          e.path,
+          existing
+            ? { ...existing, error: e.error }
+            : {
+                resolvedPath: e.path,
+                name: basename(e.path),
+                source: "—",
+                enabled: true,
+                toolCount: 0,
+                commandCount: 0,
+                error: e.error,
+              },
+        );
+      }
+      // Reconstruct disabled rows from the `-<path>` force-exclude overrides pilot wrote, so
+      // a disabled extension stays visible (and re-enableable) even though pi didn't load it.
+      for (const entry of globalSettings.getExtensionPaths()) {
+        if (!entry.startsWith("-")) continue;
+        const p = entry.slice(1);
+        if (byPath.has(p)) continue;
+        byPath.set(p, {
+          resolvedPath: p,
+          name: basename(p),
+          source: "user",
+          enabled: false,
+          toolCount: 0,
+          commandCount: 0,
+        });
+      }
+      return [...byPath.values()].sort((a, b) => a.name.localeCompare(b.name));
+    },
+
+    async setExtensionEnabled(resolvedPath, enabled) {
+      // pi loads extensions at session START; enable/disable is driven by force-exclude
+      // override patterns in settings (`-<exactPath>`, see package-manager's applyPatterns).
+      // So the toggle adds/removes that exact-path override and takes effect on the session's
+      // NEXT start — the UI labels it as such. User-scope, like the favorites patterns above.
+      // (Known limitation: a user-scope override reliably disables user-scope extensions;
+      // project-scope ones depend on pi applying user patterns across scopes — fine for the
+      // common case, revisit if a project extension won't toggle.)
+      const current = globalSettings.getExtensionPaths();
+      const override = `-${resolvedPath}`;
+      const next = enabled
+        ? current.filter((p) => p !== override)
+        : current.includes(override)
+          ? current
+          : [...current, override];
+      globalSettings.setExtensionPaths(next);
       await globalSettings.flush();
     },
   };

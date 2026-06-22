@@ -50,6 +50,18 @@
   let providersOpen = $state(false);
   const connectedCount = $derived(providers.filter((p) => p.hasAuth).length);
 
+  // The pi extensions for the focused session (Settings "Extensions" view). Fetched on
+  // demand when the section expands (collapsed by default) — re-queried each expand so it
+  // reflects any toggles since. Toggling applies on the session's NEXT start (pi loads
+  // extensions at start), which the section's note spells out.
+  const extensions = $derived(store.extensions);
+  const extensionsOn = $derived(extensions.filter((x) => x.enabled).length);
+  let extensionsOpen = $state(false);
+  function toggleExtensionsSection(): void {
+    extensionsOpen = !extensionsOpen;
+    if (extensionsOpen) store.queryExtensions();
+  }
+
   // Available models grouped by provider — drives both the default-model select and
   // the favorites checklist.
   const groups = $derived.by(() => {
@@ -106,6 +118,9 @@
           seeded.add(g.provider);
       }
       expandedFavProviders = seeded;
+      // Fetch the extension list on open (even while the section is collapsed) so its
+      // header can show the at-a-glance "N/M on" count without making you expand first.
+      store.queryExtensions();
     }
     prevOpen = open;
   });
@@ -482,6 +497,62 @@
               <div class="mempty">No models match</div>
             {/if}
           </div>
+        {/if}
+      </section>
+
+      <!-- Extensions -->
+      <section class="group">
+        <button
+          class="gtitle gtitle-toggle"
+          type="button"
+          aria-expanded={extensionsOpen}
+          data-testid="extensions-toggle"
+          title={extensionsOpen ? "Collapse extensions" : "Expand extensions"}
+          onclick={toggleExtensionsSection}
+        >
+          <span class="gchev" class:open={extensionsOpen}>▸</span>
+          <span class="gtitle-name">Extensions</span>
+          {#if extensions.length > 0}
+            <span class="gtitle-count">{extensionsOn}/{extensions.length} on</span>
+          {/if}
+        </button>
+        {#if extensionsOpen && extensions.length === 0}
+          <p class="note">No extensions loaded for this session.</p>
+        {:else if extensionsOpen}
+          <div class="exts">
+            {#each extensions as x (x.resolvedPath)}
+              <div class="ext" class:off={!x.enabled} data-testid="ext-{x.name}">
+                <div class="rinfo">
+                  <div class="rlabel">{x.name}</div>
+                  <div class="rdesc">
+                    {x.source}{#if x.toolCount > 0}
+                      · {x.toolCount} tool{x.toolCount === 1 ? "" : "s"}{/if}{#if x.commandCount > 0}
+                      · {x.commandCount} command{x.commandCount === 1 ? "" : "s"}{/if}
+                  </div>
+                  {#if x.error}
+                    <div class="ext-error" title={x.error}>⚠ {x.error}</div>
+                  {/if}
+                </div>
+                <button
+                  class="seg-btn"
+                  class:active={x.enabled}
+                  role="switch"
+                  aria-checked={x.enabled}
+                  data-testid="ext-toggle-{x.name}"
+                  title={x.enabled
+                    ? `Disable ${x.name} (applies on this session's next start)`
+                    : `Enable ${x.name} (applies on this session's next start)`}
+                  onclick={() => store.setExtensionEnabled(x.resolvedPath, !x.enabled)}
+                >
+                  {x.enabled ? "On" : "Off"}
+                </button>
+              </div>
+            {/each}
+          </div>
+          <p class="note">
+            Enabling or disabling takes effect on the session's <strong>next start</strong> —
+            pi loads extensions when a session begins, so the change isn't live.
+          </p>
         {/if}
       </section>
 
@@ -914,6 +985,30 @@
     justify-content: space-between;
     gap: 12px;
     padding: 6px 0;
+  }
+  .exts {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+  .ext {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 7px 0;
+  }
+  /* A disabled extension reads dimmed (its toggle is the lone full-opacity affordance). */
+  .ext.off .rinfo {
+    opacity: 0.55;
+  }
+  .ext-error {
+    font-size: 12px;
+    color: var(--danger);
+    margin-top: 3px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
   .keyform {
     display: flex;

@@ -5,6 +5,7 @@
 import type {
   CommandInfo,
   DirListing,
+  ExtensionInfo,
   PathStat,
   FileInfo,
   HostUiResponse,
@@ -229,6 +230,22 @@ export interface PilotDriver {
   setDefaultThinking?(level: string): Promise<void>;
   /** Replace the favorites subset (concrete `provider:modelId` refs). */
   setFavoriteModels?(refs: readonly string[]): Promise<void>;
+
+  /** The targeted session's pi extensions (loaded, projected JSON-safe via pi's
+   *  `resourceLoader.getExtensions()`), plus any pilot-disabled ones reconstructed from the
+   *  force-exclude overrides in pi's settings. Read on demand for the Settings "Extensions"
+   *  view; the hub sends it as `extensionList`. sessionId omitted -> the driver's current
+   *  session. The mock returns a fixture set. */
+  listExtensions?(sessionId?: SessionId): Promise<ExtensionInfo[]>;
+  /** Enable/disable an extension by its `resolvedPath`, persisting a force-exclude override
+   *  to pi's user settings. pi loads extensions at session START, so the change applies on
+   *  the session's NEXT start, not live (the UI labels it). The hub re-sends `extensionList`
+   *  afterward. sessionId omitted -> the driver's current session. */
+  setExtensionEnabled?(
+    resolvedPath: string,
+    enabled: boolean,
+    sessionId?: SessionId,
+  ): Promise<void>;
 
   /** Subscribe to host-level project-trust requests (D12). The driver fires the
    *  listener when opening/creating a session in an untrusted cwd needs an

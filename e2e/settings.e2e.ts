@@ -211,6 +211,65 @@ test("a provider with a favorite is seeded open when the panel reopens", async (
   );
 });
 
+test("the Extensions section is collapsed by default and lists on expand", async ({
+  page,
+}) => {
+  await page.getByTestId("settings-toggle").click();
+  const toggle = page.getByTestId("extensions-toggle");
+  // Header present + summary count; rows hidden until expanded (and not yet queried).
+  await expect(toggle).toHaveAttribute("aria-expanded", "false");
+  await expect(toggle).toContainText("4/5 on");
+  await expect(page.getByTestId("ext-answer.ts")).toHaveCount(0);
+
+  await toggle.click();
+  await expect(toggle).toHaveAttribute("aria-expanded", "true");
+  // The mock's loaded extensions list, with counts; the errored one shows its problem.
+  await expect(page.getByTestId("ext-answer.ts")).toBeVisible();
+  await expect(page.getByTestId("ext-tasklist.ts")).toContainText("2 tools");
+  await expect(page.getByTestId("ext-fancy-tui.ts")).toContainText(
+    "terminal-only",
+  );
+  // The "applies next start" honesty note is present.
+  await expect(
+    page.getByText("takes effect on the session's", { exact: false }),
+  ).toBeVisible();
+});
+
+test("toggling an extension flips its switch and reconciles with the server", async ({
+  page,
+}) => {
+  await page.getByTestId("settings-toggle").click();
+  await page.getByTestId("extensions-toggle").click();
+
+  // answer.ts ships enabled; noisy-notify.ts ships disabled (so re-enable is exercisable).
+  const answer = page.getByTestId("ext-toggle-answer.ts");
+  const noisy = page.getByTestId("ext-toggle-noisy-notify.ts");
+  await expect(answer).toHaveAttribute("aria-checked", "true");
+  await expect(noisy).toHaveAttribute("aria-checked", "false");
+
+  // Disable answer.ts: optimistic flip, and the server's re-broadcast keeps it off.
+  await answer.click();
+  await expect(answer).toHaveAttribute("aria-checked", "false");
+
+  // Re-enable the disabled one the same way.
+  await noisy.click();
+  await expect(noisy).toHaveAttribute("aria-checked", "true");
+
+  // The flip survives a re-open (server is authoritative — the mock persisted both toggles).
+  // The section stays expanded across close/reopen and re-queries on open, so the rows are
+  // already shown without re-expanding.
+  await page.keyboard.press("Escape");
+  await page.getByTestId("settings-toggle").click();
+  await expect(page.getByTestId("ext-toggle-answer.ts")).toHaveAttribute(
+    "aria-checked",
+    "false",
+  );
+  await expect(page.getByTestId("ext-toggle-noisy-notify.ts")).toHaveAttribute(
+    "aria-checked",
+    "true",
+  );
+});
+
 test("theme toggle drives the data-theme override and persists it", async ({
   page,
 }) => {

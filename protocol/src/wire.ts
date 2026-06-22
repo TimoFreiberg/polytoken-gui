@@ -7,6 +7,7 @@
 
 import type {
   CommandInfo,
+  ExtensionInfo,
   FileInfo,
   HostUiResponse,
   ImageContent,
@@ -138,6 +139,16 @@ export type ServerMessage =
       sessionId: SessionId | null;
       nodes: readonly TreeNodeInfo[];
       leafId: string | null;
+    }
+  /** The focused session's pi extensions (loaded + any pilot-disabled), for the Settings
+   *  "Extensions" view. Sent on demand when a client expands that section (it sends
+   *  {@link queryExtensions}) and re-sent after a {@link setExtensionEnabled} toggle.
+   *  `sessionId` is the session the list belongs to, so a client that switched away can
+   *  drop a late list. See {@link ExtensionInfo}. */
+  | {
+      type: "extensionList";
+      sessionId: SessionId | null;
+      extensions: readonly ExtensionInfo[];
     }
   /** The full file index for the focused session's cwd, pushed on connect + session
    *  switch (like {@link commandList}). The client fuzzy-matches it locally so the
@@ -332,6 +343,20 @@ export type ClientMessage =
   /** Ask the server for the focused session's branch tree (the tree view just opened).
    *  The server responds with {@link treeState}. Omit sessionId to target the focused one. */
   | { type: "queryTree"; sessionId?: SessionId }
+  /** Ask the server for the focused session's extension list (the Settings "Extensions"
+   *  section just expanded). The server responds with {@link extensionList}. Omit sessionId
+   *  to target the focused one. */
+  | { type: "queryExtensions"; sessionId?: SessionId }
+  /** Enable or disable a pi extension by its `resolvedPath` (writes a force-exclude override
+   *  to pi's user settings). pi loads extensions at session START, so this applies on the
+   *  session's NEXT start, not live — the UI labels it so. The server persists, then re-sends
+   *  {@link extensionList}. Omit sessionId to target the focused session. */
+  | {
+      type: "setExtensionEnabled";
+      resolvedPath: string;
+      enabled: boolean;
+      sessionId?: SessionId;
+    }
   /** Fallback file search for a composer @-mention query (the text after `@`). Only sent
    *  when the {@link fileIndex} was truncated and local matches are thin — the common case
    *  is served entirely client-side from the index. The server responds with {@link fileList}.

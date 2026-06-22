@@ -625,6 +625,44 @@ export class SessionHub {
     }
   }
 
+  /** Fetch + send ONE client its focused session's extension list (Settings "Extensions"
+   *  view). Per-connection (scoped to the requester's focus, like the command/tree lists);
+   *  re-sent after that client toggles an extension. No-op if the driver can't list them. */
+  private async sendExtensionList(conn: ClientConn): Promise<void> {
+    if (!this.driver.listExtensions) return;
+    try {
+      const extensions = await this.driver.listExtensions(
+        conn.focusedId ?? undefined,
+      );
+      conn.send({
+        type: "extensionList",
+        sessionId: conn.focusedId,
+        extensions,
+      });
+    } catch (e) {
+      console.error("[hub] listExtensions failed", e);
+    }
+  }
+
+  /** Persist an extension enable/disable for the requester's focused session, then re-send
+   *  that client the refreshed list so the row reflects the new state (applies next start). */
+  private async applyExtensionEnabled(
+    conn: ClientConn,
+    resolvedPath: string,
+    enabled: boolean,
+  ): Promise<void> {
+    try {
+      await this.driver.setExtensionEnabled?.(
+        resolvedPath,
+        enabled,
+        conn.focusedId ?? undefined,
+      );
+    } catch (e) {
+      console.error("[hub] setExtensionEnabled failed", e);
+    }
+    void this.sendExtensionList(conn);
+  }
+
   /** Fetch + send ONE client the full @-mention file index for its focused session's cwd.
    *  Pushed on that client's connect + session switch (like {@link sendCommandList}); the
    *  client fuzzy-matches it locally so the menu is instant. `truncated` tells the client
@@ -1289,6 +1327,12 @@ export class SessionHub {
         return;
       case "queryTree":
         void this.sendTree(conn);
+        return;
+      case "queryExtensions":
+        void this.sendExtensionList(conn);
+        return;
+      case "setExtensionEnabled":
+        void this.applyExtensionEnabled(conn, msg.resolvedPath, msg.enabled);
         return;
       case "queryFiles":
         void this.sendFileList(conn, msg.query, msg.cwd);

@@ -93,6 +93,32 @@ export interface CommandInfo {
   readonly argumentHint?: string;
 }
 
+/** One pi extension, projected JSON-safe for the Settings "Extensions" view — a DOM-free
+ *  reduction of pi's `Extension` (the heavy `handlers`/`tools` Maps dropped to counts).
+ *  LOADED (enabled) extensions come from pi's `resourceLoader.getExtensions()`; a DISABLED
+ *  one is reconstructed from the `-<resolvedPath>` force-exclude override pilot wrote to
+ *  pi's settings — it isn't loaded, so it carries no counts. `resolvedPath` is the stable
+ *  id AND the toggle key (it's exactly what the override pattern matches). Broadcast as
+ *  {@link extensionList}; see {@link setExtensionEnabled}. */
+export interface ExtensionInfo {
+  /** Absolute resolved path of the extension entry file — the stable id + toggle key. */
+  readonly resolvedPath: string;
+  /** Display name — the basename of the source path (e.g. "answer.ts"). */
+  readonly name: string;
+  /** Where it came from: "user" / "project" (pi's source scope), with " · package" when
+   *  it's a published package rather than a top-level local file. Display-only. */
+  readonly source: string;
+  /** Whether it's currently enabled (loaded). A disabled row is one pilot force-excluded;
+   *  toggling persists and applies on the session's NEXT start (pi loads at start). */
+  readonly enabled: boolean;
+  /** Tools this extension registers (loaded extensions only; 0 when disabled/errored). */
+  readonly toolCount: number;
+  /** Slash commands it registers (loaded only). */
+  readonly commandCount: number;
+  /** A load error pi reported for this extension, if any — drives the problems styling. */
+  readonly error?: string;
+}
+
 /** One file in the composer's @-file mention autocomplete — a relative path from the
  *  session's cwd. The server builds a capped, .gitignore-aware index via `fd` and pushes
  *  it on session switch ({@link fileIndex}); the client fuzzy-matches it locally and

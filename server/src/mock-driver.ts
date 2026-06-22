@@ -8,6 +8,7 @@ import {
   isDialogRequest,
   type CommandInfo,
   type DirListing,
+  type ExtensionInfo,
   type PathStat,
   type FileInfo,
   type HostUiRequest,
@@ -54,6 +55,7 @@ import {
   selectMany,
   staleIdle,
   MOCK_COMMANDS,
+  MOCK_EXTENSIONS,
   MOCK_FILES,
   MOCK_DEFAULT_CONFIG,
   MOCK_MODEL_DEFAULTS,
@@ -202,6 +204,9 @@ export class MockDriver implements PilotDriver {
     ...MOCK_MODEL_DEFAULTS,
     favorites: [...MOCK_MODEL_DEFAULTS.favorites],
   };
+  // Extensions for the Settings "Extensions" view; `enabled` is toggled in-memory and
+  // restored to the fixture baseline by reset() (mirrors how providers/defaults work).
+  private extensions: ExtensionInfo[] = MOCK_EXTENSIONS.map((e) => ({ ...e }));
   // Live context-window fill, grown a step on each poll so the meter is visibly
   // non-static during a run (the hub polls getUsage ~1s while a turn streams). Reset()
   // restores the baseline. MOCK_USAGE.tokens is a concrete number (its type allows null
@@ -373,6 +378,7 @@ export class MockDriver implements PilotDriver {
       ...MOCK_MODEL_DEFAULTS,
       favorites: [...MOCK_MODEL_DEFAULTS.favorites],
     };
+    this.extensions = MOCK_EXTENSIONS.map((e) => ({ ...e }));
     this.liveUsageTokens = MOCK_USAGE.tokens ?? 0;
     this.bootstrapped = opts.bootstrap !== false;
   }
@@ -671,6 +677,21 @@ export class MockDriver implements PilotDriver {
 
   async listCommands(): Promise<CommandInfo[]> {
     return MOCK_COMMANDS.map((c) => ({ ...c }));
+  }
+
+  async listExtensions(): Promise<ExtensionInfo[]> {
+    return this.extensions.map((e) => ({ ...e }));
+  }
+
+  async setExtensionEnabled(
+    resolvedPath: string,
+    enabled: boolean,
+  ): Promise<void> {
+    // Applies on a session's next start in the real driver; the mock just flips the flag
+    // so the re-broadcast list reflects it (the row stays visible either way).
+    this.extensions = this.extensions.map((e) =>
+      e.resolvedPath === resolvedPath ? { ...e, enabled } : e,
+    );
   }
 
   async listFileIndex(): Promise<{ files: FileInfo[]; truncated: boolean }> {

@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import type {
   CommandInfo,
+  ExtensionInfo,
   FileInfo,
   HostUiResponse,
   ModelDefaults,
@@ -263,6 +264,27 @@ class FakeDriver implements PilotDriver {
   }
   async setFavoriteModels(refs: readonly string[]) {
     this.favoriteCalls.push([...refs]);
+  }
+  // --- Extensions (Settings view) ---
+  readonly extensionToggleCalls: { resolvedPath: string; enabled: boolean }[] =
+    [];
+  private extEnabled = new Map<string, boolean>([
+    ["/ext/a.ts", true],
+    ["/ext/b.ts", false],
+  ]);
+  async listExtensions(): Promise<ExtensionInfo[]> {
+    return [...this.extEnabled].map(([resolvedPath, enabled]) => ({
+      resolvedPath,
+      name: resolvedPath.split("/").pop() ?? resolvedPath,
+      source: "user",
+      enabled,
+      toolCount: enabled ? 1 : 0,
+      commandCount: 0,
+    }));
+  }
+  async setExtensionEnabled(resolvedPath: string, enabled: boolean) {
+    this.extensionToggleCalls.push({ resolvedPath, enabled });
+    this.extEnabled.set(resolvedPath, enabled);
   }
 }
 
@@ -1249,6 +1271,40 @@ describe("SessionHub", () => {
     expect(
       a.received.filter((m) => m.type === "modelDefaults").length,
     ).toBeGreaterThanOrEqual(3);
+  });
+
+  test("queryExtensions sends the list; setExtensionEnabled routes + re-sends it", async () => {
+    const d = new FakeDriver();
+    const hub = new SessionHub(d);
+    const a = client();
+    hub.addClient(a.send);
+
+    hub.handleClient(a.send, { type: "queryExtensions" });
+    await flush();
+    const list = a.received.filter((m) => m.type === "extensionList").at(-1);
+    expect(list?.type).toBe("extensionList");
+    if (list?.type === "extensionList") {
+      expect(list.extensions.map((e) => e.name)).toEqual(["a.ts", "b.ts"]);
+      expect(list.extensions.find((e) => e.name === "b.ts")?.enabled).toBe(
+        false,
+      );
+    }
+
+    hub.handleClient(a.send, {
+      type: "setExtensionEnabled",
+      resolvedPath: "/ext/b.ts",
+      enabled: true,
+    });
+    await flush();
+    // The toggle reaches the driver, then re-sends the refreshed (flipped) list.
+    expect(d.extensionToggleCalls).toEqual([
+      { resolvedPath: "/ext/b.ts", enabled: true },
+    ]);
+    const after = a.received.filter((m) => m.type === "extensionList").at(-1);
+    if (after?.type === "extensionList")
+      expect(after.extensions.find((e) => e.name === "b.ts")?.enabled).toBe(
+        true,
+      );
   });
 
   test("the live ticker refreshes the session list + focused usage mid-turn", async () => {

@@ -4,6 +4,7 @@
 
 import type {
   CommandInfo,
+  ExtensionInfo,
   FileInfo,
   ImageContent,
   ModelDefaults,
@@ -208,6 +209,55 @@ export const MOCK_PROVIDERS: readonly ProviderInfo[] = [
     authSource: "none",
     apiKeySetupSupported: true,
     oauthSupported: false,
+  },
+];
+
+/** The mock's pi extensions for the Settings "Extensions" view: a couple of healthy
+ *  loaded ones, one with a load error (drives the problems styling), and one already
+ *  disabled (so the re-enable path is exercisable). The mock driver toggles `enabled`
+ *  in-memory; reset() restores this baseline. */
+export const MOCK_EXTENSIONS: readonly ExtensionInfo[] = [
+  {
+    resolvedPath: "/home/pi/.pi/agent/extensions/answer.ts",
+    name: "answer.ts",
+    source: "user",
+    enabled: true,
+    toolCount: 1,
+    commandCount: 0,
+  },
+  {
+    resolvedPath: "/home/pi/.pi/agent/extensions/tasklist.ts",
+    name: "tasklist.ts",
+    source: "user",
+    enabled: true,
+    toolCount: 2,
+    commandCount: 1,
+  },
+  {
+    resolvedPath: "/home/pi/.pi/agent/extensions/session-namer.ts",
+    name: "session-namer.ts",
+    source: "user · package",
+    enabled: true,
+    toolCount: 0,
+    commandCount: 0,
+  },
+  {
+    resolvedPath: "/repo/.pi/extensions/fancy-tui.ts",
+    name: "fancy-tui.ts",
+    source: "project",
+    enabled: true,
+    toolCount: 0,
+    commandCount: 0,
+    error:
+      'capability "ui.custom" is terminal-only: not available in the pilot remote',
+  },
+  {
+    resolvedPath: "/home/pi/.pi/agent/extensions/noisy-notify.ts",
+    name: "noisy-notify.ts",
+    source: "user",
+    enabled: false,
+    toolCount: 0,
+    commandCount: 0,
   },
 ];
 

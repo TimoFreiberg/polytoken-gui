@@ -5,6 +5,7 @@
 import {
   type CommandInfo,
   type DirListing,
+  type ExtensionInfo,
   type PathStat,
   type FileInfo,
   foldEvent,
@@ -136,6 +137,9 @@ class PilotStore {
   // Slash commands the focused session offers, for the composer typeahead. Server-
   // authoritative, delivered like `models`; refreshed on session switch (cwd-scoped).
   commands = $state<CommandInfo[]>([]);
+  // The focused session's pi extensions, for the Settings "Extensions" view. Fetched on
+  // demand (queryExtensions) when that section expands; re-sent after a toggle.
+  extensions = $state<ExtensionInfo[]>([]);
   // The focused session's full file index (cwd-scoped), pushed by the server on connect +
   // session switch. The composer fuzzy-matches this locally so the @-mention menu is
   // instant — no per-keystroke round-trip. `truncated` is true when the cwd overflowed the
@@ -610,6 +614,9 @@ class PilotStore {
         break;
       case "commandList":
         this.commands = [...msg.commands];
+        break;
+      case "extensionList":
+        this.extensions = [...msg.extensions];
         break;
       case "treeState":
         this.tree = {
@@ -1395,6 +1402,19 @@ class PilotStore {
   }
   closeSearch(): void {
     this.searchOpen = false;
+  }
+  /** Ask the server for the focused session's pi extensions (the Settings "Extensions"
+   *  section just expanded). Re-query on each expand so it reflects any toggles since. */
+  queryExtensions(): void {
+    send({ type: "queryExtensions" });
+  }
+  /** Enable/disable an extension (applies on the session's next start). Optimistic — flip
+   *  the local row now; the server persists and re-sends the authoritative list to reconcile. */
+  setExtensionEnabled(resolvedPath: string, enabled: boolean): void {
+    this.extensions = this.extensions.map((e) =>
+      e.resolvedPath === resolvedPath ? { ...e, enabled } : e,
+    );
+    send({ type: "setExtensionEnabled", resolvedPath, enabled });
   }
   /** Open the session-tree view and ask the server for the focused session's tree. We
    *  re-query on every open so the view reflects any branching since it was last seen
