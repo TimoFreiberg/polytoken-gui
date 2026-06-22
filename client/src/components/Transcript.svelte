@@ -16,6 +16,7 @@
   import ToolSummary from "./ToolSummary.svelte";
   import ThinkingBlock from "./ThinkingBlock.svelte";
   import QnaResult from "./QnaResult.svelte";
+  import TranscriptSearch from "./TranscriptSearch.svelte";
   import PullIndicator from "./PullIndicator.svelte";
   import { pullToRefresh } from "../lib/pull-to-refresh.js";
   import { createPullRefresh } from "../lib/pull-to-refresh.svelte.js";
@@ -332,6 +333,7 @@
 </script>
 
 <div class="transcript-wrap">
+<TranscriptSearch {scroller} />
 <PullIndicator snap={pull.snap} refreshing={pull.refreshing} testid="ptr-transcript" />
 <div
   class="scroller"

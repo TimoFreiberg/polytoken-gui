@@ -125,6 +125,14 @@
         e.preventDefault();
         store.toggleSidebar();
         break;
+      case "f":
+      case "F":
+        // ⌘F — find in transcript. While drafting there's nothing to search, so we let
+        // the browser's native find handle the draft form (no preventDefault).
+        if (store.draft) break;
+        e.preventDefault();
+        store.openSearch();
+        break;
     }
   }
 </script>

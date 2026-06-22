@@ -654,8 +654,14 @@ the rest._
       delivery, including explicit acceptance/rejection ACK reconciliation.
 
 ### Transcript reading
-- [ ] **In-transcript search (⌘F)** — find-as-you-type across the rendered transcript
-      with match highlighting + next/prev, distinct from the sidebar session search.
+- [x] **In-transcript search (⌘F)** → done 2026-06-22. Claude-style floating "Find in
+      transcript" box pinned top-right of the transcript pane, opened with ⌘/Ctrl+F.
+      Find-as-you-type over the rendered transcript with match highlighting (CSS Custom
+      Highlight API — `Range`s registered in `CSS.highlights`, no DOM mutation, so it
+      survives stream deltas/re-renders; degrades to scroll-only where unsupported), a
+      `current/total` counter, next/prev (⏎ / ⇧⏎ or the ↑↓ buttons, wrapping), and Esc to
+      close. A `MutationObserver` keeps matches fresh while a turn streams. Distinct from
+      the sidebar session search. New `TranscriptSearch.svelte`; `e2e/transcript-search.e2e.ts`.
 - [ ] **Collapse-all / expand-all tool calls** — one toggle to fold every tool card in a
       long transcript down to titles, for skimming a finished session.
 - [ ] **Per-code-block copy + language label** — copy button and a language tag on each

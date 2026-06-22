@@ -29,6 +29,10 @@
   --ok: #4f7a4a;
   /* Unread session-indicator dot (warm gold, matches the owner's mockup). */
   --unread: #cf962b;
+  /* In-transcript find (⌘F): all matches a soft yellow, the current one a stronger
+     amber. Translucent so a match over a code block keeps the block's background. */
+  --find-match: rgba(255, 205, 60, 0.42);
+  --find-current: rgba(255, 145, 30, 0.78);
 
   --font-sans: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue",
     Helvetica, Arial, sans-serif, "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol";
@@ -72,6 +76,8 @@
   --warning-soft: #332a18;
   --ok: #8fb787;
   --unread: #d8ad58;
+  --find-match: rgba(255, 210, 70, 0.34);
+  --find-current: rgba(255, 150, 40, 0.62);
   --sidebar-bg: #2b2c29;
 
   --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.22), 0 4px 14px rgba(0, 0, 0, 0.28);
@@ -136,6 +142,17 @@ a {
 
 ::selection {
   background: var(--accent-soft);
+}
+
+/* In-transcript find (⌘F) highlights. Painted via the CSS Custom Highlight API from
+   TranscriptSearch.svelte (CSS.highlights.set("pilot-find"…)). These must be global —
+   ::highlight() is registered document-wide and a component's scoped class selector
+   would never match it. */
+::highlight(pilot-find) {
+  background-color: var(--find-match);
+}
+::highlight(pilot-find-current) {
+  background-color: var(--find-current);
 }
 
 /* thin, unobtrusive scrollbars */

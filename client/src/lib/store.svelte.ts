@@ -226,6 +226,11 @@ class PilotStore {
   pushState = $state<PushState | "working">("idle");
   // Settings panel open/closed — per-client view state, never sent upstream.
   settingsOpen = $state(false);
+  // In-transcript find (⌘F) open/closed — per-client view state. The query, matches, and
+  // highlight ranges live in TranscriptSearch (DOM-derived, not serializable). `searchFocusN`
+  // bumps so a repeated ⌘F re-focuses + selects the existing query, mirroring native find.
+  searchOpen = $state(false);
+  searchFocusN = $state(0);
   // Session-tree (/tree) view open/closed — per-client view state. The tree data itself
   // is server-authoritative (fetched via queryTree on open, re-pushed after a branch).
   treeOpen = $state(false);
@@ -1276,6 +1281,9 @@ class PilotStore {
   startDraft(cwd = ""): void {
     // Save whatever session/draft we're leaving before flipping into the new draft.
     this.stashDraft();
+    // Find-in-transcript is a transcript-reading tool; entering a draft is a context
+    // switch, so don't let an open find box linger across it.
+    this.searchOpen = false;
     const d = this.modelDefaults;
     this.draft = {
       cwd,
@@ -1377,6 +1385,16 @@ class PilotStore {
   }
   closeSettings(): void {
     this.settingsOpen = false;
+  }
+  /** ⌘F — open the in-transcript find box and (re)focus it. No-op while drafting: there's
+   *  no transcript to search, so we leave native ⌘F to the draft form instead. */
+  openSearch(): void {
+    if (this.draft) return;
+    this.searchOpen = true;
+    this.searchFocusN++;
+  }
+  closeSearch(): void {
+    this.searchOpen = false;
   }
   /** Open the session-tree view and ask the server for the focused session's tree. We
    *  re-query on every open so the view reflects any branching since it was last seen
