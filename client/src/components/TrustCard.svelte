@@ -128,4 +128,10 @@
       opacity: 0;
     }
   }
+  @media (prefers-reduced-motion: reduce) {
+    .scrim,
+    .sheet {
+      animation: none;
+    }
+  }
 </style>

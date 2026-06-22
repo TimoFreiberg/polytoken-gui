@@ -153,6 +153,11 @@
       transform: translateY(0);
     }
   }
+  @media (prefers-reduced-motion: reduce) {
+    .pop-card {
+      animation: none;
+    }
+  }
   .pop-head {
     font-size: 11px;
     font-weight: 600;

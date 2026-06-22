@@ -540,4 +540,10 @@
       }
     }
   }
+  @media (prefers-reduced-motion: reduce) {
+    .scrim,
+    .panel {
+      animation: none;
+    }
+  }
 </style>
