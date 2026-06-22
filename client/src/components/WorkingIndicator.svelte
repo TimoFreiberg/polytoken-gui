@@ -1,5 +1,6 @@
 <script lang="ts">
   import { store } from "../lib/store.svelte.js";
+  import { formatWorkedDuration } from "../lib/transcript-view.js";
 
   // The current turn is in its THINKING phase: the open assistant bubble is
   // accumulating reasoning but hasn't emitted answer text yet. With thinking blocks
@@ -20,6 +21,37 @@
   // Estimated tokens streamed in this turn — a liveness readout so you can see the API
   // is feeding you (number climbs) vs. stalled (it freezes), even during hidden thinking.
   const tokens = $derived(store.turnStreamTokens);
+
+  // Live elapsed time for the current turn. We anchor to the wall-clock moment THIS
+  // client first sees the turn go active (Date.now()), not a server event timestamp:
+  // the mock driver's scripted fixtures stamp events with a fake epoch-0 clock, so a
+  // Date.now()-minus-event-ts reading would be off by decades in the preview / e2e.
+  // Client-side capture is identical under the mock and real pi. Tradeoff: a page reload
+  // mid-turn restarts the count from 0 — it measures "time since observed active", not
+  // absolute turn start. Acceptable for an ephemeral liveness affordance (same per-client
+  // scope as the token counter beside it).
+  let startedAt = $state<number | null>(null);
+  let nowMs = $state(Date.now());
+
+  // Anchor on the active edge; release when the turn settles. `??=` only stamps the first
+  // time we see it active, so a multi-bubble turn keeps one continuous count.
+  $effect(() => {
+    if (store.turnActive) startedAt ??= Date.now();
+    else startedAt = null;
+  });
+
+  // Tick ~1Hz while a turn runs; the interval is torn down on settle / unmount. nowMs is
+  // only written (never read) here, so it can't re-trigger this effect.
+  $effect(() => {
+    if (!store.turnActive) return;
+    nowMs = Date.now();
+    const id = setInterval(() => (nowMs = Date.now()), 1000);
+    return () => clearInterval(id);
+  });
+
+  const elapsed = $derived(
+    startedAt === null ? "" : formatWorkedDuration(nowMs - startedAt),
+  );
 </script>
 
 <!-- The "pi is still working" affordance. Lives at the bottom of the chat window,
@@ -38,6 +70,17 @@
       </span>
       <span class="label">{thinking ? "Thinking…" : "Working…"}</span>
     </span>
+    <!-- aria-hidden: like the token counter, this lives inside the role=status live
+         region and ticks once a second; announcing every tick would spam a screen
+         reader. It's a visual liveness affordance — the label carries the announced state. -->
+    {#if elapsed}
+      <span
+        class="elapsed"
+        data-testid="working-elapsed"
+        aria-hidden="true"
+        title="Time elapsed on the current turn">{elapsed}</span
+      >
+    {/if}
     <!-- aria-hidden: this lives inside the role=status live region, and a per-delta
          ticking number would spam a screen reader. It's a visual liveness affordance;
          the "Working…"/"Thinking…" label carries the announced state. -->
@@ -102,7 +145,8 @@
     font-size: 13px;
     color: var(--text-muted);
   }
-  .tokens {
+  .tokens,
+  .elapsed {
     font-size: 12px;
     color: var(--text-muted);
     opacity: 0.75;
@@ -110,7 +154,8 @@
     cursor: default;
     user-select: none;
   }
-  .tokens::before {
+  .tokens::before,
+  .elapsed::before {
     content: "·";
     margin: 0 7px 0 3px;
     opacity: 0.6;

@@ -22,6 +22,10 @@ test("the working spinner shows a token counter that climbs as text streams", as
   await expect(counter).toBeVisible();
   // The estimate climbs past zero once the API has streamed some tokens.
   await expect.poll(() => tokenCount(page)).toBeGreaterThan(0);
+  // A human-readable elapsed timer sits beside it (e.g. "3s", "1m 4s").
+  await expect(page.getByTestId("working-elapsed")).toHaveText(
+    /^\d+s$|^\d+m( \d+s)?$|^\d+h( \d+m)?$/,
+  );
 });
 
 test("the token counter also climbs while the model is only thinking", async ({
