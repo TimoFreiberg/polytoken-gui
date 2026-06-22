@@ -240,12 +240,13 @@ the remainder, roughly ordered by day-to-day leverage._
       to the current state) so it never steals focus from the composer on initial load or pops
       the soft keyboard on a phone. `e2e/sessions.e2e.ts` covers Enter-opens, Esc-clears, and
       desktop reopen-focuses.
-- [~] **New-session dir input has no validation or recent dirs** → recent-dirs done 2026-06-21.
-      The new-session path input is now backed by a `<datalist>` of distinct project dirs from
-      `store.sessions` (worktree sessions contribute their `base`), most-recent first — a known
-      project is one pick, not a retype. `e2e/sessions.e2e.ts` asserts it's populated. _(Still
-      open: the optional inline exists/is-dir hint — needs a small server stat probe the client
-      can't do; deferred as lower-value than the dropdown.)_
+- [x] **New-session dir input validation + always-typing fuzzy input** → done 2026-06-22.
+      The old two-mode design (edit/navigate toggle) is replaced with an always-visible
+      filter input that fuzzy-matches subdirectories by subsequence. Typing filters the
+      current dir's children; Backspace when empty goes up. Path mode (input starts with
+      `/` or `~`) still lets you jump to any directory directly. A debounced `statPath`
+      round-trip shows an inline ✓/✗ validation hint for typed paths. `e2e/dir-picker.e2e.ts`
+      covers filtering, path jumping, Escape clear-vs-close, and the project pick flow.
 - [x] **"N hidden" count isn't clickable** → done 2026-06-21. The "{N} hidden" hint is now a
       button that toggles to show-all on click (it then vanishes, and the adjacent toggle reads
       "Showing all"), with a count-aware tooltip and a focus ring. `e2e/archive.e2e.ts` covers
