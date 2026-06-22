@@ -17,6 +17,7 @@
   import ContextMeter from "./ContextMeter.svelte";
   import SegmentedControl from "./ui/SegmentedControl.svelte";
   import IconButton from "./ui/IconButton.svelte";
+  import Chevron from "./ui/Chevron.svelte";
   import TaskList from "./TaskList.svelte";
   import QueueTray from "./QueueTray.svelte";
   import { parseTasklist } from "../lib/tasklist.js";
@@ -711,7 +712,7 @@
           title={`Project: ${store.draft.cwd || "home"} — click to browse for a directory (⌥P)`}
           onclick={() => (pickingCwd = !pickingCwd)}
         >
-          <span class="chip-ico" aria-hidden="true">▸</span>
+          <Chevron open={pickingCwd} variant="menu" size={10} />
           {cwdBase}
         </button>
         <button
@@ -1031,9 +1032,8 @@
     color: var(--text);
     border-color: var(--border-strong);
   }
-  .chip-ico {
-    color: var(--text-faint);
-    font-size: 10px;
+  .chip:hover :global(.chevron) {
+    color: var(--text-muted);
   }
   .toggle-chip.on {
     color: var(--accent-text);
