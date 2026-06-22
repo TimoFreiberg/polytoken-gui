@@ -1,7 +1,7 @@
 <script lang="ts">
   // Rendered only when thinking blocks are NOT hidden (Transcript gates on the toggle),
   // so there's a single expandable variant — no minimal/placeholder mode.
-  import { slide } from "svelte/transition";
+  import { reveal } from "../lib/transitions.js";
   import Chevron from "./ui/Chevron.svelte";
   let { text, streaming }: { text: string; streaming: boolean } = $props();
   let open = $state(false);
@@ -14,7 +14,7 @@
     {#if streaming}<span class="shimmer"></span>{/if}
   </button>
   {#if open}
-    <div class="body" transition:slide={{ duration: 160 }}>{text}</div>
+    <div class="body" transition:reveal>{text}</div>
   {/if}
 </div>
 

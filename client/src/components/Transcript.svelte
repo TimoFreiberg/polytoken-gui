@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onDestroy, onMount } from "svelte";
-  import { slide } from "svelte/transition";
   import { cubicOut } from "svelte/easing";
+  import { reveal } from "../lib/transitions.js";
   import Chevron from "./ui/Chevron.svelte";
   import { store } from "../lib/store.svelte.js";
   import {
@@ -581,7 +581,7 @@
               <span class="inject-label">{item.customType}</span>
             </button>
             {#if injectOpen[item.id] ?? false}
-              <div class="inject-body" transition:slide={{ duration: 150 }}>{injectText(item)}</div>
+              <div class="inject-body" transition:reveal={{ duration: 150 }}>{injectText(item)}</div>
             {/if}
           </div>
         {/if}
@@ -640,7 +640,7 @@
             <div
               class="work-body"
               data-testid="work-body"
-              transition:slide={{ duration: 180, easing: cubicOut }}
+              transition:reveal={{ duration: 180, easing: cubicOut }}
             >
               {#each turn.work as it (it.id)}
                 {@render itemView(it)}

@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onDestroy } from "svelte";
-  import { slide } from "svelte/transition";
+  import { reveal } from "../lib/transitions.js";
   import type { ToolItem } from "@pilot/protocol";
   import Chevron from "./ui/Chevron.svelte";
 
@@ -381,7 +381,7 @@
     </div>
   {/if}
   {#if open}
-    <div class="body" transition:slide={{ duration: 160 }}>
+    <div class="body" transition:reveal>
       {#if argRows.length}
         <div class="args">
           {#each argRows as row}

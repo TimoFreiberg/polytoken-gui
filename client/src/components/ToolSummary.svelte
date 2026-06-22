@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { slide } from "svelte/transition";
+  import { reveal } from "../lib/transitions.js";
   import type { MergedToolsItem } from "../lib/transcript-view.js";
   import { mergedSummary } from "../lib/transcript-view.js";
   import ToolCard from "./ToolCard.svelte";
@@ -63,7 +63,7 @@
     {/if}
   </button>
   {#if open}
-    <div class="body" transition:slide={{ duration: 160 }}>
+    <div class="body" transition:reveal>
       {#each item.tools as tool (tool.id)}
         <ToolCard item={tool} />
       {/each}

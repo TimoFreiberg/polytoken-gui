@@ -13,7 +13,7 @@
 
 <script lang="ts">
   import { untrack } from "svelte";
-  import { slide } from "svelte/transition";
+  import { reveal } from "../lib/transitions.js";
   import type { HostUiRequest, QnaAnswer } from "@pilot/protocol";
   import Button from "./ui/Button.svelte";
   import Chevron from "./ui/Chevron.svelte";
@@ -259,7 +259,7 @@
   </div>
 
   {#if !collapsed}
-  <div class="card" transition:slide={{ duration: 160 }}>
+  <div class="card" transition:reveal>
     <p class="q">{q.question}</p>
     {#if q.context}<p class="ctx">{q.context}</p>{/if}
 

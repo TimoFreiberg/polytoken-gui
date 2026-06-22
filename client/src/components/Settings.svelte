@@ -1,6 +1,6 @@
 <script lang="ts">
   import type { ModelOption } from "@pilot/protocol";
-  import { slide } from "svelte/transition";
+  import { reveal } from "../lib/transitions.js";
   import { store } from "../lib/store.svelte.js";
   import type { ThemeMode } from "../lib/theme.js";
   import Button from "./ui/Button.svelte";
@@ -377,7 +377,7 @@
           {/if}
         </button>
         {#if providersOpen}
-          <div class="section-body" transition:slide={{ duration: 160 }}>
+          <div class="section-body" transition:reveal>
           {#if providers.length === 0}
             <p class="note">No providers reported by the server.</p>
           {:else}
@@ -545,7 +545,7 @@
           {/if}
         </button>
         {#if favoritesOpen}
-          <div class="section-body" transition:slide={{ duration: 160 }}>
+          <div class="section-body" transition:reveal>
           <p class="note fav-note">
             The header picker shows only your favorites (none set = show all).
           </p>
@@ -587,7 +587,7 @@
                   </span>
                 </button>
                 {#if expanded}
-                  <div class="mgroup-items" transition:slide={{ duration: 140 }}>
+                  <div class="mgroup-items" transition:reveal={{ duration: 140 }}>
                     {#each g.items as opt (opt.modelId)}
                       <label class="mitem fav" data-testid="fav-{opt.provider}-{opt.modelId}">
                         <input
@@ -630,7 +630,7 @@
           {/if}
         </button>
         {#if extensionsOpen}
-          <div class="section-body" transition:slide={{ duration: 160 }}>
+          <div class="section-body" transition:reveal>
           {#if extensions.length === 0}
             <p class="note">No extensions loaded for this session.</p>
           {:else}

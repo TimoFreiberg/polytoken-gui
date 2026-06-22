@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onDestroy, tick } from "svelte";
-  import { slide } from "svelte/transition";
   import type { SessionListEntry } from "@pilot/protocol";
+  import { reveal } from "../lib/transitions.js";
   import { store } from "../lib/store.svelte.js";
   import { filterSessions } from "../lib/session-filter.js";
   import { compactTime, relativeTime } from "../lib/relative-time.js";
@@ -552,7 +552,7 @@
             >
           </div>
           {#if !collapsed[g.cwd]}
-            <ul transition:slide={{ duration: 160 }}>
+            <ul transition:reveal>
               {#each groupDraftsFor(g.cwd) as d (d.key)}
                 <li class="row-wrap">{@render draftRow(d, false)}</li>
               {/each}
