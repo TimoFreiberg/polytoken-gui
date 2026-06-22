@@ -108,7 +108,8 @@ test("favorites filter the header model picker, keeping the active model visible
 }) => {
   // Favorite only DeepSeek; the active model stays anthropic/claude-opus-4-8.
   await page.getByTestId("settings-toggle").click();
-  // Favorites groups start collapsed (no favorites yet) — expand deepseek to reach its box.
+  // The Favorites list starts collapsed — open it, then expand deepseek to reach its box.
+  await page.getByTestId("favorites-toggle").click();
   await page.getByTestId("fav-group-deepseek").click();
   await page
     .getByTestId("fav-deepseek-deepseek-v4-flash")
@@ -134,6 +135,8 @@ test("the favorites list has a search that filters models", async ({
 }) => {
   await page.getByTestId("settings-toggle").click();
   const settings = page.getByTestId("settings-panel");
+  // The Favorites list (with its search) starts collapsed — open it first.
+  await page.getByTestId("favorites-toggle").click();
   const search = settings.getByPlaceholder("Search models…");
 
   await search.fill("gpt");
@@ -165,6 +168,7 @@ test("favorites groups collapse by default, expand on click, and a search auto-e
 }) => {
   const settings = page.getByTestId("settings-panel");
   await page.getByTestId("settings-toggle").click();
+  await page.getByTestId("favorites-toggle").click();
 
   // No favorites in the mock, so every provider group starts collapsed.
   const openai = page.getByTestId("fav-group-openai");
@@ -187,7 +191,8 @@ test("a provider with a favorite is seeded open when the panel reopens", async (
   page,
 }) => {
   await page.getByTestId("settings-toggle").click();
-  // Favorite a deepseek model (its group starts collapsed).
+  // Open the Favorites list, then favorite a deepseek model (its group starts collapsed).
+  await page.getByTestId("favorites-toggle").click();
   await page.getByTestId("fav-group-deepseek").click();
   await page
     .getByTestId("fav-deepseek-deepseek-v4-flash")
@@ -209,6 +214,57 @@ test("a provider with a favorite is seeded open when the panel reopens", async (
     "aria-expanded",
     "false",
   );
+});
+
+test("the Favorites list is collapsed by default and expands on click", async ({
+  page,
+}) => {
+  await page.getByTestId("settings-toggle").click();
+  const toggle = page.getByTestId("favorites-toggle");
+  // Header present (with a model count); the search + groups hide until expanded.
+  await expect(toggle).toHaveAttribute("aria-expanded", "false");
+  await expect(toggle).toContainText("models");
+  await expect(
+    page.getByTestId("settings-panel").getByPlaceholder("Search models…"),
+  ).toHaveCount(0);
+
+  await toggle.click();
+  await expect(toggle).toHaveAttribute("aria-expanded", "true");
+  await expect(
+    page.getByTestId("settings-panel").getByPlaceholder("Search models…"),
+  ).toBeVisible();
+});
+
+test("the Providers list has a search that filters the rows", async ({
+  page,
+}) => {
+  await page.getByTestId("settings-toggle").click();
+  await page.getByTestId("providers-toggle").click();
+  const settings = page.getByTestId("settings-panel");
+
+  const search = settings.getByPlaceholder("Search providers…");
+  await search.fill("google");
+  await expect(settings.getByTestId("provider-google")).toBeVisible();
+  await expect(settings.getByTestId("provider-anthropic")).toHaveCount(0);
+
+  await search.fill("zzzz");
+  await expect(settings.getByText("No providers match")).toBeVisible();
+});
+
+test("the Extensions list has a search that filters the rows", async ({
+  page,
+}) => {
+  await page.getByTestId("settings-toggle").click();
+  await page.getByTestId("extensions-toggle").click();
+  const settings = page.getByTestId("settings-panel");
+
+  const search = settings.getByPlaceholder("Search extensions…");
+  await search.fill("answer");
+  await expect(settings.getByTestId("ext-answer.ts")).toBeVisible();
+  await expect(settings.getByTestId("ext-tasklist.ts")).toHaveCount(0);
+
+  await search.fill("zzzz");
+  await expect(settings.getByText("No extensions match")).toBeVisible();
 });
 
 test("the Extensions section is collapsed by default and lists on expand", async ({

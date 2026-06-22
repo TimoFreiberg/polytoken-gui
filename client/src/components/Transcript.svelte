@@ -2,6 +2,7 @@
   import { onDestroy, onMount } from "svelte";
   import { slide } from "svelte/transition";
   import { cubicOut } from "svelte/easing";
+  import Chevron from "./ui/Chevron.svelte";
   import { store } from "../lib/store.svelte.js";
   import {
     type DisplayItem,
@@ -576,11 +577,11 @@
                 ? `Collapse the injected ${item.customType} note`
                 : `Expand the injected ${item.customType} note`}
             >
-              <span class="chevron" class:open={injectOpen[item.id] ?? false}>▸</span>
+              <Chevron open={injectOpen[item.id] ?? false} size={9} strokeWidth={2} />
               <span class="inject-label">{item.customType}</span>
             </button>
             {#if injectOpen[item.id] ?? false}
-              <div class="inject-body">{injectText(item)}</div>
+              <div class="inject-body" transition:slide={{ duration: 150 }}>{injectText(item)}</div>
             {/if}
           </div>
         {/if}
@@ -627,7 +628,7 @@
               ? "Collapse the agent's working steps for this turn"
               : "Expand the agent's working steps for this turn"}
           >
-            <span class="chevron" class:open={workShown(turn)}>▸</span>
+            <Chevron open={workShown(turn)} size={10} />
             <span class="work-label">{turnDone(turn) ? workedLabel(turn) : "Working…"}</span>
           </button>
           {#if workShown(turn)}
@@ -1067,16 +1068,6 @@
   .inject-pill:hover {
     color: var(--text-muted);
   }
-  .inject-pill .chevron {
-    font-size: 9px;
-    width: 9px;
-    text-align: center;
-    transition: transform 0.12s;
-    flex-shrink: 0;
-  }
-  .inject-pill .chevron.open {
-    transform: rotate(90deg);
-  }
   .inject-label {
     font-family: var(--font-mono);
     font-size: 11px;
@@ -1170,16 +1161,8 @@
   .work-head:hover {
     color: var(--text);
   }
-  .work-head .chevron {
-    font-size: 10px;
-    width: 12px;
-    text-align: center;
-    color: var(--text-faint);
-    transition: transform 0.12s;
-    flex-shrink: 0;
-  }
-  .work-head .chevron.open {
-    transform: rotate(90deg);
+  .work-head:hover :global(.chevron) {
+    color: var(--text-muted);
   }
   .work-head .work-label {
     font-weight: 550;

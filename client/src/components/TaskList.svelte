@@ -1,5 +1,6 @@
 <script lang="ts">
   import type { ParsedTask } from "../lib/tasklist.js";
+  import Chevron from "./ui/Chevron.svelte";
 
   let { tasks }: { tasks: ParsedTask[] } = $props();
 
@@ -65,7 +66,7 @@
       </svg>
     </span>
     <span class="count">{label}</span>
-    <span class="chev" class:up={open} aria-hidden="true">▾</span>
+    <Chevron {open} variant="menu" size={10} />
   </button>
 </div>
 
@@ -119,15 +120,6 @@
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
-  }
-  .chev {
-    font-size: 9px;
-    color: var(--text-faint);
-    flex-shrink: 0;
-    transition: transform 0.15s ease;
-  }
-  .chev.up {
-    transform: rotate(180deg);
   }
 
   /* Transparent positioner: sits flush against the pill's top edge and pads

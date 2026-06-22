@@ -1,6 +1,8 @@
 <script lang="ts">
   import { onDestroy } from "svelte";
+  import { slide } from "svelte/transition";
   import type { ToolItem } from "@pilot/protocol";
+  import Chevron from "./ui/Chevron.svelte";
 
   let { item }: { item: ToolItem } = $props();
   let open = $state(false);
@@ -360,7 +362,7 @@
     {#if durationLabel}
       <span class="duration" title={`Took ${durationLabel}`} aria-label={`took ${durationLabel}`}>{durationLabel}</span>
     {/if}
-    <span class="chev" class:open>▸</span>
+    <Chevron {open} size={10} />
   </button>
   {#if outImages.length}
     <!-- A tool's image output (a screenshot, a rendered mockup, an image read) is a
@@ -379,7 +381,7 @@
     </div>
   {/if}
   {#if open}
-    <div class="body">
+    <div class="body" transition:slide={{ duration: 160 }}>
       {#if argRows.length}
         <div class="args">
           {#each argRows as row}
@@ -523,15 +525,6 @@
     flex-shrink: 0;
     font-variant-numeric: tabular-nums;
     letter-spacing: -0.01em;
-  }
-  .chev {
-    font-size: 10px;
-    color: var(--text-faint);
-    flex-shrink: 0;
-    transition: transform 0.15s ease;
-  }
-  .chev.open {
-    transform: rotate(90deg);
   }
   .body {
     border-top: 1px solid var(--border);

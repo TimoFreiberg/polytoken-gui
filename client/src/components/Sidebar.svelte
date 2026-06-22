@@ -13,6 +13,7 @@
   // getting full" cue. Below it the ring is noise on a single line, so it stays hidden.
   const RING_THRESHOLD = 66;
   import IconButton from "./ui/IconButton.svelte";
+  import Chevron from "./ui/Chevron.svelte";
   import PullIndicator from "./PullIndicator.svelte";
   import { pullToRefresh } from "../lib/pull-to-refresh.js";
   import { createPullRefresh } from "../lib/pull-to-refresh.svelte.js";
@@ -530,24 +531,7 @@
               onclick={() => toggleGroup(g.cwd)}
             >
               <span class="proj">{basename(g.cwd)}</span>
-              <span
-                class="caret"
-                class:collapsed={collapsed[g.cwd]}
-                aria-hidden="true"
-              >
-                <svg
-                  viewBox="0 0 16 16"
-                  width="11"
-                  height="11"
-                  fill="none"
-                  stroke="currentColor"
-                  stroke-width="1.7"
-                  stroke-linecap="round"
-                  stroke-linejoin="round"
-                >
-                  <path d="M4 6l4 4 4-4" />
-                </svg>
-              </span>
+              <Chevron open={!collapsed[g.cwd]} />
               {#if collapsed[g.cwd]}
                 <span class="count">{g.items.length}</span>
               {/if}
@@ -1066,23 +1050,11 @@
     text-transform: uppercase;
     letter-spacing: 0.05em;
   }
-  /* Collapse/expand chevron — sits just to the right of the project name (codex-style),
-     faint at rest, rotating to point right when the group is collapsed. */
-  .caret {
-    display: inline-flex;
-    align-items: center;
-    flex-shrink: 0;
-    color: var(--text-faint);
-    transition:
-      transform 0.16s ease,
-      color 0.1s ease;
-  }
-  .group-head:hover .caret,
-  .group-toggle:focus-visible .caret {
+  /* Collapse/expand chevron (shared <Chevron>) — sits just to the right of the project
+     name (codex-style), faint at rest, brightening when the group head is hovered/focused. */
+  .group-head:hover :global(.chevron),
+  .group-toggle:focus-visible :global(.chevron) {
     color: var(--text-muted);
-  }
-  .caret.collapsed {
-    transform: rotate(-90deg);
   }
   /* Highest-priority state beside a collapsed project. */
   .group-attention {

@@ -1,18 +1,20 @@
 <script lang="ts">
   // Rendered only when thinking blocks are NOT hidden (Transcript gates on the toggle),
   // so there's a single expandable variant — no minimal/placeholder mode.
+  import { slide } from "svelte/transition";
+  import Chevron from "./ui/Chevron.svelte";
   let { text, streaming }: { text: string; streaming: boolean } = $props();
   let open = $state(false);
 </script>
 
 <div class="think" class:open>
   <button class="head" title={open ? "Collapse thinking" : "Expand thinking"} onclick={() => (open = !open)}>
-    <span class="chev">{open ? "▾" : "▸"}</span>
+    <Chevron {open} size={10} />
     <span class="label">{streaming ? "Thinking…" : "Thought process"}</span>
     {#if streaming}<span class="shimmer"></span>{/if}
   </button>
   {#if open}
-    <div class="body">{text}</div>
+    <div class="body" transition:slide={{ duration: 160 }}>{text}</div>
   {/if}
 </div>
 
@@ -30,10 +32,6 @@
     padding: 2px 0;
     color: var(--text-muted);
     font-size: 13px;
-  }
-  .chev {
-    font-size: 10px;
-    color: var(--text-faint);
   }
   .label {
     font-style: italic;

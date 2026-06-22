@@ -1,9 +1,11 @@
 <script lang="ts">
   import type { ModelOption } from "@pilot/protocol";
+  import { slide } from "svelte/transition";
   import { store } from "../lib/store.svelte.js";
   import type { ThemeMode } from "../lib/theme.js";
   import Button from "./ui/Button.svelte";
   import IconButton from "./ui/IconButton.svelte";
+  import Chevron from "./ui/Chevron.svelte";
   import SegmentedControl from "./ui/SegmentedControl.svelte";
   import { MAX_SCALE, MIN_SCALE, STEP } from "../lib/font-scale.js";
 
@@ -54,6 +56,17 @@
   // count so you can see at a glance without expanding).
   let providersOpen = $state(false);
   const connectedCount = $derived(providers.filter((p) => p.hasAuth).length);
+  // Filter-as-you-type over the provider list (name or id). Matches the favorites search.
+  let providerQuery = $state("");
+  const pq = $derived(providerQuery.trim().toLowerCase());
+  const filteredProviders = $derived(
+    pq
+      ? providers.filter(
+          (p) =>
+            p.name.toLowerCase().includes(pq) || p.id.toLowerCase().includes(pq),
+        )
+      : providers,
+  );
 
   // The pi extensions for the focused session (Settings "Extensions" view). Fetched on
   // demand when the section expands (collapsed by default) — re-queried each expand so it
@@ -66,6 +79,18 @@
     extensionsOpen = !extensionsOpen;
     if (extensionsOpen) store.queryExtensions();
   }
+  // Filter-as-you-type over the extension list (name or source).
+  let extQuery = $state("");
+  const xq = $derived(extQuery.trim().toLowerCase());
+  const filteredExtensions = $derived(
+    xq
+      ? extensions.filter(
+          (x) =>
+            x.name.toLowerCase().includes(xq) ||
+            x.source.toLowerCase().includes(xq),
+        )
+      : extensions,
+  );
 
   // Available models grouped by provider — drives both the default-model select and
   // the favorites checklist.
@@ -78,6 +103,15 @@
     }
     return [...m.entries()].map(([provider, items]) => ({ provider, items }));
   });
+
+  // The favorites checklist grows with every connected provider, so the whole list lives
+  // behind a collapsible sub-header (collapsed by default — the header shows favorited +
+  // total counts at a glance). Per-provider sub-collapse + search live inside.
+  let favoritesOpen = $state(false);
+  const totalModels = $derived(store.models.length);
+  const totalFavorites = $derived(
+    store.models.filter((m) => store.isFavorite(m.provider, m.modelId)).length,
+  );
 
   // Filter-as-you-type search for the favorites list (it grows with every provider).
   let favQuery = $state("");
@@ -336,17 +370,32 @@
           title={providersOpen ? "Collapse providers" : "Expand providers"}
           onclick={() => (providersOpen = !providersOpen)}
         >
-          <span class="gchev" class:open={providersOpen}>▸</span>
+          <Chevron open={providersOpen} size={10} />
           <span class="gtitle-name">Providers</span>
           {#if providers.length > 0}
             <span class="gtitle-count">{connectedCount}/{providers.length} connected</span>
           {/if}
         </button>
-        {#if providersOpen && providers.length === 0}
-          <p class="note">No providers reported by the server.</p>
-        {:else if providersOpen}
+        {#if providersOpen}
+          <div class="section-body" transition:slide={{ duration: 160 }}>
+          {#if providers.length === 0}
+            <p class="note">No providers reported by the server.</p>
+          {:else}
+          {#if providers.length > 1}
+            <input
+              class="sub-search"
+              type="text"
+              placeholder="Search providers…"
+              title="Filter providers by name or id"
+              aria-label="Search providers"
+              spellcheck="false"
+              autocapitalize="off"
+              autocorrect="off"
+              bind:value={providerQuery}
+            />
+          {/if}
           <div class="providers">
-            {#each providers as p (p.id)}
+            {#each filteredProviders as p (p.id)}
               <div class="prow" data-testid="provider-{p.id}">
                 <div class="rinfo">
                   <div class="rlabel">{p.name}</div>
@@ -417,12 +466,17 @@
                 </form>
               {/if}
             {/each}
+            {#if filteredProviders.length === 0}
+              <div class="mempty">No providers match</div>
+            {/if}
           </div>
           <p class="note">
             Keys save into pi's <code>auth.json</code> on the server — shared with the
             terminal <code>pi</code> on this machine. Providers configured via environment
             variables show as connected but aren't editable here.
           </p>
+          {/if}
+          </div>
         {/if}
       </section>
 
@@ -473,65 +527,88 @@
           </select>
         </div>
 
-        <div class="rdesc available">
-          Favorites — the header picker shows only these (none = show all):
-        </div>
-        {#if groups.length === 0}
-          <p class="note">No models available — connect a provider above.</p>
-        {:else}
-          <input
-            class="fav-search"
-            type="text"
-            placeholder="Search models…"
-            title="Filter the model list by name, id, or provider"
-            aria-label="Search models"
-            spellcheck="false"
-            autocapitalize="off"
-            autocorrect="off"
-            bind:value={favQuery}
-          />
-          <div class="models">
-            {#each favGroups as g (g.provider)}
-              {@const expanded = isFavExpanded(g.provider)}
-              {@const favCount = g.items.filter((m) =>
-                store.isFavorite(m.provider, m.modelId),
-              ).length}
-              <button
-                class="mprovider mprovider-toggle"
-                type="button"
-                aria-expanded={expanded}
-                data-testid="fav-group-{g.provider}"
-                title={expanded
-                  ? `Collapse ${g.provider}`
-                  : `Expand ${g.provider} (${g.items.length} model${g.items.length === 1 ? "" : "s"})`}
-                onclick={() => toggleFavProvider(g.provider)}
-              >
-                <span class="mchev" class:open={expanded}>▸</span>
-                <span class="mprovider-name">{g.provider}</span>
-                <span class="mprovider-count">
-                  {#if favCount > 0}<span class="favstar">{favCount}★</span> · {/if}{g.items
-                    .length}
-                </span>
-              </button>
-              {#if expanded}
-                {#each g.items as opt (opt.modelId)}
-                  <label class="mitem fav" data-testid="fav-{opt.provider}-{opt.modelId}">
-                    <input
-                      type="checkbox"
-                      title={store.isFavorite(opt.provider, opt.modelId)
-                        ? `Remove ${opt.label} from favorites`
-                        : `Add ${opt.label} to favorites`}
-                      checked={store.isFavorite(opt.provider, opt.modelId)}
-                      onchange={() => store.toggleFavorite(opt.provider, opt.modelId)}
-                    />
-                    <span class="mlabel">{opt.label}</span>
-                  </label>
-                {/each}
+        <button
+          class="gtitle gtitle-toggle subhead"
+          type="button"
+          aria-expanded={favoritesOpen}
+          data-testid="favorites-toggle"
+          title={favoritesOpen ? "Collapse favorites" : "Expand favorites"}
+          onclick={() => (favoritesOpen = !favoritesOpen)}
+        >
+          <Chevron open={favoritesOpen} size={10} />
+          <span class="gtitle-name">Favorites</span>
+          {#if totalModels > 0}
+            <span class="gtitle-count">
+              {#if totalFavorites > 0}<span class="favstar">{totalFavorites}★</span> · {/if}{totalModels}
+              model{totalModels === 1 ? "" : "s"}
+            </span>
+          {/if}
+        </button>
+        {#if favoritesOpen}
+          <div class="section-body" transition:slide={{ duration: 160 }}>
+          <p class="note fav-note">
+            The header picker shows only your favorites (none set = show all).
+          </p>
+          {#if groups.length === 0}
+            <p class="note">No models available — connect a provider above.</p>
+          {:else}
+            <input
+              class="fav-search"
+              type="text"
+              placeholder="Search models…"
+              title="Filter the model list by name, id, or provider"
+              aria-label="Search models"
+              spellcheck="false"
+              autocapitalize="off"
+              autocorrect="off"
+              bind:value={favQuery}
+            />
+            <div class="models">
+              {#each favGroups as g (g.provider)}
+                {@const expanded = isFavExpanded(g.provider)}
+                {@const favCount = g.items.filter((m) =>
+                  store.isFavorite(m.provider, m.modelId),
+                ).length}
+                <button
+                  class="mprovider mprovider-toggle"
+                  type="button"
+                  aria-expanded={expanded}
+                  data-testid="fav-group-{g.provider}"
+                  title={expanded
+                    ? `Collapse ${g.provider}`
+                    : `Expand ${g.provider} (${g.items.length} model${g.items.length === 1 ? "" : "s"})`}
+                  onclick={() => toggleFavProvider(g.provider)}
+                >
+                  <Chevron open={expanded} size={10} />
+                  <span class="mprovider-name">{g.provider}</span>
+                  <span class="mprovider-count">
+                    {#if favCount > 0}<span class="favstar">{favCount}★</span> · {/if}{g.items
+                      .length}
+                  </span>
+                </button>
+                {#if expanded}
+                  <div class="mgroup-items" transition:slide={{ duration: 140 }}>
+                    {#each g.items as opt (opt.modelId)}
+                      <label class="mitem fav" data-testid="fav-{opt.provider}-{opt.modelId}">
+                        <input
+                          type="checkbox"
+                          title={store.isFavorite(opt.provider, opt.modelId)
+                            ? `Remove ${opt.label} from favorites`
+                            : `Add ${opt.label} to favorites`}
+                          checked={store.isFavorite(opt.provider, opt.modelId)}
+                          onchange={() => store.toggleFavorite(opt.provider, opt.modelId)}
+                        />
+                        <span class="mlabel">{opt.label}</span>
+                      </label>
+                    {/each}
+                  </div>
+                {/if}
+              {/each}
+              {#if favGroups.length === 0}
+                <div class="mempty">No models match</div>
               {/if}
-            {/each}
-            {#if favGroups.length === 0}
-              <div class="mempty">No models match</div>
-            {/if}
+            </div>
+          {/if}
           </div>
         {/if}
       </section>
@@ -546,17 +623,32 @@
           title={extensionsOpen ? "Collapse extensions" : "Expand extensions"}
           onclick={toggleExtensionsSection}
         >
-          <span class="gchev" class:open={extensionsOpen}>▸</span>
+          <Chevron open={extensionsOpen} size={10} />
           <span class="gtitle-name">Extensions</span>
           {#if extensions.length > 0}
             <span class="gtitle-count">{extensionsOn}/{extensions.length} on</span>
           {/if}
         </button>
-        {#if extensionsOpen && extensions.length === 0}
-          <p class="note">No extensions loaded for this session.</p>
-        {:else if extensionsOpen}
+        {#if extensionsOpen}
+          <div class="section-body" transition:slide={{ duration: 160 }}>
+          {#if extensions.length === 0}
+            <p class="note">No extensions loaded for this session.</p>
+          {:else}
+          {#if extensions.length > 1}
+            <input
+              class="sub-search"
+              type="text"
+              placeholder="Search extensions…"
+              title="Filter extensions by name or source"
+              aria-label="Search extensions"
+              spellcheck="false"
+              autocapitalize="off"
+              autocorrect="off"
+              bind:value={extQuery}
+            />
+          {/if}
           <div class="exts">
-            {#each extensions as x (x.resolvedPath)}
+            {#each filteredExtensions as x (x.resolvedPath)}
               <div class="ext" class:off={!x.enabled} data-testid="ext-{x.name}">
                 <div class="rinfo">
                   <div class="rlabel">{x.name}</div>
@@ -584,11 +676,16 @@
                 </button>
               </div>
             {/each}
+            {#if filteredExtensions.length === 0}
+              <div class="mempty">No extensions match</div>
+            {/if}
           </div>
           <p class="note">
             Enabling or disabling takes effect on the session's <strong>next start</strong> —
             pi loads extensions when a session begins, so the change isn't live.
           </p>
+          {/if}
+          </div>
         {/if}
       </section>
 
@@ -824,11 +921,19 @@
   .gtitle-toggle:hover {
     color: var(--text-muted);
   }
+  .gtitle-toggle:hover :global(.chevron),
+  .gtitle-toggle:focus-visible :global(.chevron) {
+    color: var(--text-muted);
+  }
   .gtitle-toggle:focus-visible {
     outline: none;
     color: var(--text);
     border-radius: var(--radius-xs);
     box-shadow: 0 0 0 1.5px var(--accent);
+  }
+  /* Sub-header (Favorites, nested under Models) — separated from the selects above it. */
+  .gtitle-toggle.subhead {
+    margin-top: 16px;
   }
   .gtitle-count {
     margin-left: auto;
@@ -837,12 +942,25 @@
     font-size: 10.5px;
     opacity: 0.8;
   }
-  .gchev {
-    font-size: 9px;
-    transition: transform 0.15s ease;
+  /* Search box shared by the Providers / Extensions collapsible sections. */
+  .sub-search {
+    width: 100%;
+    box-sizing: border-box;
+    font-size: 12.5px;
+    color: var(--text);
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    padding: 7px 9px;
+    margin: 2px 0 8px;
   }
-  .gchev.open {
-    transform: rotate(90deg);
+  .sub-search:focus {
+    outline: none;
+    border-color: var(--accent);
+  }
+  .fav-note {
+    margin-top: 0;
+    margin-bottom: 8px;
   }
   .row {
     display: flex;
@@ -942,9 +1060,6 @@
     outline: none;
     border-color: var(--accent);
   }
-  .available {
-    margin: 12px 0 6px;
-  }
   .fav-search {
     width: 100%;
     box-sizing: border-box;
@@ -993,6 +1108,10 @@
   .mprovider-toggle:hover {
     color: var(--text-muted);
   }
+  .mprovider-toggle:hover :global(.chevron),
+  .mprovider-toggle:focus-visible :global(.chevron) {
+    color: var(--text-muted);
+  }
   .mprovider-toggle:focus-visible {
     outline: none;
     color: var(--text);
@@ -1011,13 +1130,6 @@
   .favstar {
     color: var(--accent);
     opacity: 1;
-  }
-  .mchev {
-    font-size: 9px;
-    transition: transform 0.15s ease;
-  }
-  .mchev.open {
-    transform: rotate(90deg);
   }
   .mitem {
     display: flex;

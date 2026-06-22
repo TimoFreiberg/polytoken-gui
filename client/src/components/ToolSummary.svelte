@@ -1,7 +1,9 @@
 <script lang="ts">
+  import { slide } from "svelte/transition";
   import type { MergedToolsItem } from "../lib/transcript-view.js";
   import { mergedSummary } from "../lib/transcript-view.js";
   import ToolCard from "./ToolCard.svelte";
+  import Chevron from "./ui/Chevron.svelte";
 
   let {
     item,
@@ -49,9 +51,9 @@
     aria-expanded={open}
   >
     {#if item.sealed}
-      <span class="chev" class:open>▸</span>
+      <Chevron {open} size={10} />
     {:else}
-      <span class="chev unsealed-chev">▸</span>
+      <Chevron open size={10} />
     {/if}
     {#if dot}<span class="status" aria-hidden="true">{dot}</span>{/if}
     {#if item.sealed}
@@ -61,7 +63,7 @@
     {/if}
   </button>
   {#if open}
-    <div class="body">
+    <div class="body" transition:slide={{ duration: 160 }}>
       {#each item.tools as tool (tool.id)}
         <ToolCard item={tool} />
       {/each}
@@ -97,17 +99,6 @@
     outline-offset: 2px;
     border-radius: var(--radius-xs);
   }
-  .chev {
-    font-size: 10px;
-    width: 12px;
-    text-align: center;
-    color: var(--text-faint);
-    flex-shrink: 0;
-    transition: transform 0.12s ease;
-  }
-  .chev.open {
-    transform: rotate(90deg);
-  }
   /* Status dot only renders for running/error (see `dot`). */
   .status {
     font-size: 9px;
@@ -140,21 +131,5 @@
     display: flex;
     flex-direction: column;
     gap: 8px;
-    animation: reveal 0.16s ease;
-  }
-  @keyframes reveal {
-    from {
-      opacity: 0;
-      transform: translateY(-2px);
-    }
-    to {
-      opacity: 1;
-      transform: translateY(0);
-    }
-  }
-  @media (prefers-reduced-motion: reduce) {
-    .body {
-      animation: none;
-    }
   }
 </style>

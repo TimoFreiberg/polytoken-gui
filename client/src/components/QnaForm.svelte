@@ -13,8 +13,10 @@
 
 <script lang="ts">
   import { untrack } from "svelte";
+  import { slide } from "svelte/transition";
   import type { HostUiRequest, QnaAnswer } from "@pilot/protocol";
   import Button from "./ui/Button.svelte";
+  import Chevron from "./ui/Chevron.svelte";
 
   // The remote face of the answer extension's Q&A widget: one card per question,
   // a highlight-selected choice list (single) / checkbox list (multi) / free-text,
@@ -250,14 +252,14 @@
           aria-label={collapsed ? "Expand the questions" : "Minimize to the title"}
           title={collapsed ? "Expand the questions" : "Minimize to the title"}
         >
-          {collapsed ? "▸" : "▾"}
+          <Chevron open={!collapsed} size={11} />
         </button>
       {/if}
     </div>
   </div>
 
   {#if !collapsed}
-  <div class="card">
+  <div class="card" transition:slide={{ duration: 160 }}>
     <p class="q">{q.question}</p>
     {#if q.context}<p class="ctx">{q.context}</p>{/if}
 
@@ -422,6 +424,9 @@
     font-size: 12px;
     line-height: 1;
     cursor: pointer;
+  }
+  .min :global(.chevron) {
+    color: inherit;
   }
   .min:hover {
     color: var(--text);

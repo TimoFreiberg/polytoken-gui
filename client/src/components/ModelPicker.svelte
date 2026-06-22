@@ -2,6 +2,7 @@
   import { tick } from "svelte";
   import type { ModelOption } from "@pilot/protocol";
   import { store } from "../lib/store.svelte.js";
+  import Chevron from "./ui/Chevron.svelte";
 
   type Open = "none" | "model" | "thinking";
   let open = $state<Open>("none");
@@ -222,7 +223,7 @@
         data-testid="model-badge"
       >
         <span class="badge-text">{modelLabel}</span>
-        {#if hasModels}<span class="chev" class:up={open === "model"}>▾</span>{/if}
+        {#if hasModels}<Chevron open={open === "model"} variant="menu" size={10} />{/if}
       </button>
       {#if open === "model"}
         <div class="panel" bind:this={modelPanelEl}>
@@ -251,7 +252,7 @@
                 : `Expand ${g.provider} (${g.items.length} model${g.items.length === 1 ? "" : "s"})`}
               onclick={() => toggleProvider(g.provider)}
             >
-              <span class="group-chev" class:open={expanded}>▸</span>
+              <Chevron open={expanded} size={10} />
               <span class="group-name">{g.provider}</span>
               <span class="group-count">{g.items.length}</span>
             </button>
@@ -294,7 +295,7 @@
     <div class="anchor">
       <button class="badge" title="Thinking level (⌘⇧E)" onclick={() => toggle("thinking")} data-testid="thinking-badge">
         <span class="badge-text">{thinking}</span>
-        {#if levels.length > 0}<span class="chev" class:up={open === "thinking"}>▾</span>{/if}
+        {#if levels.length > 0}<Chevron open={open === "thinking"} variant="menu" size={10} />{/if}
       </button>
       {#if open === "thinking" && levels.length > 0}
         <!-- Focusable container (tabindex -1) so the hotkey lands keyboard focus here
@@ -368,14 +369,6 @@
     overflow: hidden;
     text-overflow: ellipsis;
   }
-  .chev {
-    color: var(--text-faint);
-    font-size: 10px;
-    transition: transform 0.12s ease;
-  }
-  .chev.up {
-    transform: rotate(180deg);
-  }
   .backdrop {
     position: fixed;
     inset: 0;
@@ -443,18 +436,15 @@
   .group-title:hover {
     color: var(--text-muted);
   }
+  .group-title:hover :global(.chevron),
+  .group-title:focus-visible :global(.chevron) {
+    color: var(--text-muted);
+  }
   .group-title:focus-visible {
     outline: none;
     color: var(--text);
     border-radius: var(--radius-xs);
     box-shadow: inset 0 0 0 1.5px var(--accent);
-  }
-  .group-chev {
-    font-size: 9px;
-    transition: transform 0.15s ease;
-  }
-  .group-chev.open {
-    transform: rotate(90deg);
   }
   .group-name {
     flex: 1;
