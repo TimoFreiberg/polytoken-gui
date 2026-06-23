@@ -76,6 +76,14 @@ test("merged card expands in two steps: the list, then each call", async ({
   await expect(innerCards).toHaveCount(6);
   await expect(card.locator(":scope > .body > .tool .out")).toHaveCount(0);
 
+  // The nested calls render FLAT (no per-card box) so successive calls read as a tight
+  // list, not a stack of bordered cards. Guard the chrome-removal so it can't regress.
+  await expect(innerCards.first()).toHaveClass(/\bflat\b/);
+  const borderTop = await innerCards
+    .first()
+    .evaluate((el) => getComputedStyle(el).borderTopWidth);
+  expect(borderTop).toBe("0px");
+
   // Step 2 — expand one inner ToolCard: its output appears.
   await innerCards.first().locator(".head").click();
   await expect(

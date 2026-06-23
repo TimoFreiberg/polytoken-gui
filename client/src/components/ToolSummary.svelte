@@ -65,7 +65,7 @@
   {#if open}
     <div class="body" transition:reveal>
       {#each item.tools as tool (tool.id)}
-        <ToolCard item={tool} />
+        <ToolCard item={tool} flat />
       {/each}
     </div>
   {/if}
@@ -134,6 +134,8 @@
     border-left: 1px solid var(--border);
     display: flex;
     flex-direction: column;
-    gap: 8px;
+    /* Flat child rows carry their own header padding for vertical rhythm, so the inter-row
+       gap is tight — a tight list, not spaced-out cards. */
+    gap: 1px;
   }
 </style>

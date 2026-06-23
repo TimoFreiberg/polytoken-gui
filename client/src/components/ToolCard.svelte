@@ -5,7 +5,11 @@
   import Chevron from "./ui/Chevron.svelte";
   import { imageViewer } from "../lib/image-viewer.svelte.js";
 
-  let { item }: { item: ToolItem } = $props();
+  // `flat` drops the card chrome (border/background/rounded box) so the call renders as a
+  // bare row. Used by ToolSummary for the successive calls inside a merged run — they read
+  // as a tight list under the group's thread-line instead of a stack of separate boxes
+  // (Codex-style). Standalone high-signal cards (write/edit in Transcript) keep flat=false.
+  let { item, flat = false }: { item: ToolItem; flat?: boolean } = $props();
   let open = $state(false);
 
   // Output controls: the result <pre> is capped at 320px (see .out below), which turns a
@@ -349,7 +353,7 @@
   }
 </script>
 
-<div class="tool {item.status}">
+<div class="tool {item.status}" class:flat class:open>
   <button class="head" title={open ? "Collapse tool details" : "Expand tool details"} onclick={() => (open = !open)} aria-expanded={open}>
     <span class="status">{statusIcon[item.status]}</span>
     <span class="name" title={item.description || undefined}>{item.label ?? item.name}</span>
@@ -451,6 +455,30 @@
     border-radius: var(--radius-sm);
     background: var(--surface);
     overflow: hidden;
+  }
+  /* Flat variant (merged-run children): no box of its own — just a row whose only chrome
+     is a subtle rounded hover, so successive calls read as a tight list rather than a
+     stack of cards. The expanded body keeps its own indentation + inner sunken blocks,
+     so it stays legible without a top divider. */
+  .tool.flat {
+    border: none;
+    border-radius: var(--radius-xs);
+    background: none;
+    overflow: visible;
+  }
+  .tool.flat .head {
+    padding: 4px 7px;
+    border-radius: var(--radius-xs);
+  }
+  .tool.flat .body {
+    border-top: none;
+    padding: 2px 7px 6px;
+  }
+  /* When a flat row is expanded, tint the whole card so header + its output read as one
+     unit — without the box border, the detail would otherwise float ambiguously between
+     this row and the next in the tight list. */
+  .tool.flat.open {
+    background: var(--surface-sunken);
   }
   .head {
     width: 100%;
