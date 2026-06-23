@@ -28,6 +28,7 @@ struct Config {
 
         let pathDirs = [
             home.appendingPathComponent(".bun/bin").path,
+            home.appendingPathComponent(".local/bin").path,
             "/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin",
         ]
 
