@@ -7,6 +7,7 @@ import { existsSync } from "node:fs";
 import { rm } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { promisify } from "node:util";
+import { randomWorktreeName } from "./worktree-name.js";
 
 const run = promisify(execFile);
 
@@ -91,19 +92,38 @@ export function planWorktreeRemoval(
   };
 }
 
+/** Pick a worktree plan whose sibling dir doesn't already exist, using a memorable
+ *  `adjective-animal` slug (re-rolled on the rare collision, then falling back to a
+ *  timestamp so we never loop forever on a saturated wordlist). */
+function planFreshWorktree(repoDir: string, vcs: Vcs) {
+  for (let i = 0; i < 10; i++) {
+    const plan = planWorktree(repoDir, vcs, randomWorktreeName());
+    if (!existsSync(plan.path)) return plan;
+  }
+  return planWorktree(
+    repoDir,
+    vcs,
+    `${randomWorktreeName()}-${Date.now().toString(36)}`,
+  );
+}
+
 /** Create an isolated worktree of `repoDir` and return its metadata. Throws loudly if
  *  the dir isn't a jj/git repo or the VCS command fails — the caller surfaces it to the
- *  UI rather than silently falling back to the shared tree. */
+ *  UI rather than silently falling back to the shared tree. With no explicit `id` the
+ *  worktree gets a memorable `adjective-animal` slug; pass `id` for a deterministic name. */
 export async function createWorktree(
   repoDir: string,
-  id: string = Date.now().toString(36),
+  id?: string,
 ): Promise<WorktreeMeta> {
   const vcs = detectVcs(repoDir);
   if (!vcs)
     throw new Error(
       `cannot create a worktree: ${repoDir} is not a jj or git repository`,
     );
-  const { path, command, args, name, base } = planWorktree(repoDir, vcs, id);
+  const { path, command, args, name, base } =
+    id === undefined
+      ? planFreshWorktree(repoDir, vcs)
+      : planWorktree(repoDir, vcs, id);
   await run(command, args);
   return { path, base, vcs, name };
 }
