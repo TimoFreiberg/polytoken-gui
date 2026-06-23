@@ -895,6 +895,11 @@
     gap: 10px;
     margin-top: -2px;
     min-height: 18px;
+    /* Fill the measure so the footer's flex-start content sits at the prose's left
+       edge. Without an explicit width the auto cross-axis margins inherited from
+       `.row.assistant > *` suppress flex stretch, shrink-wrapping `.meta` and then
+       centering that small box in the wide row. */
+    width: 100%;
   }
   .copy {
     appearance: none;
