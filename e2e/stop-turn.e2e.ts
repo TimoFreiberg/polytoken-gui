@@ -43,13 +43,17 @@ test("the Stop pill survives a stray mid-turn idle snapshot (turn still in fligh
   await expect(
     page.getByText("kicking off a command", { exact: false }),
   ).toBeVisible();
-  const summary = page.locator(".tool.summary");
-  // While the turn is still live, the tool run is unsealed — the header shows the
-  // tool name rather than the programmatic prose summary.
-  await expect(summary.locator(":scope > .head .label")).toHaveText("bash");
-  await expect(summary).toHaveClass(/running/);
-  // A running run keeps a status dot (the one signal a subdued row still shows).
-  await expect(summary.locator(":scope > .head .status")).toHaveText("○");
+  // While the turn is still live, the run is unsealed — it renders as a bare flat tool
+  // card OUTSIDE any collapsible folder (no `.tool.summary` until it seals), so the user
+  // watches the call run before it's ever collapsed.
+  await expect(page.locator(".tool.summary")).toHaveCount(0);
+  const tool = page.locator(".tool.flat");
+  await expect(tool.locator(":scope > .head .name")).toHaveText(
+    "Run shell command",
+  );
+  await expect(tool).toHaveClass(/running/);
+  // A running card keeps a blinking status dot.
+  await expect(tool.locator(":scope > .head .status")).toHaveText("○");
 
   // Wait for the stray idle snapshot to land server-side: the folded status flips to
   // "idle" (and stays — the turn never completes), proving the affordance no longer

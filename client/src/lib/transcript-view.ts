@@ -23,9 +23,10 @@ import type {
 //
 // Each MergedToolsItem carries a `sealed` flag: true when a non-tool item
 // (assistant text, user message, inject) has closed the run, or when
-// mergeTrailing seals trailing tools at end-of-array. A sealed run shows the
-// programmatic prose summary; an unsealed run shows individual tool entries
-// so the user can watch each tool land while the turn is still in flight.
+// mergeTrailing seals trailing tools at end-of-array. Rendering (in Transcript):
+// a sealed run folds into the collapsible prose-summary folder (ToolSummary); an
+// unsealed (still-streaming) run renders as a bare flat list of tool cards, NOT in
+// a folder, so the user watches each call land before it's ever collapsed.
 //
 // A thinking-only assistant item normally breaks the run too — but when the "hide
 // thinking" toggle is on it renders nothing, so `mergeTools(items, true)` skips it and
@@ -59,8 +60,8 @@ export interface MergedToolsItem {
   names: string[];
   tools: ToolItem[];
   /** True when a non-tool item (text, user message, inject) has closed this run,
-   *  or when mergeTrailing sealed it at end-of-array. A sealed run shows the
-   *  programmatic prose summary; an unsealed run shows individual tool entries. */
+   *  or when mergeTrailing sealed it at end-of-array. Sealed → the collapsible prose
+   *  summary folder; unsealed → a bare flat list of tool cards (no folder). */
   sealed: boolean;
 }
 
@@ -96,9 +97,9 @@ export function mergeTools(
   items: readonly TranscriptItem[],
   hideThinking = false,
   /** When true (default), summarizable tools at the end of the array are sealed
-   *  into a prose summary — the right call for a settled turn. When false, trailing
-   *  tools stay in an unsealed card showing individual entries so streaming doesn't
-   *  collapse them to prose before the model's text arrives. */
+   *  into a prose summary — the right call for a settled turn. When false, the trailing
+   *  run stays unsealed so streaming renders it as a bare flat list (no folder) instead
+   *  of collapsing it to prose before the model's text arrives. */
   mergeTrailing = true,
 ): DisplayItem[] {
   // ── Pass 1: group consecutive summarizable tools ──────────────────────────

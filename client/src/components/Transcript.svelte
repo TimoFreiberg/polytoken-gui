@@ -615,12 +615,22 @@
             </div>
           {/if}
         </div>
-      {:else if item.kind === "mergedTools"}
+      {:else if item.kind === "mergedTools" && item.sealed}
+        <!-- A sealed run (the model narrated past it, or the turn settled) folds into the
+             collapsible "grep, read, bash"→prose summary folder — its first collapse. -->
         <ToolSummary
           {item}
-          open={mergedOpen[item.id] ?? !item.sealed}
+          open={mergedOpen[item.id] ?? false}
           ontoggle={() => toggleMerged(item.id)}
         />
+      {:else if item.kind === "mergedTools"}
+        <!-- A still-streaming run renders as a bare flat list — deliberately OUTSIDE the
+             collapsible folder. It only folds into <ToolSummary> once it seals (above). -->
+        <div class="tool-stream">
+          {#each item.tools as tool (tool.id)}
+            <ToolCard item={tool} flat />
+          {/each}
+        </div>
       {:else if item.kind === "tool" && item.name === "answer"}
         <!-- The user's Q&A answers, surfaced visibly instead of buried in a tool card. -->
         <QnaResult {item} />
@@ -1258,6 +1268,14 @@
   }
   .work-head .work-label {
     font-weight: 550;
+  }
+  /* A still-streaming tool run: bare flat rows, no folder chrome (no header, no thread
+     line). The flat cards carry their own padding, so a tight 1px gap reads as one
+     compact list, while the run as a whole keeps the column's 18px gap to its neighbours. */
+  .tool-stream {
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
   }
   /* When expanded, the work items indent under the header with a thread line. */
   .work-body {

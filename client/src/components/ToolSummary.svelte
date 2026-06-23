@@ -21,46 +21,30 @@
     return "ok";
   });
   const summary = $derived(mergedSummary(item));
-  // A quiet status dot only when it carries signal — running (live) or error. The
-  // common settled-ok run shows nothing, keeping the row as subdued as the reference
-  // Codex/Claude transcripts (just grey prose + a chevron).
-  const dot = $derived(
-    status === "running" ? "○" : status === "error" ? "✕" : null,
-  );
-
-  // Unsealed runs show entries (always expanded); the header lists tool names
-  // instead of prose so the user watches each call land.
-  const names = $derived(item.names.join(", "));
+  // A quiet status dot only when it carries signal — an error in the run. A sealed run's
+  // tools have all finished (the model moved on, or the turn settled), so it never shows
+  // a running dot; the common settled-ok run shows nothing, keeping the row as subdued as
+  // the reference Codex/Claude transcripts (just grey prose + a chevron).
+  const dot = $derived(status === "error" ? "✕" : null);
 </script>
 
-<!-- Deliberately the OPPOSITE of ToolCard's shell: a merged run is ambient noise, so it
+<!-- Deliberately the OPPOSITE of ToolCard's shell: a sealed run is ambient noise, so it
      renders as a borderless grey disclosure row (matching the "Worked for Ns" header and
      the nudge pill), not a highlighted card. The high-signal tools (write/edit) stay as
-     standalone bordered cards; everything else recedes into this line.
+     standalone bordered cards; everything else recedes into this collapsed prose line.
 
-     When unsealed (the turn is still live and no text has arrived yet), the row defaults
-     to expanded and the header shows tool names rather than prose — a single accumulating
-     card with visible entries. Once sealed, it collapses to the prose summary. -->
-<div class="tool summary {status}" class:sealed={item.sealed} class:unsealed={!item.sealed}>
+     Only SEALED runs reach this component — a still-streaming run renders as a bare flat
+     list in Transcript (no folder) and only folds in here once it seals. -->
+<div class="tool summary {status}">
   <button
     class="head"
-    title={item.sealed
-      ? `${open ? "Collapse" : "Expand"} — ${summary} (Enter)`
-      : `Working — ${names} (Enter to toggle)`}
+    title={`${open ? "Collapse" : "Expand"} — ${summary} (Enter)`}
     onclick={ontoggle}
     aria-expanded={open}
   >
-    {#if item.sealed}
-      <Chevron {open} size={10} />
-    {:else}
-      <Chevron open size={10} />
-    {/if}
+    <Chevron {open} size={10} />
     {#if dot}<span class="status" aria-hidden="true">{dot}</span>{/if}
-    {#if item.sealed}
-      <span class="label">{summary}</span>
-    {:else}
-      <span class="label unsealed-label">{names}</span>
-    {/if}
+    <span class="label">{summary}</span>
   </button>
   {#if open}
     <div class="body" transition:reveal>
@@ -103,23 +87,14 @@
     outline-offset: 2px;
     border-radius: var(--radius-xs);
   }
-  /* Status dot only renders for running/error (see `dot`). */
+  /* Status dot only renders for an errored run (see `dot`). */
   .status {
     font-size: 9px;
     line-height: 1;
     flex-shrink: 0;
   }
-  .summary.running .status {
-    color: var(--accent);
-    animation: blink 1s ease-in-out infinite;
-  }
   .summary.error .status {
     color: var(--danger);
-  }
-  @keyframes blink {
-    50% {
-      opacity: 0.3;
-    }
   }
   .label {
     font-weight: 550;
