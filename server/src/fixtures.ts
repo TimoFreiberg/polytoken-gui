@@ -1926,3 +1926,74 @@ export function newSessionSeed(
     },
   ];
 }
+
+/** The first turn of a freshly created session, streamed under that session's OWN ref
+ *  (taken from its seed snapshot) rather than the demo session's. The deferred-creation
+ *  flow delivers the first prompt only after the new session is focused, so its turn must
+ *  land in the new session's transcript — mirroring the real driver. `userId` ties the
+ *  echoed userMessage to the client's promptId so the optimistic "creating" row hands off
+ *  to the authoritative one without a flicker. */
+export function newSessionReply(
+  template: SessionSnapshot,
+  userText: string,
+  userId: string,
+  images?: readonly ImageContent[],
+): ScriptStep[] {
+  const ref = template.ref;
+  const b = () => ({ sessionRef: ref, timestamp: ts() });
+  const snap = (status: SessionSnapshot["status"]): SessionSnapshot => ({
+    ...template,
+    status,
+    updatedAt: ts(),
+  });
+  const reply =
+    "On it — the session's up. Let me take a first look at what you asked for.";
+  const steps: ScriptStep[] = [
+    {
+      wait: 0,
+      event: {
+        ...b(),
+        type: "userMessage",
+        id: userId,
+        text: userText,
+        images,
+        entryId: `e-${userId}`,
+      },
+    },
+    {
+      wait: 0,
+      event: { ...b(), type: "sessionUpdated", snapshot: snap("running") },
+    },
+  ];
+  // Stream the reply in a few-word chunks (same cadence as `deltas`, inlined here so the
+  // events carry the new session's ref instead of `base()`'s demo ref).
+  const words = reply.split(/(\s+)/);
+  let buf = "";
+  let n = 0;
+  for (const w of words) {
+    buf += w;
+    if (++n % 3 === 0) {
+      steps.push({
+        wait: 32,
+        event: { ...b(), type: "assistantDelta", text: buf, channel: "text" },
+      });
+      buf = "";
+    }
+  }
+  if (buf)
+    steps.push({
+      wait: 32,
+      event: { ...b(), type: "assistantDelta", text: buf, channel: "text" },
+    });
+  steps.push({
+    wait: 80,
+    event: {
+      ...b(),
+      type: "runCompleted",
+      snapshot: snap("idle"),
+      userEntryId: `e-${userId}`,
+      assistantEntryId: `e-a-${userId}`,
+    },
+  });
+  return steps;
+}

@@ -52,6 +52,15 @@
   const elapsed = $derived(
     startedAt === null ? "" : formatWorkedDuration(nowMs - startedAt),
   );
+
+  // A new session is being created server-side (pi warming up + first prompt in flight),
+  // before its first turn has started. We show the indicator through this gap too so the
+  // just-sent prompt isn't left under a silent, idle-looking composer; the real turn's
+  // "Working…"/"Thinking…" takes over the moment the run starts (turnActive wins the label).
+  const creating = $derived(store.creatingSession !== null && !store.turnActive);
+  const label = $derived(
+    store.turnActive ? (thinking ? "Thinking…" : "Working…") : "Starting session…",
+  );
 </script>
 
 <!-- The "pi is still working" affordance. Lives at the bottom of the chat window,
@@ -59,16 +68,23 @@
      through thinking/tool gaps (not only while text streams). Replaces the inline
      streaming caret. Driven by store.turnActive — the robust in-flight signal, so it
      never disappears mid-turn just because a stray snapshot reported idle. -->
-{#if store.turnActive}
+{#if store.turnActive || creating}
   <div class="wrap" data-testid="working-indicator" role="status" aria-live="polite">
-    <span class="inner" title={thinking ? "pi is thinking" : "pi is working"}>
+    <span
+      class="inner"
+      title={creating
+        ? "Starting the new session"
+        : thinking
+          ? "pi is thinking"
+          : "pi is working"}
+    >
       <span class="mark" aria-hidden="true">
         <span class="pi">π</span>
         <!-- Only .ring rotates; the π is a static, centered sibling so its
              centering transform never collides with the orbit animation. -->
         <span class="ring"><span class="dot"></span></span>
       </span>
-      <span class="label">{thinking ? "Thinking…" : "Working…"}</span>
+      <span class="label" data-testid="working-label">{label}</span>
     </span>
     <!-- aria-hidden: both this elapsed timer and the token counter below live inside the
          role=status live region and tick frequently; announcing every tick would spam a
@@ -82,13 +98,15 @@
         title="Time elapsed on the current turn">{elapsed}</span
       >
     {/if}
-    <span
-      class="tokens"
-      data-testid="working-tokens"
-      aria-hidden="true"
-      title="Estimated tokens received from the model this turn (~4 chars/token). Climbing = the API is streaming; frozen = it has stalled."
-      >~{tokens.toLocaleString("en-US")} tok</span
-    >
+    {#if store.turnActive}
+      <span
+        class="tokens"
+        data-testid="working-tokens"
+        aria-hidden="true"
+        title="Estimated tokens received from the model this turn (~4 chars/token). Climbing = the API is streaming; frozen = it has stalled."
+        >~{tokens.toLocaleString("en-US")} tok</span
+      >
+    {/if}
   </div>
 {/if}
 

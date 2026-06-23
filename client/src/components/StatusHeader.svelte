@@ -25,9 +25,15 @@
   const conn = $derived(store.connection);
   const s = $derived(store.session);
   const statuses = $derived(Object.entries(s.ambient.statuses));
+  // A just-submitted new session, warming up server-side before its first snapshot. The
+  // session slot was reset to empty on submit, so without special-casing this the header
+  // would flash "pilot" / "no session" until the snapshot lands. Treat it like the draft.
+  const creating = $derived(store.creatingSession !== null);
   // The focused session is warming up (created/opened, pre-stream) — show a small
-  // spinner beside the title. Suppressed while drafting (no real session yet).
-  const initializing = $derived(!store.draft && s.status === "initializing");
+  // spinner beside the title. Also during a deferred new session's creation gap.
+  const initializing = $derived(
+    creating || (!store.draft && s.status === "initializing"),
+  );
 
   // While drafting a new session there's no folded session yet — the header reflects
   // the draft so it doesn't read as the (now-backgrounded) previously-active one.
@@ -39,7 +45,9 @@
 
   // The active session's title (folded snapshot is authoritative; ambient title wins).
   const title = $derived(
-    drafting ? "New session" : s.ambient.title || s.title || "pilot",
+    drafting || creating
+      ? "New session"
+      : s.ambient.title || s.title || "pilot",
   );
 
   // The "where am I" subtitle. The folded snapshot carries no cwd/worktree, so we
@@ -51,7 +59,9 @@
   const subtitle = $derived(
     drafting
       ? draftDir || "new session"
-      : sessionSubtitle({ cwd: entry?.cwd, worktreeBase: entry?.worktree?.base }),
+      : creating
+        ? "starting…"
+        : sessionSubtitle({ cwd: entry?.cwd, worktreeBase: entry?.worktree?.base }),
   );
   // Hover reveals the full path(s) the basename(s) elide.
   const subtitleTitle = $derived(

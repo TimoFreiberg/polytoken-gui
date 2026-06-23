@@ -234,6 +234,19 @@ class PilotStore {
     model?: { provider: string; modelId: string };
     thinking?: string;
   } | null>(null);
+  // A newSession prompt was just submitted and we're awaiting the new session's first
+  // authoritative snapshot from the server (pi warm-up can take a beat). Holds the
+  // submitted prompt (id + content). While set, the transcript renders a fresh/empty
+  // session seeded with this first-prompt row + a "Starting session…" indicator — instead
+  // of flashing the previously focused session's transcript, which `this.session` still
+  // holds until the snapshot swaps it in. Cleared once that prompt's real userMessage
+  // lands in the focused transcript (maybeFinishCreating), or on navigation / failure.
+  creatingSession = $state<{
+    promptId: string;
+    text: string;
+    images?: ImageContent[];
+    createdAt: string;
+  } | null>(null);
   // Sidebar open/collapsed. Default open on a roomy viewport, closed on a phone
   // (where it's an overlay drawer). Persisted per-device in localStorage.
   sidebarOpen = $state(initialSidebarOpen());
@@ -533,7 +546,31 @@ class PilotStore {
           deliveryError: prompt.error,
         }),
       );
-    return [...this.session.items, ...optimistic];
+    const items = [...this.session.items, ...optimistic];
+    // While a new session is being created, surface its first prompt at the top of the
+    // (otherwise empty) transcript until the real userMessage lands — `existing.has`
+    // then hands off to the authoritative row. Rendered from `creatingSession` rather
+    // than the outbox so it survives the prompt's ACK, which deletes the pending entry a
+    // beat before the server echoes the message back.
+    const creating = this.creatingSession;
+    if (creating && !existing.has(creating.promptId)) {
+      const pending = this.pendingPrompts.find(
+        (p) => p.promptId === creating.promptId,
+      );
+      items.push({
+        kind: "user",
+        id: creating.promptId,
+        text: creating.text,
+        images: creating.images,
+        ts: creating.createdAt,
+        // Mirror the in-flight delivery cue while the outbox entry is still live; once
+        // ACKed it's a plain bubble (the "Starting session…" indicator carries the rest).
+        delivery: pending
+          ? deliveryState(pending.state, this.connection)
+          : undefined,
+      });
+    }
+    return items;
   }
   /** True when a turn is in flight for the FOCUSED session — the robust signal that
    *  drives the stop pill, the working indicator, and the composer's steer/queue mode.
@@ -643,6 +680,16 @@ class PilotStore {
     this.pushState = await ensurePushSubscription();
   }
 
+  /** Tear down the "creating new session" placeholder once its first prompt has actually
+   *  landed in the focused transcript. Tied to the real item (not the snapshot or the
+   *  ACK) so the optimistic first-prompt row hands off to the authoritative one without a
+   *  gap — the overlay keeps showing it right up until `existing.has(promptId)` is true. */
+  private maybeFinishCreating(): void {
+    const id = this.creatingSession?.promptId;
+    if (id !== undefined && this.session.items.some((item) => item.id === id))
+      this.creatingSession = null;
+  }
+
   private onServer(msg: ServerMessage): void {
     switch (msg.type) {
       case "hello":
@@ -659,6 +706,9 @@ class PilotStore {
       case "snapshot":
         this.session = msg.state;
         this.ready = true;
+        // A snapshot for the session we're creating may already carry its first prompt
+        // (or none yet — the userMessage event folds in next). Either way, hand off.
+        this.maybeFinishCreating();
         if (this.bootRestoreInFlight && msg.state.ref)
           this.bootRestoreInFlight = false;
         // A snapshot lands after a successful switch — clear any stale switch error.
@@ -682,6 +732,9 @@ class PilotStore {
           this.locallyResolved.delete(ev.requestId);
         }
         foldEvent(this.session, ev);
+        // The creating session's first userMessage may have just folded in — retire the
+        // optimistic placeholder so the real row takes over without a flicker.
+        this.maybeFinishCreating();
         break;
       }
       case "sessionList":
@@ -970,17 +1023,19 @@ class PilotStore {
     }
   }
 
+  /** Enqueue + send a prompt. Returns the new outbox promptId on success (truthy), or
+   *  null on failure (still connecting / local-storage write failed). */
   private async enqueuePrompt(
     prompt: Omit<
       PendingPrompt,
       "promptId" | "serverId" | "createdAt" | "state"
     >,
-  ): Promise<boolean> {
+  ): Promise<string | null> {
     const serverId = this.serverId ?? loadLastServerId();
     if (!serverId) {
       this.lastError =
         "Still connecting — your prompt is still in the composer.";
-      return false;
+      return null;
     }
     // `$state` values reach here as reactive proxies (composer images, draft
     // model/options), which IndexedDB refuses to clone. `savePendingPrompt` is the
@@ -1003,14 +1058,14 @@ class PilotStore {
       await savePendingPrompt(pending);
     } catch (e) {
       this.lastError = `couldn't save the prompt locally: ${errorText(e)}`;
-      return false;
+      return null;
     }
     this.pendingPrompts = [...this.pendingPrompts, pending];
     // The optimistic bubble just landed at the tail — ask the transcript to follow it
     // to the bottom (re-pinning if the reader had scrolled up).
     this.promptSentN++;
     this.sendPendingPrompt(pending.promptId);
-    return true;
+    return pending.promptId;
   }
 
   private async settlePrompt(
@@ -1031,6 +1086,11 @@ class PilotStore {
       }
       return;
     }
+    // Any rejection retires the "creating session" placeholder (a SUCCESS clears it via the
+    // real userMessage landing in the transcript — see maybeFinishCreating — so the
+    // optimistic row never blinks out before its authoritative replacement arrives).
+    if (result.promptId === this.creatingSession?.promptId)
+      this.creatingSession = null;
     // A new-session creation that failed before any session existed (no sessionId): its
     // draft was already cleared on submit, and a kind:"newSession" rejection has no
     // transcript surface (the optimistic overlay only renders kind:"prompt" rows for the
@@ -1100,6 +1160,8 @@ class PilotStore {
     // Save whatever session/draft we're leaving before flipping into the recovered draft.
     this.stashDraft();
     this.searchOpen = false;
+    // The creation failed — retire its placeholder before re-showing the draft form.
+    this.creatingSession = null;
     const ns = prompt.newSession;
     this.draft = {
       cwd: ns?.cwd ?? "",
@@ -1296,6 +1358,9 @@ class PilotStore {
     // before the composer re-points; navigating to a session exits any new-session draft.
     this.stashDraft();
     this.draft = null;
+    // Navigating away abandons any in-flight "creating session" placeholder — its
+    // optimistic prompt row must not bleed onto the session we're switching to.
+    this.creatingSession = null;
     const entry = this.sessions.find((s) => s.path === path);
     const id = entry?.sessionId;
     // Restore the target's saved draft into the composer (empty if none).
@@ -1511,6 +1576,8 @@ class PilotStore {
   startDraft(cwd = ""): void {
     // Save whatever session/draft we're leaving before flipping into the new draft.
     this.stashDraft();
+    // A fresh draft replaces any in-flight "creating session" placeholder.
+    this.creatingSession = null;
     // Find-in-transcript is a transcript-reading tool; entering a draft is a context
     // switch, so don't let an open find box linger across it.
     this.searchOpen = false;
@@ -1534,6 +1601,7 @@ class PilotStore {
     // Keep the new-session draft for next time, then drop back to the active session's draft.
     this.stashDraft();
     this.draft = null;
+    this.creatingSession = null;
     this.loadDraft(this.composerDraftKey);
   }
   /** Discard a pending new-session draft (the sidebar ×). Drops its stashed text
@@ -1579,7 +1647,7 @@ class PilotStore {
     void ensurePushSubscription().then((s) => {
       this.pushState = s;
     });
-    const queued = await this.enqueuePrompt({
+    const promptId = await this.enqueuePrompt({
       kind: "newSession",
       text: t,
       images,
@@ -1590,7 +1658,7 @@ class PilotStore {
         thinking: d.thinking,
       },
     });
-    if (!queued) return false;
+    if (!promptId) return false;
     // Record the sent prompt for ArrowUp recall (key is n:cwd while the draft is still set),
     // then drop the pending new-session draft's stored copy.
     this.recordPromptHistory(this.composerDraftKey, t);
@@ -1598,6 +1666,19 @@ class PilotStore {
     this.draft = null;
     this.composerDraft = "";
     this.composerImages = [];
+    // Hand the transcript a clean slate immediately. Without this it keeps rendering the
+    // PREVIOUSLY focused session (still held in `this.session`) for the whole pi warm-up
+    // window, flashing that old transcript before the new session's snapshot lands. We
+    // reset to an empty state and mark the creation pending so the only thing shown is the
+    // optimistic first-prompt row (transcriptItems) + the "Starting session…" indicator,
+    // both of which carry seamlessly into the real session once its snapshot arrives.
+    this.session = initialSessionState();
+    this.creatingSession = {
+      promptId,
+      text: t,
+      images: images ? [...images] : undefined,
+      createdAt: new Date().toISOString(),
+    };
     return true;
   }
   /** PWA: a newer service worker installed — raise the refresh prompt (set from sw.ts). */

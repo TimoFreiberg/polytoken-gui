@@ -21,6 +21,7 @@ import {
   type SessionConfig,
   type SessionDriverEvent,
   type SessionListEntry,
+  type SessionSnapshot,
   type SessionQueuedMessage,
   type SessionUsage,
   type TreeSnapshot,
@@ -65,6 +66,7 @@ import {
   mockSessionSeed,
   mockTrustRequest,
   NEW_SESSION_ENTRY,
+  newSessionReply,
   newSessionSeed,
   pendingHold,
   promptReply,
@@ -183,6 +185,13 @@ export class MockDriver implements PilotDriver {
   // One-shot: when set, the next newSession() rejects then clears (armed via
   // runScript("failnewsession")). Simulates a transient creation failure for e2e.
   private failNextNewSession = false;
+  // The most recently created session's id + seed snapshot, so the FIRST prompt that
+  // follows (the deferred-creation first turn) streams under that session's own ref
+  // instead of the demo session's. Consumed (cleared) by that first prompt. Without this
+  // the new session's first turn would fold into the demo session and never reach the
+  // focused new-session transcript.
+  private lastCreated: { sessionId: string; snapshot: SessionSnapshot } | null =
+    null;
   // In-flight scripted steps, in chronological order. We keep the step alongside its
   // timer (not just the raw handle) so a NEW script can flush the in-flight one to
   // completion before it starts — see play() for why interleaving corrupts state.
@@ -405,7 +414,7 @@ export class MockDriver implements PilotDriver {
   prompt(
     text: string,
     _deliverAs?: "steer" | "followUp",
-    _sessionId?: string,
+    sessionId?: string,
     images?: readonly import("@pilot/protocol").ImageContent[],
     promptId?: string,
   ): Promise<void> {
@@ -413,6 +422,21 @@ export class MockDriver implements PilotDriver {
       return Promise.reject(
         new Error("Mock prompt rejected before acceptance"),
       );
+    // Deferred-creation first turn: this prompt targets the session we JUST created, so
+    // stream it under that session's own ref (not the demo session's) and consume the
+    // one-shot marker. Subsequent prompts fall through to the normal demo-session reply.
+    if (
+      sessionId &&
+      this.lastCreated &&
+      sessionId === this.lastCreated.sessionId
+    ) {
+      const { snapshot } = this.lastCreated;
+      this.lastCreated = null;
+      this.play(
+        newSessionReply(snapshot, text, promptId ?? `u-${Date.now()}`, images),
+      );
+      return Promise.resolve();
+    }
     this.play(promptReply(text, promptId, images));
     return Promise.resolve();
   }
@@ -709,7 +733,16 @@ export class MockDriver implements PilotDriver {
       availableThinkingLevels:
         chosen?.thinkingLevels ?? MOCK_DEFAULT_CONFIG.availableThinkingLevels,
     };
-    return newSessionSeed({ cwd: dir, config: this.config });
+    const seed = newSessionSeed({ cwd: dir, config: this.config });
+    // Remember the seed snapshot so the first prompt (delivered right after this swap)
+    // streams its turn under the new session's own ref — see prompt().
+    const opened = seed.find((e) => e.type === "sessionOpened");
+    if (opened?.type === "sessionOpened")
+      this.lastCreated = {
+        sessionId: opened.snapshot.ref.sessionId,
+        snapshot: opened.snapshot,
+      };
+    return seed;
   }
 
   async listModels(): Promise<ModelOption[]> {
