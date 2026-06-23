@@ -1628,4 +1628,52 @@ describe("desktop update relay", () => {
       force: false,
     });
   });
+
+  test("desktopStale relays to clients independently of a staged TS update", () => {
+    const hub = new SessionHub(new FakeDriver());
+    const a = client();
+    hub.addClient(a.send);
+    // Baseline: not stale, nothing staged.
+    expect(lastUpdate(a)).toMatchObject({
+      available: false,
+      desktopStale: false,
+    });
+
+    // The watcher reports a stale .app with NO staged TS commit (sha null) — the dot is
+    // orthogonal to the update card.
+    hub.reportUpdate(null, false, true);
+    expect(lastUpdate(a)).toMatchObject({
+      available: false,
+      desktopStale: true,
+    });
+
+    // A later rebuild clears it.
+    hub.reportUpdate(null, false, false);
+    expect(lastUpdate(a)).toMatchObject({
+      available: false,
+      desktopStale: false,
+    });
+  });
+
+  test("omitting desktopStale leaves the last value untouched (partial report)", () => {
+    const hub = new SessionHub(new FakeDriver());
+    const a = client();
+    hub.addClient(a.send);
+    hub.reportUpdate(null, false, true);
+    expect(lastUpdate(a)).toMatchObject({ desktopStale: true });
+    // A report that doesn't mention desktopStale (undefined) must not clear the dot.
+    hub.reportUpdate("abc123");
+    expect(lastUpdate(a)).toMatchObject({
+      available: true,
+      desktopStale: true,
+    });
+  });
+
+  test("a client connecting while the .app is stale sees the dot immediately", () => {
+    const hub = new SessionHub(new FakeDriver());
+    hub.reportUpdate(null, false, true);
+    const late = client();
+    hub.addClient(late.send);
+    expect(lastUpdate(late)).toMatchObject({ desktopStale: true });
+  });
 });

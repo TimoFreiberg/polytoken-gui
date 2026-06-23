@@ -159,6 +159,12 @@ export class SessionHub {
   // sidebar card's "update now" — the watcher reads it back on its next poll and applies.
   private updateSha: string | null = null;
   private applying = false;
+  // True when the running Pilot.app's native shell differs from the clone's checked-out
+  // `HEAD:desktop` — the binary no longer matches its source and needs a manual build-app.sh
+  // rebuild (the TS auto-update path can't replace the .app). Set by the watcher on every
+  // /update/state report and broadcast in `updateStatus`; drives the durable sidebar rebuild
+  // dot. Independent of `updateSha` (a stale binary is orthogonal to a staged TS commit).
+  private desktopStale = false;
   // Set by a `forceUpdate` message (the build-stamp menu, for clicking right after a push).
   // The watcher consumes it on its next /update/state poll and does an immediate fetch +
   // apply, bypassing the ~60s fetch cadence and the defer-while-connected policy. Read-once:
@@ -1154,6 +1160,7 @@ export class SessionHub {
       available: this.updateSha !== null,
       sha: this.updateSha ?? undefined,
       applying: this.applying,
+      desktopStale: this.desktopStale,
     });
     // Pilot-local settings + live login-env status (Settings "Environment" section).
     // Synchronous: both are in-memory / a small file read.
@@ -1483,6 +1490,7 @@ export class SessionHub {
     this.sessionTitles.clear();
     this.updateSha = null;
     this.applying = false;
+    this.desktopStale = false;
     this.forceRequested = false;
     this.driver.reset?.(opts);
     this.seedDefault();
@@ -1531,15 +1539,22 @@ export class SessionHub {
    *  offers retry). Broadcasts updateStatus on change. Returns `applying` (did the user
    *  click "update now"?) and `force` (did they pick "force-update"?) so the watcher learns
    *  both on this same poll. `force` is read-once — handed to this caller and cleared — so a
-   *  force triggers exactly one fetch-and-apply. */
+   *  force triggers exactly one fetch-and-apply. `desktopStale` (running .app vs the clone's
+   *  HEAD:desktop) rides along when the watcher knows it; `undefined` leaves the last value
+   *  untouched so a partial report can't clear the dot. */
   reportUpdate(
     sha: string | null,
     applyFailed = false,
+    desktopStale?: boolean,
   ): { applying: boolean; force: boolean } {
     let changed = false;
     if (sha !== this.updateSha) {
       this.updateSha = sha;
       if (sha === null) this.applying = false; // applied/gone — drop any apply flag
+      changed = true;
+    }
+    if (desktopStale !== undefined && desktopStale !== this.desktopStale) {
+      this.desktopStale = desktopStale;
       changed = true;
     }
     if (applyFailed && this.applying) {
@@ -1559,6 +1574,7 @@ export class SessionHub {
       available: this.updateSha !== null,
       sha: this.updateSha ?? undefined,
       applying: this.applying,
+      desktopStale: this.desktopStale,
     });
   }
 }

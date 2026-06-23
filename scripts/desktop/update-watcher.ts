@@ -271,6 +271,14 @@ interface CompareResult {
    *  rebuild signal, NOT the auto-apply loop (which would otherwise spin forever, since the
    *  app's stamp can't change without a manual rebuild). */
   desktopBehind: boolean;
+  /** Does the running .app binary differ from what `build-app.sh` would stamp RIGHT NOW —
+   *  i.e. the stamped sha vs the clone's CHECKED-OUT `HEAD:desktop` (not the remote)? This is
+   *  the durable "you should rebuild" signal surfaced as the sidebar dot: it's true exactly
+   *  when a manual rebuild would produce a different binary, so a rebuild always clears it
+   *  (build-app.sh stamps HEAD:desktop too). Distinct from `desktopBehind` (vs origin/main),
+   *  which is the transient "news from upstream" notification and can be true before the
+   *  clone has even pulled the commit — at which point a rebuild wouldn't pick it up yet. */
+  desktopStale: boolean;
   /** Is the served TS bundle behind origin/main? (built !== remote, see isBuildStale.)
    *  Drives the card + auto-apply. TS only — native-shell staleness is desktopBehind. */
   behind: boolean;
@@ -332,15 +340,24 @@ async function fetchAndCompare(cfg: WatcherConfig): Promise<CompareResult> {
     cfg.clone,
     `${cfg.remote}/${cfg.branch}`,
   );
+  // The clone's CHECKED-OUT desktop tree — what a `build-app.sh` run right now would stamp.
+  // Flip this ref to `${cfg.remote}/${cfg.branch}` to make the dot track the remote instead
+  // (then it'd light before the clone pulls — see the desktopStale doc on why HEAD is the
+  // honest "rebuild now" reference).
+  const localDesktop = await readDesktopTreeSha(cfg.clone, "HEAD");
   const desktopBehind =
     remoteDesktop !== null &&
     desktopNeedsRebuild(cfg.appDesktopSha, remoteDesktop);
+  const desktopStale =
+    localDesktop !== null &&
+    desktopNeedsRebuild(cfg.appDesktopSha, localDesktop);
   return {
     local,
     remote,
     built,
     remoteDesktop,
     desktopBehind,
+    desktopStale,
     behind: isBuildStale(built, remote),
   };
 }
@@ -377,12 +394,15 @@ async function readHostState(healthUrl: string): Promise<HostState> {
 /** Tell the server the staged-update state (sha, or null when up to date) so it can show
  *  or clear the sidebar card, and learn back whether the user clicked "update now"
  *  (`applying`) or "force-update" (`force` — the build-stamp menu). `applyFailed` resets a
- *  stuck "applying" card. Any error → { applying: false, force: false }: a flaky report
- *  must never trigger an apply. */
+ *  stuck "applying" card. `desktopStale` rides along on every report to drive the durable
+ *  "rebuild the .app" dot (running binary vs the clone's HEAD:desktop — see CompareResult);
+ *  omit it to leave the server's last value untouched. Any error → { applying: false,
+ *  force: false }: a flaky report must never trigger an apply. */
 async function reportUpdate(
   cfg: WatcherConfig,
   sha: string | null,
   applyFailed = false,
+  desktopStale?: boolean,
 ): Promise<{ applying: boolean; force: boolean }> {
   try {
     const res = await fetch(cfg.updateUrl, {
@@ -395,6 +415,7 @@ async function reportUpdate(
         available: sha !== null,
         sha: sha ?? undefined,
         applyFailed,
+        desktopStale,
       }),
       signal: AbortSignal.timeout(3000),
     });
@@ -610,7 +631,12 @@ export async function tick(
   let applying = false;
   let force = false;
   if (!cfg.dryRun) {
-    const r = await reportUpdate(cfg, cached.behind ? cached.remote : null);
+    const r = await reportUpdate(
+      cfg,
+      cached.behind ? cached.remote : null,
+      false,
+      cached.desktopStale,
+    );
     applying = r.applying;
     force = r.force;
   }
@@ -624,7 +650,8 @@ export async function tick(
     lastFetchMs = now;
     if (!cached.behind) {
       log("force-update requested but already up to date — nothing to apply");
-      await reportUpdate(cfg, null); // clears a staged 'Updating…' card if one was up
+      // clears a staged 'Updating…' card if one was up (desktopStale rides along)
+      await reportUpdate(cfg, null, false, cached.desktopStale);
       return { lastNotifiedSha: null, lastFetchMs, cached };
     }
     log(`force-update requested — applying ${describeUpdate(cached)}`);
@@ -633,7 +660,8 @@ export async function tick(
       return initialState;
     } catch (e) {
       log(`force apply failed: ${e instanceof Error ? e.message : String(e)}`);
-      await reportUpdate(cfg, cached.remote, true); // un-stick → offer retry via the card
+      // un-stick → offer retry via the card
+      await reportUpdate(cfg, cached.remote, true, cached.desktopStale);
       return { lastNotifiedSha, lastFetchMs, cached };
     }
   }
@@ -670,7 +698,8 @@ export async function tick(
       return initialState;
     } catch (e) {
       log(`apply failed: ${e instanceof Error ? e.message : String(e)}`);
-      await reportUpdate(cfg, cached.remote, true); // un-stick the card → offer retry
+      // un-stick the card → offer retry
+      await reportUpdate(cfg, cached.remote, true, cached.desktopStale);
       return { lastNotifiedSha, lastFetchMs, cached };
     }
   }

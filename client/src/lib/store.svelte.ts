@@ -297,6 +297,11 @@ class PilotStore {
   // `applying` is true between clicking "update now" and the server restarting. Distinct
   // from `swUpdateReady` (that's the PWA asset-cache refresh).
   appUpdate = $state<{ sha: string; applying: boolean } | null>(null);
+  // Desktop app: the running Pilot.app's native shell (`desktop/`) no longer matches the
+  // clone's checked-out source, so the binary needs a manual `build-app.sh` rebuild (the TS
+  // auto-update can't replace the .app). Server-pushed via `updateStatus`; drives the durable
+  // rebuild dot on the sidebar build stamp. Stays false in a plain browser (no stamped app).
+  desktopStale = $state(false);
   // The last prompt text sent — lets the run-failed error card re-send it on Retry.
   lastPrompt = $state("");
   // Global hotkey dispatch — incremented so $effect catches every keystroke.
@@ -867,6 +872,7 @@ class PilotStore {
         this.appUpdate = msg.available
           ? { sha: msg.sha ?? "", applying: msg.applying }
           : null;
+        this.desktopStale = msg.desktopStale === true;
         break;
       case "oauthPrompt":
         // Ignore prompts for a flow this client didn't start (or already closed).

@@ -224,12 +224,20 @@ export type ServerMessage =
    *  deferred because a client is connected — clients show the sidebar update card.
    *  `applying` flips true after a client clicks "update now" (the watcher then pulls,
    *  rebuilds, and restarts the server). NOT the PWA service-worker update — that's the
-   *  separate `swUpdateReady` "reload" toast. */
+   *  separate `swUpdateReady` "reload" toast.
+   *
+   *  `desktopStale` is independent of `available`: it's true when the running Pilot.app's
+   *  native shell (`desktop/`) differs from the clone's checked-out `HEAD:desktop` — i.e. the
+   *  binary you're running no longer matches its source and needs a manual `build-app.sh`
+   *  rebuild (the TS auto-update can't replace the .app — see desktop/README). Drives the
+   *  durable "rebuild" dot on the sidebar build stamp; only ever set under the desktop app
+   *  (the watcher knows the running bundle's stamp), so it stays false in a plain browser. */
   | {
       type: "updateStatus";
       available: boolean;
       sha?: string;
       applying: boolean;
+      desktopStale?: boolean;
     }
   /** A step in an in-progress OAuth login needs the operator's answer (open a URL +
    *  paste the code, or pick a login method). Broadcast to every client; the first

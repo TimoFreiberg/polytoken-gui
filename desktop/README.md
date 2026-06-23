@@ -93,6 +93,15 @@ by hand** — it does *not* swap the bundle itself:
 - Detection uses the `desktop/` **tree sha** (not git HEAD), so a TS-only commit doesn't
   trigger it. The notification is deduped on the sha (the watcher re-emits each tick while
   the shell is stale; the app buzzes once per new sha).
+- The notification is transient; for a **durable** reminder the watcher also reports
+  `desktopStale` on every `/update/state` poll (the stamped sha vs the clone's checked-out
+  `HEAD:desktop`), which lights a small **amber dot on the sidebar build stamp** until you
+  rebuild. Note the references differ on purpose: the *notification* fires off
+  `origin/main:desktop` (news from upstream, possibly before the clone has pulled it), while
+  the *dot* tracks `HEAD:desktop` — i.e. it's lit exactly when a `build-app.sh` run right now
+  would produce a different binary, so a rebuild always clears it. The dot only ever shows
+  under the desktop app (the watcher knows the running bundle's stamp); it stays dark in a
+  plain browser.
 
 **Why not swap + relaunch the `.app` automatically?** Replacing an installed app bundle in
 place trips macOS **App Management** (`kTCCServiceSystemPolicyAppBundles`). The OS only

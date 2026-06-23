@@ -207,10 +207,11 @@ const server = Bun.serve<WsData>({
     }
 
     // Desktop auto-update relay. The update-watcher POSTs whether a new origin/main is
-    // staged-and-waiting (body { available, sha?, applyFailed? }); the hub broadcasts the
-    // card to clients and returns { applying, force } so the watcher learns on this same
-    // poll whether the user clicked "update now" (force = a force-update was requested).
-    // Token-gated like /push (off on the local
+    // staged-and-waiting (body { available, sha?, applyFailed?, desktopStale? }); the hub
+    // broadcasts the card to clients and returns { applying, force } so the watcher learns on
+    // this same poll whether the user clicked "update now" (force = a force-update was
+    // requested). `desktopStale` (running .app vs the clone's HEAD:desktop) rides along to
+    // drive the durable rebuild dot. Token-gated like /push (off on the local
     // desktop app; required behind tailscale).
     if (url.pathname === "/update/state" && req.method === "POST") {
       if (!tokenOk(tokenFromRequest(req, url)))
@@ -220,9 +221,18 @@ const server = Bun.serve<WsData>({
           available?: boolean;
           sha?: string;
           applyFailed?: boolean;
+          desktopStale?: boolean;
         };
         const sha = body.available ? (body.sha ?? null) : null;
-        return Response.json(hub.reportUpdate(sha, body.applyFailed === true));
+        // Absent desktopStale → undefined → hub leaves its last value untouched (a partial
+        // report must not silently clear the dot).
+        const desktopStale =
+          typeof body.desktopStale === "boolean"
+            ? body.desktopStale
+            : undefined;
+        return Response.json(
+          hub.reportUpdate(sha, body.applyFailed === true, desktopStale),
+        );
       } catch (e) {
         return new Response(`bad request: ${String(e)}`, { status: 400 });
       }
