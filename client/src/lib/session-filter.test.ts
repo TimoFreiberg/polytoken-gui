@@ -128,6 +128,30 @@ describe("filterSessions", () => {
     expect(all.hiddenCount).toBe(0);
   });
 
+  test("pinnedIds keeps archived/stale sessions visible and out of hiddenCount", () => {
+    const sessions = [
+      entry({ sessionId: "live", path: "/live", cwd: "/p" }),
+      entry({ sessionId: "arch", path: "/arch", cwd: "/p", archived: true }),
+      entry({
+        sessionId: "old",
+        path: "/old",
+        cwd: "/p",
+        updatedAt: isoAgo(STALE_MS + 1000),
+      }),
+    ];
+    // Pin the archived one (e.g. it's running or focused) — it shows, and no longer
+    // counts as hidden; the stale one stays hidden.
+    const pinned = filterSessions(sessions, {
+      ...active,
+      pinnedIds: new Set(["arch"]),
+    });
+    expect(pinned.groups[0].items.map((i) => i.path).sort()).toEqual([
+      "/arch",
+      "/live",
+    ]);
+    expect(pinned.hiddenCount).toBe(1);
+  });
+
   test("a group whose sessions are all hidden disappears from the active view", () => {
     const sessions = [
       entry({ path: "/live", cwd: "/active-proj" }),

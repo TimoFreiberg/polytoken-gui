@@ -18,6 +18,12 @@ export interface FilterOptions {
   /** false = active-only (hide archived + stale); true = show everything. */
   showArchived: boolean;
   now: number;
+  /** Session IDs to keep visible even when the active-only filter would hide them
+   *  (archived or stale): the session currently shown in the transcript and every
+   *  currently-running session. Hiding the row you're looking at — or one that's
+   *  actively working — is more confusing than the tidiness it buys. Omit = none
+   *  pinned. */
+  pinnedIds?: ReadonlySet<string>;
 }
 
 export interface FilterResult {
@@ -34,12 +40,15 @@ export function isStale(entry: SessionListEntry, now: number): boolean {
   return Number.isFinite(t) && now - t > STALE_MS;
 }
 
-/** Hidden by the active-only filter: archived or stale. Always false when showing all. */
+/** Hidden by the active-only filter: archived or stale. Always false when showing all,
+ *  or when the session is pinned (focused in the transcript / currently running). */
 export function isHidden(
   entry: SessionListEntry,
   now: number,
   showArchived: boolean,
+  pinnedIds?: ReadonlySet<string>,
 ): boolean {
+  if (pinnedIds?.has(entry.sessionId)) return false;
   return !showArchived && (entry.archived || isStale(entry, now));
 }
 
@@ -75,16 +84,16 @@ function lastInteractionKey(entry: SessionListEntry): string {
  *  sessions are all hidden (archived/stale) disappears from the active view. */
 export function filterSessions(
   sessions: readonly SessionListEntry[],
-  { query, showArchived, now }: FilterOptions,
+  { query, showArchived, now, pinnedIds }: FilterOptions,
 ): FilterResult {
   const q = query.trim().toLowerCase();
   const hiddenCount = sessions.filter((s) =>
-    isHidden(s, now, showArchived),
+    isHidden(s, now, showArchived, pinnedIds),
   ).length;
 
   const byCwd = new Map<string, SessionListEntry[]>();
   for (const s of sessions) {
-    if (isHidden(s, now, showArchived)) continue;
+    if (isHidden(s, now, showArchived, pinnedIds)) continue;
     if (!matchesQuery(s, q)) continue;
     // A pilot-created worktree session groups under the repo it was forked from
     // (`worktree.base`), not its own worktree-basename cwd — so it interleaves with the

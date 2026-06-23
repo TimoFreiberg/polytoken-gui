@@ -48,6 +48,7 @@
       query,
       showArchived: store.showArchived,
       now: Date.now(),
+      pinnedIds: store.pinnedSidebarIds,
     }),
   );
   const filteredGroups = $derived(filtered.groups);

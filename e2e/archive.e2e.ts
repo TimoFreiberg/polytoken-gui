@@ -146,6 +146,32 @@ test("pressing 'a' while the menu is open archives the targeted session", async 
   ).toHaveCount(0);
 });
 
+test("archiving the focused session keeps it visible (pinned to the transcript)", async ({
+  page,
+}) => {
+  await openSidebar(page);
+  const sidebar = page.getByTestId("sidebar");
+
+  // "Wire up the WebSocket bridge" (demo-session) is the focused session on a fresh
+  // server — its transcript is what's showing.
+  const row = sidebar
+    .locator(".row-wrap")
+    .filter({ hasText: "Wire up the WebSocket bridge" });
+  await expect(row).toBeVisible();
+
+  // Archive it from its overflow menu.
+  await row.hover();
+  await row.getByTestId("session-menu").click();
+  await sidebar.getByRole("menuitem", { name: "Archive", exact: true }).click();
+
+  // Unlike an unfocused archive (next test), the focused session stays in the active
+  // view — hiding the row you're reading is more confusing than tidy — now marked
+  // "archived". (A currently-running session is pinned the same way; see the
+  // session-filter unit tests for that branch.)
+  await expect(row).toBeVisible();
+  await expect(row.getByText("archived")).toBeVisible();
+});
+
 test("the overflow menu archives a session, hiding it from the active list", async ({
   page,
 }) => {

@@ -398,7 +398,18 @@ class PilotStore {
       query: "",
       showArchived: this.showArchived,
       now: Date.now(),
+      pinnedIds: this.pinnedSidebarIds,
     }).groups.flatMap((g) => g.items);
+  }
+
+  /** Session IDs the sidebar keeps visible even when archived/stale would hide them:
+   *  the one currently shown in the transcript, plus every running session. Feeds
+   *  `filterSessions`' `pinnedIds` at both callsites (here + the Sidebar component). */
+  get pinnedSidebarIds(): ReadonlySet<string> {
+    const ids = new Set(this.runningIds);
+    const viewed = this.session.ref?.sessionId ?? this.activeSessionId;
+    if (viewed) ids.add(viewed);
+    return ids;
   }
 
   /** Ctrl+Tab / Ctrl+Shift+Tab — step to the next (`dir:1`) or previous (`dir:-1`)
