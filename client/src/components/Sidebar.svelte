@@ -221,13 +221,17 @@
         closeMenu();
         return;
       }
-      if (e.key.toLowerCase() === "a" && !e.metaKey && !e.ctrlKey && !e.altKey) {
+      if (!e.metaKey && !e.ctrlKey && !e.altKey) {
         const t = e.target as HTMLElement;
         if (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable)
           return;
-        if (menuSession) {
+        const k = e.key.toLowerCase();
+        if (k === "a" && menuSession) {
           e.preventDefault();
           toggleArchive(menuSession);
+        } else if (k === "r" && menuSession) {
+          e.preventDefault();
+          startRename(menuSession);
         }
       }
     };
@@ -756,8 +760,11 @@
                       <button
                         class="menu-item"
                         role="menuitem"
-                        title="Rename this session"
-                        onclick={() => startRename(s)}>Rename</button
+                        title="Rename this session (R)"
+                        onclick={() => startRename(s)}>
+                        <span>Rename</span>
+                        <kbd class="hotkey" aria-hidden="true">R</kbd>
+                      </button
                       >
                       <button
                         class="menu-item"
