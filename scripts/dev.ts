@@ -109,6 +109,20 @@ const dataDir =
 const viteArgs = ["run", "dev"];
 if (vitePort) viteArgs.push("--port", vitePort);
 
+// Pilot embeds pi inside a Bun process. Some pi provider deps are CJS packages that
+// Bun resolves from ~/.bun/install/cache, where transitive deps are not laid out as
+// siblings. NODE_PATH must be present before Bun starts so those cached packages can
+// resolve through this workspace's real dependency symlink forest.
+const bunNodePath = join(process.cwd(), "node_modules", ".bun", "node_modules");
+const backendEnv = {
+  ...process.env,
+  NODE_PATH: process.env.NODE_PATH
+    ? `${bunNodePath}:${process.env.NODE_PATH}`
+    : bunNodePath,
+  PILOT_PORT: backendPort,
+  PILOT_DATA_DIR: dataDir,
+};
+
 // Start the backend first and wait until it answers /health before launching Vite.
 // Otherwise Vite (and thus the dev-server port) comes up while the WS backend is
 // still booting — a tool like Claude_Preview returns as soon as the port listens,
@@ -116,7 +130,7 @@ if (vitePort) viteArgs.push("--port", vitePort);
 // empty session list. Gating on /health makes the first WS connect succeed.
 const server = Bun.spawn(["bun", "run", "--hot", "src/index.ts"], {
   cwd: "server",
-  env: { ...process.env, PILOT_PORT: backendPort, PILOT_DATA_DIR: dataDir },
+  env: backendEnv,
   stdout: "inherit",
   stderr: "inherit",
 });

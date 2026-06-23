@@ -16,6 +16,8 @@ struct Config {
     /// PATH handed to spawned processes so the server (pi → git/rg/shell) and the watcher
     /// (git/bun) resolve their tools. Mirrors the deploy plists' PATH.
     let augmentedPATH: String
+    /// Node-style dependency lookup path for Bun-hosted pi provider packages.
+    let bunNodePath: String
 
     static func resolve(serverPort: Int) -> Config {
         let home = FileManager.default.homeDirectoryForCurrentUser
@@ -34,7 +36,10 @@ struct Config {
             dataDir: home.appendingPathComponent("Library/Application Support/Pilot"),
             bunPath: findBun(in: pathDirs) ?? "bun",
             serverPort: serverPort,
-            augmentedPATH: pathDirs.joined(separator: ":")
+            augmentedPATH: pathDirs.joined(separator: ":"),
+            bunNodePath: URL(fileURLWithPath: clonePath)
+                .appendingPathComponent("node_modules/.bun/node_modules")
+                .path
         )
     }
 
@@ -44,6 +49,7 @@ struct Config {
     func serverEnv() -> [String: String] {
         var env = ProcessInfo.processInfo.environment
         env["PATH"] = augmentedPATH
+        env["NODE_PATH"] = env["NODE_PATH"].map { "\(bunNodePath):\($0)" } ?? bunNodePath
         env["PILOT_HOST"] = "127.0.0.1"
         env["PILOT_PORT"] = String(serverPort)
         env["PILOT_DATA_DIR"] = dataDir.path

@@ -21,6 +21,14 @@ export PILOT_DATA_DIR
 : "${PILOT_PORT:=8787}"
 export PILOT_HOST PILOT_PORT
 
+# Pilot embeds pi inside a Bun process. Some pi provider deps are CJS packages
+# that Bun resolves from ~/.bun/install/cache, where transitive deps are not laid
+# out as siblings. NODE_PATH must be present before Bun starts so cached packages
+# can resolve through this slot's real dependency symlink forest.
+SLOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+BUN_NODE_PATH="$SLOT_DIR/node_modules/.bun/node_modules"
+export NODE_PATH="$BUN_NODE_PATH${NODE_PATH:+:$NODE_PATH}"
+
 if [[ -z "${PILOT_TOKEN:-}" ]]; then
   echo "WARNING: PILOT_TOKEN is unset — the server will accept any client." >&2
 fi
