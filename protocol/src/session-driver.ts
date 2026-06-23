@@ -300,11 +300,11 @@ export interface SessionListEntry {
    *  resolves it at list time). Archived sessions are hidden by the sidebar's
    *  active-only filter, alongside ones untouched for >7 days. */
   readonly archived: boolean;
-  /** Present when this session runs in a jj/git worktree pilot created (the cwd is the
-   *  worktree). The driver resolves it at list time from its worktree index; the sidebar
-   *  shows an indicator + a clean-up/copy-path action, and groups the row under the
-   *  parent project (`base`) instead of its own worktree-basename group. Absent for
-   *  normal sessions and for workspaces pilot didn't create (hand-made jj/git
+  /** Present when this session runs in (or once ran in) a jj/git worktree pilot created
+   *  (the cwd is the worktree). The driver resolves it at list time from its worktree
+   *  index; the sidebar shows an indicator + a clean-up/copy-path action, and groups the
+   *  row under the parent project (`base`) instead of its own worktree-basename group.
+   *  Absent for normal sessions and for workspaces pilot didn't create (hand-made jj/git
    *  workspaces keep their own group). */
   readonly worktree?: {
     readonly path: string;
@@ -312,6 +312,11 @@ export interface SessionListEntry {
     readonly base: string;
     /** The jj workspace name (unused for git worktrees). Surfaced for tooltips. */
     readonly name: string;
+    /** True once the worktree dir has been reaped (cleaned up / forgotten). The dir no
+     *  longer exists, so the live affordances (indicator, copy-path, clean-up) drop —
+     *  but `base` is retained so the session keeps grouping under its parent project
+     *  instead of jumping into a lonely group named after the dead worktree dir. */
+    readonly reaped?: boolean;
   };
 }
 

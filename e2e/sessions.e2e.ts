@@ -424,9 +424,17 @@ test("a worktree session shows a path indicator and can be cleaned up", async ({
   await page.getByTestId("cleanup-worktree").click();
   await page.getByTestId("confirm-cleanup-worktree").click();
   await expect(sidebar.locator(".wt")).toHaveCount(0);
+  // The (still-active) session keeps grouping under its parent project after cleanup —
+  // it doesn't jump into a lonely "demo-worktree" group named after the dead dir.
+  await expect(sidebar.getByText("demo", { exact: true })).toBeVisible();
+  await expect(sidebar.getByText("demo-worktree", { exact: true })).toHaveCount(
+    0,
+  );
 });
 
-test("archiving a worktree session reaps the worktree", async ({ page }) => {
+test("archiving a worktree session reaps it but keeps its parent-project grouping", async ({
+  page,
+}) => {
   await createWorktreeSession(page);
   const sidebar = page.getByTestId("sidebar");
 
@@ -439,10 +447,14 @@ test("archiving a worktree session reaps the worktree", async ({ page }) => {
   // Reveal archived sessions; the row is back but the worktree indicator is gone — the
   // (clean) worktree was reaped on archive.
   await sidebar.getByTestId("filter-toggle").click();
-  await expect(
-    sidebar.getByText("demo-worktree", { exact: true }),
-  ).toBeVisible();
   await expect(sidebar.locator(".wt")).toHaveCount(0);
+  // Reaping tombstones the worktree (keeps its `base`), so the orphaned session keeps
+  // grouping under its parent project ("demo") instead of jumping into a lonely
+  // "demo-worktree" group named after the now-dead worktree dir.
+  await expect(sidebar.getByText("demo", { exact: true })).toBeVisible();
+  await expect(sidebar.getByText("demo-worktree", { exact: true })).toHaveCount(
+    0,
+  );
 });
 
 test("archiving a dirty worktree session keeps it and explains why in a toast", async ({

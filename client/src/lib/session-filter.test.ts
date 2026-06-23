@@ -192,6 +192,27 @@ describe("filterSessions", () => {
     expect(groups.map((g) => g.cwd)).toEqual(["/proj"]); // parent basename, not worktree's
   });
 
+  test("a reaped worktree session still groups under its parent (base retained)", () => {
+    const sessions = [
+      entry({
+        path: "/wt",
+        cwd: "/proj-pilot-abc",
+        // Worktree dir cleaned up: `reaped` set, but `base` retained so grouping survives.
+        worktree: {
+          path: "/proj-pilot-abc",
+          base: "/proj",
+          name: "pilot-abc",
+          reaped: true,
+        },
+      }),
+      entry({ path: "/main", cwd: "/proj" }),
+    ];
+    const { groups } = filterSessions(sessions, active);
+    // Still one group under the parent — no lonely "proj-pilot-abc" group after reaping.
+    expect(groups.map((g) => g.cwd)).toEqual(["/proj"]);
+    expect(groups[0].items.map((i) => i.path).sort()).toEqual(["/main", "/wt"]);
+  });
+
   test("a hand-made workspace (no `worktree` field) keeps its own group", () => {
     const sessions = [
       entry({ path: "/main", cwd: "/proj" }),

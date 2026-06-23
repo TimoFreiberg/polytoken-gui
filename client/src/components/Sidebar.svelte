@@ -651,7 +651,7 @@
                         {#if s.archived}
                           <span class="tag">archived</span>
                         {/if}
-                        {#if s.worktree}
+                        {#if s.worktree && !s.worktree.reaped}
                           <span
                             class="wt"
                             title={`Worktree: ${s.worktree.path}`}
@@ -722,7 +722,7 @@
                       bind:this={menuEl}
                       style={`top:${menuPos.top}px;${menuPos.left != null ? `left:${menuPos.left}px` : `right:${menuPos.right}px`}`}
                     >
-                      {#if s.worktree}
+                      {#if s.worktree && !s.worktree.reaped}
                         <button
                           class="menu-item"
                           role="menuitem"

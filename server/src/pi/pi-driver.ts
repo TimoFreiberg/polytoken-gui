@@ -379,6 +379,21 @@ export async function createPiDriver(
   // sidebar can flag them and cleanup only ever touches worktrees we own.
   const worktreeStore = new WorktreeStore();
 
+  // The SessionListEntry.worktree field for a given cwd, or undefined. A reaped (cleaned
+  // up) worktree still returns its meta with `reaped:true` so the sidebar keeps grouping
+  // the orphaned session under its parent project (`base`) while dropping the now-dead
+  // live affordances. Shared by toEntry + the warm-session placeholder so both agree.
+  const worktreeFieldFor = (cwd: string) => {
+    const meta = worktreeStore.get(cwd);
+    if (!meta) return undefined;
+    return {
+      path: meta.path,
+      base: meta.base,
+      name: meta.name,
+      reaped: worktreeStore.isReaped(cwd) || undefined,
+    };
+  };
+
   // ONE shared auth store + model registry across every warm session. Both are global
   // (auth.json + models.json under agentDir, cwd-independent), and sharing them is what
   // lets the Settings panel's provider/key changes take effect everywhere: a key saved
@@ -866,12 +881,7 @@ export async function createPiDriver(
           : info.created.toISOString(),
       parentSessionPath: info.parentSessionPath,
       archived: archiveStore.has(info.path),
-      worktree: (() => {
-        const meta = worktreeStore.get(info.cwd);
-        return meta
-          ? { path: meta.path, base: meta.base, name: meta.name }
-          : undefined;
-      })(),
+      worktree: worktreeFieldFor(info.cwd),
     };
   };
 
@@ -911,12 +921,7 @@ export async function createPiDriver(
       // worktree session under its own cwd until pi persists the .jsonl on the first
       // assistant message and the disk entry supersedes this placeholder — a visible
       // few-second jump into the parent project. worktreeStore has the meta now.
-      worktree: (() => {
-        const meta = worktreeStore.get(ws.cwd);
-        return meta
-          ? { path: meta.path, base: meta.base, name: meta.name }
-          : undefined;
-      })(),
+      worktree: worktreeFieldFor(ws.cwd),
     };
   };
 
@@ -927,11 +932,13 @@ export async function createPiDriver(
     cwd: string,
     force: boolean,
   ): Promise<{ removed: boolean; reason?: string }> => {
-    const meta = worktreeStore.get(cwd);
+    const meta = worktreeStore.live(cwd);
     if (!meta)
       return { removed: false, reason: "no pilot worktree at this path" };
     const res = await removeWorktree(meta, force);
-    if (res.removed) worktreeStore.remove(cwd);
+    // Tombstone, don't delete: keep the meta (marked reaped) so the orphaned session
+    // keeps grouping under its parent project even though the dir is gone.
+    if (res.removed) worktreeStore.markReaped(cwd);
     return res;
   };
 
@@ -1091,7 +1098,7 @@ export async function createPiDriver(
       const info = (await SessionManager.listAll()).find(
         (s) => s.path === path,
       );
-      if (!info || !worktreeStore.get(info.cwd)) return;
+      if (!info || !worktreeStore.live(info.cwd)) return;
       const res = await reapWorktree(info.cwd, false).catch((e) => {
         console.error("[worktree] archive cleanup failed", e);
         return { removed: false, reason: String(e) };

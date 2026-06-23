@@ -219,6 +219,10 @@ export class MockDriver implements PilotDriver {
   // "worktree kept" toast.
   private worktrees = seedWorktrees(SESSION_LIST);
   private dirtyWorktrees = new Set<string>();
+  // cwds whose worktree dir has been reaped (cleaned up / archived). Mirrors the real
+  // WorktreeStore tombstone: the meta stays in `worktrees` so the orphaned session keeps
+  // grouping under its parent project, but the live affordances + ownership gate drop it.
+  private reapedWorktrees = new Set<string>();
   // The mock's current model selection, mutated by setModel/setThinking so the picker
   // reflects a switch. (Scripted replies still emit the fixture default — fine for a
   // deterministic mock; the picker is exercised on its own.)
@@ -400,6 +404,7 @@ export class MockDriver implements PilotDriver {
     this.failNextNewSession = false;
     this.worktrees = seedWorktrees(SESSION_LIST);
     this.dirtyWorktrees = new Set<string>();
+    this.reapedWorktrees = new Set<string>();
     this.config = { ...MOCK_DEFAULT_CONFIG };
     this.providers = MOCK_PROVIDERS.map((p) => ({ ...p }));
     this.defaults = {
@@ -559,7 +564,12 @@ export class MockDriver implements PilotDriver {
       worktree: (() => {
         const meta = this.worktrees.get(s.cwd);
         return meta
-          ? { path: s.cwd, base: meta.base, name: meta.name }
+          ? {
+              path: s.cwd,
+              base: meta.base,
+              name: meta.name,
+              reaped: this.reapedWorktrees.has(s.cwd) || undefined,
+            }
           : undefined;
       })(),
     }));
@@ -601,12 +611,13 @@ export class MockDriver implements PilotDriver {
     // back, exactly as the real driver does, so the client can explain the leftover.
     if (archived) {
       const cwd = this.sessions.find((s) => s.path === path)?.cwd;
-      if (cwd && this.worktrees.has(cwd)) {
+      if (cwd && this.worktrees.has(cwd) && !this.reapedWorktrees.has(cwd)) {
         if (this.dirtyWorktrees.has(cwd))
           return {
             worktreeRetained: { path: cwd, reason: "uncommitted changes" },
           };
-        this.worktrees.delete(cwd);
+        // Tombstone, don't delete: keep the meta so the session keeps grouping.
+        this.reapedWorktrees.add(cwd);
       }
     }
   }
@@ -614,10 +625,12 @@ export class MockDriver implements PilotDriver {
   async cleanupWorktree(
     path: string,
   ): Promise<{ removed: boolean; reason?: string }> {
-    // Mock worktrees are always clean, so force is moot — just forget it.
-    if (!this.worktrees.has(path))
+    // Mock worktrees are always clean, so force is moot — just forget it. Tombstone
+    // (mark reaped) rather than delete so the orphaned session keeps grouping under
+    // its parent project, mirroring the real WorktreeStore.
+    if (!this.worktrees.has(path) || this.reapedWorktrees.has(path))
       return { removed: false, reason: "no pilot worktree at this path" };
-    this.worktrees.delete(path);
+    this.reapedWorktrees.add(path);
     return { removed: true };
   }
 
