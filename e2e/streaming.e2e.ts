@@ -134,32 +134,41 @@ test("run-failed shows an error card whose Retry re-sends the last prompt", asyn
   await expect(page.getByText("run the failing thing")).toHaveCount(2);
 });
 
-test("Enter steers and Alt+Enter queues a follow-up while streaming", async ({
+test("the delivery toggle is the source of truth: Enter respects it, Alt+Enter is a one-shot follow-up", async ({
   page,
 }) => {
   await drive(page, "streamhold"); // a turn that stays running
-  // The steer/follow-up switch is now the shared SegmentedControl (a radiogroup of
-  // radios, matching Settings' theme switch) — select it by its accessible name.
+  // The steer/follow-up switch is the shared SegmentedControl (a radiogroup of radios,
+  // matching Settings' theme switch) — select it by its accessible name.
   const modes = page.getByRole("radiogroup", { name: "Delivery mode" });
   await expect(modes).toBeVisible();
   // The hotkey hint is shown alongside the steer/follow-up toggle.
   await expect(
     page.getByText("queues a follow-up", { exact: false }),
   ).toBeVisible();
+  const steer = modes.getByRole("radio", { name: "steer", exact: true });
+  const followUp = modes.getByRole("radio", { name: "follow-up" });
+  // Default selection is steer.
+  await expect(steer).toHaveClass(/active/);
 
   const box = page.getByPlaceholder("Queue a message…");
-  // Alt+Enter queues a follow-up — the toggle reflects the choice and the draft clears.
+  // Alt+Enter is a ONE-SHOT follow-up: it sends, but must NOT flip the persistent toggle
+  // off steer. (The old behavior auto-selected follow-up on the modifier, which then
+  // silently changed what a later plain Enter did.)
   await box.fill("do this after");
   await box.press("Alt+Enter");
-  await expect(modes.getByRole("radio", { name: "follow-up" })).toHaveClass(
-    /active/,
-  );
   await expect(box).toHaveValue("");
+  await expect(steer).toHaveClass(/active/);
 
-  // Plain Enter steers.
-  await box.fill("actually now");
+  // Click the toggle to follow-up — now it's the user's persistent choice.
+  await followUp.click();
+  await expect(followUp).toHaveClass(/active/);
+
+  // Plain Enter must RESPECT the toggle, not force steer: it sends, and the selection
+  // stays on follow-up. (The bug was plain Enter overriding the toggle back to steer, so
+  // a message the user meant as a follow-up went out as a mid-run steer instead.)
+  await box.fill("still a follow-up");
   await box.press("Enter");
-  await expect(
-    modes.getByRole("radio", { name: "steer", exact: true }),
-  ).toHaveClass(/active/);
+  await expect(box).toHaveValue("");
+  await expect(followUp).toHaveClass(/active/);
 });

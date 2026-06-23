@@ -26,11 +26,15 @@
   // Delivery-mode options for the steer/follow-up switch. Typed so the SegmentedControl
   // generic infers `"steer" | "followUp"` and `bind:value={deliverAs}` stays type-safe.
   const deliverModes: { value: "steer" | "followUp"; label: string; title: string }[] = [
-    { value: "steer", label: "steer", title: "Steer — deliver after the current step (Enter)" },
+    {
+      value: "steer",
+      label: "steer",
+      title: "Steer — deliver after the agent's current step, nudging the run in flight",
+    },
     {
       value: "followUp",
       label: "follow-up",
-      title: "Follow-up — deliver when the agent stops (Alt+Enter)",
+      title: "Follow-up — hold until the agent would stop, then deliver as a fresh turn",
     },
   ];
   let ta = $state<HTMLTextAreaElement>();
@@ -268,7 +272,10 @@
     return () => clearTimeout(stashTimer);
   });
 
-  async function submit() {
+  // `deliverOverride` is a per-send, one-shot mode (Alt+Enter forces follow-up) that does
+  // NOT mutate the `deliverAs` toggle. The toggle is the persistent source of truth, set
+  // only by clicking it; plain Enter / the Send button send with whatever it shows.
+  async function submit(deliverOverride?: "steer" | "followUp") {
     if (submitting) return;
     const text = store.composerDraft;
     // `/tree` is a client-native view, not a pi command (pi's /tree is a TUI builtin that
@@ -288,7 +295,11 @@
     try {
       queued = drafting
         ? await store.submitDraft(text, imgs)
-        : await store.prompt(text, streaming ? deliverAs : undefined, imgs);
+        : await store.prompt(
+            text,
+            streaming ? (deliverOverride ?? deliverAs) : undefined,
+            imgs,
+          );
     } finally {
       submitting = false;
     }
@@ -578,10 +589,10 @@
     // Desktop keeps Enter-to-send. The slash/file menus already consumed their Enter above.
     if (isTouch && !(e.metaKey || e.ctrlKey)) return;
     e.preventDefault();
-    // While the agent runs, Enter steers (deliver after the current step) and
-    // Alt+Enter queues a follow-up (deliver when it stops); the toggle reflects it.
-    if (streaming) deliverAs = e.altKey ? "followUp" : "steer";
-    submit();
+    // While the agent runs, plain Enter sends with the toggle's selected mode; Alt+Enter
+    // is a one-shot "queue a follow-up" override (it does NOT flip the toggle, so the
+    // toggle stays an honest persistent choice the user controls by clicking it).
+    submit(streaming && e.altKey ? "followUp" : undefined);
   }
 
   // Type-to-focus: a printable keystroke while nothing is focused lands in the
@@ -794,7 +805,7 @@
         <button
           class="send"
           disabled={submitting || addingImages || (!store.composerDraft.trim() && imageCount === 0)}
-          onclick={submit}
+          onclick={() => submit()}
           aria-label={drafting ? "Create session and send" : "Send"}
           title={drafting
             ? `Create session and send first message (${isTouch ? "⌘/Ctrl+Enter" : "Enter"})`
@@ -823,7 +834,7 @@
              remove a line and jump the layout. Hidden on touch viewports, where there's
              no Enter/Alt+Enter to hint at. -->
         <div class="toolbar-hint">
-          <kbd>Enter</kbd> steers · <kbd>Alt</kbd>+<kbd>Enter</kbd> queues a follow-up
+          <kbd>Enter</kbd> sends as selected · <kbd>Alt</kbd>+<kbd>Enter</kbd> queues a follow-up
         </div>
       {/if}
       <div class="toolbar-right">
