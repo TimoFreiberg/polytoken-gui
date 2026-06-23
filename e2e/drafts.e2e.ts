@@ -94,6 +94,65 @@ test("a pending new-session draft's worktree toggle survives a reload", async ({
   );
 });
 
+// Pick a non-default model (Sonnet — same anthropic group as the Opus default, which is
+// seeded open) and a non-default thinking level (high), then assert the badges reflect it.
+async function pickNonDefaultModelAndThinking(page: Page): Promise<void> {
+  await page
+    .locator(".mp .badge")
+    .filter({ hasText: "Claude Opus 4.8" })
+    .click();
+  await page.locator(".mp .panel").getByText("Claude Sonnet 4.6").click();
+  await expect(
+    page.locator(".mp .badge").filter({ hasText: "Claude Sonnet 4.6" }),
+  ).toBeVisible();
+
+  await page.locator(".mp .badge").filter({ hasText: "medium" }).click();
+  await page.locator(".mp .item").filter({ hasText: "high" }).click();
+  await expect(
+    page.locator(".mp .badge").filter({ hasText: "high" }),
+  ).toBeVisible();
+}
+
+async function expectNonDefaultModelAndThinking(page: Page): Promise<void> {
+  await expect(
+    page.locator(".mp .badge").filter({ hasText: "Claude Sonnet 4.6" }),
+  ).toBeVisible();
+  await expect(
+    page.locator(".mp .badge").filter({ hasText: "high" }),
+  ).toBeVisible();
+}
+
+test("a pending new-session draft's model + thinking survive leaving and reopening", async ({
+  page,
+}) => {
+  await openSidebar(page);
+  await page.getByRole("button", { name: "New session…" }).click();
+  await pickNonDefaultModelAndThinking(page);
+
+  // Navigate to an existing session — exits the draft.
+  await row(page, "Explore the fold reducer").click();
+  await openSidebar(page);
+  await expect(composer(page)).toHaveValue("");
+
+  // Reopen the new-session view (same project) — the picks are still there.
+  await page.getByRole("button", { name: "New session…" }).click();
+  await expectNonDefaultModelAndThinking(page);
+});
+
+test("a pending new-session draft's model + thinking survive a reload", async ({
+  page,
+}) => {
+  await openSidebar(page);
+  await page.getByRole("button", { name: "New session…" }).click();
+  await pickNonDefaultModelAndThinking(page);
+
+  await page.reload();
+  // Boot restores the focused session, not the draft, so reopen the new view.
+  await openSidebar(page);
+  await page.getByRole("button", { name: "New session…" }).click();
+  await expectNonDefaultModelAndThinking(page);
+});
+
 test("sending a prompt clears its stored draft (no resurrection on return)", async ({
   page,
 }) => {

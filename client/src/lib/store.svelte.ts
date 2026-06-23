@@ -218,12 +218,13 @@ class PilotStore {
   // durable backing store, stashed on switch / debounced keystroke / pagehide. Pure client
   // state — no protocol change.
   private draftMap = $state<Record<string, string>>(loadDraftMap());
-  // Per new-session-draft config that isn't carried by composerDraft text — currently just
-  // the worktree toggle. Keyed identically to draftMap (`n:<cwd>`) so a switch / reload
-  // restores it; startDraft rebuilds the draft from defaults and would otherwise drop it.
-  // Only set entries are stored (worktree:true) — false is the default, i.e. absence.
+  // Per new-session-draft config that isn't carried by composerDraft text — the worktree
+  // toggle plus any explicit model/thinking override. Keyed identically to draftMap
+  // (`n:<cwd>`) so a switch / reload restores it; startDraft rebuilds the draft from defaults
+  // and would otherwise drop it. Stores only what diverges from the default (worktree:true,
+  // and a model/thinking that isn't the current global default) — absence means "use default".
   private draftConfigMap =
-    $state<Record<string, { worktree: boolean }>>(loadDraftConfigMap());
+    $state<Record<string, StoredDraftConfig>>(loadDraftConfigMap());
   // Per-session (and per new-session-draft) submit log: every prompt the user has SENT,
   // recorded at the submit chokepoint and persisted in localStorage (key `pilot.promptHistory`).
   // This is the durable, independent backing for ArrowUp recall — independent of the transcript
@@ -498,13 +499,24 @@ class PilotStore {
       persistDraftMap(this.draftMap);
     }
   }
-  /** Persist the active new-session draft's worktree toggle under its `n:<cwd>` key, so a
-   *  session switch / reload restores it (startDraft rebuilds the draft from defaults and
-   *  would otherwise drop it). Only `true` is stored — false is the default, i.e. absence. */
-  private persistDraftWorktree(): void {
+  /** Persist the active new-session draft's config (worktree toggle + explicit model/thinking
+   *  override) under its `n:<cwd>` key, so a session switch / reload restores it (startDraft
+   *  rebuilds the draft from defaults and would otherwise drop it). Stores only what diverges
+   *  from the default: worktree:true, and a model/thinking that isn't the current global
+   *  default — so an untouched draft keeps tracking the default rather than pinning a stale one. */
+  private persistDraftConfig(): void {
     if (!this.draft) return;
     const key = this.composerDraftKey;
-    if (this.draft.worktree) this.draftConfigMap[key] = { worktree: true };
+    const def = this.modelDefaults;
+    const cfg: StoredDraftConfig = {};
+    if (this.draft.worktree) cfg.worktree = true;
+    const m = this.draft.model;
+    if (m && (m.provider !== def.provider || m.modelId !== def.modelId))
+      cfg.model = m;
+    if (this.draft.thinking && this.draft.thinking !== def.thinkingLevel)
+      cfg.thinking = this.draft.thinking;
+    if (cfg.worktree || cfg.model || cfg.thinking)
+      this.draftConfigMap[key] = cfg;
     else delete this.draftConfigMap[key];
     persistDraftConfigMap(this.draftConfigMap);
   }
@@ -1204,7 +1216,7 @@ class PilotStore {
     // Persist the restored text under n:<cwd> now (stashDraft keys off the live draft),
     // so a reload before the next keystroke-stash doesn't drop it.
     this.stashDraft();
-    this.persistDraftWorktree();
+    this.persistDraftConfig();
     this.pushNav({ kind: "draft", cwd: this.draft.cwd });
     if (this.draft.cwd) this.setLastProjectCwd(this.draft.cwd);
     this.focusComposer();
@@ -1629,10 +1641,17 @@ class PilotStore {
     };
     // Restore this project's pending new-session draft, if any (key now resolves to n:cwd).
     this.loadDraft(this.composerDraftKey);
-    // Restore the persisted worktree toggle for this project's draft (text rides draftMap,
-    // the worktree pref rides draftConfigMap, both keyed by n:<cwd>).
-    if (this.draftConfigMap[this.composerDraftKey]?.worktree)
-      this.draft = { ...this.draft, worktree: true };
+    // Restore this project's persisted draft config (text rides draftMap; worktree + any
+    // model/thinking override ride draftConfigMap, both keyed by n:<cwd>). Each field falls
+    // back to the default seed when absent.
+    const saved = this.draftConfigMap[this.composerDraftKey];
+    if (saved)
+      this.draft = {
+        ...this.draft,
+        worktree: saved.worktree ?? this.draft.worktree,
+        model: saved.model ?? this.draft.model,
+        thinking: saved.thinking ?? this.draft.thinking,
+      };
     // Record the draft view for ⌘[ / ⌘] history and remember its project for ⌘N.
     this.pushNav({ kind: "draft", cwd });
     if (cwd) this.setLastProjectCwd(cwd);
@@ -1674,13 +1693,13 @@ class PilotStore {
       }
       // The worktree pref follows the draft to its new project key.
       if (oldKey in this.draftConfigMap) delete this.draftConfigMap[oldKey];
-      this.persistDraftWorktree(); // re-writes the live pref under newKey (+ persists)
+      this.persistDraftConfig(); // re-writes the live config under newKey (+ persists)
     }
   }
   toggleDraftWorktree(): void {
     if (this.draft) {
       this.draft = { ...this.draft, worktree: !this.draft.worktree };
-      this.persistDraftWorktree();
+      this.persistDraftConfig();
     }
   }
   /** Commit the draft: create the session and deliver its first prompt in one
@@ -1874,6 +1893,7 @@ class PilotStore {
             : levels[levels.length - 1]
           : cur;
       this.draft = { ...this.draft, model: { provider, modelId }, thinking };
+      this.persistDraftConfig();
       return;
     }
     send({ type: "setModel", provider, modelId });
@@ -1881,6 +1901,7 @@ class PilotStore {
   setThinking(level: string): void {
     if (this.draft) {
       this.draft = { ...this.draft, thinking: level };
+      this.persistDraftConfig();
       return;
     }
     send({ type: "setThinking", level });
@@ -2221,38 +2242,53 @@ function persistDraftMap(map: Record<string, string>): void {
   }
 }
 
-/** Read per-new-session-draft config (worktree toggle) from localStorage. Tolerant of a
- *  missing / corrupt value — a lost toggle is never worth a thrown boot. Only worktree:true
- *  entries are kept (false == default == absent). */
-function loadDraftConfigMap(): Record<string, { worktree: boolean }> {
+/** Persisted per-new-session-draft config not carried by the composer text: the worktree
+ *  toggle plus an explicit model/thinking override. Keyed `n:<cwd>` in draftConfigMap. Every
+ *  field is optional — absence means "fall back to the global default at draft-open". */
+type StoredDraftConfig = {
+  worktree?: boolean;
+  model?: { provider: string; modelId: string };
+  thinking?: string;
+};
+
+/** Read per-new-session-draft config from localStorage. Tolerant of a missing / corrupt
+ *  value — a lost draft config is never worth a thrown boot. Each field is validated and
+ *  kept only when well-formed; an entry left with nothing is dropped. */
+function loadDraftConfigMap(): Record<string, StoredDraftConfig> {
   if (typeof window === "undefined") return {};
   try {
     const raw = localStorage.getItem(DRAFT_CONFIG_KEY);
     if (!raw) return {};
     const parsed: unknown = JSON.parse(raw);
     if (!parsed || typeof parsed !== "object") return {};
-    const out: Record<string, { worktree: boolean }> = {};
-    for (const [k, v] of Object.entries(parsed as Record<string, unknown>))
-      if (
-        v &&
-        typeof v === "object" &&
-        (v as { worktree?: unknown }).worktree === true
-      )
-        out[k] = { worktree: true };
+    const out: Record<string, StoredDraftConfig> = {};
+    for (const [k, v] of Object.entries(parsed as Record<string, unknown>)) {
+      if (!v || typeof v !== "object") continue;
+      const rec = v as {
+        worktree?: unknown;
+        model?: unknown;
+        thinking?: unknown;
+      };
+      const cfg: StoredDraftConfig = {};
+      if (rec.worktree === true) cfg.worktree = true;
+      const m = rec.model as { provider?: unknown; modelId?: unknown } | null;
+      if (m && typeof m.provider === "string" && typeof m.modelId === "string")
+        cfg.model = { provider: m.provider, modelId: m.modelId };
+      if (typeof rec.thinking === "string") cfg.thinking = rec.thinking;
+      if (cfg.worktree || cfg.model || cfg.thinking) out[k] = cfg;
+    }
     return out;
   } catch {
     return {};
   }
 }
 
-function persistDraftConfigMap(
-  map: Record<string, { worktree: boolean }>,
-): void {
+function persistDraftConfigMap(map: Record<string, StoredDraftConfig>): void {
   if (typeof window === "undefined") return;
   try {
     localStorage.setItem(DRAFT_CONFIG_KEY, JSON.stringify(map));
   } catch {
-    // Storage full / unavailable (private mode) — the toggle stays in-memory this session.
+    // Storage full / unavailable (private mode) — draft config stays in-memory this session.
   }
 }
 
