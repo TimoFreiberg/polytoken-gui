@@ -19,6 +19,9 @@
   --accent-hover: #44569f;
   --accent-soft: #e7eaf7;
   --accent-text: #ffffff;
+  /* Text-selection band (::selection). Translucent accent so it tints consistently
+     over prose, bubbles, and code blocks while keeping the text readable. */
+  --select-text-bg: rgba(79, 99, 191, 0.24);
   /* Monochrome selection highlight (no accent) — choice cards / progress dots. */
   --select-bg: #f0ede6;
   --select-border: #a8a39a;
@@ -74,6 +77,9 @@
   --accent-hover: #8499e0;
   --accent-soft: #363e54;
   --accent-text: #14181f;
+  /* Text-selection band (::selection). Translucent periwinkle — clearly visible on
+     charcoal yet light enough to keep selected text legible. */
+  --select-text-bg: rgba(111, 138, 217, 0.42);
   /* Monochrome selection highlight (no accent) — choice cards / progress dots. */
   --select-bg: #37362f;
   --select-border: #bdb9b0;
@@ -148,7 +154,7 @@ a {
 }
 
 ::selection {
-  background: var(--accent-soft);
+  background: var(--select-text-bg);
 }
 
 /* In-transcript find (⌘F) highlights. Painted via the CSS Custom Highlight API from
