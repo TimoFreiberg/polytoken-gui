@@ -45,8 +45,11 @@ export function planWorktree(
   base: string;
 } {
   const base = resolve(repoDir).replace(/\/+$/, "");
+  // The dir is `<repo>-<slug>` (e.g. pilot-brisk-otter); the jj workspace keeps a
+  // `pilot-` prefix as a marker in `jj workspace list`, but we don't repeat it in the
+  // path — that's what produced the doubled `pilot-pilot-` dir names.
   const name = `pilot-${id}`;
-  const path = `${base}-${name}`;
+  const path = `${base}-${id}`;
   if (vcs === "jj")
     return {
       path,

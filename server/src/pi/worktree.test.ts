@@ -8,7 +8,8 @@ import {
 describe("planWorktree", () => {
   test("jj: workspace add at a sibling path with a unique name", () => {
     const p = planWorktree("/Users/x/repo", "jj", "abc");
-    expect(p.path).toBe("/Users/x/repo-pilot-abc");
+    // Dir is `<repo>-<slug>` (no doubled `pilot-`); the workspace name keeps the marker.
+    expect(p.path).toBe("/Users/x/repo-abc");
     expect(p.command).toBe("jj");
     expect(p.args).toEqual([
       "-R",
@@ -17,14 +18,14 @@ describe("planWorktree", () => {
       "add",
       "--name",
       "pilot-abc",
-      "/Users/x/repo-pilot-abc",
+      "/Users/x/repo-abc",
     ]);
   });
 
   test("git: detached worktree at a sibling path", () => {
     // A trailing slash is normalized away before building the sibling path.
     const p = planWorktree("/Users/x/repo/", "git", "xy");
-    expect(p.path).toBe("/Users/x/repo-pilot-xy");
+    expect(p.path).toBe("/Users/x/repo-xy");
     expect(p.command).toBe("git");
     expect(p.args).toEqual([
       "-C",
@@ -32,7 +33,7 @@ describe("planWorktree", () => {
       "worktree",
       "add",
       "--detach",
-      "/Users/x/repo-pilot-xy",
+      "/Users/x/repo-xy",
     ]);
   });
 
@@ -45,13 +46,13 @@ describe("planWorktree", () => {
 
 describe("planWorktreeRemoval", () => {
   const jjMeta: WorktreeMeta = {
-    path: "/Users/x/repo-pilot-abc",
+    path: "/Users/x/repo-abc",
     base: "/Users/x/repo",
     vcs: "jj",
     name: "pilot-abc",
   };
   const gitMeta: WorktreeMeta = {
-    path: "/Users/x/repo-pilot-xy",
+    path: "/Users/x/repo-xy",
     base: "/Users/x/repo",
     vcs: "git",
     name: "pilot-xy",
@@ -79,7 +80,7 @@ describe("planWorktreeRemoval", () => {
       "/Users/x/repo",
       "worktree",
       "remove",
-      "/Users/x/repo-pilot-xy",
+      "/Users/x/repo-xy",
     ]);
     expect(p.removeDir).toBe(false);
   });
