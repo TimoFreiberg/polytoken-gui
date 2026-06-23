@@ -207,6 +207,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         switch event {
         case "update-deferred":
             postUpdateNotification()
+        case "desktop-update-available":
+            // The native shell (desktop/) changed, so the running .app binary is stale. We do
+            // NOT swap + relaunch it ourselves: replacing the bundle in place trips macOS App
+            // Management (the in-place self-update exemption needs an Apple Developer ID this
+            // ad-hoc-signed app doesn't have). Instead, tell the user to rebuild by hand.
+            // Deduped on the sha so the watcher re-emitting every tick doesn't re-buzz.
+            postDesktopUpdateNotification(sha: obj["sha"] as? String)
         case "apply":
             // One per apply phase (starting → installing? → building → restarting, or failed).
             // A failure drops the overlay (the sidebar card offers retry); any other phase
@@ -326,6 +333,32 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             NSLog("Pilot: update overlay failsafe fired — tearing it down")
             self?.hideUpdateOverlay()
         }
+    }
+
+    // MARK: - Native shell update (detect-only; the user rebuilds by hand)
+
+    /// Last desktop tree sha we notified about, so the watcher re-emitting
+    /// `desktop-update-available` every tick doesn't re-buzz. nil until the first one.
+    private var lastNotifiedDesktopSha: String?
+
+    /// The native shell (desktop/) changed, so the running .app binary is stale. We deliberately
+    /// do NOT swap + relaunch the bundle ourselves: replacing an installed .app in place trips
+    /// macOS App Management (the in-place self-update exemption requires an Apple Developer ID;
+    /// this app is ad-hoc signed). So we just tell the user to rebuild with build-app.sh — they
+    /// run it in their own shell, which sidesteps the permission entirely. The TS/server/client
+    /// layer keeps auto-updating; only the rare native-shell change needs this manual step.
+    private func postDesktopUpdateNotification(sha: String?) {
+        guard sha != lastNotifiedDesktopSha else { return }  // dedupe the per-tick re-emits
+        lastNotifiedDesktopSha = sha
+        let content = UNMutableNotificationContent()
+        content.title = "Pilot app update ready"
+        content.body =
+            "The app shell changed. Quit Pilot and run desktop/build-app.sh in "
+            + config.clone.path + " to update it."
+        // Stable id so a later native change replaces this banner rather than stacking.
+        let req = UNNotificationRequest(
+            identifier: "pilot-desktop-update-ready", content: content, trigger: nil)
+        UNUserNotificationCenter.current().add(req)
     }
 
     // MARK: - Notifications (UNUserNotificationCenterDelegate)

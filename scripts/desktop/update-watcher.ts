@@ -50,6 +50,13 @@ export interface WatcherConfig {
   /** App token, sent as Bearer to the gated /update/state endpoint. Empty/undefined on
    *  the local desktop app (auth off); set behind tailscale. */
   token?: string;
+  /** The `desktop/` tree sha the *running* Pilot.app was built from (stamped into the
+   *  bundle by build-app.sh, handed to us via PILOT_APP_DESKTOP_SHA). When this differs
+   *  from origin/main:desktop the served TS can be made current with a server restart, but
+   *  the native Swift shell is stale — so an apply rebuilds the .app and relaunches instead.
+   *  Undefined when the app didn't stamp it (an older build, or the watcher run standalone)
+   *  → we never trigger a native relaunch we can't reason about. */
+  appDesktopSha?: string;
   /** Data dir holding `pilot.pid` (the server's recorded pid; our restart signal). */
   dataDir: string;
   /** How often to `git fetch` (the network-heavy check). */
@@ -86,6 +93,7 @@ export function configFromEnv(
     healthUrl: process.env.PILOT_HEALTH_URL ?? `${base}/health`,
     updateUrl: process.env.PILOT_UPDATE_URL ?? `${base}/update/state`,
     token: process.env.PILOT_TOKEN || undefined,
+    appDesktopSha: process.env.PILOT_APP_DESKTOP_SHA || undefined,
     dataDir: process.env.PILOT_DATA_DIR ?? defaultDataDir(),
     intervalMs: Number(process.env.PILOT_UPDATE_INTERVAL_MS ?? 60_000),
     pollMs: Number(process.env.PILOT_UPDATE_POLL_MS ?? 5_000),
@@ -129,6 +137,20 @@ export function isBuildStale(
   remoteSha: string,
 ): boolean {
   return builtSha !== remoteSha;
+}
+
+/** Does the native Swift shell need a rebuild + relaunch? True when the running app's
+ *  stamped `desktop/` tree sha differs from origin/main's. A null/unknown app sha (an older
+ *  build that never stamped, or the watcher run standalone) returns false: we refuse to
+ *  relaunch the whole app on a comparison we can't trust — the worst case is a stale shell
+ *  the user rebuilds by hand, not a relaunch loop. Granularity is the desktop/ subtree, not
+ *  git HEAD, so a TS-only commit doesn't needlessly blink the native window. */
+export function desktopNeedsRebuild(
+  appDesktopSha: string | null | undefined,
+  remoteDesktopSha: string,
+): boolean {
+  if (!appDesktopSha) return false;
+  return appDesktopSha !== remoteDesktopSha;
 }
 
 /** /health and /update/state must hit the SAME server: behind-detection + the notification
@@ -240,7 +262,17 @@ interface CompareResult {
   remote: string;
   /** Full sha vite stamped into the served bundle, or null if no build has run yet. */
   built: string | null;
-  /** Is the *served* bundle behind origin/main? (built !== remote, see isBuildStale.) */
+  /** The `desktop/` tree sha at the tracked remote ref — what a fresh .app would stamp, or
+   *  null if it couldn't be resolved (then the native-rebuild check is simply off). */
+  remoteDesktop: string | null;
+  /** Is the running native shell behind origin/main:desktop? (see desktopNeedsRebuild.)
+   *  Kept SEPARATE from `behind`: it can't be auto-resolved (replacing the .app in place
+   *  trips macOS App Management — no Apple Developer ID), so it drives a notify-the-user-to-
+   *  rebuild signal, NOT the auto-apply loop (which would otherwise spin forever, since the
+   *  app's stamp can't change without a manual rebuild). */
+  desktopBehind: boolean;
+  /** Is the served TS bundle behind origin/main? (built !== remote, see isBuildStale.)
+   *  Drives the card + auto-apply. TS only — native-shell staleness is desktopBehind. */
   behind: boolean;
 }
 
@@ -250,6 +282,25 @@ interface CompareResult {
 async function readBuiltSha(clone: string): Promise<string | null> {
   const f = Bun.file(join(clone, "client", "dist", ".pilot-built-sha"));
   return (await f.exists()) ? (await f.text()).trim() || null : null;
+}
+
+/** The `desktop/` tree sha at `ref` (e.g. `origin/main` or `HEAD`) — what a fresh .app built
+ *  from `ref` would stamp. Null if it can't be resolved (no desktop/ tree, git hiccup): the
+ *  native-rebuild feature degrades gracefully to its off state rather than throwing and
+ *  stalling the whole TS-update loop alongside it. */
+async function readDesktopTreeSha(
+  clone: string,
+  ref: string,
+): Promise<string | null> {
+  try {
+    return (
+      (
+        await capture("git", ["-C", clone, "rev-parse", `${ref}:desktop`])
+      ).stdout.trim() || null
+    );
+  } catch {
+    return null;
+  }
 }
 
 /** Fetch, then compare the *built* bundle to the tracked remote ref (see isBuildStale for
@@ -277,7 +328,21 @@ async function fetchAndCompare(cfg: WatcherConfig): Promise<CompareResult> {
     ])
   ).stdout.trim();
   const built = await readBuiltSha(cfg.clone);
-  return { local, remote, built, behind: isBuildStale(built, remote) };
+  const remoteDesktop = await readDesktopTreeSha(
+    cfg.clone,
+    `${cfg.remote}/${cfg.branch}`,
+  );
+  const desktopBehind =
+    remoteDesktop !== null &&
+    desktopNeedsRebuild(cfg.appDesktopSha, remoteDesktop);
+  return {
+    local,
+    remote,
+    built,
+    remoteDesktop,
+    desktopBehind,
+    behind: isBuildStale(built, remote),
+  };
 }
 
 interface HostState {
@@ -356,7 +421,14 @@ async function readLock(clone: string): Promise<string | null> {
  *  for the whole apply — the build keeps the old UI alive but the restart makes it unusable,
  *  so we cover the lot rather than flash a broken page. The matching teardown is the
  *  server coming back healthy + the webview reloading the fresh build (no "done" event
- *  needed). A failure emits `phase: "failed"` so the overlay drops instead of stranding. */
+ *  needed). A failure emits `phase: "failed"` so the overlay drops instead of stranding.
+ *
+ *  NOTE: a `desktop/` (native shell) change can't be applied here — replacing the running
+ *  .app in place trips macOS App Management (the in-place self-update exemption needs an
+ *  Apple Developer ID, which this ad-hoc-signed app doesn't have). So the watcher only
+ *  DETECTS native staleness (tick → `desktop-update-available`) and the app notifies the
+ *  user to rebuild by hand with build-app.sh. The TS build above re-stamps the served sha,
+ *  so a desktop-only commit still clears the card normally. */
 async function applyUpdate(cfg: WatcherConfig): Promise<void> {
   emitEvent({ event: "apply", phase: "starting", label: "Updating Pilot…" });
   try {
@@ -521,6 +593,15 @@ export async function tick(
     lastFetchMs = now;
   }
   const short = (s: string) => s.slice(0, 7);
+
+  // Native shell staleness is DETECTED but never auto-applied: replacing the running .app in
+  // place trips macOS App Management (the in-place self-update exemption needs an Apple
+  // Developer ID we don't have — see desktop/README). Surface it every tick it holds; the app
+  // posts a "rebuild with build-app.sh" notification, deduped app-side on the sha. The TS
+  // update path below stays fully automatic and is unaffected.
+  if (cached.desktopBehind && cached.remoteDesktop) {
+    emitEvent({ event: "desktop-update-available", sha: cached.remoteDesktop });
+  }
 
   // Report what we believe is staged (or null when current) and learn back whether the user
   // asked to apply the staged commit (`applying`, the card) or to force one (`force`, the

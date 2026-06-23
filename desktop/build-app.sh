@@ -38,6 +38,19 @@ done
 iconutil -c icns "$ICONSET" -o "$APP/Contents/Resources/AppIcon.icns"
 rm -rf "$(dirname "$ICONSET")"
 
+# Stamp the desktop/ tree sha into the bundle so the running app knows which version of the
+# native shell it was built from. The update-watcher compares this (via PILOT_APP_DESKTOP_SHA)
+# against origin/main:desktop to decide whether a pulled update needs a native rebuild +
+# relaunch (vs just a server restart). Tree sha, not git HEAD, so a TS-only commit doesn't
+# trip it. Done BEFORE codesign so the stamp is sealed inside the signature. git-unreachable
+# (e.g. a non-git build) → skip rather than stamp junk; auto-update just won't rebuild the app.
+if DESKTOP_SHA="$(git rev-parse HEAD:desktop 2>/dev/null)" && [ -n "$DESKTOP_SHA" ]; then
+    printf '%s' "$DESKTOP_SHA" > "$APP/Contents/Resources/.pilot-desktop-sha"
+    echo "→ stamped desktop sha ${DESKTOP_SHA:0:7}"
+else
+    echo "→ git unavailable; skipped desktop-sha stamp (auto-update won't rebuild the app)"
+fi
+
 # Ad-hoc signature ("-" identity). Enough for a local app; swap for a Developer ID +
 # notarization if you ever want frictionless double-click installs across machines.
 if codesign --force --sign - "$APP" 2>/dev/null; then

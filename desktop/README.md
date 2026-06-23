@@ -7,8 +7,10 @@ Mini, is a separate future feature.)
 
 The app is deliberately almost stateless. All the real pilot code — server, web client,
 update-watcher — lives in a **dedicated clone** that tracks `origin/main` and keeps
-itself current (see "Updates"). So the `.app` itself rarely needs rebuilding; the clone
-updates underneath it.
+itself current (see "Updates"). The TS layer updates underneath the running `.app`; when
+the **native shell itself** (`desktop/`) changes, Pilot notifies you to rebuild the `.app`
+by hand (it can't safely self-replace without an Apple Developer ID — see "Updates → Native
+shell").
 
 ## How it works
 
@@ -70,13 +72,51 @@ work (full policy in `scripts/desktop/update-watcher.ts`):
   fetch has noticed the commit (the same menu also copies the build hash). The watcher polls
   the server every few seconds so the force is picked up promptly.
 
-While an update applies (build + restart), the app raises a native **"Updating Pilot…"**
+### Native shell (rebuilding the `.app` itself)
+
+The apply path rebuilds the TS and restarts the *server* — it never touches the running Swift
+binary. So a change under `desktop/` (the AppKit shell, `Info.plist`, `build-app.sh`, the
+icon) leaves the running `.app` stale. Pilot **detects** this and **notifies you to rebuild
+by hand** — it does *not* swap the bundle itself:
+
+- `build-app.sh` stamps the **`desktop/` tree sha** into the bundle
+  (`Contents/Resources/.pilot-desktop-sha`). The app hands it to the watcher as
+  `PILOT_APP_DESKTOP_SHA`.
+- When that stamp differs from `origin/main:desktop`, the watcher emits
+  `desktop-update-available` and the app posts a native notification: *"The app shell
+  changed — quit Pilot and run desktop/build-app.sh."* You rebuild it in your own shell:
+
+  ```bash
+  cd <clone>/desktop && ./build-app.sh && open Pilot.app   # quit the running one first
+  ```
+
+- Detection uses the `desktop/` **tree sha** (not git HEAD), so a TS-only commit doesn't
+  trigger it. The notification is deduped on the sha (the watcher re-emits each tick while
+  the shell is stale; the app buzzes once per new sha).
+
+**Why not swap + relaunch the `.app` automatically?** Replacing an installed app bundle in
+place trips macOS **App Management** (`kTCCServiceSystemPolicyAppBundles`). The OS only
+exempts an *in-place self-update* when the new and old bundles share an **Apple Developer ID
+Team** — ad-hoc / self-signed builds (this app) don't qualify and would prompt the user to
+"allow Pilot.app to update or delete other applications." Self-signing makes the identity
+stable but still doesn't satisfy the exemption. Having the user run `build-app.sh` in their
+own shell sidesteps the permission entirely. The fully-automatic path would need a paid
+Apple Developer ID + notarization (see "Not done yet"); the detect-and-notify approach keeps
+it free and permission-free.
+
+Needs the **Command Line Tools** (`swiftc`/`sips`/`iconutil`/`codesign`) to rebuild — the
+same toolchain that built the app in the first place. A git-less build can't compute the
+stamp, so it's skipped and the watcher simply never flags a native update (TS auto-update is
+unaffected).
+
+While a (TS) update applies (build + restart), the app raises a native **"Updating Pilot…"**
 overlay over the webview — a frosted scrim + indeterminate spinner + a phase label
 (`Building…`, `Restarting…`). It's driven by the watcher's `apply` events (one per phase on
-its stdout machine channel, alongside `update-deferred` / `restart-requested`) and torn down
-once the rebuilt server is healthy and the webview has reloaded the fresh build. Native, not
-web, because the web client is exactly what's restarting — it can't paint its own progress,
-and the restart leaves it showing a stale, offline page.
+its stdout machine channel, alongside `update-deferred` / `restart-requested` /
+`desktop-update-available`) and torn down once the rebuilt server is healthy and the webview
+has reloaded the fresh build. Native, not web, because the web client is exactly what's
+restarting — it can't paint its own progress, and the restart leaves it showing a stale,
+offline page.
 
 "Current" means the *served bundle*, not git HEAD: the watcher compares the sha vite stamps
 into `client/dist/.pilot-built-sha` against `origin/main`, so a state where HEAD advanced but
@@ -135,7 +175,10 @@ panel instead of rendering inline.
 
 ## Not done yet
 
-- **Code-signing/notarization** for frictionless installs.
+- **Developer ID signing + notarization** — the prerequisite for *automatic* in-place native
+  self-update (the macOS App Management self-update exemption needs an Apple Team ID; ad-hoc
+  and self-signed don't qualify). Today native-shell changes are detect-and-notify + manual
+  `build-app.sh`. It would also give frictionless double-click installs.
 - A release/CI step to publish a built `.app`.
 
 ## Known caveat (resolved)

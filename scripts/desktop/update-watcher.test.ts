@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import {
   decideAction,
+  desktopNeedsRebuild,
   hasClientsFromHealth,
   isBuildStale,
   isBusyFromHealth,
@@ -39,6 +40,22 @@ describe("isBuildStale", () => {
   });
   test("no build stamped yet (fresh clone) → stale, so the first tick builds it", () => {
     expect(isBuildStale(null, "abc123")).toBe(true);
+  });
+});
+
+describe("desktopNeedsRebuild", () => {
+  test("running app's desktop sha matches origin/main → no native rebuild", () => {
+    expect(desktopNeedsRebuild("tree123", "tree123")).toBe(false);
+  });
+  test("running app's desktop sha lags origin/main → rebuild the .app", () => {
+    expect(desktopNeedsRebuild("treeOLD", "treeNEW")).toBe(true);
+  });
+  test("unknown app sha (older build / standalone watcher) → never relaunch", () => {
+    // We refuse to blink the whole app on a comparison we can't trust; worst case is a
+    // stale shell the user rebuilds by hand, not a relaunch loop.
+    expect(desktopNeedsRebuild(null, "treeNEW")).toBe(false);
+    expect(desktopNeedsRebuild(undefined, "treeNEW")).toBe(false);
+    expect(desktopNeedsRebuild("", "treeNEW")).toBe(false);
   });
 });
 

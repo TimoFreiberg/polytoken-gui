@@ -68,7 +68,27 @@ struct Config {
         // fallback — those notifications are attributed to Script Editor, so clicking one
         // opens Script Editor instead of Pilot.
         env["PILOT_UPDATE_NATIVE_NOTIFY"] = "0"
+        // Tell the watcher which `desktop/` tree sha this running .app was built from (stamped
+        // into the bundle by build-app.sh). When origin/main's desktop tree differs, the
+        // watcher rebuilds the .app and asks us to swap+relaunch instead of just restarting
+        // the server. Absent on an older build that never stamped — then the watcher keeps the
+        // server-restart-only behavior (it can't reason about a native change it can't see).
+        if let sha = Config.bundledDesktopSha() {
+            env["PILOT_APP_DESKTOP_SHA"] = sha
+        }
         return env
+    }
+
+    /// The `desktop/` tree sha stamped into the running bundle
+    /// (Contents/Resources/.pilot-desktop-sha), or nil if unstamped/unreadable. Read from
+    /// the bundle rather than env so it reflects the *binary actually running*, not whatever
+    /// the clone is at.
+    static func bundledDesktopSha() -> String? {
+        let url = Bundle.main.bundleURL
+            .appendingPathComponent("Contents/Resources/.pilot-desktop-sha")
+        guard let raw = try? String(contentsOf: url, encoding: .utf8) else { return nil }
+        let sha = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        return sha.isEmpty ? nil : sha
     }
 
     private static func findBun(in dirs: [String]) -> String? {
