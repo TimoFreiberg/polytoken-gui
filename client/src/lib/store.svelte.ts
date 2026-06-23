@@ -27,6 +27,7 @@ import {
   type TrustRequest,
 } from "@pilot/protocol";
 import { clearToken, getToken, setToken } from "./auth.js";
+import { filterSessions } from "./session-filter.js";
 import { deliveryState } from "./delivery.js";
 import { ensurePermission } from "./notify.js";
 import {
@@ -337,6 +338,35 @@ class PilotStore {
   navForward(): void {
     for (let i = this.navIndex + 1; i < this.navStack.length; i++)
       if (this.applyNav(i)) return;
+  }
+
+  /** The sessions in the order the sidebar paints them: grouped by project (A→Z),
+   *  newest-first within a group, flattened. Honours the active-only filter
+   *  (`showArchived`) so cycling visits exactly the rows you can see, but ignores the
+   *  sidebar's transient search query — that's component-local view state, and a
+   *  keyboard cycle shouldn't depend on whether a search box happens to be filled. */
+  get sidebarOrder(): SessionListEntry[] {
+    return filterSessions(this.sessions, {
+      query: "",
+      showArchived: this.showArchived,
+      now: Date.now(),
+    }).groups.flatMap((g) => g.items);
+  }
+
+  /** Ctrl+Tab / Ctrl+Shift+Tab — step to the next (`dir:1`) or previous (`dir:-1`)
+   *  session in sidebar order, wrapping at the ends. From a new-session draft (or any
+   *  view whose session isn't in the visible list), it enters the list at the matching
+   *  edge: forward → first row, back → last. No-op with nothing to cycle. */
+  cycleSession(dir: 1 | -1): void {
+    const order = this.sidebarOrder;
+    if (order.length === 0) return;
+    const currentId = this.session.ref?.sessionId ?? this.activeSessionId;
+    const idx = order.findIndex((s) => s.sessionId === currentId);
+    const next =
+      idx === -1
+        ? order[dir > 0 ? 0 : order.length - 1]
+        : order[(idx + dir + order.length) % order.length];
+    if (next) this.openSession(next.path);
   }
 
   /** ⌘N — open a new-session draft, defaulting its project to the one you're in (the

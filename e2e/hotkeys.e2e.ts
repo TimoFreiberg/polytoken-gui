@@ -62,6 +62,31 @@ test("back history reaches a new-session draft", async ({ page }) => {
   await expect(title(page)).toHaveText("New session");
 });
 
+test("Ctrl+Tab / Ctrl+Shift+Tab cycle through sessions in sidebar order", async ({
+  page,
+}) => {
+  // Boot lands on the active row. Sidebar order: project groups A→Z (pilot, scratch),
+  // newest-first within a group — so "Wire up…" → "Explore…" → the scratch session.
+  await expect(title(page)).toContainText("Wire up the WebSocket bridge");
+
+  await page.keyboard.press("Control+Tab");
+  await expect(title(page)).toContainText("Explore the fold reducer");
+
+  await page.keyboard.press("Control+Tab");
+  await expect(title(page)).toContainText("scratch");
+
+  // Past the last row wraps back to the top.
+  await page.keyboard.press("Control+Tab");
+  await expect(title(page)).toContainText("Wire up the WebSocket bridge");
+
+  // Shift reverses, and wraps off the top to the last row.
+  await page.keyboard.press("Control+Shift+Tab");
+  await expect(title(page)).toContainText("scratch");
+
+  await page.keyboard.press("Control+Shift+Tab");
+  await expect(title(page)).toContainText("Explore the fold reducer");
+});
+
 test("⌘B toggles the sidebar", async ({ page }) => {
   const sidebar = page.getByTestId("sidebar");
   await expect(sidebar).toHaveAttribute("data-open", "true"); // desktop default

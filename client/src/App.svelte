@@ -122,6 +122,18 @@
   // the browser's history nav, which is unused since the app routes views client-side.)
   function onGlobalKeydown(e: KeyboardEvent) {
     if (store.unauthorized) return;
+    // Ctrl+Tab / Ctrl+Shift+Tab — cycle forward/back through sessions in sidebar order.
+    // Handled before the generic guard because it's the one combo that *wants* Shift,
+    // and it's gated on Ctrl specifically (Cmd+Tab is the OS app switcher and never
+    // reaches us). Like ⌘N, the browser eats it in a plain tab but leaves it for the
+    // page in the installed PWA / desktop app, pilot's primary surface. We deliberately
+    // don't use Cmd+←/→: in any focused text field (the composer, almost always) those
+    // are move-to-line-start/end, and the app already maps history nav to ⌘[ / ⌘].
+    if (e.key === "Tab" && e.ctrlKey && !e.metaKey && !e.altKey) {
+      e.preventDefault();
+      store.cycleSession(e.shiftKey ? -1 : 1);
+      return;
+    }
     const mod = e.metaKey || e.ctrlKey;
     if (!mod || e.altKey || e.shiftKey) return;
     switch (e.key) {
