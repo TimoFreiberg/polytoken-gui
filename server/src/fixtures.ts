@@ -1716,8 +1716,116 @@ export function journalNudge(): ScriptStep[] {
   return steps;
 }
 
+/** A turn that asks via the `answer` tool, then keeps working. The answer-result card
+ *  (QnaResult) must sit in its CHRONOLOGICAL place — between the pre-answer work run and
+ *  the post-answer one — not floated to the bottom of the work block, and centered at the
+ *  reading measure like every other card (not hugging the wide track's left edge). Drives
+ *  the dev-bar `answercard` button + the answer-card e2e. */
+export function answerCard(): ScriptStep[] {
+  const steps: ScriptStep[] = [
+    {
+      wait: 0,
+      event: {
+        ...base(),
+        type: "userMessage",
+        id: "ac-u1",
+        text: "Bump pi to 0.80.2 and re-create the patch.",
+        entryId: "e-ac-u1",
+      },
+    },
+    {
+      wait: 0,
+      event: {
+        ...base(),
+        type: "sessionUpdated",
+        snapshot: snapshot({ status: "running" }),
+      },
+    },
+    ...deltas("Let me check the current pinned version first.", "text"),
+    ...toolSpan(
+      {
+        callId: "ac-t1",
+        toolName: "bash",
+        label: "Run shell command",
+        description: "Execute a command in the workspace shell",
+        input: { command: 'rg -n "pi-coding-agent" server/package.json' },
+      },
+      {
+        callId: "ac-t1",
+        success: true,
+        output: '"@earendil-works/pi-coding-agent": "^0.79.5"',
+      },
+      { startWait: 120, wait: 220, durationMs: 900 },
+    ),
+    // The answer tool: its output is the answer extension's formatQnA text, parsed by
+    // QnaResult back into the Q/A card.
+    ...toolSpan(
+      {
+        callId: "ac-t2",
+        toolName: "answer",
+        label: "Ask the operator",
+        description: "Ask one or more multiple-choice questions",
+        input: {
+          questions: [
+            {
+              question:
+                "How do you want to proceed with the pi 0.79.9 → 0.80.2 bump?",
+            },
+          ],
+        },
+      },
+      {
+        callId: "ac-t2",
+        success: true,
+        output:
+          "Q: How do you want to proceed with the pi 0.79.9 → 0.80.2 bump?\n" +
+          "> The bump needs the right edit site (server/package.json) and the pi-ai patch re-created for 0.80.2.\n" +
+          "A: Re-create the patch for 0.80.2 + bump in server/package.json, then run the full gate and commit",
+      },
+      { startWait: 120, wait: 220, durationMs: 0 },
+    ),
+    // Post-answer work: this used to render ABOVE the answer card (pulled out of work),
+    // shoving it down as it streamed in. With lanes it lands BELOW the pinned card.
+    ...deltas(
+      "Patch created and re-keyed to 0.80.2. Verifying it applies.",
+      "text",
+    ),
+    ...toolSpan(
+      {
+        callId: "ac-t3",
+        toolName: "bash",
+        label: "Run shell command",
+        description: "Execute a command in the workspace shell",
+        input: { command: "bun install --force 2>&1 | tail -4" },
+      },
+      {
+        callId: "ac-t3",
+        success: true,
+        output: "installed file has the fix ✓",
+      },
+      { startWait: 120, wait: 220, durationMs: 830 },
+    ),
+    ...deltas(
+      "Done — bumped to 0.80.2, patch re-applies, the gate is green.",
+      "text",
+    ),
+    {
+      wait: 60,
+      event: {
+        ...base(),
+        type: "runCompleted",
+        snapshot: snapshot({ status: "idle" }),
+        userEntryId: "e-ac-u1",
+        assistantEntryId: "e-ac-a1",
+      },
+    },
+  ];
+  return steps;
+}
+
 export const SCRIPTS: Record<string, () => ScriptStep[]> = {
   greeting,
+  answercard: answerCard,
   journalnudge: journalNudge,
   skill: skillLoad,
   confirm: confirmDialog,

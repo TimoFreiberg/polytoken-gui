@@ -34,6 +34,7 @@ import type {
 } from "./driver.js";
 import {
   ambient,
+  answerCard,
   bgRun,
   bgWait,
   branchedSeed,
@@ -993,6 +994,7 @@ export class MockDriver implements PilotDriver {
       selectmany: selectMany,
       ambient,
       compat,
+      answercard: answerCard,
       bgrun: bgRun,
       bgwait: bgWait,
       reply: () => promptReply("Show me the streamed reply script."),

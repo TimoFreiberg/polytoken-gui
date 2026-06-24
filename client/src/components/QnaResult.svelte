@@ -32,8 +32,9 @@
 
 <style>
   .qna-result {
-    align-self: flex-start;
-    width: 100%;
+    /* No align-self override: inherit the column's centering + --maxw cap (.col >
+       :global(*)) so the card sits inline with the prose/tool-card measure instead of
+       hugging the wide track's left edge. */
     box-sizing: border-box;
     background: var(--surface);
     border: 1px solid var(--border);

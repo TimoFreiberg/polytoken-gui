@@ -86,16 +86,16 @@
     return turn.id !== lastTurnId || !store.turnActive;
   }
 
-  // Per-turn open/close for the work block. Default: collapsed once the turn settles,
-  // expanded while it's still in flight. An explicit user toggle overrides the default.
+  // Per-work-run open/close, keyed by lane id (a turn can hold several runs, split by
+  // pinned answer/screenshot cards). Default: collapsed once the turn settles, expanded
+  // while it's still in flight. An explicit user toggle overrides the default.
   let workOpen = $state<Record<string, boolean>>({});
-  function toggleWork(id: string) {
-    const turn = turns.find((t) => t.id === id);
-    const current = workOpen[id] ?? (turn ? !turnDone(turn) : false);
-    workOpen = { ...workOpen, [id]: !current };
+  function toggleWork(laneId: string, turn: TurnGroup) {
+    const current = workOpen[laneId] ?? !turnDone(turn);
+    workOpen = { ...workOpen, [laneId]: !current };
   }
-  function workShown(turn: TurnGroup): boolean {
-    return workOpen[turn.id] ?? !turnDone(turn);
+  function workShown(laneId: string, turn: TurnGroup): boolean {
+    return workOpen[laneId] ?? !turnDone(turn);
   }
 
   // Per-turn aggregation for the assistant footer (copy + timestamp). Only the LAST
@@ -689,49 +689,51 @@
       {#if turn.user}
         {@render itemView(turn.user)}
       {/if}
-      {#if turn.collapsible}
-        <!-- Codex-style working block: the turn's tools + intermediate narration
-             collapse behind a "Worked for Ns" header only once the turn settles; the
-             final response (rendered after) stays visible. -->
-        <div class="turn-work" class:open={workShown(turn)}>
-          <button
-            class="work-head"
-            data-testid="work-toggle"
-            onclick={() => toggleWork(turn.id)}
-            aria-expanded={workShown(turn)}
-            title={workShown(turn)
-              ? "Collapse the agent's working steps for this turn"
-              : "Expand the agent's working steps for this turn"}
-          >
-            <Chevron open={workShown(turn)} size={10} />
-            <span class="work-label">{turnDone(turn) ? workedLabel(turn) : "Working…"}</span>
-          </button>
-          {#if workShown(turn)}
-            <!-- Slide the working steps closed instead of snapping: when a turn finishes
-                 its closing paragraph the early work autocollapses, and an instant removal
-                 jumped the content below. A short height/opacity glide smooths it (and the
-                 manual toggle). Intro is skipped on initial mount, so settled turns on load
-                 don't animate. -->
-            <div
-              class="work-body"
-              data-testid="work-body"
-              transition:reveal={{ duration: 180, easing: cubicOut }}
+      <!-- Lanes render the turn body in chronological order: each collapsible work run
+           folds behind its own "Worked for Ns" header, while pinned items (the answer
+           Q&A, screenshots) stay in place between runs so they don't float to the
+           bottom as later work streams in. -->
+      {#each turn.lanes as lane (lane.id)}
+        {#if lane.kind === "pinned"}
+          {@render itemView(lane.item)}
+        {:else if lane.collapsible}
+          <!-- Codex-style working block: the run's tools + intermediate narration
+               collapse behind a "Worked for Ns" header only once the turn settles. -->
+          <div class="turn-work" class:open={workShown(lane.id, turn)}>
+            <button
+              class="work-head"
+              data-testid="work-toggle"
+              onclick={() => toggleWork(lane.id, turn)}
+              aria-expanded={workShown(lane.id, turn)}
+              title={workShown(lane.id, turn)
+                ? "Collapse the agent's working steps for this turn"
+                : "Expand the agent's working steps for this turn"}
             >
-              {#each turn.work as it (it.id)}
-                {@render itemView(it)}
-              {/each}
-            </div>
-          {/if}
-        </div>
-      {:else}
-        {#each turn.work as it (it.id)}
-          {@render itemView(it)}
-        {/each}
-      {/if}
-      <!-- Always-visible items (the answer Q&A) sit after the collapsed work and
-           before the turn-final response. -->
-      {#each turn.visible as it (it.id)}
-        {@render itemView(it)}
+              <Chevron open={workShown(lane.id, turn)} size={10} />
+              <span class="work-label">{turnDone(turn) ? workedLabel(lane) : "Working…"}</span>
+            </button>
+            {#if workShown(lane.id, turn)}
+              <!-- Slide the working steps closed instead of snapping: when a turn finishes
+                   its closing paragraph the early work autocollapses, and an instant removal
+                   jumped the content below. A short height/opacity glide smooths it (and the
+                   manual toggle). Intro is skipped on initial mount, so settled turns on load
+                   don't animate. -->
+              <div
+                class="work-body"
+                data-testid="work-body"
+                transition:reveal={{ duration: 180, easing: cubicOut }}
+              >
+                {#each lane.items as it (it.id)}
+                  {@render itemView(it)}
+                {/each}
+              </div>
+            {/if}
+          </div>
+        {:else}
+          {#each lane.items as it (it.id)}
+            {@render itemView(it)}
+          {/each}
+        {/if}
       {/each}
       {#each turn.response as it (it.id)}
         {@render itemView(it)}

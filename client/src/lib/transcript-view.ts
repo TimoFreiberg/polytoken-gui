@@ -306,6 +306,30 @@ export function mergedSummary(item: MergedToolsItem): string {
 
 // ── Pass 2: group into turns and split work vs. response ─────────────────────
 
+/** One chronological slice of a turn's body. Either a contiguous run of collapsible
+ *  work (tools + narration) that folds behind its own "Worked for Ns" header, or a
+ *  single always-visible item (the answer Q&A / a screenshot) pinned in place so it
+ *  never floats below later work as the turn streams in. */
+export interface WorkLane {
+  kind: "work";
+  /** Stable key per work run within a turn (`${turnId}:w${runIndex}`). */
+  id: string;
+  items: DisplayItem[];
+  /** Offer the collapse affordance for THIS run: it holds a work tool and the turn has
+   *  a trailing response to keep showing once collapsed. Forced false while the turn is
+   *  still in flight (see groupTurns' lastTurnActive). */
+  collapsible: boolean;
+  startTs?: string;
+  endTs?: string;
+}
+export interface PinnedLane {
+  kind: "pinned";
+  /** The pinned item's own id. */
+  id: string;
+  item: DisplayItem;
+}
+export type TurnLane = WorkLane | PinnedLane;
+
 export interface TurnGroup {
   /** Stable key for the turn (the user item's id, else the first item's, else index). */
   id: string;
@@ -323,6 +347,10 @@ export interface TurnGroup {
   /** The turn-final assistant message(s) — the trailing run of assistant items after the
    *  last tool. Rendered visibly; the work collapses behind the "Worked for Ns" header. */
   response: DisplayItem[];
+  /** The body in chronological order: collapsible work runs interleaved with pinned
+   *  always-visible items. This is what the transcript renders (the work/visible split
+   *  above is kept only for the turn-footer text scan and tests). */
+  lanes: TurnLane[];
   /** Whether to offer the collapse affordance: there's real work (≥1 tool) AND a final
    *  response to keep showing once it's hidden. Turns still in flight, or that ended on a
    *  tool / pure narration, render inline instead. */
@@ -362,14 +390,45 @@ function buildTurn(
   let k = body.length;
   while (k > 0 && body[k - 1]!.kind === "assistant") k--;
   // Pull always-visible tools (the answer Q&A, plus any image-bearing tool — a
-  // screenshot or rendered mockup) out of the work portion so they never collapse.
-  // They're rendered after the work block, before the response — chronologically
-  // right for the common "ask/show → final response" tail.
+  // screenshot or rendered mockup) out of the collapsible work so they never hide.
+  // `work`/`visible` are flat splits kept for the footer text scan + tests; `lanes`
+  // (below) is what actually renders, keeping each pinned item in chronological place.
   const workItems = body.slice(0, k);
   const visible = workItems.filter(isVisibleTool);
   const work = workItems.filter((i) => !isVisibleTool(i));
   const response = body.slice(k);
-  const collapsible = response.length > 0 && work.some(isWorkTool);
+  const turnHasResponse = response.length > 0;
+  const collapsible = turnHasResponse && work.some(isWorkTool);
+
+  // Lanes preserve chronological order: a contiguous run of non-visible work folds into
+  // one collapsible run; each visible tool stays pinned in place between runs, so it
+  // doesn't float to the bottom of the work block as later work streams in.
+  const turnId = user?.id ?? body[0]?.id ?? `turn-${index}`;
+  const lanes: TurnLane[] = [];
+  let run: DisplayItem[] = [];
+  let runIndex = 0;
+  const flushRun = () => {
+    if (run.length === 0) return;
+    const items = run;
+    run = [];
+    lanes.push({
+      kind: "work",
+      id: `${turnId}:w${runIndex++}`,
+      items,
+      collapsible: turnHasResponse && items.some(isWorkTool),
+      startTs: itemStart(items[0]!),
+      endTs: itemEnd(items[items.length - 1]!),
+    });
+  };
+  for (const it of workItems) {
+    if (isVisibleTool(it)) {
+      flushRun();
+      lanes.push({ kind: "pinned", id: it.id, item: it });
+    } else {
+      run.push(it);
+    }
+  }
+  flushRun();
 
   // Explicit undefined checks, not `||`: a timestamp can be a numeric string like "0",
   // which is falsy — `||` would wrongly skip it.
@@ -383,12 +442,23 @@ function buildTurn(
   if (endTs === undefined && work.length > 0)
     endTs = itemEnd(work[work.length - 1]!);
 
+  // Anchor the outer work runs to the turn's own bounds: the first run starts when the
+  // turn started (the user prompt, before any work item), the last ends when the final
+  // response settled. So a single-work-run turn's "Worked for Ns" still reads the whole
+  // turn duration; only inner runs (split by a pinned card) measure their own span.
+  const workLanes = lanes.filter((l): l is WorkLane => l.kind === "work");
+  const firstWork = workLanes[0];
+  const lastWork = workLanes[workLanes.length - 1];
+  if (firstWork && startTs !== undefined) firstWork.startTs = startTs;
+  if (lastWork && endTs !== undefined) lastWork.endTs = endTs;
+
   return {
-    id: user?.id ?? body[0]?.id ?? `turn-${index}`,
+    id: turnId,
     user,
     work,
     visible,
     response,
+    lanes,
     collapsible,
     startTs,
     endTs,
@@ -431,7 +501,11 @@ export function groupTurns(
   // text and tool events.
   if (lastTurnActive) {
     const last = turns[turns.length - 1];
-    if (last) last.collapsible = false;
+    if (last) {
+      last.collapsible = false;
+      for (const lane of last.lanes)
+        if (lane.kind === "work") lane.collapsible = false;
+    }
   }
   return turns;
 }
@@ -474,11 +548,15 @@ export function formatWorkedDuration(ms: number): string {
   return remMin ? `${hr}h ${remMin}m` : `${hr}h`;
 }
 
-/** The label for a turn's work header. Null duration (missing/!bad timestamps) → just
- *  "Worked"; a settled turn with both bounds → "Worked for Ns". */
-export function workedLabel(turn: TurnGroup): string {
-  const a = parseTs(turn.startTs);
-  const b = parseTs(turn.endTs);
+/** The label for a work-run header. Null duration (missing/!bad timestamps) → just
+ *  "Worked"; a settled run with both bounds → "Worked for Ns". Takes anything with
+ *  start/end bounds — a whole turn or a single work lane. */
+export function workedLabel(span: {
+  startTs?: string;
+  endTs?: string;
+}): string {
+  const a = parseTs(span.startTs);
+  const b = parseTs(span.endTs);
   if (a === null || b === null || b < a) return "Worked";
   return `Worked for ${formatWorkedDuration(b - a)}`;
 }

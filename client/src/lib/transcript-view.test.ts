@@ -379,6 +379,48 @@ describe("groupTurns: answer (visible) tools", () => {
     expect(turns[0]!.visible.map((i) => i.id)).toEqual(["a1"]);
   });
 
+  test("lanes pin the answer in chronological place between work runs", () => {
+    // pre-answer work, the answer, then MORE work, then the response: the pinned answer
+    // must sit between the two work runs (not floated to the bottom of the work block),
+    // so later work streams in below it instead of shoving it down.
+    const turns = groupTurns([
+      user("u1"),
+      asst("intro"),
+      tool("b1"),
+      tool("a1", "answer"),
+      tool("b2"),
+      asst("final"),
+    ]);
+    const lanes = turns[0]!.lanes;
+    expect(lanes.map((l) => l.id)).toEqual(["u1:w0", "a1", "u1:w1"]);
+    expect(lanes.map((l) => l.kind)).toEqual(["work", "pinned", "work"]);
+    const [pre, pinned, post] = lanes;
+    expect(pre!.kind === "work" && pre.items.map((i) => i.id)).toEqual([
+      "intro",
+      "b1",
+    ]);
+    expect(pinned!.kind === "pinned" && pinned.item.id).toBe("a1");
+    expect(post!.kind === "work" && post.items.map((i) => i.id)).toEqual([
+      "b2",
+    ]);
+    // Both work runs collapse (each holds a tool + the turn has a response).
+    expect(pre!.kind === "work" && pre.collapsible).toBe(true);
+    expect(post!.kind === "work" && post.collapsible).toBe(true);
+  });
+
+  test("an active last turn forces every work lane non-collapsible", () => {
+    const items = [
+      user("u1"),
+      tool("b1"),
+      tool("a1", "answer"),
+      tool("b2"),
+      asst("final"),
+    ];
+    const lanes = groupTurns(items, true)[0]!.lanes;
+    for (const l of lanes)
+      if (l.kind === "work") expect(l.collapsible).toBe(false);
+  });
+
   test("answer stays standalone, not folded into a tool summary", () => {
     const out = mergeTools([tool("a1", "answer"), tool("r1", "read")]);
     expect(out.map((i) => i.kind)).toEqual(["tool", "mergedTools"]);
