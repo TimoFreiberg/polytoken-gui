@@ -22,6 +22,6 @@
     "typescript": "^6.0.3"
   },
   "patchedDependencies": {
-    "@earendil-works/pi-ai@0.79.9": "patches/@earendil-works%2Fpi-ai@0.79.9.patch"
+    "@earendil-works/pi-ai@0.80.2": "patches/@earendil-works%2Fpi-ai@0.80.2.patch"
   }
 }

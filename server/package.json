@@ -8,7 +8,7 @@
     "start": "NODE_PATH=../node_modules/.bun/node_modules bun run src/index.ts"
   },
   "dependencies": {
-    "@earendil-works/pi-coding-agent": "^0.79.5",
+    "@earendil-works/pi-coding-agent": "^0.80.2",
     "@pilot/protocol": "workspace:*",
     "web-push": "^3.6.7"
   },

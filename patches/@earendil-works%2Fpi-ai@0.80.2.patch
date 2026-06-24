@@ -1,8 +1,8 @@
-diff --git a/dist/providers/anthropic.js b/dist/providers/anthropic.js
-index fdffa1159609dc76f58a07b3bde8d08c7f0dccd5..fbf628f20b3de19089e0e974eacfc508d00c5fd3 100644
---- a/dist/providers/anthropic.js
-+++ b/dist/providers/anthropic.js
-@@ -255,28 +255,58 @@ async function* iterateAnthropicEvents(response, signal) {
+diff --git a/dist/api/anthropic-messages.js b/dist/api/anthropic-messages.js
+index f68192c6fe0b8abee33f819d353f7cfc0a730987..a7a498039a301f4f11e4146ca4b2e80cb5f3bec3 100644
+--- a/dist/api/anthropic-messages.js
++++ b/dist/api/anthropic-messages.js
+@@ -270,28 +270,58 @@ async function* iterateAnthropicEvents(response, signal) {
      }
      let sawMessageStart = false;
      let sawMessageEnd = false;
