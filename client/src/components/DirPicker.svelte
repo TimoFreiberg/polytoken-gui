@@ -9,10 +9,12 @@
   // the breadcrumb to jump up, "Use this folder" to pick the one you're in.
   //
   // An always-visible filter input lets you fuzzy-match subdirectories: type `pi` to
-  // narrow the list to entries whose names contain those characters in order. Press
-  // Enter to descend into the selected match. Type a path starting with / or ~ and
-  // Enter jumps there directly (the old "go to path" escape hatch, now always available).
-  // Backspace when the filter is empty goes up one directory.
+  // narrow the list to entries whose names contain those characters in order. With a
+  // filter, Enter (or Tab, shell-style autocomplete) descends into the selected match.
+  // With the filter empty, Enter commits the directory you're standing in (same as
+  // "Use this folder"). Type a path starting with / or ~ and Enter jumps there directly
+  // (the old "go to path" escape hatch, now always available). Backspace when the filter
+  // is empty goes up one directory (there's no ".." row — use Backspace/← or the breadcrumb).
   let {
     recents,
     current,
@@ -38,7 +40,7 @@
   // Filter text — always visible, always typed into. Empty = show all subdirs.
   let filterText = $state("");
   let filterRef = $state<HTMLInputElement>();
-  // Keyboard selection index over the visible rows (.. row + filtered entries).
+  // Keyboard selection index over the filtered subdirectory rows.
   let sel = $state(0);
   let lastPath = $state("");
 
@@ -55,23 +57,21 @@
     return entries.filter((name) => fuzzyMatch(q, name));
   });
 
-  // Has a parent dir → the ".." row is shown and occupies index 0.
-  const hasParent = $derived(!!showing?.parent);
-  const visibleCount = $derived(filtered.length + (hasParent ? 1 : 0));
+  const visibleCount = $derived(filtered.length);
 
   // Reset filter + selection whenever the directory changes.
   $effect(() => {
     if (showing && showing.path !== lastPath) {
       lastPath = showing.path;
       filterText = "";
-      sel = hasParent ? 0 : filtered.length > 0 ? 0 : 0;
+      sel = 0;
     }
   });
 
   // Auto-select the top filtered match when the user starts typing.
   $effect(() => {
     if (filterText.trim() && !isPathMode) {
-      sel = hasParent ? 1 : 0;
+      sel = 0;
     }
   });
 
@@ -212,28 +212,31 @@
       if (isPathMode) {
         // Path mode: navigate to the typed path directly.
         go(filterText.trim());
-      } else if (visibleCount > 0) {
-        // Filter mode: descend into the selected row.
-        if (hasParent && sel === 0) {
-          up(); // ".." row
-        } else {
-          const idx = hasParent ? sel - 1 : sel;
-          const name = filtered[idx];
-          if (name) descend(name);
-        }
+      } else if (!filterText.trim()) {
+        // No filter: Enter commits the directory we're standing in.
+        commit();
+      } else {
+        // Filter mode: descend into the selected match.
+        const name = filtered[sel];
+        if (name) descend(name);
+      }
+      return;
+    }
+    if (e.key === "Tab") {
+      // Shell-style autocomplete: descend into the highlighted entry. preventDefault
+      // keeps Tab from moving focus out of the filter input.
+      e.preventDefault();
+      if (!isPathMode) {
+        const name = filtered[sel];
+        if (name) descend(name);
       }
       return;
     }
     if (e.key === "ArrowRight") {
-      if (visibleCount > 0) {
+      if (!isPathMode && filtered.length > 0) {
         e.preventDefault();
-        if (hasParent && sel === 0) {
-          up();
-        } else {
-          const idx = hasParent ? sel - 1 : sel;
-          const name = filtered[idx];
-          if (name) descend(name);
-        }
+        const name = filtered[sel];
+        if (name) descend(name);
       }
       return;
     }
@@ -327,7 +330,7 @@
       aria-label={isPathMode ? "Go to path" : "Filter subdirectories"}
       title={isPathMode
         ? "Type or paste a path, then Enter to go (Esc to clear)"
-        : "Type to filter subdirectories — Backspace goes up, Esc clears"}
+        : "Filter subdirs — Tab/→ enters the match, Enter (empty filter) uses this folder, Backspace goes up, Esc clears"}
       onkeydown={onInputKeydown}
     />
     {#if statHint}
@@ -364,38 +367,19 @@
     {:else if showing?.error}
       <div class="hint err">Can't read this folder. Go up or type a different path.</div>
     {:else if showing}
-      {#if showing.parent}
-        <button
-          class="row up"
-          class:sel={sel === 0}
-          data-i={0}
-          role="option"
-          aria-selected={sel === 0}
-          title="Up to parent (← / Backspace)"
-          onmousedown={(e) => {
-            e.preventDefault();
-            up();
-          }}
-          onmouseenter={() => (sel = 0)}
-        >
-          <span class="ico" aria-hidden="true">↰</span>
-          <span class="name">..</span>
-        </button>
-      {/if}
       {#each filtered as name, i (name)}
-        {@const rowI = hasParent ? i + 1 : i}
         <button
           class="row"
-          class:sel={rowI === sel}
-          data-i={rowI}
+          class:sel={i === sel}
+          data-i={i}
           role="option"
-          aria-selected={rowI === sel}
-          title={`Open ${name}/ (↵ / →)`}
+          aria-selected={i === sel}
+          title={`Open ${name}/ (Tab / →)`}
           onmousedown={(e) => {
             e.preventDefault();
             descend(name);
           }}
-          onmouseenter={() => (sel = rowI)}
+          onmouseenter={() => (sel = i)}
         >
           <span class="ico" aria-hidden="true">▸</span>
           <span class="name">{name}</span>
@@ -410,7 +394,7 @@
   <div class="foot">
     <button
       class="use"
-      title="Use this folder for the new session (⌘/Ctrl+↵)"
+      title="Use this folder for the new session (↵ with empty filter, or ⌘/Ctrl+↵)"
       onmousedown={(e) => {
         e.preventDefault();
         commit();
@@ -569,9 +553,6 @@
   }
   .row.sel {
     background: color-mix(in srgb, var(--accent) 14%, transparent);
-  }
-  .row.up .name {
-    color: var(--text-muted);
   }
   @media (pointer: coarse) {
     .row {

@@ -138,15 +138,59 @@ test("typing filters subdirectories by fuzzy match", async ({ page }) => {
   const rows = picker(page).locator(".row[data-i] .name");
   // "src" should still be visible (fuzzy subsequence match).
   await expect(rows.filter({ hasText: "src" })).toBeVisible();
-  // Only "src" + the ".." parent row remain; the other 4 entries are hidden.
-  await expect(rows).toHaveCount(2);
+  // Only "src" remains (no ".." row); the other entries are hidden.
+  await expect(rows).toHaveCount(1);
   // Documents (which doesn't match "sr") should be gone.
   await expect(rows.filter({ hasText: "Documents" })).toBeHidden();
 
   // Clear the filter (Escape) — all entries reappear.
   await filterInput(page).press("Escape");
   await expect(filterInput(page)).toHaveValue("");
-  await expect(rows).not.toHaveCount(2); // more entries now
+  await expect(rows).not.toHaveCount(1); // more entries now
+});
+
+test("Enter with an empty filter uses the directory you're standing in", async ({
+  page,
+}) => {
+  await openDraft(page);
+  await projectChip(page).click();
+  await expect(picker(page)).toBeVisible();
+
+  await picker(page).locator(".home-btn").click();
+  const rows = picker(page).locator(".row[data-i] .name");
+  await expect(rows.filter({ hasText: "src" })).toBeVisible();
+
+  // Descend into src so we're standing in a concrete dir, then commit it with Enter
+  // (no filter text) instead of clicking "Use this folder".
+  await picker(page).locator(".row[data-i]", { hasText: "src" }).click();
+  await expect(rows.filter({ hasText: "pilot" })).toBeVisible();
+  await expect(filterInput(page)).toHaveValue("");
+  await filterInput(page).press("Enter");
+
+  await expect(picker(page)).toBeHidden();
+  await expect(projectChip(page)).toContainText("src");
+});
+
+test("Tab autocompletes by descending into the filtered match", async ({
+  page,
+}) => {
+  await openDraft(page);
+  await projectChip(page).click();
+  await expect(picker(page)).toBeVisible();
+
+  await picker(page).locator(".home-btn").click();
+  const rows = picker(page).locator(".row[data-i] .name");
+  await expect(rows.filter({ hasText: "src" })).toBeVisible();
+
+  // Type a fuzzy match for "src", then Tab to descend into it (shell-style).
+  await filterInput(page).fill("sr");
+  await expect(rows).toHaveCount(1);
+  await filterInput(page).press("Tab");
+
+  // We're now inside src: its children are visible and the filter has reset.
+  await expect(picker(page).locator(".bc")).toContainText("src");
+  await expect(rows.filter({ hasText: "pilot" })).toBeVisible();
+  await expect(filterInput(page)).toHaveValue("");
 });
 
 test("Escape clears the filter without closing the browser", async ({
