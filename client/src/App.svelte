@@ -23,10 +23,25 @@
   import { wakeLock } from "./lib/wake-lock.js";
   import { trackKeyboardInset } from "./lib/keyboard-inset.js";
   import { STEP as FONT_STEP } from "./lib/font-scale.js";
+  import { edgeSwipe } from "./lib/edge-swipe.js";
+  import { createEdgeSwipe } from "./lib/edge-swipe.svelte.js";
 
   // Dev affordance: ?dev shows buttons that drive the mock to any UI state, so the
   // screenshot harness can reach approval/ambient/error states deterministically.
   const dev = new URLSearchParams(location.search).has("dev");
+
+  // Left-edge swipe opens the phone drawer. One controller instance owns the live-follow
+  // snapshot; the Sidebar reacts to it for the transform, the action below fires open/cancel.
+  // Phone-only (the drawer is the desktop sidebar, always reachable via ⌘B / the header
+  // button) and disabled once the drawer is open (a second swipe would just fight the
+  // drawer's own scrim/scroll). Tracks the same 859px breakpoint the drawer CSS uses.
+  const edge = createEdgeSwipe();
+  const PHONE_MQ = "(max-width: 859px)";
+  const edgeEnabled = $derived(
+    store.sidebarOpen === false &&
+      typeof window !== "undefined" &&
+      window.matchMedia(PHONE_MQ).matches,
+  );
   const scripts = ["reply", "markdown", "search", "thinkingtools", "skill", "confirm", "trust", "input", "qna", "answercard", "ambient", "compat", "bgrun", "bgwait", "queue", "deliverqueue", "initializing", "editdiff", "images", "error", "idle", "streamhold", "staleidle", "pendinghold", "timeout", "yesno", "journalnudge", "contextfull", "longoutput", "selectmany", "failnewsession"];
 
   onMount(() => store.start());
@@ -174,8 +189,16 @@
   <TokenGate />
 {:else}
 <div class="shell">
-  <Sidebar />
-  <div class="app">
+  <Sidebar edge={edge} />
+  <div
+    class="app"
+    use:edgeSwipe={{
+      enabled: edgeEnabled,
+      onOpen: edge.open,
+      onChange: edge.onChange,
+      onCancel: edge.cancel,
+    }}
+  >
     <StatusHeader />
     <div class="chat">
       <ConnectionBanner />

@@ -17,11 +17,25 @@
   import PullIndicator from "./PullIndicator.svelte";
   import { pullToRefresh } from "../lib/pull-to-refresh.js";
   import { createPullRefresh } from "../lib/pull-to-refresh.svelte.js";
+  import type { EdgeSwipe } from "../lib/edge-swipe.svelte.js";
 
   // Pull-to-refresh (touch only): pulling the session list down from the top forces a
   // reconnect + re-snapshot, same gesture as the transcript.
   const pull = createPullRefresh();
   onDestroy(() => pull.dispose());
+
+  // Left-edge swipe live-follow: while a phone drawer-open swipe is in flight, the
+  // controller's snapshot drives this sidebar's translateX so it tracks the finger;
+  // .edge-drag disables the open/close transition so the follow is frame-accurate.
+  // Passed in from App.svelte (the swipe surface is the main pane), so the one
+  // controller owns both the action's callbacks and the snapshot we read here.
+  const { edge }: { edge: EdgeSwipe } = $props();
+  const edgeDragging = $derived(edge.snap.phase !== "idle");
+  const sidebarTransform = $derived(
+    edgeDragging
+      ? `translateX(calc(-100% + ${edge.snap.distance}px))`
+      : undefined,
+  );
 
   // Touch-primary devices only — desktop has the Reconnect button (Alt+R).
   const isTouch =
@@ -411,7 +425,13 @@
   ></button>
 {/if}
 
-<aside class="sidebar" data-testid="sidebar" data-open={store.sidebarOpen}>
+<aside
+  class="sidebar"
+  class:edge-drag={edgeDragging}
+  data-testid="sidebar"
+  data-open={store.sidebarOpen}
+  style={sidebarTransform ? `transform: ${sidebarTransform}` : undefined}
+>
   <div class="top">
     <IconButton
       title="Collapse sidebar (⌘B)"
@@ -1464,6 +1484,12 @@
     .sidebar[data-open="false"] {
       display: flex; /* keep it mounted; slide it off-screen instead of unmounting */
       transform: translateX(-100%);
+    }
+    /* While a left-edge swipe is in flight, the component sets an inline translateX that
+       follows the finger. Disable the open/close transition so the follow is frame-accurate
+       (the transform snaps to rest via the transition the moment the drag ends). */
+    .sidebar.edge-drag {
+      transition: none;
     }
     .scrim {
       display: block;

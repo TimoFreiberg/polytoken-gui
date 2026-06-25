@@ -1870,6 +1870,11 @@ class PilotStore {
     this.sidebarOpen = false;
     persistSidebarOpen(false);
   }
+  /** Open the drawer. Pair of closeSidebar; used by the left-edge swipe gesture. */
+  openSidebar(): void {
+    this.sidebarOpen = true;
+    persistSidebarOpen(true);
+  }
   /** Flip the active-only ↔ all filter; persisted per-device. */
   toggleShowArchived(): void {
     this.showArchived = !this.showArchived;
