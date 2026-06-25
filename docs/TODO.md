@@ -770,6 +770,50 @@ config). If effect-creep ever starts, the lightest guardrail matching the articl
 explaining comment) — the project already follows the convention, so a rule would just hold the
 line. Bigger lift, only worth it if drift actually appears; noted so the option is on record.
 
+## 🤖 LLM suggestion — discuss before implementing
+
+_From a GLM-5.2 architectural review of pilot (read-only pass, 2026-06-25). These are the
+review's recommendations that were **not** implemented — parked here for discussion, **not
+endorsed**. Treat as an outside model's opinion: verify the reasoning against the code before
+acting. (The two contained fixes from the same review — a runtime shape guard at the
+pi-history boundary, and throttling the live-tick `listSessions` disk scan — were prototyped
+separately on branch `task/glm-fix-pilot`, not included here.)_
+
+- [ ] **Decompose the hub (god object).** `server/src/hub.ts` (~1439 lines) owns folded
+      session states, the running/initializing/attention maps, titles, the clients map, the
+      live ticker, desktop-update state, the OAuth pending map + single-flight flag, and the
+      prompt-results ledger; `handleClient` is one giant switch, and tests reach into privates
+      via `(hub as unknown as …)` (`hub.test.ts`). Suggestion: extract `OAuthFlow`,
+      `UpdateRelay`, `LiveTicker`, `PromptLedger` as collaborators the hub delegates to — the
+      hub orchestrates rather than owning eight unrelated state machines, which would also drop
+      the private-method test hacks. GLM ranked this the highest-leverage maintainability change.
+      _Discuss:_ worth the churn vs. living with a well-documented god object?
+
+- [ ] **Replace `structuredClone` snapshots with structural sharing.** A full `SessionState`
+      deep-clone fires on every snapshot send (`server/src/hub.ts`, fired on connect / switch /
+      reconnect / branch re-seed) — O(n) per snapshot for long transcripts, broadcast to every
+      viewer on a branch. Suggestion: structural sharing past a transcript-length threshold, or
+      an incremental diff on branch re-seed instead of a full clone. Pairs with the
+      already-planned JS-windowing work. _Discuss:_ premature until transcripts actually get
+      long? (already flagged as a known future cliff, not unnoticed.)
+
+- [ ] **Fix or gate the branch-durability gap.** A no-summary branch jump only moves the
+      in-memory leaf; it isn't durable until the next prompt appends a child, so a cold reopen
+      before prompting re-derives the pre-branch leaf — silent state loss in a shipped feature
+      (`server/src/pi/pi-driver.ts`, `branchFrom`). GLM suggested forcing a persist on
+      `navigateTree` **or** disabling the branch gesture until a child is appended. **Note:** a
+      follow-up fix run found force-persist isn't reachable through pi's public API (the leaf id
+      is in-memory only; a durable leaf change requires an appended entry), so this collapses to
+      _gate the gesture_ or _document the limitation_. _Discuss:_ gate vs. document?
+
+- [ ] **Track the `qna` unwrapped-bridge coupling with a pi-version canary.**
+      `server/src/pi/ui-bridge.ts` relies on pi handing extensions the raw, unwrapped bridge as
+      `ctx.ui`, so methods beyond the typed `ExtensionUIContext` stay callable — a dependency on
+      undocumented pi-internal behavior. If pi ever wraps `ctx.ui`, `qna` degrades silently (the
+      answer extension feature-detects and falls back, but a non-answer extension relying on it
+      would break invisibly). Suggestion: a pi-version canary test so a bump fails loud.
+      _Discuss:_ canary test vs. just a tracked-risk note?
+
 ## 💡 Brainstorm (unfiltered — owner to triage into the lanes above)
 
 _Generated 2026-06-17 on request. Cross-checked against existing items + DESIGN/DECISIONS;
