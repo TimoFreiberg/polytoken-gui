@@ -36,6 +36,18 @@ Runtime = **Bun** (native `Bun.serve` WS, built-in test runner, your ecosystem
 fit). Risk: pi SDK under Bun is unproven here — validated at M1; trivial fallback
 to Node+tsx since it's all TS.
 
+**Tracked risk — `qna` unwrapped-bridge coupling.** `PiUiBridge.qna()` (the
+multi-question form pilot offers extensions) is NOT part of pi's typed
+`ExtensionUIContext`. It is reachable only because pi hands extensions the RAW,
+UNWRAPPED bridge as `ctx.ui` (the runner returns `uiContext` as-is), so methods
+beyond the typed interface are still callable — a coupling to an undocumented
+pi-internal behavior. If pi ever wraps `ctx.ui`, `qna` silently degrades (the
+answer extension feature-detects and falls back; a non-answer extension relying
+on the same trick would break invisibly). The `as unknown as ExtensionUIContext`
+cast at `pi-driver.ts` bindExtensions is the seam. Canary:
+`server/src/pi/ui-bridge-coupling.test.ts` fails loud if pi adds `qna` to the
+typed interface (the cast would then be redundant or change semantics).
+
 ## D3. Frontend: **fresh Svelte 5 + Vite + Tailwind v4**
 Not forking pi-gui's React (Electron/IPC-coupled, single-window/single-session —
 the exact multi-client model we must discard). Not pi's `web-ui` (Lit, runs the
@@ -162,6 +174,22 @@ driver resumes the most recent session via `SessionManager.continueRecent(cwd)`,
 discovers via `list`, switches via `runtime.switchSession`, and rebuilds state
 from the session's messages on load (`historyToEvents`). Resume-across-restart
 and new↔existing switching both replay the full transcript.
+
+**Tracked risk — branch (leaf) durability gap.** A no-summary `branchFrom` only
+moves the session's in-memory `leafId` (`navigateTree`); it is NOT durable until
+the next prompt appends a child entry. If the server restarts or the session is
+cold-evicted (LRU warm cap) *before* the user prompts on the new branch, a reopen
+re-derives the leaf to the file tail — i.e. the user lands on the pre-branch
+state and the branch they jumped to is silently lost. This is a user-visible
+correctness gap on a shipped feature, scoped to the no-summary jump-then-
+(reload-before-prompt) flow. It has **no clean code fix via pi's public API**
+(`branch(id)` sets `leafId` in-memory only; the only durable leaf-changing paths
+append entries — `branchWithSummary` needs an LLM call, `appendLabelChange` adds
+a visible node), so it is tracked, not patched. Mitigations a user can take now:
+navigate with a label or summary (both persist an entry), or simply prompt on
+the new branch before reloading. The follow-up to have pilot persist the leaf
+explicitly (if pi grows the capability) is in `docs/TODO.md`. See the `branchFrom`
+comment in `server/src/pi/pi-driver.ts`.
 
 ### D14. Styling = same-family, dark-first (OQ8)
 Not pixel-faithful. Polish lane for later: beautiful prose/font rendering,

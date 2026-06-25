@@ -612,6 +612,17 @@ hit a session limit mid-verify; confirm each against the code before acting):_
           eviction / server restart) before prompting re-derives the leaf to the file tail.
           Benign for the warm jump-then-prompt flow; if it bites, navigate with a label or
           summary (those persist an entry) or have pilot persist the leaf explicitly.
+- [ ] **Branch (leaf) durability — tracked risk (D13).** A no-summary `branchFrom`
+      moves the session's in-memory `leafId` only (`navigateTree`); it is NOT durable
+      until the next prompt appends a child entry. A server restart or LRU cold-eviction
+      before the user prompts on the new branch re-derives the leaf to the file tail, so
+      the user lands on the pre-branch state and the jump is silently lost. **No clean
+      code fix via pi's public API** — `branch(id)` is in-memory only; the durable
+      leaf-changing paths append entries (`branchWithSummary` needs an LLM call,
+      `appendLabelChange` adds a visible node). Tracked under D13, not patched. User
+      mitigations: navigate with a label/summary (persists an entry) or prompt on the
+      new branch before reloading. Follow-up: have pilot persist the leaf explicitly
+      if/when pi grows the capability. See `branchFrom` in `server/src/pi/pi-driver.ts`.
 - [ ] **Scheduled / recurring runs**
 - [x] **Image attachments via browser file input** → done 2026-06-19. Up to ten selected
       images render as removable thumbnail chips and travel through the protocol into pi's

@@ -1279,8 +1279,10 @@ export async function createPiDriver(
       // so the seed equals the current transcript — the re-seed is harmless either way,
       // and never blanks state. NOTE: a no-summary jump only moves the in-memory leaf;
       // it isn't durable until the next prompt appends a child (a cold reopen before
-      // then re-derives the leaf to the file tail). Fine for the warm jump-then-prompt
-      // flow; see docs/TODO.md for the durability follow-up.
+      // then re-derives the leaf to the file tail). This is a TRACKED, known correctness
+      // gap (D13) with no clean code fix via pi's public API — branch(id) is in-memory
+      // only, and the durable leaf-changing paths append entries. Fine for the warm
+      // jump-then-prompt flow; see docs/TODO.md + docs/DECISIONS.md (D13) for mitigations.
       return {
         seed: seedFor(ws),
         editorText: result.editorText,
