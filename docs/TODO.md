@@ -9,6 +9,10 @@ See `docs/` siblings for context: `DESIGN.md` (architecture + roadmap), `DECISIO
 
 ## 🔴 Next (urgent / blocking)
 
+- [ ] don't collapse agent end-turn paragraphs that also ask user questions (is this distinguishable from a mid-turn user question? i have a session here, 019ef8d7-35a9-7738-afac-e718fdbaccc2, where Opus 4.8 sent a very final-response-paragraph looking message which also triggered a question and then continued working based on my response, and the pre-question paragraph was hidden. i would like to see this paragraph directly above my answers in the transcript!)
+- [ ] cmd+= / cmd+- (font size changes) aren't applied to the question widget, they should
+- [ ] hotkey for hiding/showing the question widget?
+
 - [x] **Reliable prompt delivery across disconnects** → done 2026-06-20. Every normal
       or create+first prompt gets a client UUID and is saved to an IndexedDB outbox before
       the composer clears. Pending rows render optimistically as Sending/Queued offline;
