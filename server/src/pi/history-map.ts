@@ -17,6 +17,53 @@ import type {
 } from "@pilot/protocol";
 import { imagesFromContent, textFromContent } from "./content.js";
 
+/**
+ * Roles `historyToEvents` knows how to render. This is the runtime shape guard at
+ * the pi-internal boundary: `session.messages` reaches us through a structural cast
+ * (`as unknown as readonly HistoryMessage[]` in pi-driver.ts), so a pi version bump
+ * that adds a new renderable role would compile fine but silently drop those messages
+ * from reloaded transcripts (the `default: break` below). {@link findUnknownHistoryRoles}
+ * + {@link warnUnknownHistoryRole} surface drift LOUD instead — a failing canary test
+ * (history-map-shape.test.ts) and a per-role process warning catch it.
+ *
+ * Keep in sync with the `switch (m.role)` cases in {@link historyToEvents}.
+ */
+export const KNOWN_HISTORY_ROLES = [
+  "user",
+  "assistant",
+  "toolResult",
+  "custom",
+  "bashExecution",
+  "compactionSummary",
+  "branchSummary",
+] as const;
+
+const KNOWN_ROLE_SET = new Set<string>(KNOWN_HISTORY_ROLES);
+
+/** Roles in `messages` that {@link historyToEvents} would silently drop. */
+export function findUnknownHistoryRoles(
+  messages: readonly { role: string }[],
+): string[] {
+  const unknown: string[] = [];
+  for (const m of messages) {
+    if (!KNOWN_ROLE_SET.has(m.role) && !unknown.includes(m.role))
+      unknown.push(m.role);
+  }
+  return unknown;
+}
+
+/** Warn once per unknown role per process so a pi shape drift is diagnosable, not
+ *  silent. Dedup avoids log spam when a whole reloaded transcript carries the new role. */
+const warnedRoles = new Set<string>();
+export function warnUnknownHistoryRole(role: string): void {
+  if (warnedRoles.has(role)) return;
+  warnedRoles.add(role);
+  console.warn(
+    `[pilot] history-map: unknown message role "${role}" — dropped from reloaded transcript. ` +
+      `This usually means a pi version bump added a renderable role; add a case to historyToEvents.`,
+  );
+}
+
 type ContentBlock =
   | { type: "text"; text: string }
   | { type: "thinking"; thinking: string }
@@ -228,9 +275,16 @@ export function historyToEvents(
         });
         break;
 
-      // unknown roles carry no transcript-renderable content here — skip.
-      default:
+      // Unknown roles carry no transcript-renderable content here — skip, but
+      // warn LOUD (once per role per process) so a pi version bump that introduces
+      // a new renderable role is diagnosable instead of silently dropping messages
+      // from reloaded transcripts. The cast `session.messages as unknown as
+      // readonly HistoryMessage[]` (pi-driver.ts) is structural; this guard is the
+      // only thing that surfaces shape drift at runtime. See history-map-shape.test.ts.
+      default: {
+        warnUnknownHistoryRole(m.role);
         break;
+      }
     }
   }
 
