@@ -153,6 +153,15 @@ export class SessionHub {
   // nulled when idle. (getContextUsage / listSessions are O(messages|files) — fine once
   // a second, never on the per-delta path.)
   private liveTimer: ReturnType<typeof setInterval> | null = null;
+  // Whether the session LIST content may have changed since the last list broadcast.
+  // The live-tick calls listSessions (a disk scan) ONLY when this is set, so a long
+  // streaming turn doesn't re-scan disk every second when nothing the sidebar shows
+  // has changed (assistantDelta/toolStarted/toolUpdated don't change list content —
+  // userMessageCount/preview/updatedAt move only at turn boundaries). Set by onEvent
+  // for the few events that CAN change list content; explicit list re-broadcasts
+  // (open/new/branch/archive) bypass the gate by calling broadcastSessionList directly.
+  // Starts true so the very first tick after a turn starts still refreshes.
+  private sessionListDirty = true;
   // Desktop auto-update (driven by scripts/desktop/update-watcher.ts via /update/state).
   // `updateSha` is the origin/main commit the watcher staged but deferred because a client
   // is connected; null = up to date. `applying` flips true when a client clicks the
@@ -260,6 +269,18 @@ export class SessionHub {
     const statusChanged = this.trackRunning(sid, ev);
     const attentionChanged = this.trackAttention(sid, ev);
     if (statusChanged || attentionChanged) this.broadcastSessionStatus();
+    // Mark the session list dirty for the few events that can change what the sidebar
+    // shows (userMessageCount/preview/updatedAt move here; a row appears/disappears).
+    // assistantDelta/toolStarted/toolUpdated do NOT change list content, so a long
+    // streaming turn skips the per-second listSessions disk scan (Rec #3).
+    if (
+      ev.type === "userMessage" ||
+      ev.type === "runCompleted" ||
+      ev.type === "runFailed" ||
+      ev.type === "sessionOpened" ||
+      ev.type === "sessionClosed"
+    )
+      this.sessionListDirty = true;
     // Fold + route only for a session someone is viewing (or the landing default).
     // Background sessions nobody opened are tracked above, but their transcript stays
     // private — folded only once a client focuses them (switchTo seeds it then).
@@ -483,9 +504,15 @@ export class SessionHub {
   }
 
   /** One live-refresh pass: a fresh session list for every client (running rows' counts
-   *  / names / previews climb) + every running, viewed session's current context usage. */
+   *  / names / previews climb) + every running, viewed session's current context usage.
+   *
+   *  The listSessions disk scan is gated on `sessionListDirty` (Rec #3): a long
+   *  streaming turn fires only assistantDelta/toolStarted/toolUpdated, none of which
+   *  changes sidebar-list content, so we skip the per-second disk scan until a
+   *  userMessage/runCompleted/etc. marks it dirty. Usage always refreshes (cheap, and
+   *  the meter is the reason this ticker exists). */
   private liveTick(): void {
-    void this.broadcastSessionList();
+    if (this.sessionListDirty) void this.broadcastSessionList();
     this.refreshUsage();
   }
 
@@ -1007,7 +1034,7 @@ export class SessionHub {
   /** Re-scan available sessions and send the list to every client. The list CONTENT is
    *  shared (one disk scan), but `activeSessionId` is per-connection — each client
    *  highlights its OWN focused row, so one client switching never moves another's
-   *  highlight. */
+   *  highlight. Clears `sessionListDirty` once the fresh list has been sent. */
   private async broadcastSessionList(): Promise<void> {
     try {
       const sessions = await this.driver.listSessions();
@@ -1019,6 +1046,7 @@ export class SessionHub {
           activeSessionId: conn.focusedId,
           defaultNewSessionCwd,
         });
+      this.sessionListDirty = false;
     } catch (e) {
       console.error("[hub] listSessions failed", e);
     }

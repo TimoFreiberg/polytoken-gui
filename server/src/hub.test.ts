@@ -101,7 +101,9 @@ class FakeDriver implements PilotDriver {
     };
   }
   readonly archiveCalls: { path: string; archived: boolean }[] = [];
+  listSessionsCalls = 0;
   async listSessions(): Promise<SessionListEntry[]> {
+    this.listSessionsCalls++;
     return [
       {
         sessionId: "s",
@@ -1381,6 +1383,7 @@ describe("SessionHub", () => {
     );
     await flush();
     a.received.length = 0;
+    d.listSessionsCalls = 0;
 
     (hub as unknown as { liveTick(): void }).liveTick();
     await flush();
@@ -1392,8 +1395,11 @@ describe("SessionHub", () => {
     expect(usageEv).toBeTruthy();
     if (usageEv?.type === "event" && usageEv.event.type === "usageUpdated")
       expect(usageEv.event.usage.tokens).toBeGreaterThan(0);
-    // ...and the sidebar rows refresh via a fresh session list.
-    expect(a.received.some((m) => m.type === "sessionList")).toBe(true);
+    // ...and the session-list scan is skipped because the sessionOpened already
+    // broadcast + cleared the dirty flag, and nothing list-affecting has happened
+    // since (Rec #3 throttle — a long streaming turn shouldn't re-scan disk/sec).
+    expect(d.listSessionsCalls).toBe(0);
+    expect(a.received.some((m) => m.type === "sessionList")).toBe(false);
   });
 
   test("the live ticker skips usage when the focused session is idle", async () => {
@@ -1405,6 +1411,7 @@ describe("SessionHub", () => {
     await flush();
     a.received.length = 0;
     d.getUsageCalls = 0;
+    d.listSessionsCalls = 0;
 
     (hub as unknown as { liveTick(): void }).liveTick();
     await flush();
@@ -1415,8 +1422,50 @@ describe("SessionHub", () => {
         (m) => m.type === "event" && m.event.type === "usageUpdated",
       ),
     ).toBe(false);
-    // The list still refreshes — harmless, and covers background rows.
+    // The idle session's list isn't dirty either, so the scan is skipped (Rec #3).
+    expect(d.listSessionsCalls).toBe(0);
+    expect(a.received.some((m) => m.type === "sessionList")).toBe(false);
+  });
+
+  test("the live ticker re-scans the session list only when list content may have changed (Rec #3)", async () => {
+    const d = new FakeDriver();
+    const hub = new SessionHub(d);
+    const a = client();
+    hub.addClient(a.send);
+    // A running seed marks the list dirty (sessionOpened).
+    d.emit(
+      ev({
+        type: "sessionOpened",
+        snapshot: { ...snap("s"), status: "running" },
+      }),
+    );
+    await flush();
+    a.received.length = 0;
+    d.listSessionsCalls = 0;
+
+    // First tick: dirty from sessionOpened, but that already broadcast + cleared on
+    // the flush above — so a quiet tick skips the scan.
+    (hub as unknown as { liveTick(): void }).liveTick();
+    await flush();
+    expect(d.listSessionsCalls).toBe(0);
+
+    // A userMessage arrives mid-turn — it CAN change sidebar content (count/preview),
+    // so the next tick re-scans and re-broadcasts.
+    d.emit(ev({ type: "userMessage", id: "u1", text: "more" }));
+    await flush();
+    a.received.length = 0;
+    (hub as unknown as { liveTick(): void }).liveTick();
+    await flush();
+    expect(d.listSessionsCalls).toBe(1);
     expect(a.received.some((m) => m.type === "sessionList")).toBe(true);
+
+    // Subsequent quiet ticks (assistantDelta etc. don't change list content) skip again.
+    a.received.length = 0;
+    d.listSessionsCalls = 0;
+    (hub as unknown as { liveTick(): void }).liveTick();
+    await flush();
+    expect(d.listSessionsCalls).toBe(0);
+    expect(a.received.some((m) => m.type === "sessionList")).toBe(false);
   });
 
   test("the ticker runs while a turn streams and stops when it ends", async () => {
