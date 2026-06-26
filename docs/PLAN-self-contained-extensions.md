@@ -234,16 +234,33 @@ unrelated to this refactor; logged in `docs/TODO.md`.
 The dependency D2 removes is shared by answer + session-namer, so land it
 first — neither can be ported cleanly without it.
 
-- New `backgroundModel` field in `PilotSettings` (value: a pi model spec string,
-  OR a `script:`-prefixed path).
-- Wire round-trip (`PilotSettings` already broadcasts; add the field + UI).
-- Settings panel control (under a new or existing section — see **[OPEN A]**).
-- Server-side resolver: given the setting, return a `Model` (spec parse →
-  `modelRegistry.find`, or run script → parse stdout). Fail loud on bad specs.
+- New `backgroundModel` field in `PilotSettings` (value: a pi model spec string
+  `provider/model[:thinking]`, OR a `script:`-prefixed path). `null` = unset
+  (extensions fall back to a sensible default or no-op).
+- Wire round-trip (`PilotSettings` broadcasts via the existing `pilotSettings`
+  message; add the field + a `setBackgroundModel` client→server message mirroring
+  `setLoginShell`).
+- Settings panel control **under the Models section** ([OPEN A] resolved → lean
+  (a): it's a model picker, keeps related controls together, no new section).
+- Server-side resolver: given the setting, return a `Model`. For a spec string,
+  use pi's `parseModelPattern(spec, modelRegistry.getModels())` (from
+  `~/src/pi/packages/coding-agent/src/core/model-resolver.ts:192`) — it returns
+  `{ model, thinkingLevel, warning }`, and `warning` is the loud-error channel
+  for bad specs. For a `script:` path, run it → parse stdout as a spec → recurse.
+  Fail loud on bad specs (surface `warning` to the Settings UI).
+- **Runtime access for extensions** ([OPEN F] resolved → option (a)): pilot
+  threads `backgroundModel` into `createAgentSessionServices`'s
+  `extensionFlagValues` Map (the same channel pilot already uses for `mcp-config`
+  at `pi-driver.ts` warmUp) as a `background-model` string flag. The ported
+  extensions (Chunks 2/4) register + read it via `ctx.getFlag("background-model")`
+  and resolve with `ctx.modelRegistry`. **Chunk 1 ships the flag-value
+  threading in warmUp** (read `backgroundModel` from `PilotSettings`, add to the
+  `extensionFlagValues` Map); the extension-side `registerFlag`/`getFlag` code
+  belongs to Chunks 2/4.
 - Mock-driver fixture for the setting so e2e can exercise it.
 
 **Verify:** new `e2e/settings.e2e.ts` case — set a spec, confirm it's read
-back; set a bad spec, confirm a loud error.
+back; set a bad spec, confirm a loud error (the resolver's `warning` surfacing).
 
 ### Chunk 2 — Port session-namer.ts (simplest of the 3) + owned-ext toggle machinery
 Smallest, softest coupling (only `setSessionName`, no host-UI bespoke methods).
@@ -345,16 +362,11 @@ After all three are ported and pilot-side verified:
 
 ## Open questions
 
-### [OPEN A] — Does the "background model" setting get its own Settings section, or ride an existing one?
-The Settings panel is already long (Appearance, Notifications, Providers,
-Models+Favorites, Extensions, Environment, Access token). The D2 control could:
-(a) live under "Models" (it's a model picker, thematically adjacent), or
-(b) get its own small section, or
-(c) be deferred into the **separate "settings submenus" refactor** the owner
-    flagged (see [OPEN C]).
-
-Lean: (a) under Models — it's a model picker, keeps related controls together,
-no new section.
+### [OPEN A] — RESOLVED (owner, 2026-06-26): option (a) — under Models
+Does the "background model" setting get its own Settings section, or ride an
+existing one? **Resolved: (a) under Models** — it's a model picker, keeps
+related controls together, no new section. (Chunk 0.5's nav refactor means it
+lands as a row inside the Models tab, not crowding a single scroll.)
 
 ### [OPEN B] — tasklist wire format: keep string lines or go structured?
 See Chunk 3. The structured option is newly viable once pilot owns the
@@ -400,6 +412,22 @@ the existing default-model), read in `warmUp()` to filter the
 `additionalExtensionPaths` array, + the Settings UI showing the toggle (with
 the OPEN D warning) for pilot-owned rows. User/project extensions keep using
 pi's force-exclude toggle unchanged.
+
+### [OPEN F] — RESOLVED (owner, 2026-06-26): option (a) — extension flag
+How do the ported extensions (session-namer, answer) READ pilot's
+`backgroundModel` setting at runtime? pi's `ExtensionContext` has
+`cwd`/`modelRegistry`/`model` but NO pilot-data channel — extensions can't see
+`PilotSettings` directly. The dotfiles versions currently resolve via
+`roles.mjs` reading `~/.pi/agent/roles.json`. **Resolution: (a) extension flag.**
+Pilot threads `backgroundModel` into `createAgentSessionServices`'s
+`extensionFlagValues` Map (the same channel pilot already uses for `mcp-config`
+in `warmUp`) as a `background-model` string flag. The ported extensions
+register a `background-model` string flag + read it via
+`ctx.getFlag("background-model")`, then resolve with `ctx.modelRegistry`.
+pi-native, no filesystem coupling, no coupling to pilot's data-dir location.
+**Chunk 1 ships the flag-value threading** (read `backgroundModel` from
+`PilotSettings`, add to the `extensionFlagValues` Map in `warmUp`); the
+extension-side `registerFlag`/`getFlag` code belongs to Chunks 2/4 (the ports).
 
 ## Non-goals
 
