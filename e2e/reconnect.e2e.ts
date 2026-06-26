@@ -16,7 +16,7 @@ async function gateInitialWebSocket(page: Page) {
       onmessage: ((event: MessageEvent) => void) | null = null;
       onopen: ((event: Event) => void) | null = null;
       protocol = "";
-      readyState = NativeWebSocket.CONNECTING;
+      readyState: 0 | 1 | 2 | 3 = NativeWebSocket.CONNECTING;
       url = "ws://pilot-blocked";
 
       constructor() {
@@ -43,7 +43,7 @@ async function gateInitialWebSocket(page: Page) {
       protocols?: string | string[],
     ): WebSocket {
       attempts += 1;
-      if (!allow) return new BlockedSocket() as WebSocket;
+      if (!allow) return new BlockedSocket() as unknown as WebSocket;
       return protocols === undefined
         ? new NativeWebSocket(url)
         : new NativeWebSocket(url, protocols);
@@ -54,7 +54,7 @@ async function gateInitialWebSocket(page: Page) {
     GatedWebSocket.CLOSING = NativeWebSocket.CLOSING;
     GatedWebSocket.CLOSED = NativeWebSocket.CLOSED;
     GatedWebSocket.prototype = NativeWebSocket.prototype;
-    window.WebSocket = GatedWebSocket as typeof WebSocket;
+    window.WebSocket = GatedWebSocket as unknown as typeof WebSocket;
 
     Object.assign(window, {
       __pilotAllowWebSocket: () => {
@@ -109,8 +109,8 @@ test("transcript survives a reload", async ({ page }) => {
 test("the connection banner can reconnect immediately", async ({ page }) => {
   const reconnect = await gotoWithBlockedWebSocket(page);
   await expect(reconnect).toHaveAttribute("title", "Reconnect now (Alt+R)");
-  const before = await page.evaluate(
-    () => (window as any).__pilotWebSocketAttempts(),
+  const before = await page.evaluate(() =>
+    (window as any).__pilotWebSocketAttempts(),
   );
 
   await page.evaluate(() => (window as any).__pilotAllowWebSocket());
@@ -120,8 +120,8 @@ test("the connection banner can reconnect immediately", async ({ page }) => {
     page.getByText("Routes live in", { exact: false }),
   ).toBeVisible();
   await expect(reconnect).toBeHidden();
-  const after = await page.evaluate(
-    () => (window as any).__pilotWebSocketAttempts(),
+  const after = await page.evaluate(() =>
+    (window as any).__pilotWebSocketAttempts(),
   );
   expect(after).toBeGreaterThan(before);
 });

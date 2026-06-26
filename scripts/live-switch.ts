@@ -29,10 +29,10 @@ let sessions: Array<{
 }> = [];
 let phase: "init" | "newSession" | "openSession" | "done" = "init";
 
-const fail = (msg: string) => {
+function fail(msg: string): never {
   console.error(`\nFAIL: ${msg}`);
   process.exit(1);
-};
+}
 const timeout = setTimeout(() => fail("timeout after 90s"), 90_000);
 
 const label = (s?: { displayName?: string; preview?: string }) =>

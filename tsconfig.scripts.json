@@ -1,0 +1,17 @@
+{
+  // Typechecks scripts/ — dev tooling (scripts/dev.ts dev server, scripts/live-*.ts
+  // manual Tailscale smoke tools, scripts/smoke-test.ts). Previously un-typechecked
+  // (same blind-spot shape as pilot/extensions before tsconfig.extensions.json): a
+  // genuine `target is possibly undefined` in live-switch.ts was hiding here.
+  //
+  // moduleDetection: "force" — the live-*.ts scripts have no top-level import/export,
+  // so without it tsc treats each as a script sharing one global scope and reports
+  // spurious "Cannot redeclare block-scoped variable" across files. Force-module gives
+  // each its own scope (correct: these are run as individual entry points via `bun run`).
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "moduleDetection": "force"
+  },
+  "include": ["scripts"]
+}

@@ -13,7 +13,7 @@
     "test": "bun test protocol server client/src scripts",
     "test:e2e": "playwright test",
     "test:e2e:update": "playwright test --update-snapshots",
-    "check": "tsc -p protocol/tsconfig.json --noEmit && tsc -p server/tsconfig.json --noEmit && tsc -p tsconfig.extensions.json --noEmit && bun run --cwd client check",
+    "check": "tsc -p protocol/tsconfig.json --noEmit && tsc -p server/tsconfig.json --noEmit && tsc -p tsconfig.extensions.json --noEmit && tsc -p tsconfig.scripts.json --noEmit && tsc -p tsconfig.e2e.json --noEmit && bun run --cwd client check",
     "deploy:now": "bash scripts/deploy-now.sh"
   },
   "devDependencies": {

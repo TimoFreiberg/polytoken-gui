@@ -1,0 +1,11 @@
+{
+  // Typechecks e2e/ (Playwright specs). Playwright does NOT typecheck by default, so
+  // type errors in specs slipped through — same blind-spot shape as pilot/extensions.
+  // A minimal extension of tsconfig.base.json (no `types` override needed: base ships
+  // `types: ["bun"]` and @playwright/test resolves normally).
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "noEmit": true
+  },
+  "include": ["e2e"]
+}

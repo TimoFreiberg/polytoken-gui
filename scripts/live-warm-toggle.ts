@@ -27,10 +27,10 @@ let b: S | undefined;
 let aFirstItems = -1;
 let phase: "init" | "openA1" | "openB" | "openA2" | "done" = "init";
 
-const fail = (msg: string) => {
+function fail(msg: string): never {
   console.error(`\nFAIL: ${msg}`);
   process.exit(1);
-};
+}
 const timeout = setTimeout(() => fail("timeout after 90s"), 90_000);
 const label = (s?: S) =>
   s?.displayName || s?.preview?.slice(0, 40) || "(untitled)";
