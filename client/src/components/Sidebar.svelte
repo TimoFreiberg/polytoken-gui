@@ -260,17 +260,27 @@
         }
       }
     };
-    const onDetach = (): void => closeMenu();
+    // Only a scroll that can move the popover's anchor closes it: something INSIDE the
+    // sidebar scrolling (the session list), caught via capture since scroll doesn't bubble.
+    // NOT an unrelated pane — the transcript auto-scrolling mid-stream would otherwise slam
+    // the menu shut the instant you open it on a freshly-created, still-streaming session
+    // (the worktree cleanup e2e flaked on exactly this). Resize always detaches it.
+    const onScroll = (e: Event): void => {
+      const t = e.target as HTMLElement | null;
+      if (t && typeof t.closest === "function" && t.closest(".sidebar"))
+        closeMenu();
+    };
+    const onResize = (): void => closeMenu();
     const id = setTimeout(() => document.addEventListener("click", onClick), 0);
     document.addEventListener("keydown", onKey);
-    window.addEventListener("scroll", onDetach, true);
-    window.addEventListener("resize", onDetach);
+    window.addEventListener("scroll", onScroll, true);
+    window.addEventListener("resize", onResize);
     return () => {
       clearTimeout(id);
       document.removeEventListener("click", onClick);
       document.removeEventListener("keydown", onKey);
-      window.removeEventListener("scroll", onDetach, true);
-      window.removeEventListener("resize", onDetach);
+      window.removeEventListener("scroll", onScroll, true);
+      window.removeEventListener("resize", onResize);
     };
   });
 
@@ -351,17 +361,24 @@
         forceUpdate();
       }
     };
-    const onDetach = (): void => closeBuildMenu();
+    // Same scoping as the session menu: only a sidebar-internal scroll detaches the
+    // anchored popover, not the transcript auto-scrolling in the other pane.
+    const onScroll = (e: Event): void => {
+      const t = e.target as HTMLElement | null;
+      if (t && typeof t.closest === "function" && t.closest(".sidebar"))
+        closeBuildMenu();
+    };
+    const onResize = (): void => closeBuildMenu();
     const id = setTimeout(() => document.addEventListener("click", onClick), 0);
     document.addEventListener("keydown", onKey);
-    window.addEventListener("scroll", onDetach, true);
-    window.addEventListener("resize", onDetach);
+    window.addEventListener("scroll", onScroll, true);
+    window.addEventListener("resize", onResize);
     return () => {
       clearTimeout(id);
       document.removeEventListener("click", onClick);
       document.removeEventListener("keydown", onKey);
-      window.removeEventListener("scroll", onDetach, true);
-      window.removeEventListener("resize", onDetach);
+      window.removeEventListener("scroll", onScroll, true);
+      window.removeEventListener("resize", onResize);
     };
   });
 
@@ -745,80 +762,6 @@
                       onclick={(e) => toggleMenu(e, s.path)}>⋯</IconButton
                     >
                   </div>
-                  {#if menuFor === s.path && menuPos}
-                    <div
-                      class="menu"
-                      role="menu"
-                      bind:this={menuEl}
-                      style={`top:${menuPos.top}px;${menuPos.left != null ? `left:${menuPos.left}px` : `right:${menuPos.right}px`}`}
-                    >
-                      {#if s.worktree && !s.worktree.reaped}
-                        <button
-                          class="menu-item"
-                          role="menuitem"
-                          title={`Copy the worktree path to the clipboard: ${s.worktree.path}`}
-                          onclick={() => copyWorktreePath(s)}
-                          >Copy worktree path</button
-                        >
-                        {#if confirmCleanup === s.path}
-                          <button
-                            class="menu-item danger"
-                            role="menuitem"
-                            data-testid="confirm-cleanup-worktree"
-                            title="Permanently remove the worktree from disk — discards any uncommitted changes"
-                            onclick={() => cleanupWorktree(s)}
-                            >Confirm: delete worktree</button
-                          >
-                        {:else}
-                          <button
-                            class="menu-item"
-                            role="menuitem"
-                            data-testid="cleanup-worktree"
-                            title="Remove this worktree from disk, freeing the isolated copy (asks to confirm)"
-                            onclick={() => (confirmCleanup = s.path)}
-                            >Clean up worktree…</button
-                          >
-                        {/if}
-                      {/if}
-                      <button
-                        class="menu-item"
-                        role="menuitem"
-                        data-testid="copy-session-id"
-                        title={`Copy the pi session id to the clipboard: ${s.sessionId}`}
-                        onclick={() => copySessionId(s)}
-                        >Copy session ID</button
-                      >
-                      <button
-                        class="menu-item"
-                        role="menuitem"
-                        title="Rename this session (R)"
-                        onclick={() => startRename(s)}>
-                        <span>Rename</span>
-                        <kbd class="hotkey" aria-hidden="true">R</kbd>
-                      </button
-                      >
-                      <button
-                        class="menu-item"
-                        role="menuitem"
-                        data-testid="reload-session"
-                        title="Reload pi context from scratch (config + extensions reloaded) and restore the transcript — recovery for a session a buggy extension wedged (L)"
-                        onclick={() => reloadSession(s)}>
-                        <span>Reload pi session</span>
-                        <kbd class="hotkey" aria-hidden="true">L</kbd>
-                      </button>
-                      <button
-                        class="menu-item"
-                        role="menuitem"
-                        title={s.archived
-                          ? "Restore this session to the active list (A)"
-                          : "Hide this session from the active list (A)"}
-                        onclick={() => toggleArchive(s)}
-                      >
-                        <span>{s.archived ? "Unarchive" : "Archive"}</span>
-                        <kbd class="hotkey" aria-hidden="true">A</kbd>
-                      </button>
-                    </div>
-                  {/if}
                   {/if}
                 </li>
               {/each}
@@ -828,6 +771,93 @@
       {/each}
     {/if}
   </nav>
+
+  <!-- Session actions menu. Rendered ONCE (outside the {#each sessions} list) and keyed
+       on `menuFor` (the stable user-intent signal), NOT on `menuSession`: that lookup is
+       $derived from store.sessions.find(...), and when the server pushes a new session list
+       (every sessionList / attention / live-count tick) the derived re-runs and can briefly
+       resolve to null mid-update — keying the menu's mount on it unmounts+remounts the
+       DOM, detaching buttons mid-click-action (the worktree cleanup tests hit this
+       deterministically: "element was detached from the DOM, retrying" → 30s timeout).
+       `menuFor` only changes on explicit open/close, so the menu stays mounted across
+       list pushes. Position is `fixed` (viewport-relative), so lifting it out of the
+       row's DOM tree doesn't change where it appears. -->
+  {#if menuFor && menuPos}
+    <div
+      class="menu"
+      role="menu"
+      bind:this={menuEl}
+      style={`top:${menuPos.top}px;${menuPos.left != null ? `left:${menuPos.left}px` : `right:${menuPos.right}px`}`}
+    >
+      {#if menuSession}
+        {#if menuSession.worktree && !menuSession.worktree.reaped}
+          <button
+            class="menu-item"
+            role="menuitem"
+            title={`Copy the worktree path to the clipboard: ${menuSession.worktree.path}`}
+            onclick={() => copyWorktreePath(menuSession)}
+            >Copy worktree path</button
+          >
+          {#if confirmCleanup === menuSession.path}
+            <button
+              class="menu-item danger"
+              role="menuitem"
+              data-testid="confirm-cleanup-worktree"
+              title="Permanently remove the worktree from disk — discards any uncommitted changes"
+              onclick={() => cleanupWorktree(menuSession)}
+              >Confirm: delete worktree</button
+            >
+          {:else}
+            <button
+              class="menu-item"
+              role="menuitem"
+              data-testid="cleanup-worktree"
+              title="Remove this worktree from disk, freeing the isolated copy (asks to confirm)"
+              onclick={() => (confirmCleanup = menuSession.path)}
+              >Clean up worktree…</button
+            >
+          {/if}
+        {/if}
+        <button
+          class="menu-item"
+          role="menuitem"
+          data-testid="copy-session-id"
+          title={`Copy the pi session id to the clipboard: ${menuSession.sessionId}`}
+          onclick={() => copySessionId(menuSession)}
+          >Copy session ID</button
+        >
+        <button
+          class="menu-item"
+          role="menuitem"
+          title="Rename this session (R)"
+          onclick={() => startRename(menuSession)}>
+          <span>Rename</span>
+          <kbd class="hotkey" aria-hidden="true">R</kbd>
+        </button
+        >
+        <button
+          class="menu-item"
+          role="menuitem"
+          data-testid="reload-session"
+          title="Reload pi context from scratch (config + extensions reloaded) and restore the transcript — recovery for a session a buggy extension wedged (L)"
+          onclick={() => reloadSession(menuSession)}>
+          <span>Reload pi session</span>
+          <kbd class="hotkey" aria-hidden="true">L</kbd>
+        </button>
+        <button
+          class="menu-item"
+          role="menuitem"
+          title={menuSession.archived
+            ? "Restore this session to the active list (A)"
+            : "Hide this session from the active list (A)"}
+          onclick={() => toggleArchive(menuSession)}
+        >
+          <span>{menuSession.archived ? "Unarchive" : "Archive"}</span>
+          <kbd class="hotkey" aria-hidden="true">A</kbd>
+        </button>
+      {/if}
+    </div>
+  {/if}
   </div>
 
   <!-- Desktop auto-update card: shown when a new origin/main is staged but deferred

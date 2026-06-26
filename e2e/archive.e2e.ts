@@ -80,15 +80,19 @@ test("right-clicking a session row opens its overflow menu", async ({
     .filter({ hasText: "Explore the fold reducer" });
   await expect(row).toBeVisible();
 
-  // The menu is closed to start with — no hover, no ⋯ click.
+  // The menu is closed to start with — no hover, no ⋯ click. The menu renders once at
+  // the sidebar level (lifted out of the per-row {#each}), so check there for absence.
   await expect(
-    row.getByRole("menuitem", { name: "Archive", exact: true }),
+    sidebar.getByRole("menuitem", { name: "Archive", exact: true }),
   ).toHaveCount(0);
 
   // Right-click the row itself opens the same menu the ⋯ trigger would.
+  // The menu renders once at the sidebar level (lifted out of the per-row {#each} so
+  // session-list pushes don't tear it down mid-click), so the menuitem lives under
+  // `sidebar`, not `row`.
   await row.locator(".row").click({ button: "right" });
   await expect(
-    row.getByRole("menuitem", { name: "Archive", exact: true }),
+    sidebar.getByRole("menuitem", { name: "Archive", exact: true }),
   ).toBeVisible();
 
   // And it drives the same action.
