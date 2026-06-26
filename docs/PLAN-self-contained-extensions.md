@@ -213,23 +213,43 @@ first — neither can be ported cleanly without it.
 **Verify:** new `e2e/settings.e2e.ts` case — set a spec, confirm it's read
 back; set a bad spec, confirm a loud error.
 
-### Chunk 2 — Port session-namer.ts (simplest of the 3)
+### Chunk 2 — Port session-namer.ts (simplest of the 3) + owned-ext toggle machinery
 Smallest, softest coupling (only `setSessionName`, no host-UI bespoke methods).
 Good first real port — proves the porting pattern (copy file → swap roles.mjs
 for the D2 setting → drop realpath-cross-symlink scaffolding → register via
-D1).
+D1). **Also the home of the [OPEN E] (b) pilot-side toggle** (first porting
+chunk to surface a toggle in the Extensions UI) and the D3 "Pilot" badge
+projection tweak, since both touch the same Settings Extensions row.
 
 - Copy `session-namer.ts` → `pilot/extensions/session-namer.ts`.
 - Replace `getResolveRoleModel()` / `resolveRoleModel(ROLE, …)` with a read of
   the D2 background-model setting (role `text-summary` → the setting).
 - Remove the `realpath`/`pathToFileURL` roles.mjs import dance (no longer
   needed — local file now).
-- Register via `additionalExtensionPaths`.
+- Register via `additionalExtensionPaths`. **Remove the Chunk 0 spike**
+  (`pilot/extensions/_spike.ts` + its `PILOT_SPIKE_EXTENSION_PATH` wiring +
+  `spike-extension.test.ts`) — the spike was throwaway de-risking and is a hard
+  gate on this chunk (it currently surfaces `/pilot-spike` in every real
+  session). Keep a slimmed regression test that re-asserts the load + source
+  mechanics against `session-namer.ts` instead.
 - Add a frontmatter/description per D3.
+- **[OPEN E] (b) pilot-side toggle:** add a pilot-owned `enabledPaths` set
+  (persisted in `PilotSettings`, mirroring the existing default-model field),
+  read in `warmUp()` to filter the `additionalExtensionPaths` array passed to
+  `createAgentSessionServices` (omit disabled owned paths). Settings UI shows
+  the toggle on pilot-owned rows (with the [OPEN D] inline warning for
+  load-bearing ones — session-namer is low-risk, but wire the warning path so
+  chunks 3–4 reuse it). User/project extensions keep pi's force-exclude toggle
+  unchanged.
+- **D3 "Pilot" badge projection:** in `listExtensions` (server-side), project
+  the owned extensions' `source:"cli"/scope:"temporary"` to a "Pilot" origin
+  so they group under the Pilot header in the Settings Extensions list.
 
 **Verify:** existing `e2e/settings.e2e.ts` Extensions-section tests already
 reference `answer.ts`/`tasklist.ts` mocks — extend with a session-namer mock +
-assert it appears under the "Pilot" origin group with its description.
+assert it appears under the "Pilot" origin group with its description. Add a
+case that the pilot-side toggle actually disables an owned extension (the
+chunk-0 finding that pi's force-exclude couldn't).
 
 ### Chunk 3 — Port tasklist.ts
 Medium coupling: the `setWidget("tasklist", lines)` wire format + pilot's
@@ -315,51 +335,39 @@ submenus for its longer lists, and confirmed it folds into this project as
 every section, run through the inner loop independently, and precedes the
 Extensions UI work so the new origin-grouped list lands inside the new nav.
 
-### [OPEN D] — Should pilot-owned extensions be toggleable at all? *(reframed by Chunk 0 — see [OPEN E])*
+### [OPEN D] — Should pilot-owned extensions be toggleable at all? *(resolved via [OPEN E] → option (b))*
 D1 *said* yes (uniform toggle) — but Chunk 0 disproved the mechanism that was
 supposed to deliver uniform toggling (a `-<resolvedPath>` override does NOT
-disable an `additionalExtensionPaths` entry). So "toggleable" no longer falls
-out for free; it's a build, and the load-bearing-breakage concern below still
-stands independently. Disabling `answer.ts` breaks the qna UI (pilot has
-components that assume `qna` exists), and disabling `tasklist.ts` silently
-degrades the tasklist widget. Options (revised):
-(a) toggleable, via a *pilot-side* enable/disable (not pi's force-exclude — see
-    [OPEN E]) but with a warning in the UI ("Disabling this breaks the Q&A
-    feature"), or
-(b) non-toggleable for the 3 pilot-owned ones (always on, no toggle), or
-(c) toggleable, no warning, and let it break (operator's choice).
+disable an `additionalExtensionPaths` entry). Disabling `answer.ts` breaks the
+qna UI (pilot has components that assume `qna` exists), and disabling
+`tasklist.ts` silently degrades the tasklist widget — so the load-bearing-breakage
+concern stands independently. **Resolved with [OPEN E] option (b):** pilot owns
+its own enabled/disabled set for the owned paths and omits disabled ones from
+`additionalExtensionPaths`. The Settings UI should show an inline warning on the
+load-bearing ones ("Disabling this breaks the Q&A feature") rather than letting
+them break silently. Toggle machinery lands with the first porting chunk that
+surfaces a toggle in the UI (Chunk 2 — see its sub-task).
 
-Lean: (b) — now the path of least resistance AND least footgun, since pi's
-force-exclude doesn't even work on these entries (Chunk 0). Defer the final
-call to [OPEN E]'s resolution, which determines whether (a) is even feasible
-without extra pilot-side work.
-
-### [OPEN E] — NEW (Chunk 0): pi's force-exclude override doesn't disable `additionalExtensionPaths` entries. How should pilot-owned extensions be toggleable?
+### [OPEN E] — RESOLVED (owner, 2026-06-26): option (b) — pilot-side toggle
 Chunk 0 disproved D1's assumption: a `-<resolvedPath>` force-exclude override
 in pi settings is **ignored** for `additionalExtensionPaths` entries (pi's
 `resolveLocalExtensionSource` hardcodes `enabled: true`; `isEnabledByOverrides`
 only runs on the auto-discovery scan path). So pilot's existing Settings
 Extensions toggle — which writes a `-<resolvedPath>` override — is a no-op on
-the owned extensions. Options:
-(a) **Accept non-toggleable for the 3 owned ones** (always on) — simplest;
-    matches OPEN D lean (b). The Settings UI hides/disables the toggle for
-    them with a note. Cost: none beyond the UI projection tweak already needed
-    for the D3 "Pilot" badge.
-(b) **Pilot-side toggle** — pilot maintains its own enabled/disabled set for
-    owned extension paths and simply omits disabled ones from the
-    `additionalExtensionPaths` array it passes to `createAgentSessionServices`.
-    Cost: a small new pilot-side setting + store state + UI; but it's
-    pilot-internal, not dependent on pi's force-exclude. Gives a real toggle
-    (and pairs with OPEN D option (a)'s warning).
-(c) **Upstream pi fix** — contribute a patch so `resolveLocalExtensionSource`
-    honors `isEnabledByOverrides`, restoring D1's original "uniform toggle"
-    story for free. Cost: an upstream PR + waiting on a pi release; highest
-    fidelity, slowest.
+the owned extensions. **Resolution: (b) pilot-side toggle.** Pilot maintains its
+own enabled/disabled set for owned extension paths and omits disabled ones from
+the `additionalExtensionPaths` array it passes to `createAgentSessionServices`.
+It's pilot-internal, not dependent on pi's force-exclude, and gives a real
+toggle. Pairs with [OPEN D]'s inline-warning-on-load-bearing ones.
 
-Lean: (a) for now (ship the 3 ports as always-on, matching OPEN D (b)), with
-(c) as a follow-up if a real toggle is later wanted. (b) is the middle ground
-if a toggle is wanted *before* an upstream fix lands. **Resolves before
-chunks 2–4**, since the toggle UI for the owned extensions depends on it.
+**Implementation home:** the toggle machinery is a sub-task of the first
+porting chunk that surfaces a toggle in the Extensions UI (Chunk 2), since
+that's where the owned-extension row + toggle render. Concretely, by end of
+Chunk 2: a pilot-owned `enabledPaths` set (persisted in `PilotSettings`, like
+the existing default-model), read in `warmUp()` to filter the
+`additionalExtensionPaths` array, + the Settings UI showing the toggle (with
+the OPEN D warning) for pilot-owned rows. User/project extensions keep using
+pi's force-exclude toggle unchanged.
 
 ## Non-goals
 
