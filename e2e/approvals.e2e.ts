@@ -155,6 +155,14 @@ test("ambient: status strip + a collapsed tasklist pill that expands", async ({
   await pill.hover();
   await expect(task).toBeVisible();
   await expect(page.getByText("wire up /health route")).toBeVisible();
+  // [OPEN B]: the task id is INTERNAL-only — the human-facing widget lines carry just
+  // the description (`  ○ add a smoke test`), never a `#<id>` badge. Assert the three
+  // task lines render and none contains a `#` (the descriptions themselves have no `#`,
+  // so any `#` here would be the dropped id badge).
+  const taskLines = page.locator(".tasklist .task");
+  await expect(taskLines).toHaveCount(3);
+  for (const line of await taskLines.all())
+    await expect(line).not.toContainText("#");
   // …and moving the pointer away collapses it again (peek, not pinned).
   await page.mouse.move(0, 0);
   await expect(task).toBeHidden();

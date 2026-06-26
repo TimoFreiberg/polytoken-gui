@@ -12,7 +12,10 @@
 // server code — it's a plain readonly array, no runtime/DOM deps. `pi-driver.ts` derives
 // its name→path map from this list so the two can't drift. Add a name here in the same
 // chunk that ships the extension file (session-namer = Chunk 2; answer/tasklist = 3/4).
-export const PILOT_OWNED_EXTENSION_NAMES: readonly string[] = ["session-namer"];
+export const PILOT_OWNED_EXTENSION_NAMES: readonly string[] = [
+  "session-namer",
+  "tasklist",
+];
 
 /** Is `nameOrBasename` a pilot-OWNED extension? Accepts the basename with or without a
  *  trailing `.ts` (the Settings list / fixture rows carry `name.ts`; the protocol list

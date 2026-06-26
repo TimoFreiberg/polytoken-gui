@@ -374,7 +374,7 @@ test("the Extensions section is collapsed by default and lists on expand", async
   await expect(toggle).toHaveAttribute("aria-expanded", "true");
   // The mock's loaded extensions list, with counts; the errored one shows its problem.
   await expect(page.getByTestId("ext-answer.ts")).toBeVisible();
-  await expect(page.getByTestId("ext-tasklist.ts")).toContainText("2 tools");
+  await expect(page.getByTestId("ext-tasklist.ts")).toContainText("4 tools");
   await expect(page.getByTestId("ext-fancy-tui.ts")).toContainText(
     "terminal-only",
   );

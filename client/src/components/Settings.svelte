@@ -212,9 +212,12 @@
   //   owned extension basename → a short warning shown inline when its toggle is OFF, so
   //   disabling a load-bearing one (answer breaks the Q&A UI; tasklist degrades the
   //   widget) doesn't fail silently. session-namer is LOW-risk (disabling just stops
-  //   auto-naming) so it's absent here — but the render path reads this map so Chunks 3/4
-  //   can add ["answer","tasklist"] warnings without touching the markup.
-  const EXT_LOAD_BEARING_WARNINGS: Record<string, string> = {};
+  //   auto-naming) so it's absent here — but the render path reads this map so Chunk 4
+  //   can add an "answer" warning without touching the markup.
+  const EXT_LOAD_BEARING_WARNINGS: Record<string, string> = {
+    tasklist:
+      "Disabling this hides the open-tasks widget above the composer.",
+  };
   // Whether a row is one of pilot's OWNED extensions (its toggle routes to pilot's
   //   `enabledExtensions`, not pi's force-exclude — Chunk 0 finding). Delegates to the
   //   shared protocol predicate so client + server can't disagree on what counts as owned.

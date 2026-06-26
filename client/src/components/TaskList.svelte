@@ -31,11 +31,10 @@
       <div class="pop-card">
         <div class="pop-head">Open tasks · {count}</div>
         <ul class="tasks">
-          {#each tasks as t (t.id)}
+          {#each tasks as t, i (`${i}:${t.description}`)}
             <li class="task">
               <span class="mark" aria-hidden="true">○</span>
               <span class="desc">{t.description}</span>
-              <span class="id" title="Task id">#{t.id}</span>
             </li>
           {/each}
         </ul>
@@ -193,12 +192,5 @@
     flex: 1;
     min-width: 0;
     word-break: break-word;
-  }
-  .id {
-    flex-shrink: 0;
-    font-family: var(--font-mono);
-    font-size: 10.5px;
-    color: var(--text-faint);
-    align-self: center;
   }
 </style>

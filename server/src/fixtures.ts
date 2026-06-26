@@ -225,13 +225,22 @@ export const MOCK_EXTENSIONS: readonly ExtensionInfo[] = [
     toolCount: 1,
     commandCount: 0,
   },
+  // A pilot-OWNED extension (the ported tasklist). Its `source` is "Pilot" (the D3
+  //  badge the real driver projects for additionalExtensionPaths entries) and it carries
+  //  a `description` (parsed from the file's @pilot frontmatter in the real driver). The
+  //  resolved path matches the name a pilot-owned toggle keys off, so the mock's
+  //  setExtensionEnabled routes it to pilot's `enabledExtensions` set (the [OPEN E]
+  //  toggle — pi's force-exclude is a no-op on owned paths). Mirrors the session-namer
+  //  row below; tool/command counts reflect what the ported extension actually
+  //  registers (tasklist_add/done/delete/list + the /tasks command).
   {
-    resolvedPath: "/home/pi/.pi/agent/extensions/tasklist.ts",
+    resolvedPath: "tasklist",
     name: "tasklist.ts",
-    source: "user",
+    source: "Pilot",
     enabled: true,
-    toolCount: 2,
+    toolCount: 4,
     commandCount: 1,
+    description: "In-session task tracking widget — the agent maintains a focused task list with reminders.",
   },
   // A pilot-OWNED extension (the ported session-namer). Its `source` is "Pilot" (the
   //  D3 badge the real driver projects for additionalExtensionPaths entries) and it
@@ -1065,12 +1074,13 @@ export function ambient(): ScriptStep[] {
           requestId: "w1",
           key: "tasklist",
           // Matches the tasklist extension's real wire format so the client's
-          // collapsed-pill rendering is exercised by the dev bar + e2e.
+          // collapsed-pill rendering is exercised by the dev bar + e2e. [OPEN B]: the
+          // item lines carry just the description (the #id is internal-only).
           lines: [
             "Open Tasks (3):",
-            "  ○ #v23gry: wire up /health route",
-            "  ○ #4dhaiz: add a smoke test",
-            "  ○ #dyouxr: document the deploy step",
+            "  ○ wire up /health route",
+            "  ○ add a smoke test",
+            "  ○ document the deploy step",
           ],
           placement: "aboveComposer",
         },
