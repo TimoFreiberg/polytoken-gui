@@ -156,14 +156,20 @@ function findTask(
 
   // 2. Prefix match on ID
   const prefixHits = tasks.filter((t) => t.id.startsWith(trimmed));
-  if (prefixHits.length === 1) return { task: prefixHits[0] };
+  if (prefixHits.length === 1) {
+    const task = prefixHits[0];
+    if (task) return { task };
+  }
 
   // 3. Case-insensitive substring on description
   const lower = trimmed.toLowerCase();
   const substrHits = tasks.filter((t) =>
     t.description.toLowerCase().includes(lower),
   );
-  if (substrHits.length === 1) return { task: substrHits[0] };
+  if (substrHits.length === 1) {
+    const task = substrHits[0];
+    if (task) return { task };
+  }
 
   // 4. Disambiguate: show candidates if prefix/substring hit multiple
   const candidates = prefixHits.length > 1 ? prefixHits : substrHits;
@@ -410,6 +416,20 @@ export default function tasklistExtension(pi: ExtensionAPI) {
       }
       const idx = tasks.indexOf(result.task);
       const done = tasks.splice(idx, 1)[0];
+      // splice yields the removed element; idx came from indexOf against the same
+      // `tasks` array result.task was found in, so this is non-empty in practice.
+      // Guard anyway so a future invariant break surfaces as a tool error, not a crash.
+      if (!done) {
+        return {
+          content: [{ type: "text", text: "Task vanished before completion." }],
+          isError: true,
+          details: {
+            action: "done",
+            error: "not_found",
+            taskId: params.taskId,
+          },
+        };
+      }
       markToolUsed();
       writeFile();
       updateWidget(ctx.ui);
@@ -457,6 +477,19 @@ export default function tasklistExtension(pi: ExtensionAPI) {
       }
       const idx = tasks.indexOf(result.task);
       const removed = tasks.splice(idx, 1)[0];
+      // Same invariant + guard as tasklist_done: idx came from indexOf against the
+      // array result.task was found in, so non-empty in practice; guard for safety.
+      if (!removed) {
+        return {
+          content: [{ type: "text", text: "Task vanished before deletion." }],
+          isError: true,
+          details: {
+            action: "delete",
+            error: "not_found",
+            taskId: params.taskId,
+          },
+        };
+      }
       markToolUsed();
       writeFile();
       updateWidget(ctx.ui);

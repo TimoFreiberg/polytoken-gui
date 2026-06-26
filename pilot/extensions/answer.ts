@@ -61,6 +61,8 @@ import {
   type ExtensionContext,
   type KeybindingsManager,
   type ModelRegistry,
+  type SessionMessageEntry,
+  type SessionEntry,
   type Theme,
 } from "@earendil-works/pi-coding-agent";
 import { BorderedLoader } from "@earendil-works/pi-coding-agent";
@@ -149,6 +151,10 @@ export function formatQnA(
 
   for (let i = 0; i < questions.length; i++) {
     const q = questions[i];
+    // The loop bound guarantees i < questions.length, so q is defined; the guard
+    // satisfies noUncheckedIndexedAccess and skips a malformed (short) array
+    // defensively rather than crashing the formatter.
+    if (!q) continue;
     const a = answers[i] ?? emptyAnswer();
 
     parts.push(`Q: ${q.question}`);
@@ -160,9 +166,12 @@ export function formatQnA(
     if (hasOptions) {
       const picked = new Set(a.selectedOptionIndices);
       parts.push("Options:");
-      for (let j = 0; j < q.options!.length; j++) {
+      const opts = q.options!;
+      for (let j = 0; j < opts.length; j++) {
+        const opt = opts[j];
+        if (!opt) continue; // loop bound guarantees this; guard for noUncheckedIndexedAccess
         const mark = picked.has(j) ? "[x]" : "[ ]";
-        parts.push(`  ${mark} ${q.options![j].label}`);
+        parts.push(`  ${mark} ${opt.label}`);
       }
     }
 
@@ -170,7 +179,9 @@ export function formatQnA(
     const chosenLabels = hasOptions
       ? a.selectedOptionIndices
           .filter((idx) => idx >= 0 && idx < q.options!.length)
-          .map((idx) => q.options![idx].label)
+          .map((idx) => q.options![idx])
+          .filter((opt): opt is QuestionOption => Boolean(opt))
+          .map((opt) => opt.label)
       : [];
     const custom = a.customText.trim();
     const answerSegments: string[] = [...chosenLabels];
@@ -418,7 +429,10 @@ function parseExtractionResult(text: string): ExtractionResult {
   let jsonStr = text;
   const jsonMatch = text.match(/```(?:json)?\s*([\s\S]*?)```/);
   if (jsonMatch) {
-    jsonStr = jsonMatch[1].trim();
+    // The regex has exactly one capture group; it's defined when jsonMatch matches.
+    // The non-null assertion is safe under noUncheckedIndexedAccess because the
+    // `if (jsonMatch)` guard above confirms a match.
+    jsonStr = jsonMatch[1]!.trim();
   }
 
   let parsed: unknown;
@@ -544,7 +558,28 @@ class QnAComponent implements Component, Focusable {
   // --- Mode helpers ---
 
   private currentQuestion(): ExtractedQuestion {
-    return this.questions[this.currentIndex];
+    // currentIndex is clamped to [0, questions.length) by navigateTo's bounds
+    // guard; reaching here out of bounds is a logic bug we want to surface loudly,
+    // not silently degrade. (noUncheckedIndexedAccess makes this.questions[i]
+    // ExtractedQuestion | undefined — the guard also satisfies that.)
+    const q = this.questions[this.currentIndex];
+    if (!q)
+      throw new Error(
+        `answer: currentIndex ${this.currentIndex} out of range (questions: ${this.questions.length})`,
+      );
+    return q;
+  }
+
+  /** The answer for the current question. Mirrors currentQuestion(): in-bounds by
+   *  construction (answers is built questions-length via emptyAnswer()), guarded
+   *  so a future length-mismatch bug surfaces instead of corrupting silently. */
+  private currentAnswer(): QnAAnswer {
+    const a = this.answers[this.currentIndex];
+    if (!a)
+      throw new Error(
+        `answer: currentIndex ${this.currentIndex} out of range (answers: ${this.answers.length})`,
+      );
+    return a;
   }
 
   /** Whether the current question is a choice question (has options). */
@@ -585,11 +620,11 @@ class QnAComponent implements Component, Focusable {
       // "Type something" escape uses the editor, and that is captured when the
       // user leaves edit mode. Nothing to flush here unless mid-edit.
       if (this.choiceEditMode) {
-        this.answers[this.currentIndex].customText = this.editor.getText();
+        this.currentAnswer().customText = this.editor.getText();
       }
       return;
     }
-    this.answers[this.currentIndex].customText = this.editor.getText();
+    this.currentAnswer().customText = this.editor.getText();
   }
 
   /** Load the current question's stored free-text into the editor, if any. */
@@ -598,7 +633,7 @@ class QnAComponent implements Component, Focusable {
       this.editor.setText("");
       return;
     }
-    this.editor.setText(this.answers[this.currentIndex]?.customText || "");
+    this.editor.setText(this.currentAnswer().customText || "");
   }
 
   private navigateTo(index: number): void {
@@ -616,7 +651,7 @@ class QnAComponent implements Component, Focusable {
   /** Toggle (multiSelect) or set (single-select) the option under the cursor. */
   private chooseCurrentOption(): void {
     const q = this.currentQuestion();
-    const a = this.answers[this.currentIndex];
+    const a = this.currentAnswer();
 
     if (this.isOtherRow(this.optionCursor)) {
       // Enter the free-text escape editor.
@@ -725,7 +760,7 @@ class QnAComponent implements Component, Focusable {
     if (this.isChoice() && this.choiceEditMode) {
       // Esc leaves the escape editor and returns to the option list.
       if (matchesKey(data, Key.escape)) {
-        this.answers[this.currentIndex].customText = this.editor.getText();
+        this.currentAnswer().customText = this.editor.getText();
         this.choiceEditMode = false;
         this.invalidate();
         this.requestRender();
@@ -737,7 +772,7 @@ class QnAComponent implements Component, Focusable {
         !matchesKey(data, Key.shift("enter"))
       ) {
         const text = this.editor.getText().trim();
-        const a = this.answers[this.currentIndex];
+        const a = this.currentAnswer();
         a.customText = text;
         // A free-text escape answer overrides any checkbox selections.
         a.selectedOptionIndices = [];
@@ -924,7 +959,7 @@ class QnAComponent implements Component, Focusable {
     lines.push(padLine(emptyBoxLine()));
 
     // Current question
-    const q = this.questions[this.currentIndex];
+    const q = this.currentQuestion();
     const questionText = `${t.bold("Q:")} ${q.question}`;
     for (const wl of wrapTextWithAnsi(questionText, contentWidth)) {
       lines.push(padLine(boxLine(wl)));
@@ -948,12 +983,14 @@ class QnAComponent implements Component, Focusable {
     if (this.isChoice() && !this.choiceEditMode) {
       // Option list (single-select or checkbox). The trailing row is the
       // "Type something" free-text escape.
-      const a = this.answers[this.currentIndex];
+      const a = this.currentAnswer();
       const selected = new Set(a.selectedOptionIndices);
       const opts = q.options ?? [];
       const multi = q.multiSelect === true;
 
       for (let i = 0; i < opts.length; i++) {
+        const opt = opts[i];
+        if (!opt) continue; // loop bound guarantees this; guard for noUncheckedIndexedAccess
         const onCursor = i === this.optionCursor;
         const cursor = onCursor ? t.fg("accent", "> ") : "  ";
         const checked = selected.has(i);
@@ -966,15 +1003,15 @@ class QnAComponent implements Component, Focusable {
             ? t.fg("success", "(•) ")
             : t.fg("dim", "( ) ");
         const labelColor = onCursor ? "accent" : "text";
-        const label = t.fg(labelColor, `${i + 1}. ${opts[i].label}`);
+        const label = t.fg(labelColor, `${i + 1}. ${opt.label}`);
         for (const wl of wrapTextWithAnsi(
           cursor + marker + label,
           contentWidth,
         )) {
           lines.push(padLine(boxLine(wl)));
         }
-        if (opts[i].description) {
-          const desc = t.fg("muted", opts[i].description!);
+        if (opt.description) {
+          const desc = t.fg("muted", opt.description);
           for (const wl of wrapTextWithAnsi(desc, contentWidth - 5)) {
             lines.push(padLine(boxLine("     " + wl)));
           }
@@ -1263,6 +1300,18 @@ function createAnswerTool(pi: ExtensionAPI) {
  *  detector stays pure and unit-testable without pi's session types. */
 type BranchEntry = { type: string; message?: unknown };
 
+/** Narrow a `SessionEntry` to its `SessionMessageEntry` variant.
+ *
+ * `SessionEntryBase.type` is `string` (not a literal), so the runtime check
+ * `entry.type === "message"` does NOT narrow the `SessionEntry` union in TS —
+ * only `SessionMessageEntry` has `.message`, so accessing it directly is a
+ * type error (the blind spot this file lived in hid it). This predicate mirrors
+ * pi's own runtime guard (`entry.type === "message"`) and gives TS the narrowing
+ * pi's JS source never needed. */
+function isMessageEntry(entry: SessionEntry): entry is SessionMessageEntry {
+  return entry.type === "message";
+}
+
 /**
  * Detect a Q&A that went down with the form open. If the LAST message on the
  * branch is an assistant turn that called the `answer` tool and never received a
@@ -1356,25 +1405,27 @@ export default function (pi: ExtensionAPI) {
 
     for (let i = branch.length - 1; i >= 0; i--) {
       const entry = branch[i];
-      if (entry.type === "message") {
-        const msg = entry.message;
-        if ("role" in msg && msg.role === "assistant") {
-          if (msg.stopReason !== "stop") {
-            ctx.ui.notify(
-              `Last assistant message incomplete (${msg.stopReason})`,
-              "error",
-            );
-            return;
-          }
-          const textParts = msg.content
-            .filter(
-              (c): c is { type: "text"; text: string } => c.type === "text",
-            )
-            .map((c) => c.text);
-          if (textParts.length > 0) {
-            lastAssistantText = textParts.join("\n");
-            break;
-          }
+      // SessionEntryBase.type is typed `string` (not a literal), so the
+      // `entry.type === "message"` check alone doesn't narrow the SessionEntry
+      // union to SessionMessageEntry — only that variant has `.message`.
+      // Mirrors pi's own runtime guard (agent-session.js: `entry.type === "message"
+      // && entry.message.role === ...`) with an `is` predicate so TS narrows too.
+      if (!entry || !isMessageEntry(entry)) continue;
+      const msg = entry.message;
+      if ("role" in msg && msg.role === "assistant") {
+        if (msg.stopReason !== "stop") {
+          ctx.ui.notify(
+            `Last assistant message incomplete (${msg.stopReason})`,
+            "error",
+          );
+          return;
+        }
+        const textParts = msg.content
+          .filter((c): c is { type: "text"; text: string } => c.type === "text")
+          .map((c) => c.text);
+        if (textParts.length > 0) {
+          lastAssistantText = textParts.join("\n");
+          break;
         }
       }
     }

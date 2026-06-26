@@ -37,9 +37,17 @@
  * block or crash the turn.
  */
 
-import { complete, type Model, type UserMessage } from "@earendil-works/pi-ai";
+// `Api` (the model-api union) + `Model` + `UserMessage` live on `@earendil-works/pi-ai`.
+// pi-coding-agent re-exports `Model`/`UserMessage` but NOT `Api` — importing it from there
+// is a type-resolution error the un-typechecked extensions tree was hiding (same shape as
+// the ctx.getFlag bug). Pull `Api` from its real home alongside `Model`.
+import {
+  complete,
+  type Api,
+  type Model,
+  type UserMessage,
+} from "@earendil-works/pi-ai";
 import type {
-  Api,
   ExtensionAPI,
   ExtensionContext,
 } from "@earendil-works/pi-coding-agent";

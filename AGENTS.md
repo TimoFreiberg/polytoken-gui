@@ -41,9 +41,15 @@ bun run dev                     # same, but uses real pi driver (needs pi runnin
 bun test                        # unit tests — no driver needed, no mock required
 bun run test:e2e                # Playwright — sets PILOT_DRIVER=mock automatically
 bunx tsc --noEmit -p protocol/tsconfig.json   # typecheck server/protocol the same way
+bunx tsc --noEmit -p tsconfig.extensions.json # typecheck pilot/extensions (paths-mapped; see the file)
 bun run --cwd client check                    # svelte-check
 bun run --cwd client build                    # prod bundle
 ```
+
+`bun run check` runs protocol + server + extensions + client typechecks end to end —
+the extensions step (`tsconfig.extensions.json`) is what closed the blind spot that
+let the `ctx.getFlag`/`Api`-from-wrong-package class of runtime crash ship uncaught
+(those files weren't in any tsconfig project). Keep it green.
 
 **Driver note:** the server defaults to the real pi SDK driver. Set `PILOT_DRIVER=mock`
 to use the deterministic mock instead — you want this for UI dev without a running

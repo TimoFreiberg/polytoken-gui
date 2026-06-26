@@ -1,0 +1,40 @@
+{
+  // Typechecks pilot/extensions/*.ts — the pilot-owned extensions the server loads
+  // via `additionalExtensionPaths` (pi-driver warmUp). Previously this tree was in NO
+  // tsconfig project, so tsc never saw it — which is how the ctx.getFlag → pi.getFlag
+  // runtime crash (getFlag lives on ExtensionAPI, not ExtensionContext) shipped uncaught.
+  // Wiring this into `bun run check` closes that blind spot.
+  //
+  // RESOLUTION NOTES (why `paths`):
+  // pilot/extensions sits at the repo root but imports @earendil-works/pi-coding-agent
+  // (+ its transitive deps pi-tui, typebox), which the SERVER declares. Bun hoists
+  // pi-coding-agent into server/node_modules (a stable symlink) but keeps pi-tui +
+  // typebox in node_modules/.bun (transitive, NOT symlinked at root). tsc's bundler
+  // resolution walks UP from the SOURCE file, so a root-level tsconfig can't see them
+  // without `paths`. Adding pi-coding-agent as a root devDep does NOT help — Bun still
+  // doesn't surface the two transitive deps at root. So: one stable path (the server
+  // symlink) + two .bun cache paths.
+  //
+  // FRAGILITY: the .bun paths encode the version (e.g. @0.80.2). A pi dep bump changes
+  // them — but that surfaces as a LOUD "Cannot find module" at `bun run check` time
+  // (not a silent miss), which is the failure mode we want. Re-derive the paths from
+  // `fd <pkg> node_modules/.bun -t d` after a bump if this breaks.
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "baseUrl": ".",
+    "ignoreDeprecations": "6.0",
+    "paths": {
+      "@earendil-works/pi-coding-agent": [
+        "./server/node_modules/@earendil-works/pi-coding-agent"
+      ],
+      "@earendil-works/pi-tui": [
+        "./node_modules/.bun/@earendil-works+pi-tui@0.80.2/node_modules/@earendil-works/pi-tui"
+      ],
+      "typebox": [
+        "./node_modules/.bun/typebox@1.1.38/node_modules/typebox"
+      ]
+    }
+  },
+  "include": ["pilot/extensions"]
+}

@@ -128,7 +128,12 @@ const ANIMALS = [
 ];
 
 function pick<T>(arr: readonly T[]): T {
-  return arr[Math.floor(Math.random() * arr.length)];
+  // The callers pass non-empty constant arrays; an empty array here is a logic
+  // bug we want to surface, not silently return undefined as T. (noUncheckedIndexedAccess
+  // makes arr[i] T | undefined — the throw also satisfies that.)
+  const v = arr[Math.floor(Math.random() * arr.length)];
+  if (v === undefined) throw new Error("pick: empty array");
+  return v;
 }
 
 /** A memorable `adjective-animal` worktree slug (e.g. "brisk-otter"). */
