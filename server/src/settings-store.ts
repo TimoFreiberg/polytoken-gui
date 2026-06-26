@@ -9,7 +9,11 @@ import { join } from "node:path";
 import type { PilotSettings } from "@pilot/protocol";
 import { config } from "./config.js";
 
-const DEFAULTS: PilotSettings = { loginShell: null, backgroundModel: null };
+const DEFAULTS: PilotSettings = {
+  loginShell: null,
+  backgroundModel: null,
+  enabledExtensions: null,
+};
 
 function settingsPath(): string {
   return join(config.dataDir, "pilot-settings.json");

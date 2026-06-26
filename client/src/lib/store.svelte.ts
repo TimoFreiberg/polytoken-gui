@@ -18,6 +18,7 @@ import {
   type ModelOption,
   type OAuthDeviceInfo,
   type OAuthLoginPrompt,
+  PILOT_OWNED_EXTENSION_NAMES,
   type ProviderInfo,
   type ServerMessage,
   type SessionAttention,
@@ -185,7 +186,11 @@ class PilotStore {
   // server's startup login-shell env capture. Server-authoritative, sent on connect and
   // after a change. `loginEnv.activeShell` is what the running server captured with;
   // compare to `pilotSettings.loginShell` to know whether a restart is pending.
-  pilotSettings = $state<PilotSettings>({ loginShell: null, backgroundModel: null });
+  pilotSettings = $state<PilotSettings>({
+    loginShell: null,
+    backgroundModel: null,
+    enabledExtensions: null,
+  });
   loginEnv = $state<LoginEnvStatus>({ activeShell: null, ok: false });
   // Server-computed: the configured login shell differs from the one captured at boot,
   // so a restart is needed to apply it. Drives the Settings "restart to apply" hint.
@@ -1807,11 +1812,34 @@ class PilotStore {
     send({ type: "queryExtensions" });
   }
   /** Enable/disable an extension (applies on the session's next start). Optimistic — flip
-   *  the local row now; the server persists and re-sends the authoritative list to reconcile. */
+   *  the local row now; the server persists and re-sends the authoritative list to reconcile.
+   *  A pilot-OWNED row's toggle writes pilot's `enabledExtensions` set (not pi's
+   *  force-exclude, which Chunk 0 proved is a no-op on owned paths), so optimistically
+   *  mirror that too — the server re-broadcasts `pilotSettings` to reconcile. */
   setExtensionEnabled(resolvedPath: string, enabled: boolean): void {
     this.extensions = this.extensions.map((e) =>
       e.resolvedPath === resolvedPath ? { ...e, enabled } : e,
     );
+    const ownedName = this.extensions.find(
+      (e) => e.resolvedPath === resolvedPath,
+    )?.name.replace(/\.ts$/, "");
+    if (ownedName && PILOT_OWNED_EXTENSION_NAMES.includes(ownedName)) {
+      const cur = this.pilotSettings.enabledExtensions ?? [
+        ...PILOT_OWNED_EXTENSION_NAMES,
+      ];
+      const next = enabled
+        ? cur.includes(ownedName)
+          ? cur
+          : [...cur, ownedName]
+        : cur.filter((n) => n !== ownedName);
+      const allEnabled =
+        next.length === PILOT_OWNED_EXTENSION_NAMES.length &&
+        PILOT_OWNED_EXTENSION_NAMES.every((n) => next.includes(n));
+      this.pilotSettings = {
+        ...this.pilotSettings,
+        enabledExtensions: allEnabled ? null : next,
+      };
+    }
     send({ type: "setExtensionEnabled", resolvedPath, enabled });
   }
   /** Open the session-tree view and ask the server for the focused session's tree. We

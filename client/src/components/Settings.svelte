@@ -1,5 +1,6 @@
 <script lang="ts">
   import type { ModelOption } from "@pilot/protocol";
+  import { PILOT_OWNED_EXTENSION_NAMES } from "@pilot/protocol";
   import { reveal } from "../lib/transitions.js";
   import { store } from "../lib/store.svelte.js";
   import type { ThemeMode } from "../lib/theme.js";
@@ -171,6 +172,55 @@
         )
       : extensions,
   );
+  // D3: group the filtered extensions under collapsible origin headers so the Settings
+  //   list reads "Pilot / User / Project / …" rather than one flat alphabetical run.
+  //   Pilot comes first (pilot's own shipped extensions), then the rest alphabetically
+  //   by their `source` label ("user", "project", "user · package", …). A non-empty
+  //   search auto-expands every group with a match (mirrors the favorites behaviour).
+  type ExtGroup = { origin: string; items: typeof filteredExtensions };
+  const extGroups = $derived.by<ExtGroup[]>(() => {
+    const order = ["Pilot"];
+    const map = new Map<string, typeof filteredExtensions>();
+    for (const x of filteredExtensions) {
+      const arr = map.get(x.source) ?? [];
+      arr.push(x);
+      map.set(x.source, arr);
+    }
+    const origins = [...map.keys()].sort((a, b) => {
+      const ia = order.indexOf(a);
+      const ib = order.indexOf(b);
+      if (ia !== -1 || ib !== -1) {
+        // Pinned origins (Pilot) sort before everything else; among pinned, by their index.
+        if (ia !== -1 && ib !== -1) return ia - ib;
+        return ia !== -1 ? -1 : 1;
+      }
+      return a.localeCompare(b);
+    });
+    return origins.map((origin) => ({ origin, items: map.get(origin)! }));
+  });
+  let collapsedExtOrigins = $state<Set<string>>(new Set());
+  function isExtOriginExpanded(origin: string): boolean {
+    return xq !== "" || !collapsedExtOrigins.has(origin);
+  }
+  function toggleExtOrigin(origin: string): void {
+    const next = new Set(collapsedExtOrigins);
+    if (next.has(origin)) next.delete(origin);
+    else next.add(origin);
+    collapsedExtOrigins = next;
+  }
+  // The load-bearing-breakage warning for pilot-owned extensions ([OPEN D]). Maps an
+  //   owned extension basename → a short warning shown inline when its toggle is OFF, so
+  //   disabling a load-bearing one (answer breaks the Q&A UI; tasklist degrades the
+  //   widget) doesn't fail silently. session-namer is LOW-risk (disabling just stops
+  //   auto-naming) so it's absent here — but the render path reads this map so Chunks 3/4
+  //   can add ["answer","tasklist"] warnings without touching the markup.
+  const EXT_LOAD_BEARING_WARNINGS: Record<string, string> = {};
+  // Whether a row is one of pilot's OWNED extensions (its toggle routes to pilot's
+  //   `enabledExtensions`, not pi's force-exclude — Chunk 0 finding). Keyed off the
+  //   protocol name list so client + server agree.
+  function isPilotOwnedExt(name: string): boolean {
+    return PILOT_OWNED_EXTENSION_NAMES.includes(name.replace(/\.ts$/, ""));
+  }
 
   // Available models grouped by provider — drives both the default-model select and
   // the favorites checklist.
@@ -831,33 +881,65 @@
             />
           {/if}
           <div class="exts">
-            {#each filteredExtensions as x (x.resolvedPath)}
-              <div class="ext" class:off={!x.enabled} data-testid="ext-{x.name}">
-                <div class="rinfo">
-                  <div class="rlabel">{x.name}</div>
-                  <div class="rdesc">
-                    {x.source}{#if x.toolCount > 0}
-                      · {x.toolCount} tool{x.toolCount === 1 ? "" : "s"}{/if}{#if x.commandCount > 0}
-                      · {x.commandCount} command{x.commandCount === 1 ? "" : "s"}{/if}
-                  </div>
-                  {#if x.error}
-                    <div class="ext-error" title={x.error}>⚠ {x.error}</div>
-                  {/if}
+            {#each extGroups as g (g.origin)}
+              {@const expanded = isExtOriginExpanded(g.origin)}
+              {@const groupOn = g.items.filter((x) => x.enabled).length}
+              <button
+                class="mprovider mprovider-toggle ext-origin"
+                type="button"
+                aria-expanded={expanded}
+                data-testid="ext-origin-{g.origin}"
+                title={expanded
+                  ? `Collapse ${g.origin} extensions`
+                  : `Expand ${g.origin} extensions (${g.items.length} total)`}
+                onclick={() => toggleExtOrigin(g.origin)}
+              >
+                <Chevron open={expanded} size={10} />
+                <span class="mprovider-name">{g.origin}</span>
+                <span class="mprovider-count">{groupOn}/{g.items.length}</span>
+              </button>
+              {#if expanded}
+                <div class="mgroup-items" transition:reveal={{ duration: 140 }}>
+                  {#each g.items as x (x.resolvedPath)}
+                    <div
+                      class="ext"
+                      class:off={!x.enabled}
+                      class:pilot={g.origin === "Pilot"}
+                      data-testid="ext-{x.name}"
+                    >
+                      <div class="rinfo">
+                        <div class="rlabel">{x.name}</div>
+                        <div class="rdesc">
+                          {#if x.description}{x.description} · {/if}{x.source}{#if x.toolCount > 0}
+                            · {x.toolCount} tool{x.toolCount === 1 ? "" : "s"}{/if}{#if x.commandCount > 0}
+                            · {x.commandCount} command{x.commandCount === 1 ? "" : "s"}{/if}
+                        </div>
+                        {#if x.error}
+                          <div class="ext-error" title={x.error}>⚠ {x.error}</div>
+                        {/if}
+                        {#if !x.enabled && EXT_LOAD_BEARING_WARNINGS[x.name.replace(/\.ts$/, "")]}
+                          <div class="ext-error" data-testid="ext-warn-{x.name}">
+                            ⚠ {EXT_LOAD_BEARING_WARNINGS[x.name.replace(/\.ts$/, "")]}
+                          </div>
+                        {/if}
+                      </div>
+                      <button
+                        class="seg-btn"
+                        class:active={x.enabled}
+                        role="switch"
+                        aria-checked={x.enabled}
+                        data-testid="ext-toggle-{x.name}"
+                        title={x.enabled
+                          ? `Disable ${x.name} (applies on this session's next start)`
+                          : `Enable ${x.name} (applies on this session's next start)`}
+                        onclick={() => store.setExtensionEnabled(x.resolvedPath, !x.enabled)}
+                      >
+                        {x.enabled ? "On" : "Off"}
+                      </button>
+                    </div>
+                  {/each}
                 </div>
-                <button
-                  class="seg-btn"
-                  class:active={x.enabled}
-                  role="switch"
-                  aria-checked={x.enabled}
-                  data-testid="ext-toggle-{x.name}"
-                  title={x.enabled
-                    ? `Disable ${x.name} (applies on this session's next start)`
-                    : `Enable ${x.name} (applies on this session's next start)`}
-                  onclick={() => store.setExtensionEnabled(x.resolvedPath, !x.enabled)}
-                >
-                  {x.enabled ? "On" : "Off"}
-                </button>
-              </div>
+              {/if}
             {/each}
             {#if filteredExtensions.length === 0}
               <div class="mempty">No extensions match</div>

@@ -6,6 +6,7 @@ import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import {
   isDialogRequest,
+  PILOT_OWNED_EXTENSION_NAMES,
   type CommandInfo,
   type DirListing,
   type ExtensionInfo,
@@ -27,7 +28,7 @@ import {
   type TreeSnapshot,
 } from "@pilot/protocol";
 import type { NewSessionOpts, OAuthLoginIO, PilotDriver, TrustEvent } from "./driver.js";
-import { writePilotSettings } from "./settings-store.js";
+import { writePilotSettings, readPilotSettings } from "./settings-store.js";
 import {
   ambient,
   answerCard,
@@ -778,15 +779,52 @@ export class MockDriver implements PilotDriver {
   }
 
   async listExtensions(): Promise<ExtensionInfo[]> {
-    return this.extensions.map((e) => ({ ...e }));
+    // Mirror the real driver's projection: a pilot-OWNED row's `enabled` reflects pilot's
+    //   `enabledExtensions` set (the [OPEN E] toggle — pi's force-exclude is a no-op on
+    //   owned paths). null = all owned enabled; an array = the enabled subset by name.
+    const enabledExtensions = readPilotSettings().enabledExtensions;
+    return this.extensions.map((e) => {
+      if (!PILOT_OWNED_EXTENSION_NAMES.includes(e.name.replace(/\.ts$/, "")))
+        return { ...e };
+      const name = e.name.replace(/\.ts$/, "");
+      const on =
+        enabledExtensions === null || enabledExtensions.includes(name);
+      return { ...e, enabled: on };
+    });
   }
 
   async setExtensionEnabled(
     resolvedPath: string,
     enabled: boolean,
   ): Promise<void> {
-    // Applies on a session's next start in the real driver; the mock just flips the flag
-    // so the re-broadcast list reflects it (the row stays visible either way).
+    // Pilot-OWNED rows route to pilot's `enabledExtensions` set (mirrors the real
+    //   driver — pi's force-exclude override is a no-op on additionalExtensionPaths).
+    //   The mock keys off the fixture row's name (basename without .ts), like the real
+    //   driver's ownedExtensionBasename. null = all enabled; an array = the subset.
+    const owned = this.extensions.find((e) => e.resolvedPath === resolvedPath);
+    const ownedName =
+      owned && PILOT_OWNED_EXTENSION_NAMES.includes(owned.name.replace(/\.ts$/, ""))
+        ? owned.name.replace(/\.ts$/, "")
+        : undefined;
+    if (ownedName) {
+      const cur = readPilotSettings().enabledExtensions ?? [
+        ...PILOT_OWNED_EXTENSION_NAMES,
+      ];
+      const next = enabled
+        ? cur.includes(ownedName)
+          ? cur
+          : [...cur, ownedName]
+        : cur.filter((n) => n !== ownedName);
+      const allEnabled =
+        next.length === PILOT_OWNED_EXTENSION_NAMES.length &&
+        PILOT_OWNED_EXTENSION_NAMES.every((n) => next.includes(n));
+      writePilotSettings({
+        enabledExtensions: allEnabled ? null : next,
+      });
+      return;
+    }
+    // User/project extension: flip the in-memory flag (the mock doesn't persist pi
+    // settings); the re-broadcast list reflects it (the row stays visible either way).
     this.extensions = this.extensions.map((e) =>
       e.resolvedPath === resolvedPath ? { ...e, enabled } : e,
     );

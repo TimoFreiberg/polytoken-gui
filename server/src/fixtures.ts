@@ -233,13 +233,20 @@ export const MOCK_EXTENSIONS: readonly ExtensionInfo[] = [
     toolCount: 2,
     commandCount: 1,
   },
+  // A pilot-OWNED extension (the ported session-namer). Its `source` is "Pilot" (the
+  //  D3 badge the real driver projects for additionalExtensionPaths entries) and it
+  //  carries a `description` (parsed from the file's @pilot frontmatter in the real
+  //  driver). The resolved path matches the name a pilot-owned toggle keys off, so the
+  //  mock's setExtensionEnabled routes it to pilot's `enabledExtensions` set (the
+  //  [OPEN E] toggle — pi's force-exclude is a no-op on owned paths).
   {
-    resolvedPath: "/home/pi/.pi/agent/extensions/session-namer.ts",
+    resolvedPath: "session-namer",
     name: "session-namer.ts",
-    source: "user · package",
+    source: "Pilot",
     enabled: true,
     toolCount: 0,
     commandCount: 0,
+    description: "Auto-names a session from its first prompt via the background model.",
   },
   {
     resolvedPath: "/repo/.pi/extensions/fancy-tui.ts",

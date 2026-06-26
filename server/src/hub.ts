@@ -9,6 +9,7 @@ import {
   initialSessionState,
   isDialogRequest,
   type ModelOption,
+  PILOT_OWNED_EXTENSION_NAMES,
   PROTOCOL_VERSION,
   type ServerMessage,
   type SessionAttention,
@@ -718,6 +719,15 @@ export class SessionHub {
       console.error("[hub] setExtensionEnabled failed", e);
     }
     void this.sendExtensionList(conn);
+    // A pilot-OWNED toggle writes pilot's `enabledExtensions` (not pi's force-exclude),
+    // so re-broadcast `pilotSettings` so every client's owned-row state stays in sync.
+    // Key off the basename (without .ts) the protocol list carries — the real driver's
+    // ownedExtensionBasename and the mock's name match both reduce to this.
+    const base = resolvedPath.split(/[/\\]/).pop() ?? resolvedPath;
+    const name = base.replace(/\.ts$/, "");
+    if (PILOT_OWNED_EXTENSION_NAMES.includes(name)) {
+      this.broadcast(this.pilotSettingsMsg());
+    }
   }
 
   /** Fetch + send ONE client the full @-mention file index for its focused session's cwd.
@@ -1593,7 +1603,11 @@ export class SessionHub {
     // `setLoginShell` mutation doesn't leak into sibling specs (the persisted file is
     // shared across the per-port data dir for the whole e2e run). Mirrors how the mock
     // driver's reset() restores providers/defaults/extensions to their fixture baseline.
-    writePilotSettings({ loginShell: null, backgroundModel: null });
+    writePilotSettings({
+      loginShell: null,
+      backgroundModel: null,
+      enabledExtensions: null,
+    });
     this.driver.reset?.(opts);
     this.seedDefault();
     for (const conn of this.clients.values()) {

@@ -419,6 +419,66 @@ test("toggling an extension flips its switch and reconciles with the server", as
   );
 });
 
+test("pilot-owned extensions group under a Pilot origin header with their description", async ({
+  page,
+}) => {
+  await openSettings(page, "extensions");
+  await page.getByTestId("extensions-toggle").click();
+
+  // The Pilot origin header is present and expanded by default, grouping pilot's owned
+  // extensions (session-namer for now) under it — the D3 "Pilot" badge projection.
+  const pilotHeader = page.getByTestId("ext-origin-Pilot");
+  await expect(pilotHeader).toBeVisible();
+  await expect(pilotHeader).toHaveAttribute("aria-expanded", "true");
+  await expect(pilotHeader).toContainText("Pilot");
+
+  // session-namer appears under the Pilot group with its @pilot frontmatter description.
+  const namer = page.getByTestId("ext-session-namer.ts");
+  await expect(namer).toBeVisible();
+  await expect(namer).toContainText(
+    "Auto-names a session from its first prompt via the background model.",
+  );
+  await expect(page.getByTestId("ext-toggle-session-namer.ts")).toHaveAttribute(
+    "aria-checked",
+    "true",
+  );
+});
+
+test("the pilot-side toggle disables a pilot-owned extension (pi's force-exclude couldn't)", async ({
+  page,
+}) => {
+  // Chunk 0 finding: pi's `-<resolvedPath>` force-exclude override is a NO-OP on
+  // `additionalExtensionPaths` entries. So pilot owns its own enabled/disabled set
+  // (`enabledExtensions`) and omits disabled owned paths from the array in warmUp. This
+  // asserts that toggle actually persists for a pilot-owned row — the gap the force-exclude
+  // path leaves for owned extensions.
+  await openSettings(page, "extensions");
+  await page.getByTestId("extensions-toggle").click();
+
+  const toggle = page.getByTestId("ext-toggle-session-namer.ts");
+  await expect(toggle).toHaveAttribute("aria-checked", "true");
+
+  // Disable: optimistic flip, and the server re-broadcasts (pilotSettings + extensionList).
+  await toggle.click();
+  await expect(toggle).toHaveAttribute("aria-checked", "false");
+
+  // The flip survives a re-open — the mock persisted it to pilot's enabledExtensions set
+  // (the [OPEN E] toggle), proving the owned-row toggle is real where force-exclude wasn't.
+  await page.keyboard.press("Escape");
+  await page.getByTestId("settings-toggle").click();
+  await expect(page.getByTestId("ext-toggle-session-namer.ts")).toHaveAttribute(
+    "aria-checked",
+    "false",
+  );
+
+  // Re-enable lands back on (the enabledExtensions round-trip both ways).
+  await page.getByTestId("ext-toggle-session-namer.ts").click();
+  await expect(page.getByTestId("ext-toggle-session-namer.ts")).toHaveAttribute(
+    "aria-checked",
+    "true",
+  );
+});
+
 test("theme toggle drives the data-theme override and persists it", async ({
   page,
 }) => {

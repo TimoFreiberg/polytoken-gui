@@ -18,7 +18,7 @@
 // This replaces the old runtime-swap model: AgentSessionRuntime exists precisely to
 // replace+dispose the active session, which is the opposite of keeping N warm.
 
-import { type Dirent, readdirSync, statSync } from "node:fs";
+import { type Dirent, readFileSync, readdirSync, statSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import {
@@ -50,6 +50,7 @@ import type {
   SessionStatus,
   SessionUsage,
 } from "@pilot/protocol";
+import { PILOT_OWNED_EXTENSION_NAMES } from "@pilot/protocol";
 import { ArchiveStore } from "../archive-store.js";
 import { config } from "../config.js";
 import type {
@@ -85,7 +86,7 @@ import { buildSessionMcpConfigOverride } from "./mcp-cwd-workaround.js";
 import { makeTrustResolver, type TrustAsk } from "./trust.js";
 import { PiUiBridge } from "./ui-bridge.js";
 import { parseUnsupportedHostUiErrorMessage } from "./unsupported-host-ui.js";
-import { readPilotSettings } from "../settings-store.js";
+import { readPilotSettings, writePilotSettings } from "../settings-store.js";
 import { userMessageStats } from "./user-message-count.js";
 
 export interface PiDriverOptions {
@@ -93,22 +94,75 @@ export interface PiDriverOptions {
   warmCap?: number;
 }
 
-// SPIKE (Chunk 0, docs/PLAN-self-contained-extensions.md): a pilot-bundled throwaway
-// extension passed to pi's `DefaultResourceLoader` via `additionalExtensionPaths` so
-// we can prove the load + `/pilot-spike` command + Settings list + enable/disable
-// toggle path before porting the real extensions. Delete once chunks 2–4 land.
+// The pilot-owned extensions (docs/PLAN-self-contained-extensions.md, Chunks 2–4).
+// These ship in-repo as `.ts` files and load via pi's `DefaultResourceLoader` option
+// `additionalExtensionPaths` (D1). The NAME set lives in `@pilot/protocol`
+// (`PILOT_OWNED_EXTENSION_NAMES`) as the single source the client also imports — here we
+// only resolve each name to its absolute server path. ONE source of truth for the list,
+// read by `warmUp` (filter disabled ones out of the array), `listExtensions` (project
+// `source:"Pilot"` + parse the frontmatter description), and `setExtensionEnabled` (route
+// the pilot-side toggle). answer.ts + tasklist.ts join the protocol list in Chunks 3/4.
 //
-// Resolved to an ABSOLUTE path at module init (NOT per-warmUp, NOT against
-// process.cwd()): the server cwd carries no operator intent (a Finder-launched desktop
-// app starts in `/`), and pi's `resolveExtensionSources` would mis-resolve a relative
-// path against whatever cwd a session happens to use. Per pi's docstring at
-// agent-session-services.ts:36 — CLI-provided resource paths must be absolute before
-// they reach createAgentSessionServices. import.meta.dir is the pilot repo root from
-// here (server/src/pi/), so this is invariant of where the process was launched.
-const PILOT_SPIKE_EXTENSION_PATH = resolve(
-  import.meta.dir,
-  "../../../pilot/extensions/_spike.ts",
+// Resolved to ABSOLUTE paths at module init (NOT per-warmUp, NOT against process.cwd()):
+// the server cwd carries no operator intent (a Finder-launched desktop app starts in
+// `/`), and pi's `resolveExtensionSources` would mis-resolve a relative path against
+// whatever cwd a session happens to use. Per pi's docstring at agent-session-services.ts
+// — CLI-provided resource paths must be absolute before they reach
+// createAgentSessionServices. import.meta.dir is the pilot repo root from here
+// (server/src/pi/), so these are invariant of where the process was launched.
+const PILOT_OWNED_EXTENSIONS: ReadonlyMap<string, string> = new Map(
+  PILOT_OWNED_EXTENSION_NAMES.map((name) => [
+    name,
+    resolve(import.meta.dir, `../../../pilot/extensions/${name}.ts`),
+  ]),
 );
+
+/** The resolved path of a pilot-owned extension by its basename (without `.ts`), or
+ *  undefined when `name` isn't a pilot-owned extension. Exported for tests / future
+ *  server-side callers that need the path (the client uses the protocol NAMES list). */
+export function pilotOwnedExtensionPath(name: string): string | undefined {
+  return PILOT_OWNED_EXTENSIONS.get(name);
+}
+
+/** Reverse lookup: the pilot-owned basename (without `.ts`) for a resolved path, or
+ *  undefined when it isn't one. Used by `listExtensions`/`setExtensionEnabled` to route
+ *  the Pilot badge + the pilot-side toggle. O(paths) but the set is tiny (3 at most). */
+function ownedExtensionBasename(resolvedPath: string): string | undefined {
+  for (const [name, path] of PILOT_OWNED_EXTENSIONS)
+    if (path === resolvedPath) return name;
+  return undefined;
+}
+
+/** Parse a pilot-owned extension file's leading `@pilot` doc-comment frontmatter for its
+ *  `description:` line (D3). The convention is a leading block comment whose first line
+ *  is `/** @pilot` with `name:`/`description:` lines. Returns undefined when there's no
+ *  frontmatter or no description (user/project extensions stay description-less). Cached
+ *  per path — the file is read once at first list. Never throws: a malformed/unreadable
+ *  block just yields no description. */
+const pilotDescriptionCache = new Map<string, string>();
+function pilotExtensionDescription(resolvedPath: string): string | undefined {
+  const cached = pilotDescriptionCache.get(resolvedPath);
+  if (cached !== undefined) return cached || undefined;
+  let desc = "";
+  try {
+    const src = readFileSync(resolvedPath, "utf8");
+    // Match a leading `/** ... @pilot ... description: <value> ... */` block.
+    const m = src.match(/^\/\*\*[\s\S]*?\*\//);
+    if (m && m[0].includes("@pilot")) {
+      const line = m[0]
+        .split("\n")
+        .map((l: string) => l.replace(/^\s*\*\s?/, "").trim())
+        .find((l: string) => l.toLowerCase().startsWith("description:"));
+      if (line) desc = line.slice("description:".length).trim();
+    }
+  } catch {
+    // Unreadable file → no description (don't brick the Settings list over a missing file).
+  }
+  // Cache `""` for the no-description case so the file isn't re-read each list; the
+  // `|| undefined` at return maps empty → undefined (no description) for the caller.
+  pilotDescriptionCache.set(resolvedPath, desc);
+  return desc || undefined;
+}
 
 // pi's thinking-level ladder. Mirrors `getSupportedThinkingLevels` from
 // @earendil-works/pi-ai, which isn't a direct/resolvable dep here — we read the same
@@ -767,15 +821,26 @@ export async function createPiDriver(
     // The extension-flag values pilot threads into createAgentSessionServices. The
     //   `mcp-config` entry is the per-cwd MCP override (see mcp-cwd-workaround.ts); the
     //   `background-model` entry is the D2 setting read from pilot-settings.json, so the
-    //   ported extensions (Chunks 2/4) read it via ctx.getFlag("background-model") and
-    //   resolve with ctx.modelRegistry. null/unset → omitted (extensions fall back).
-    //   NOTE: only the VALUE is threaded here; the extension-side registerFlag/getFlag
-    //   code belongs to Chunks 2/4 (this chunk ships no extensions yet).
+    //   ported extensions (session-namer now; answer in Chunk 4) read it via
+    //   ctx.getFlag("background-model") and resolve with ctx.modelRegistry.
+    //   null/unset → omitted (extensions fall back to no-op).
     const backgroundModel = readPilotSettings().backgroundModel;
     const extensionFlagValues = new Map<string, boolean | string>();
     if (mcpConfigOverride) extensionFlagValues.set("mcp-config", mcpConfigOverride);
     if (backgroundModel)
       extensionFlagValues.set("background-model", backgroundModel);
+    // [OPEN E] (b): pilot-side toggle. pi's force-exclude override is a NO-OP on
+    //   `additionalExtensionPaths` entries (Chunk 0 finding — pi's
+    //   resolveLocalExtensionSource hardcodes enabled:true), so pilot owns its own
+    //   enabled/disabled set and simply OMITS disabled owned paths from this array.
+    //   `enabledExtensions: null` = all owned enabled (the default); an array = the
+    //   enabled subset by basename. Only OWNED paths are filtered here — user/project
+    //   extensions keep pi's force-exclude toggle unchanged.
+    const { enabledExtensions } = readPilotSettings();
+    const ownedEnabled = [...PILOT_OWNED_EXTENSIONS.values()].filter((p) => {
+      const name = basename(p, ".ts");
+      return enabledExtensions === null || enabledExtensions.includes(name);
+    });
     const services = await createAgentSessionServices({
       cwd,
       agentDir,
@@ -785,13 +850,14 @@ export async function createPiDriver(
       authStorage,
       modelRegistry,
       ...(extensionFlagValues.size > 0 ? { extensionFlagValues } : {}),
-      // SPIKE (Chunk 0): register the no-op pilot extension so it loads through pi's
-      // resource loader the same way a CLI `-e <path>` would. resolveExtensionSources
-      // tags it source:"cli", scope:"temporary", origin:"top-level". The real extensions
-      // replace this array in later chunks; for the spike it's a single resolved path.
-      resourceLoaderOptions: {
-        additionalExtensionPaths: [PILOT_SPIKE_EXTENSION_PATH],
-      },
+      // D1: register pilot's owned extensions through pi's resource loader the same way a
+      // CLI `-e <path>` would. resolveExtensionSources tags them source:"cli",
+      // scope:"temporary", origin:"top-level"; `listExtensions` re-projects that to
+      // source:"Pilot" (D3) so the Settings list groups them under a Pilot header.
+      // Disabled owned paths are already omitted above (the pilot-side toggle).
+      ...(ownedEnabled.length > 0
+        ? { resourceLoaderOptions: { additionalExtensionPaths: ownedEnabled } }
+        : {}),
       // Without this, pi leaves projectTrusted=true and auto-loads every project's .pi
       // resources — the D12 gap. Resolve trust per cwd instead (non-interactive MVP;
       // honors trust.json, denies untrusted paths (no implicit trust — see createPiDriver).
@@ -1650,18 +1716,28 @@ export async function createPiDriver(
       // become counts; sourceInfo.scope/origin become a short origin label.
       const { extensions, errors } = ws.session.resourceLoader.getExtensions();
       const byPath = new Map<string, ExtensionInfo>();
-      for (const ext of extensions)
+      for (const ext of extensions) {
+        const ownedName = ownedExtensionBasename(ext.resolvedPath);
         byPath.set(ext.resolvedPath, {
           resolvedPath: ext.resolvedPath,
           name: basename(ext.sourceInfo.path),
-          source:
-            ext.sourceInfo.origin === "package"
+          // D3: pilot-owned paths project `source:"Pilot"` so the Settings list groups
+          // them under a Pilot header (their `sourceInfo.scope` is "temporary" under the
+          // `additionalExtensionPaths` route — Chunk 0 finding). Everything else keeps
+          // the existing scope/origin projection.
+          source: ownedName
+            ? "Pilot"
+            : ext.sourceInfo.origin === "package"
               ? `${ext.sourceInfo.scope} · package`
               : ext.sourceInfo.scope,
           enabled: true,
           toolCount: ext.tools.size,
           commandCount: ext.commands.size,
+          ...(ownedName
+            ? { description: pilotExtensionDescription(ext.resolvedPath) }
+            : {}),
         });
+      }
       // A load error either annotates its (partially) loaded row or stands alone as a
       // broken-but-present row, so the problems are visible rather than silently missing.
       for (const e of errors) {
@@ -1673,7 +1749,7 @@ export async function createPiDriver(
             : {
                 resolvedPath: e.path,
                 name: basename(e.path),
-                source: "—",
+                source: ownedExtensionBasename(e.path) ? "Pilot" : "—",
                 enabled: true,
                 toolCount: 0,
                 commandCount: 0,
@@ -1681,8 +1757,27 @@ export async function createPiDriver(
               },
         );
       }
-      // Reconstruct disabled rows from the `-<path>` force-exclude overrides pilot wrote, so
-      // a disabled extension stays visible (and re-enableable) even though pi didn't load it.
+      // Reconstruct disabled rows so a disabled extension stays visible (and
+      // re-enableable) even though pi didn't load it. Pilot-OWNED disabled rows come from
+      // pilot's `enabledExtensions` set (the [OPEN E] toggle — pi's force-exclude is a
+      // no-op on them); user/project disabled rows come from the `-<path>` force-exclude
+      // overrides pilot wrote for those scopes.
+      const settings = readPilotSettings();
+      if (settings.enabledExtensions !== null) {
+        for (const [name, path] of PILOT_OWNED_EXTENSIONS) {
+          if (settings.enabledExtensions.includes(name)) continue;
+          if (byPath.has(path)) continue;
+          byPath.set(path, {
+            resolvedPath: path,
+            name: `${name}.ts`,
+            source: "Pilot",
+            enabled: false,
+            toolCount: 0,
+            commandCount: 0,
+            description: pilotExtensionDescription(path),
+          });
+        }
+      }
       for (const entry of globalSettings.getExtensionPaths()) {
         if (!entry.startsWith("-")) continue;
         const p = entry.slice(1);
@@ -1700,13 +1795,35 @@ export async function createPiDriver(
     },
 
     async setExtensionEnabled(resolvedPath, enabled) {
-      // pi loads extensions at session START; enable/disable is driven by force-exclude
-      // override patterns in settings (`-<exactPath>`, see package-manager's applyPatterns).
-      // So the toggle adds/removes that exact-path override and takes effect on the session's
-      // NEXT start — the UI labels it as such. User-scope, like the favorites patterns above.
-      // (Known limitation: a user-scope override reliably disables user-scope extensions;
-      // project-scope ones depend on pi applying user patterns across scopes — fine for the
-      // common case, revisit if a project extension won't toggle.)
+      // [OPEN E] (b): a pilot-OWNED extension toggles pilot's own `enabledExtensions` set
+      // (pi's `-<path>` force-exclude override is a NO-OP on `additionalExtensionPaths`
+      // entries — Chunk 0 finding). The setting is read in `warmUp` to omit disabled
+      // owned paths from the array; applies on the session's NEXT start, same as the
+      // force-exclude path for user/project extensions (the UI labels it so).
+      const ownedName = ownedExtensionBasename(resolvedPath);
+      if (ownedName) {
+        const cur = readPilotSettings().enabledExtensions ?? [
+          ...PILOT_OWNED_EXTENSIONS.keys(),
+        ];
+        const next = enabled
+          ? cur.includes(ownedName)
+            ? cur
+            : [...cur, ownedName]
+          : cur.filter((n) => n !== ownedName);
+        // null = all enabled; an array = the enabled subset. After disabling the last
+        // disabled one, collapse back to null when every owned ext is enabled (keeps the
+        // persisted file tidy and matches the default).
+        const allEnabled =
+          next.length === PILOT_OWNED_EXTENSIONS.size &&
+          [...PILOT_OWNED_EXTENSIONS.keys()].every((n) => next.includes(n));
+        writePilotSettings({ enabledExtensions: allEnabled ? null : next });
+        return;
+      }
+      // User/project extension: pi loads extensions at session START; enable/disable is
+      // driven by force-exclude override patterns in settings (`-<exactPath>`, see
+      // package-manager's applyPatterns). So the toggle adds/removes that exact-path
+      // override. (Known limitation: a user-scope override reliably disables user-scope
+      // extensions; project-scope ones depend on pi applying user patterns across scopes.)
       const current = globalSettings.getExtensionPaths();
       const override = `-${resolvedPath}`;
       const next = enabled

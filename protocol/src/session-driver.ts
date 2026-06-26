@@ -115,6 +115,11 @@ export interface ExtensionInfo {
   readonly toolCount: number;
   /** Slash commands it registers (loaded only). */
   readonly commandCount: number;
+  /** A short, human-readable description of what this extension does. Currently only
+   *  pilot-OWNED extensions carry one (parsed from the file's `@pilot` frontmatter, D3);
+   *  user/project/package extensions leave it undefined until pi grows the field.
+   *  Display-only. */
+  readonly description?: string;
   /** A load error pi reported for this extension, if any — drives the problems styling. */
   readonly error?: string;
 }

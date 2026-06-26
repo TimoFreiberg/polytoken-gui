@@ -47,6 +47,14 @@ export interface PilotSettings {
    *  resolves + validates this on read (see `resolveBackgroundModel`) and surfaces a
    *  loud `warning` to the Settings UI when the spec is bad — never silent. */
   backgroundModel: string | null;
+  /** Pilot's own enabled/disabled set for the OWNED extension paths (the
+   *  `additionalExtensionPaths` entries — session-namer now, answer/tasklist in Chunks
+   *  3/4). pi's `-<path>` force-exclude override is a NO-OP on those (Chunk 0 finding),
+   *  so pilot maintains its own set and omits disabled owned paths from the array in
+   *  `warmUp`. `null` = all owned enabled (the default); an array = the enabled subset
+   *  by basename (e.g. `["session-namer"]`) — the operator thinks in names, not paths.
+   *  User/project extensions keep pi's force-exclude toggle unchanged. */
+  enabledExtensions: string[] | null;
 }
 
 /** Runtime status of pilot's startup login-shell env capture, so the Settings panel
