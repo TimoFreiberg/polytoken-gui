@@ -7,7 +7,12 @@ test.beforeEach(async ({ page }) => {
 
 /** Open the project chip's directory browser and choose `/Users/timo/src/<name>`. The
  *  picker opens at the active fixture session's cwd (`/Users/timo/src/pilot` — a stable
- *  path regardless of the suite's $HOME), so we step up to `.../src` and into `name`. */
+ *  path regardless of the suite's $HOME), so we step up to `.../src` and into `name`.
+ *
+ *  The picker has no `..` row anymore (commit plktoqunywtt dropped it): "up" is the
+ *  breadcrumb or Backspace-with-empty-filter. We use Backspace — the filter input is
+ *  auto-focused on open, and Backspace navigates to the parent when the filter is empty,
+ *  so this doesn't depend on breadcrumb DOM structure. */
 async function chooseProjectDir(
   page: import("@playwright/test").Page,
   name: string,
@@ -15,7 +20,9 @@ async function chooseProjectDir(
   await page.locator(".chips .chip").first().click();
   const picker = page.getByTestId("dir-picker");
   await expect(picker).toBeVisible();
-  await picker.locator(".row.up").click(); // /Users/timo/src/pilot -> /Users/timo/src
+  // The filter input is auto-focused on open; Backspace with it empty goes up one dir
+  // (/Users/timo/src/pilot -> /Users/timo/src).
+  await picker.locator(".filter-input").press("Backspace");
   await picker.locator(".row[data-i]", { hasText: name }).click(); // -> .../<name>
   await picker.locator(".use").click();
   await expect(picker).toBeHidden();
