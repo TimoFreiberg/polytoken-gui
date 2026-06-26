@@ -103,6 +103,29 @@ interface ResolvedModel {
  * Returns `null` when the spec doesn't resolve (caller no-ops). Does NOT handle the
  * `script:` prefix — pilot resolves those server-side and threads the plain spec.
  */
+
+/** Try an exact `provider/modelId` (or bare-id) match against available models BEFORE the
+ *  colon-split. Mirrors the server's `findExactModelReferenceMatch` (background-model.ts):
+ *  a canonical `provider/id` exact match (case-insensitive); a bare-id match only when
+ *  unambiguous across providers. Returns undefined when nothing matches or it's ambiguous
+ *  — the caller falls through to the colon-split + `find()` path. */
+function tryExactMatch(
+  reference: string,
+  available: readonly Model<Api>[],
+): Model<Api> | undefined {
+  const lower = reference.trim().toLowerCase();
+  if (!lower) return undefined;
+  // Canonical `provider/id` exact match first.
+  const canonical = available.filter(
+    (m) => `${m.provider}/${m.id}`.toLowerCase() === lower,
+  );
+  if (canonical.length === 1) return canonical[0];
+  if (canonical.length > 1) return undefined; // ambiguous
+  // Bare-id exact match (rejected when ambiguous across providers).
+  const byId = available.filter((m) => m.id.toLowerCase() === lower);
+  return byId.length === 1 ? byId[0] : undefined;
+}
+
 function resolveSpec(
   spec: string,
   registry: ExtensionContext["modelRegistry"],
@@ -120,7 +143,11 @@ function resolveSpec(
   if (colon !== -1 && colon > slash) {
     const suffix = trimmed.slice(colon + 1);
     const prefix = trimmed.slice(0, colon);
-    if (VALID_THINKING_LEVELS.includes(suffix as (typeof VALID_THINKING_LEVELS)[number])) {
+    if (
+      VALID_THINKING_LEVELS.includes(
+        suffix as (typeof VALID_THINKING_LEVELS)[number],
+      )
+    ) {
       thinkingLevel = suffix === "off" ? undefined : suffix;
       core = prefix;
     } else {
@@ -133,17 +160,28 @@ function resolveSpec(
 
   const available = registry.getAvailable();
 
-  let model: Model<Api> | undefined;
-  const providerSlash = core.indexOf("/");
-  if (providerSlash !== -1) {
-    const provider = core.slice(0, providerSlash).trim();
-    const modelId = core.slice(providerSlash + 1).trim();
-    if (provider && modelId) model = registry.find(provider, modelId);
-  } else {
-    // Bare id: match against available models; reject when ambiguous across providers.
-    const lower = core.toLowerCase();
-    const matches = available.filter((m) => m.id.toLowerCase() === lower);
-    model = matches.length === 1 ? matches[0] : undefined;
+  // EXACT-MATCH FIRST (parity with the server's `parseSpec`/`tryMatchModel`): try the
+  // full `spec` (incl. any colons in the model id, e.g. OpenRouter's `:exacto`/`:nitro`
+  // variants) against available models BEFORE the colon-split below. Without this, a
+  // colon-bearing model id with NO `:thinking` suffix would be mis-split: `openrouter/
+  // some-model:exacto` → suffix `exacto` (invalid thinking) → prefix `some-model` →
+  // `registry.find("openrouter","some-model")` misses the real id. The server resolves
+  // such specs cleanly via this same exact-first step; matching it keeps Settings-
+  // validation and runtime in parity (the D2 "a spec that validates also runs" promise).
+  // The colon-split below still handles a real `:thinking` suffix on a colon-bearing id.
+  let model: Model<Api> | undefined = tryExactMatch(trimmed, available);
+  if (!model) {
+    const providerSlash = core.indexOf("/");
+    if (providerSlash !== -1) {
+      const provider = core.slice(0, providerSlash).trim();
+      const modelId = core.slice(providerSlash + 1).trim();
+      if (provider && modelId) model = registry.find(provider, modelId);
+    } else {
+      // Bare id: match against available models; reject when ambiguous across providers.
+      const lower = core.toLowerCase();
+      const matches = available.filter((m) => m.id.toLowerCase() === lower);
+      model = matches.length === 1 ? matches[0] : undefined;
+    }
   }
 
   if (!model) {
@@ -227,7 +265,9 @@ async function nameSession(
       {
         apiKey: auth.apiKey,
         headers: auth.headers,
-        ...(resolved.thinkingLevel ? { reasoning: resolved.thinkingLevel } : {}),
+        ...(resolved.thinkingLevel
+          ? { reasoning: resolved.thinkingLevel }
+          : {}),
       },
     );
   } catch (err) {

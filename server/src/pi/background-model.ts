@@ -63,14 +63,35 @@ export interface BackgroundModelRegistry {
 
 /** Adapt pi's `ModelRegistry` (or any `{getAvailable()}`-shaped object) to the resolver's
  *  `BackgroundModelRegistry` slice. The resolver only needs `getAvailable()`, so this is a
- *  thin passthrough — but it lives here so callers (`hub.ts` Settings validation, pi-driver
- *  `warmUp`) share ONE adapter and can't drift on the slice shape. It was dropped as dead
- *  in Chunk 1's S1 cleanup once `hub.ts` moved to a hand-rolled inline registry; C1
- *  (resolve the `script:` spec server-side in `warmUp`) gives it a real caller again. */
-export function asBackgroundModelRegistry<T extends { getAvailable(): readonly ModelLike[] }>(
-  registry: T,
-): BackgroundModelRegistry {
+ *  thin passthrough. `pi-driver.ts` `warmUp` is its single production caller (it
+ *  resolves the `backgroundModel` setting before threading it into the `background-model`
+ *  extension flag — see Chunk 2's C1 fix). `hub.ts` Settings validation hand-rolls its own
+ *  inline adapter over the wire `ModelOption` cache instead (different model source);
+ *  this adapter was dropped as dead in Chunk 1's S1 cleanup once that happened, then
+ *  re-added when `warmUp` became a real caller. */
+export function asBackgroundModelRegistry<
+  T extends { getAvailable(): readonly ModelLike[] },
+>(registry: T): BackgroundModelRegistry {
   return { getAvailable: () => registry.getAvailable() };
+}
+
+/** Reconstruct a plain `provider/model[:thinking]` spec string from a resolved
+ *  background model. `warmUp` calls this after `resolveBackgroundModel` so the
+ *  `background-model` extension flag carries a plain spec (not a raw `script:` path) —
+ *  the ported extensions read it + resolve via `ctx.modelRegistry` themselves. Exported
+ *  so `warmUp` and its test share ONE reconstruction (not a hand-copied duplicate that
+ *  silently drifts). Returns undefined when the resolution has no model (unset or
+ *  non-resolving) → the caller threads nothing and the extension no-ops. */
+export function reconstructPlainSpec(
+  resolved: ResolvedBackgroundModel,
+): string | undefined {
+  if (!resolved.model) return undefined;
+  // `model` is typed `unknown` (pi's `Model<Api>` isn't exported); cast through the
+  // structural `ModelLike` shape the matcher already uses.
+  const m = resolved.model as ModelLike;
+  return `${m.provider}/${m.id}${
+    resolved.thinkingLevel ? `:${resolved.thinkingLevel}` : ""
+  }`;
 }
 
 /** The model fields the matcher reads. A structural slice of pi's `Model<Api>` — kept

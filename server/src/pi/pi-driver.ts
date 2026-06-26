@@ -55,6 +55,7 @@ import { ArchiveStore } from "../archive-store.js";
 import { config } from "../config.js";
 import {
   asBackgroundModelRegistry,
+  reconstructPlainSpec,
   resolveBackgroundModel,
 } from "./background-model.js";
 import type {
@@ -144,7 +145,9 @@ function ownedExtensionBasename(resolvedPath: string): string | undefined {
  *  per path — the file is read once at first list. Never throws: a malformed/unreadable
  *  block just yields no description. */
 const pilotDescriptionCache = new Map<string, string>();
-export function pilotExtensionDescription(resolvedPath: string): string | undefined {
+export function pilotExtensionDescription(
+  resolvedPath: string,
+): string | undefined {
   const cached = pilotDescriptionCache.get(resolvedPath);
   if (cached !== undefined) return cached || undefined;
   let desc = "";
@@ -848,18 +851,14 @@ export async function createPiDriver(
       backgroundModelSetting,
       asBackgroundModelRegistry(modelRegistry),
     );
-    let backgroundModel: string | undefined;
-    if (resolvedBg.model) {
-      // Reconstruct a plain `provider/id[:thinking]` spec from the resolved model +
-      //   level. `model` is `unknown` (pi's `Model<Api>` isn't exported) — cast to the
-      //   structural `ModelLike` shape to read `.provider`/`.id`.
-      const m = resolvedBg.model as { provider: string; id: string };
-      backgroundModel = `${m.provider}/${m.id}${
-        resolvedBg.thinkingLevel ? `:${resolvedBg.thinkingLevel}` : ""
-      }`;
-    }
+    // Reconstruct a plain `provider/id[:thinking]` spec from the resolved model + level
+    //   (so a `script:` setting is resolved here and the extension flag carries a plain
+    //   spec). Unset/non-resolving → undefined → thread nothing (the extension no-ops).
+    //   Shared with the test via `reconstructPlainSpec` so they can't drift apart.
+    const backgroundModel = reconstructPlainSpec(resolvedBg);
     const extensionFlagValues = new Map<string, boolean | string>();
-    if (mcpConfigOverride) extensionFlagValues.set("mcp-config", mcpConfigOverride);
+    if (mcpConfigOverride)
+      extensionFlagValues.set("mcp-config", mcpConfigOverride);
     if (backgroundModel)
       extensionFlagValues.set("background-model", backgroundModel);
     // [OPEN E] (b): pilot-side toggle. pi's force-exclude override is a NO-OP on
