@@ -57,10 +57,7 @@
 
 <style>
   .summary {
-    /* content-visibility win on long transcripts; no box of its own. Intentional — see the
-       note on store.svelte.ts logRenderTiming; it's load-bearing for the autoscroll pin. */
-    content-visibility: auto;
-    contain-intrinsic-size: auto 24px;
+    /* no box of its own — the summary card is a bare header + optional body. */
   }
   .head {
     display: inline-flex;

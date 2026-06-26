@@ -239,11 +239,10 @@
   }
 
   /** Force the viewport to the true bottom, re-asserting across a few frames. A single
-   *  scrollTo can land short because off-screen `content-visibility` rows report their
-   *  estimated `contain-intrinsic-size` until they paint; re-running per frame lets the
-   *  estimate firm up to real heights and the bottom hold. The streaming pin gets this
-   *  convergence for free by re-firing on every delta — a one-shot switch into an idle
-   *  session does not, so it has to settle itself. */
+   *  scrollTo can land short when content arrives after the first layout (images decoding,
+   *  markstream finalizing blocks), so re-running per frame lets those settle and the
+   *  bottom hold. The streaming pin gets this convergence for free by re-firing on every
+   *  delta — a one-shot switch into an idle session does not, so it has to settle itself. */
   function snapToBottom(): void {
     let frames = 0;
     const settle = () => {
@@ -307,12 +306,9 @@
     navIndex = null;
     store.clearActiveUnread();
     // Re-assert across frames (not a single scrollTo): sending while scrolled up jumps
-    // from the top, where the rows between were `content-visibility`-skipped and reporting
-    // their estimated `contain-intrinsic-size`. A one-shot scroll lands at the ESTIMATED
-    // bottom; as those rows paint and firm up to real heights, scrollHeight grows, a gap
-    // opens below, and `onScroll` would unpin (gap > 80) before the reply even streams.
-    // snapToBottom chases the true bottom for a few frames so the pin holds. (Same reason
-    // session-switch uses it.)
+    // from the top, where content between may still be settling (images decoding,
+    // markstream finalizing). A one-shot scroll can land short; snapToBottom chases the
+    // true bottom for a few frames so the pin holds. (Same reason session-switch uses it.)
     snapToBottom();
   });
 
@@ -879,10 +875,6 @@
     max-width: calc(100% - max(0px, (100% - var(--maxw)) / 2));
     margin-inline: max(0px, calc((100% - var(--maxw)) / 2)) 0;
   }
-  .row, :global(.tool) {
-    content-visibility: auto;
-    contain-intrinsic-size: auto 120px;
-  }
   .row {
     display: flex;
     flex-direction: column;
@@ -1247,10 +1239,6 @@
     tab-size: 2;
   }
   /* ── Per-turn "Worked for Ns" block (Codex-style collapsed working section) ── */
-  .turn-work {
-    content-visibility: auto;
-    contain-intrinsic-size: auto 44px;
-  }
   .work-head {
     display: inline-flex;
     align-items: center;

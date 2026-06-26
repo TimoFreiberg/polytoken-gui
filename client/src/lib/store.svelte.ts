@@ -1471,13 +1471,13 @@ class PilotStore {
    *  add `?dev` to the URL in any deploy. Watch the trend: when `itemCount` climbs into
    *  the thousands AND the paint time grows past a perceptible pause, JS windowing
    *  (render only the last N turns + "load older") starts to earn its complexity. The
-   *  transcript renders every item up front (no JS virtualization). CSS `content-visibility:
-   *  auto` on `.row`/`.tool`/`.turn-work`/`.summary` skips PAINTING off-screen rows — kept
-   *  INTENTIONALLY: it's load-bearing for the autoscroll pin (without it the pinned scroll
-   *  settles ~150px short of the bottom — `e2e/polish.e2e.ts` guards this). Accepted tradeoff:
-   *  a residual viewport-drift risk while scrolling UP past not-yet-painted tall rows (their
-   *  `contain-intrinsic-size` estimate snaps to real height). Real JS windowing that preserves
-   *  scroll on prepend is the proper fix when item counts climb into the thousands. */
+   *  transcript renders every item up front (no JS virtualization, no CSS
+   *  content-visibility): rows render at their true height immediately. (content-visibility
+   *  was tried as a zero-JS virtualization but reverted — its estimated contain-intrinsic-size
+   *  made off-screen rows snap to real height as you scrolled up, drifting the viewport
+   *  into tall messages. `e2e/transcript.e2e.ts` guards the no-CV invariant.) Real JS windowing
+   *  that preserves scroll on prepend is the proper fix when item counts climb into the
+   *  thousands. */
   private logRenderTiming(itemCount: number): void {
     if (typeof window === "undefined") return;
     if (!new URLSearchParams(window.location.search).has("dev")) return;
