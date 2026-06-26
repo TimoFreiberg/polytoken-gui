@@ -92,6 +92,23 @@ export interface PiDriverOptions {
   warmCap?: number;
 }
 
+// SPIKE (Chunk 0, docs/PLAN-self-contained-extensions.md): a pilot-bundled throwaway
+// extension passed to pi's `DefaultResourceLoader` via `additionalExtensionPaths` so
+// we can prove the load + `/pilot-spike` command + Settings list + enable/disable
+// toggle path before porting the real extensions. Delete once chunks 2–4 land.
+//
+// Resolved to an ABSOLUTE path at module init (NOT per-warmUp, NOT against
+// process.cwd()): the server cwd carries no operator intent (a Finder-launched desktop
+// app starts in `/`), and pi's `resolveExtensionSources` would mis-resolve a relative
+// path against whatever cwd a session happens to use. Per pi's docstring at
+// agent-session-services.ts:36 — CLI-provided resource paths must be absolute before
+// they reach createAgentSessionServices. import.meta.dir is the pilot repo root from
+// here (server/src/pi/), so this is invariant of where the process was launched.
+const PILOT_SPIKE_EXTENSION_PATH = resolve(
+  import.meta.dir,
+  "../../../pilot/extensions/_spike.ts",
+);
+
 // pi's thinking-level ladder. Mirrors `getSupportedThinkingLevels` from
 // @earendil-works/pi-ai, which isn't a direct/resolvable dep here — we read the same
 // `reasoning` + `thinkingLevelMap` model metadata it does. Used to enrich the model
@@ -757,6 +774,13 @@ export async function createPiDriver(
       ...(mcpConfigOverride
         ? { extensionFlagValues: new Map([["mcp-config", mcpConfigOverride]]) }
         : {}),
+      // SPIKE (Chunk 0): register the no-op pilot extension so it loads through pi's
+      // resource loader the same way a CLI `-e <path>` would. resolveExtensionSources
+      // tags it source:"cli", scope:"temporary", origin:"top-level". The real extensions
+      // replace this array in later chunks; for the spike it's a single resolved path.
+      resourceLoaderOptions: {
+        additionalExtensionPaths: [PILOT_SPIKE_EXTENSION_PATH],
+      },
       // Without this, pi leaves projectTrusted=true and auto-loads every project's .pi
       // resources — the D12 gap. Resolve trust per cwd instead (non-interactive MVP;
       // honors trust.json, denies untrusted paths (no implicit trust — see createPiDriver).
