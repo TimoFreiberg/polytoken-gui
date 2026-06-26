@@ -46,24 +46,39 @@ paths to `DefaultResourceLoader` via
 `DefaultResourceLoaderOptions.additionalExtensionPaths`.
 
 Why not `extensionFactories` (direct function injection): factories may not
-surface in `getExtensions()` the same way, and the enable/disable toggle keys on
-`resolvedPath` — so the owned extensions might become un-toggleable, breaking
-the "dedicated enable/disable toggles" goal. File-based keeps the toggle story
-uniform with user extensions.
+surface in `getExtensions()` the same way. *(The original rationale also cited
+"the enable/disable toggle keys on `resolvedPath`" to keep toggles uniform —
+but that rationale was disproved by Chunk 0; see the correction below and
+[OPEN E]. File-based is still chosen for the `getExtensions()`/discovery reason;
+toggleability is now a separate question.)*
 
-Verified mechanics (`pi-coding-agent@0.80.2`):
+Verified mechanics — `pi-coding-agent@0.80.2`, **confirmed empirically by
+Chunk 0** (`server/src/pi/spike-extension.test.ts`, 6 tests, all green):
 - `additionalExtensionPaths` route through `resolveExtensionSources`, tagged
-  `source:"cli", scope:"temporary", origin:"top-level"`.
-- Force-exclude overrides (`-<resolvedPath>` in pi settings) **do** apply to
-  them — so pilot's enable/disable toggle works on the owned extensions too.
-- **No path dedup.** If pilot registers `…/pilot/extensions/answer.ts` AND the
-  dotfiles `~/.pi/agent/extensions/answer.ts` is still discoverable via the
-  symlink, **both load → tool/command name collisions** (the `answer` tool
-  registered twice). **Therefore moving an extension requires the dotfiles copy
-  to be removed (or disabled), not coexisted.** This is a hard constraint the
-  plan accounts for (see chunk "Migration").
-- `source:"cli"` origin will need a small server-side projection tweak so the
-  Settings list badges these as "Pilot" rather than "cli"/"temporary". See D3.
+  `source:"cli", scope:"temporary", origin:"top-level"`. ✅ confirmed
+- **Force-exclude overrides (`-<resolvedPath>` in pi settings) do NOT disable
+  `additionalExtensionPaths` entries.** ❌ contradicts the pre-spike assumption.
+  Root cause: pi's `resolveLocalExtensionSource` calls `addResource(…, enabled:
+  true)` unconditionally (`package-manager.ts:~1296/1303`); `isEnabledByOverrides`
+  is only consulted on the auto-discovery filesystem scan path (`~2301`), never
+  on the local-source path that `additionalExtensionPaths` →
+  `resolveExtensionSources({temporary:true})` routes through. A boundary test
+  proves the *same* override DOES disable a user-scope auto-discovered extension.
+  **The "uniform toggle" goal does not fall out for free** — resolving it is
+  [OPEN E] below. Resolves before chunks 2–4, since those ports register via D1.
+- **Path dedup is by canonicalized (realpath) path.** A real second copy on
+  disk (e.g. dotfiles `answer.ts` AND `pilot/extensions/answer.ts`) → both
+  load → tool/command name collisions (the `answer` tool registered twice;
+  pi's `resolveRegisteredCommands` disambiguates *invocation* names but both
+  handlers stay live). A *symlink*, however, IS deduped (realpath collision).
+  So the dotfiles *symlink* alone wouldn't double-register — but Chunk 5 still
+  removes the three real extension files from dotfiles, because the
+  `~/.pi/agent/extensions` → `~/dotfiles/agents/extensions` symlink resolves
+  to the real dotfiles copies. ✅ "must remove from dotfiles" constraint
+  confirmed; see Chunk 5.
+- `source:"cli"` origin **does NOT** badge as "Pilot" for free — pilot's
+  `listExtensions` projection surfaces it as `"temporary"`. A server-side
+  projection tweak is needed. ✅ confirmed; folded into D3.
 
 ### D2 — Cheap-model resolution: a pilot Settings entry (with optional script hook)
 answer.ts + session-namer.ts need a cheap model (the `text-summary` and
@@ -128,25 +143,44 @@ Ordered by dependency + risk (cheapest, most-de-risking first). Each chunk is
 one inner-loop run. Every chunk carries its own verification target — either
 an existing e2e spec or a new one.
 
-### Chunk 0 — Spike: register a no-op extension via `additionalExtensionPaths`  ✅ KEPT
+### Chunk 0 — Spike: register a no-op extension via `additionalExtensionPaths`  ✅ DONE (2026-06-26)
 **De-risk the core mechanism before porting anything real.** Add a tiny
 throwaway extension under `pilot/extensions/_spike.ts` (registers a
 `/pilot-spike` command), wire it into the `DefaultResourceLoader` options in
-`server/src/pi/pi-driver.ts`, and verify:
-1. It loads and the command appears in the composer typeahead.
-2. It shows up in `getExtensions()` and the Settings Extensions list.
-3. The enable/disable toggle (force-exclude) works on it.
-4. The `source:"cli"` origin surfaces — confirm whether the D3 "Pilot" badge
-   needs a projection tweak or falls out for free.
-5. Double-registration: confirm the collision if the same file is also in
-   `~/.pi/agent/extensions` (to validate the D1 "must remove from dotfiles"
-   constraint empirically, not just from the loader source).
+`server/src/pi/pi-driver.ts`, and verify (1–5 below). **Outcome:** the mechanism
+works; points 1, 2, 4, 5 confirmed ✅; point 3 **disproved** — the force-exclude
+override does NOT disable an `additionalExtensionPaths` entry (see D1 + [OPEN E]).
+1. ✅ It loads and the command registers (`/pilot-spike` in
+   `getExtensions().commands`).
+2. ✅ It shows up in `getExtensions()` (and therefore the Settings Extensions
+   list, which reads the same projection).
+3. ❌ **The enable/disable toggle does NOT work on `additionalExtensionPaths`
+   entries** — contradicts the pre-spike D1 assumption. The `-<resolvedPath>`
+   override is ignored on the local-source path. Pinned by a failing-loud test
+   + a boundary test proving the same override DOES disable a user-scope
+   auto-discovered extension. → [OPEN E].
+4. ✅ `source:"cli", scope:"temporary", origin:"top-level"` surfaces — but does
+   NOT badge as "Pilot" for free (projects as `"temporary"`); the D3 projection
+   tweak is required.
+5. ✅ Double-registration confirmed: a real second copy → command collision
+   (both handlers live); a symlink → realpath-deduped (no collision). The
+   "must remove from dotfiles" constraint holds for the real-file migration.
 
 Throw the spike away after; it exists only to retire the mechanism risk. No
 migration, no UI changes.
 
-**Verify:** manual `/pilot-spike` in a mock-driver session + `GET /debug/state`
-shows the extension.
+**Outcome:** spike committed (`wwxunzvlpstm`); `server/src/pi/spike-extension.test.ts`
+(6 tests) drives the real `DefaultResourceLoader` to prove the above without a
+running pi session. Reviewer (opus-4.8) verdict: `needs attention` solely on the
+forward-looking removal-gate obligation (S1) — the spike itself is sound. The
+spike is still live in `warmUp()` (surfaces `/pilot-spike` in every real
+session) and **MUST be removed/replaced when Chunk 2 swaps it for
+`session-namer.ts`** — tracked as a hard gate on Chunk 2.
+
+**Verify:** (as built) unit tests proving load + source metadata + the toggle
+finding + both dedup cases. The mock driver doesn't exercise
+`createAgentSessionServices`, so a full mock-driver e2e was low-ROI for the
+spike; the unit suite driving the real loader is the faithful substitute.
 
 ### Chunk 0.5 — Settings navigation refactor  ✅ ADDED (per [OPEN C] resolution)
 Break the single long Settings panel into submenus / nested navigation so its
@@ -281,17 +315,51 @@ submenus for its longer lists, and confirmed it folds into this project as
 every section, run through the inner loop independently, and precedes the
 Extensions UI work so the new origin-grouped list lands inside the new nav.
 
-### [OPEN D] — Should pilot-owned extensions be toggleable at all?
-D1 says yes (uniform toggle). But disabling `answer.ts` breaks the qna UI
-(pilot has components that assume `qna` exists), and disabling `tasklist.ts`
-silently degrades the tasklist widget. Options:
-(a) toggleable but with a warning in the UI ("Disabling this breaks the Q&A
+### [OPEN D] — Should pilot-owned extensions be toggleable at all? *(reframed by Chunk 0 — see [OPEN E])*
+D1 *said* yes (uniform toggle) — but Chunk 0 disproved the mechanism that was
+supposed to deliver uniform toggling (a `-<resolvedPath>` override does NOT
+disable an `additionalExtensionPaths` entry). So "toggleable" no longer falls
+out for free; it's a build, and the load-bearing-breakage concern below still
+stands independently. Disabling `answer.ts` breaks the qna UI (pilot has
+components that assume `qna` exists), and disabling `tasklist.ts` silently
+degrades the tasklist widget. Options (revised):
+(a) toggleable, via a *pilot-side* enable/disable (not pi's force-exclude — see
+    [OPEN E]) but with a warning in the UI ("Disabling this breaks the Q&A
     feature"), or
 (b) non-toggleable for the 3 pilot-owned ones (always on, no toggle), or
 (c) toggleable, no warning, and let it break (operator's choice).
 
-Lean: (a) — toggleable (consistency) but with an inline warning for the
-load-bearing ones. Defer until Chunk 2–4 reveal how the toggle actually feels.
+Lean: (b) — now the path of least resistance AND least footgun, since pi's
+force-exclude doesn't even work on these entries (Chunk 0). Defer the final
+call to [OPEN E]'s resolution, which determines whether (a) is even feasible
+without extra pilot-side work.
+
+### [OPEN E] — NEW (Chunk 0): pi's force-exclude override doesn't disable `additionalExtensionPaths` entries. How should pilot-owned extensions be toggleable?
+Chunk 0 disproved D1's assumption: a `-<resolvedPath>` force-exclude override
+in pi settings is **ignored** for `additionalExtensionPaths` entries (pi's
+`resolveLocalExtensionSource` hardcodes `enabled: true`; `isEnabledByOverrides`
+only runs on the auto-discovery scan path). So pilot's existing Settings
+Extensions toggle — which writes a `-<resolvedPath>` override — is a no-op on
+the owned extensions. Options:
+(a) **Accept non-toggleable for the 3 owned ones** (always on) — simplest;
+    matches OPEN D lean (b). The Settings UI hides/disables the toggle for
+    them with a note. Cost: none beyond the UI projection tweak already needed
+    for the D3 "Pilot" badge.
+(b) **Pilot-side toggle** — pilot maintains its own enabled/disabled set for
+    owned extension paths and simply omits disabled ones from the
+    `additionalExtensionPaths` array it passes to `createAgentSessionServices`.
+    Cost: a small new pilot-side setting + store state + UI; but it's
+    pilot-internal, not dependent on pi's force-exclude. Gives a real toggle
+    (and pairs with OPEN D option (a)'s warning).
+(c) **Upstream pi fix** — contribute a patch so `resolveLocalExtensionSource`
+    honors `isEnabledByOverrides`, restoring D1's original "uniform toggle"
+    story for free. Cost: an upstream PR + waiting on a pi release; highest
+    fidelity, slowest.
+
+Lean: (a) for now (ship the 3 ports as always-on, matching OPEN D (b)), with
+(c) as a follow-up if a real toggle is later wanted. (b) is the middle ground
+if a toggle is wanted *before* an upstream fix lands. **Resolves before
+chunks 2–4**, since the toggle UI for the owned extensions depends on it.
 
 ## Non-goals
 
