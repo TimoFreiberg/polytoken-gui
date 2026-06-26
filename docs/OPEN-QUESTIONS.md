@@ -109,3 +109,67 @@ first-run trust card.** Tell me if you want pixel-faithful vs just "same family.
     oh, same family to start with, as soon as i dogfood i can imagine proposing changes from the way claude does it, too. things i like are how prose reads, e.g. font rendering should be beautiful, tool calls should be inspectable but unobtrusive. i like having quick ways to navigate a session, so having like a hotkey to jump to my last prompt would be neat, or maybe we could consider a minimap on the right side at some point lol (not sure about that one!)
     i think that's the area we could go ham with just to have something to continuously improve when the meat and bones are good.
 </review>
+
+## OQ9 — iOS keyboard accessory bar (prev/next/done): live with it, or rewrite the composer to contenteditable? — TABLED
+
+**Status: tabled 2026-06-26. Needs a fresh discussion before deciding — recorded
+here so the trade-off isn't rediscovered from scratch.**
+
+On iOS, focusing any `<textarea>`/`<input>` makes WKWebView draw a native
+**form-navigation accessory bar** above the keyboard (`UIWebFormAccessory`): a
+▲/▼ pair that cycles between focusable form fields on the page, and a ✓ "Done"
+that dismisses the keyboard. It's platform chrome — nothing in pilot renders it
+(verified: the Composer's only top-border element is the single expand caret
+`⌃`/`⌄`, which doesn't match). It fires on all three text-input surfaces:
+`client/src/components/Composer.svelte`, `QnaForm.svelte`, `ApprovalLayer.svelte`.
+
+The user finds it unwanted dead weight (single-field UI → prev/next do nothing
+useful) and wants it gone. The honest problem: **no web API removes it for a
+standalone PWA.** Checked — `enterkeyhint` only relabels Return, `inputmode` only
+swaps keyboard layout, the `VirtualKeyboard` API is Chromium-only and ignores
+the accessory, and the viewport/`interactive-widget` meta is about resize, not
+the bar. The native knobs that *do* hide it (Cordova
+`HideKeyboardFormAccessoryBar`, Tauri/wry input-accessory-view removal) operate
+on a *wrapped* WKWebView — which would mean abandoning the pure-PWA
+architecture settled in D3. Not on the table.
+
+The one real web lever is **swapping the `<textarea>` for a `contenteditable`
+div**: iOS doesn't show the form-assistant bar for a contenteditable element
+(it's not a "form field," so there's nothing to prev/next between). This is the
+commonly-cited workaround. **Caveat flagged, not buried:** I couldn't find a hard
+2025/26 confirmation that it suppresses the bar in a standalone home-screen PWA
+on current iOS — it's well-supported anecdotally but not a documented guarantee.
+
+The cost is real, not a drop-in. The Composer is deeply textarea-shaped:
+`ta.selectionStart`/`ta.selectionEnd` drive `@`-mention insertion
+(`file-autocomplete.ts`), slash-query detection (`slash.ts`), and readline
+history (`caret-visual-line.ts`, `prompt-history.ts`) — a contenteditable
+element has neither, so caret offset gets re-derived from `Selection`/Range
+APIs. Autosize (`scrollHeight`→`height`) differs, paste needs sanitization
+(rich paste → plain), IME composition and caret-position math are
+browser-inconsistent, and "the text" stops being a single plain string the store
+owns and becomes a derived thing. Meaningful rewrite of the Composer's input
+core (caret tracking, mentions, slash, history, autosize, paste) with a real
+regression surface — **for a fix that isn't guaranteed to work** until tried on
+the device.
+
+Two honest paths when this gets revisited:
+
+1. **Verify the lever before paying for it.** Stand up a throwaway page (one
+   `contenteditable` div + one `<textarea>`) as a PWA on the actual iPhone. If
+   the bar is gone on the contenteditable one and present on the textarea, the
+   rewrite is justified; if it's still there, stop — accept/document instead.
+   ~15 min, kills the key uncertainty before any rewrite.
+2. **If verified → rewrite** the three textareas to contenteditable (behind the
+   existing `isTouch` guard where reasonable), extending the e2e suite to cover
+   caret/mention/history on the new element.
+
+If not verified, **accept it**: the ✓ Done is arguably useful anyway; it's the
+prev/next that are dead weight with a single field. Document as a known iOS
+platform limitation in `DECISIONS.md`, zero code.
+
+What this entry deliberately does *not* do: commit to the contenteditable
+rewrite on an unverified assumption. The trade-off is "large rewrite, real
+regression risk" vs. "one strip of iOS chrome that's mostly harmless," and the
+deciding fact (does contenteditable even suppress it on current iOS PWAs?) is
+cheap to check first.
