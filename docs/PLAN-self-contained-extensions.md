@@ -182,7 +182,7 @@ finding + both dedup cases. The mock driver doesn't exercise
 `createAgentSessionServices`, so a full mock-driver e2e was low-ROI for the
 spike; the unit suite driving the real loader is the faithful substitute.
 
-### Chunk 0.5 — Settings navigation refactor  ✅ ADDED (per [OPEN C] resolution)
+### Chunk 0.5 — Settings navigation refactor  ✅ DONE (2026-06-26)
 Break the single long Settings panel into submenus / nested navigation so its
 longer lists (Providers, Models+Favorites, Extensions) don't crowd one scroll.
 Touches every section's affordance, so run it through the inner loop on its own,
@@ -195,8 +195,40 @@ the whole panel?), mobile behavior (the panel is a bottom-sheet on phones), and
 hotkey/escape semantics across nested views. Keep the existing testids stable
 where possible — the e2e suite (`e2e/settings.e2e.ts`) keys off them.
 
-**Verify:** full `e2e/settings.e2e.ts` stays green (it exercises every section);
-add a case for the nav itself (open a deep section directly, escape back).
+**Outcome:** shipped a **left-rail of flat section tabs** (not a drill-in stack):
+the seven tabs (Appearance, Notifications, Providers, Models, Extensions,
+Environment, Access token) whose labels ARE the section names, so all stay
+visible on panel open (satisfies the e2e's six-name-visible invariant). Only the
+active section renders. `Alt+1..7` jumps tabs (via `e.code` `Digit1..7`, not
+`e.key` — macOS Option+digit composes a glyph, so `e.key` silently no-ops on the
+project's primary platform; `preventDefault` swallows the glyph so focused
+fields aren't corrupted). `⌘,/Ctrl+,` toggles the panel; Esc closes it. Active
+tab persists in `localStorage` (`pilot.settingsSection`) across close/reopen +
+reload, mirroring the app's other per-device prefs. Mobile reflows the rail to a
+horizontal scrollable strip; tabs clear 44px on coarse pointers. ARIA tabs
+pattern completed (`role="tablist"`/`tab`/`tabpanel` + `aria-controls`/
+`aria-labelledby`, matching `QnaForm.svelte`'s existing tablist; `tabindex="0"`
+left OFF the tabpanel since it has focusable descendants, per ARIA APG). An
+`openSettings(page, section?)` e2e helper was extracted; existing settings-
+touching specs migrated to it (only the active section renders, so tests must
+nav to a tab before touching its controls). 3 new nav e2e tests (deep-link,
+`Alt+1..7`, Escape) + a mobile rail tap-target assertion.
+
+**Why left-rail over collapsible-groups-promoted:** a flat tab rail keeps all
+seven section names simultaneously visible (the e2e invariant) AND gives each
+long list its own scroll instead of crowding one — collapsible-groups would
+still be one scroll with expanded sections stacking. Picked + documented in-round
+per the plan's leave-open scope.
+
+Loop: round 1 review `correct` (all P2); round 1 fix commit applied the 6 P2s;
+round 2 review `correct` (3 smaller P2); round 2 fix commit applied those.
+Working copy clean; settings e2e 27/27 green. The Extensions UI work (Chunks
+2–4) now lands inside this nav.
+
+**Verify:** full `e2e/settings.e2e.ts` green (27/27); the broader suite has 5
+PRE-EXISTING failures in `e2e/sessions.e2e.ts` (worktree/dir-picker tests
+timing out on `.row.up`) — verified to fail at the clean base commit too,
+unrelated to this refactor; logged in `docs/TODO.md`.
 
 ### Chunk 1 — Settings: "background model" entry (D2)
 The dependency D2 removes is shared by answer + session-namer, so land it

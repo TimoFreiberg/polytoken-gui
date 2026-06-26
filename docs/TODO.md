@@ -9,6 +9,15 @@ See `docs/` siblings for context: `DESIGN.md` (architecture + roadmap), `DECISIO
 
 ## 🔴 Next (urgent / blocking)
 
+- [ ] **e2e: dir-picker `.row.up` "go up" button times out (pre-existing flake).** Surfaced
+      during the Chunk 0.5 Settings-nav verification (2026-06-26): 5 `e2e/sessions.e2e.ts`
+      worktree/dir-picker tests (`started in a directory chosen via the browser`, `worktree
+      chip creates…`, `worktree session shows a path indicator`, `archiving a worktree session
+      reaps…`, `archiving a dirty worktree session…`) all fail with a 30s timeout waiting for
+      `dir-picker`'s `.row.up`. VERIFIED to fail at the clean base commit `b3c98cac` (no
+      Settings changes) — NOT a regression from the nav refactor. Likely environmental
+      (the `chooseProjectDir` helper's `.row.up` click never resolves). Not blocking the
+      extensions plan, but it's noisy in the suite and should be diagnosed separately.
 - [x] **Don't collapse the lead-up paragraph when an agent asks via the `answer` tool.**
       Repro (session `019ef8d7-35a9-7738-afac-e718fdbaccc2`, Opus 4.8): the agent wrote a
       final-response-looking paragraph, then immediately fired the `answer` tool to ask a
