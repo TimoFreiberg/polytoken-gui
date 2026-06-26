@@ -555,9 +555,11 @@ test("the section rail deep-links to a section without scrolling", async ({
   await envTab.click();
   await expect(envTab).toHaveAttribute("aria-selected", "true");
 
-  // toBeVisible() only checks rendered + not CSS-hidden, not "in the viewport". The
-  // left-rail swaps sections without scroll, so the env body's scroll container should
-  // still be at the top (scrollTop 0) — assert that directly.
+  // The left-rail swaps sections by mounting only the active one (no scroll), so
+  // the panel body's scrollTop stays 0. This is a weak guard (it can't really be
+  // non-zero given only one section renders) — the real teeth are the
+  // login-shell-status-visible + theme-system-gone assertions below. Kept as a
+  // cheap sanity check that nothing scrolled the panel.
   const env = page.getByTestId("settings-panel").getByTestId("env-section");
   await expect(env.getByTestId("login-shell-status")).toBeVisible();
   const bodyScrollTop = await page
@@ -566,7 +568,9 @@ test("the section rail deep-links to a section without scrolling", async ({
     .evaluate((el) => el.scrollTop);
   expect(bodyScrollTop).toBe(0);
   // …and the Appearance section (the default) is no longer rendered at all.
-  await expect(page.getByTestId("settings-panel").getByTestId("theme-system")).toHaveCount(0);
+  await expect(
+    page.getByTestId("settings-panel").getByTestId("theme-system"),
+  ).toHaveCount(0);
 });
 
 test("Alt+1..7 jump between section tabs", async ({ page }) => {

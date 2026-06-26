@@ -285,11 +285,13 @@
     // ("Digit1".."Digit7") rather than e.key: on macOS Option+digit composes a glyph
     // (Option+1 → "¡"), so Number(e.key) is NaN and the shortcut would silently no-op
     // on the project's primary platform. e.code is the physical key, layout/OS-
-    // independent. Safe even while a field is focused — the provider/favorites/
-    // extension searches and the key/shell/token fields all leave Alt+digit alone
-    // (Alt combos aren't text input), so this never fights typing. noUncheckedIndexed-
-    // Access makes SECTIONS[idx] `T | undefined`; the guard narrows it at runtime but
-    // not to TS, so capture the element after the bound check.
+    // independent. Safe even while a settings field is focused (provider/favorites/
+    // extension searches, key/shell/token fields): Option+digit would compose a
+    // glyph there, but we preventDefault() on the Digit1..7 match before it lands,
+    // swallowing the glyph and navigating instead — so the shortcut never corrupts
+    // field text. noUncheckedIndexedAccess makes SECTIONS[idx] `T | undefined`; the
+    // guard narrows it at runtime but not to TS, so capture the element after the
+    // bound check.
     if (open && e.altKey && !e.ctrlKey && !e.metaKey && !e.shiftKey) {
       const m = /^Digit([1-7])$/.exec(e.code);
       const target = m ? SECTIONS[Number(m[1]) - 1] : undefined;
@@ -378,7 +380,6 @@
         id="settings-panel-body"
         role="tabpanel"
         aria-labelledby="settings-tab-{activeSection}"
-        tabindex="0"
       >
       <!-- Appearance -->
       {#if activeSection === "appearance"}
