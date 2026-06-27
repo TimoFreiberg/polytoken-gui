@@ -42,9 +42,10 @@
 // is a type-resolution error the un-typechecked extensions tree was hiding (same shape as
 // the ctx.getFlag bug). Pull `Api` from its real home alongside `Model`.
 import {
-  complete,
+  completeSimple,
   type Api,
   type Model,
+  type ThinkingLevel,
   type UserMessage,
 } from "@earendil-works/pi-ai";
 import type {
@@ -93,8 +94,10 @@ const errText = (err: unknown): string =>
  *  pi's stream API. */
 interface ResolvedModel {
   model: Model<Api>;
-  /** pi thinking level when a `:thinking` suffix was parsed, else undefined. */
-  thinkingLevel?: string;
+  /** pi thinking level when a `:thinking` suffix was parsed, else undefined.
+   *  `ThinkingLevel` (not `ModelThinkingLevel`): an `off` suffix is mapped to
+   *  `undefined` in resolveSpec, so this is never `"off"`. */
+  thinkingLevel?: ThinkingLevel;
 }
 
 /** Try an exact `provider/modelId` (or bare-id) match against available models BEFORE the
@@ -143,7 +146,7 @@ function resolveSpec(
 
   // Split off a trailing `:thinking` (after any provider slash) — mirrors the server's
   // last-colon split so a model id that itself contains a colon still needs a slash.
-  let thinkingLevel: string | undefined;
+  let thinkingLevel: ThinkingLevel | undefined;
   let core = trimmed;
   const colon = trimmed.lastIndexOf(":");
   const slash = trimmed.indexOf("/");
@@ -155,7 +158,9 @@ function resolveSpec(
         suffix as (typeof VALID_THINKING_LEVELS)[number],
       )
     ) {
-      thinkingLevel = suffix === "off" ? undefined : suffix;
+      // `off` maps to undefined (no thinking param) — so thinkingLevel stays ThinkingLevel,
+      // never `"off"` (which is ModelThinkingLevel, not a reasoning option value).
+      thinkingLevel = suffix === "off" ? undefined : (suffix as ThinkingLevel);
       core = prefix;
     } else {
       // Invalid thinking level: try the prefix; if it resolves, drop the level + warn
@@ -274,9 +279,16 @@ async function nameSession(
     timestamp: Date.now(),
   };
 
-  let response: Awaited<ReturnType<typeof complete>>;
+  // Use `completeSimple` (not `complete`): the `reasoning` option lives on
+  // `SimpleStreamOptions`, NOT `StreamOptions`. `complete()`/`stream()` take the latter,
+  // so a `reasoning` value passed there is SILENTLY DROPPED (no error — the anthropic
+  // adapter then sends no `thinking` param). `streamSimpleAnthropic` is what translates
+  // `reasoning` → `thinkingEnabled` + `effort`. So a spec like `umans/umans-flash:low`
+  // under `complete()` sent the SAME request as the no-suffix form; `completeSimple`
+  // honors it. (answer.ts sidesteps this by passing no thinking option at all.)
+  let response: Awaited<ReturnType<typeof completeSimple>>;
   try {
-    response = await complete(
+    response = await completeSimple(
       resolved.model,
       { systemPrompt: SYSTEM_PROMPT, messages: [userMessage] },
       {
@@ -303,7 +315,17 @@ async function nameSession(
 
   const name = sanitizeName(text);
   if (!name) {
-    note("session-namer: model returned an empty name");
+    // DIAGNOSTIC (temporary): the model returned no usable text. Surface the raw response
+    // shape BOTH on the process stderr (visible when running `bun run dev` in a terminal)
+    // AND in the UI notify text itself (the popup you see in the live desktop app —
+    // `console.error` alone goes to the GUI app's stderr, which isn't captured in
+    // pilot.log and is hard to reach, so the notify carries the detail too). The leading
+    // suspects: reasoning burning the budget (thinking block, no text, stop=length), the
+    // gateway returning a non-text content shape the namer doesn't read, or an
+    // intermittent quirk. One captured failure here resolves which. Remove once confirmed.
+    const diag = `spec=${spec} stop=${response.stopReason} blocks=[${response.content.map((c) => c.type).join(",")}] textLen=${text.length} out=${response.usage?.output ?? "?"} errMsg=${response.errorMessage ?? "(none)"}`;
+    console.error("[session-namer] empty name —", diag);
+    note(`session-namer: model returned an empty name (${diag})`);
     return;
   }
 
