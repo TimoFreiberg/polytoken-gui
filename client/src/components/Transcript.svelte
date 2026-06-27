@@ -27,8 +27,8 @@
     persistScrollPositions,
     saveScrollPosition,
     planRestore,
-    BOTTOM_GAP,
   } from "../lib/scroll-position.js";
+  import { nextPinned } from "../lib/scroll-follow.js";
 
   const items = $derived(store.transcriptItems);
 
@@ -235,15 +235,6 @@
     progScrollUntil = Date.now() + 800;
   }
 
-  // Our own programmatic `scrollTo` (settleScroll/applySettle) fires a `scroll` event
-  // synchronously; onScroll must NOT re-evaluate `pinned` from that event. The classic
-  // failure: an instant bottom-scroll lands short while a work-block collapse is still
-  // animating, onScroll reads a large gap, flips `pinned` false — and the settle bails
-  // forever (the prompt-step e2e flake). Set this around each programmatic scrollTo so
-  // onScroll skips the pin re-eval for just that event; a user wheel/touch scroll is a
-  // separate event landing outside the window, so genuine scroll-up still unpins.
-  let suppressPinUntil = 0;
-
   // Per-session reading position, persisted so switching back to a warmed session
   // restores where you were instead of always jumping to the bottom. Saved on scroll
   // (debounced), on session-switch-away, and on pagehide (mirrors the draft stash).
@@ -287,16 +278,32 @@
     persistScrollPositions(scrollPositions);
   }
 
+  // The scrollTop the last onScroll saw — fed to nextPinned as prevTop. Component-scoped
+  // (not per-session), so it's reset to 0 in the session-restore effect below at every
+  // switch (a stale cross-session prevTop could spuriously un-pin a taller live session —
+  // see scroll-follow.ts). Within a session it tracks the live scroll position.
+  let lastScrollTop = 0;
   function onScroll() {
     if (!scroller) return;
-    const gap = scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight;
-    // Skip the pin re-eval for our own programmatic scrollTo (settleScroll/applySettle):
-    // its instant scroll fires this handler synchronously, and a short landing while content
-    // is still collapsing would otherwise flip `pinned` false and stall the settle forever
-    // (the prompt-step e2e flake). `suppressPinUntil` is set around those scrollTo calls;
-    // a user wheel/touch scroll is a separate event outside the window, so genuine scroll-up
-    // still unpins normally.
-    if (Date.now() >= suppressPinUntil) pinned = gap < BOTTOM_GAP;
+    const top = scroller.scrollTop;
+    const gap = scroller.scrollHeight - top - scroller.clientHeight;
+    // Direction-based pin (extracted, unit-tested in scroll-follow.test.ts): a programmatic
+    // snap can land short (scrollHeight grows after its scrollTo as a collapsing work block /
+    // streaming content settles), and the resulting scroll event would, under a gap-only
+    // `pinned = gap < 80` rule, un-pin us — at which point the streaming-pin effect stops
+    // following (it only scrolls while pinned), the next delta hits its `else if (grew)`
+    // branch, marks the active session unread, and the "New messages ↓" pill appears. The
+    // view never recovers until the next send/switch. Re-pinning only on a genuine upward
+    // move that has left the bottom zone holds the pin through our own short-landing events
+    // without a time window (which would also suppress a real reader scroll-up during
+    // streaming, since progScrollUntil is always in the future while pinned).
+    pinned = nextPinned({
+      prevPinned: pinned,
+      prevTop: lastScrollTop,
+      top,
+      gap,
+    });
+    lastScrollTop = top;
     // Reaching the bottom clears the active-session unread flag (you've seen it all).
     if (pinned) store.clearActiveUnread();
     // A user scroll (not one of ours) abandons prompt-stepping, so the next ⌘↑ re-anchors.
@@ -331,16 +338,8 @@
       // Live-bottom follow: only while still pinned, so a user scrolling up mid-window isn't
       // yanked back down (mirrors the streaming pin's `pinned` gate).
       if (!pinned) return;
-      // Suppress the pin re-eval for our own instant scrollTo below: it fires a `scroll`
-      // event synchronously, and if content was still collapsing when it landed, onScroll
-      // would read a large gap and flip `pinned` false — stalling the settle forever (the
-      // prompt-step e2e flake). The true defect was onScroll misattributing our scroll;
-      // suppressing the pin there fixes it without the "drag a scrolled-up reader back to the
-      // bottom" regression a broader exception would cause. See `suppressPinUntil` in onScroll.
-      suppressPinUntil = Date.now() + 50;
       scroller.scrollTo({ top: scroller.scrollHeight });
     } else {
-      suppressPinUntil = Date.now() + 50;
       scroller.scrollTo({ top: settleRatio * scroller.scrollHeight });
     }
   }
@@ -386,6 +385,15 @@
     if (id === lastFocusId) return;
     lastFocusId = id;
     prevSize = -1;
+    // Reset the onScroll direction baseline so the first chase frame's scroll event can't
+    // spuriously un-pin a LIVE session. `lastScrollTop` is component-scoped (not
+    // per-session), so without this it would carry the prior (taller) session's scrollTop;
+    // switching to a taller live session whose first chase frame lands short (scrollHeight
+    // grows under it on first render) would feed nextPinned a stale-higher prevTop and trip
+    // `top < prevTop && gap >= 80` — un-pinning the live tail, the same stuck-pill symptom
+    // this fix targets. With prevTop=0 the comparison can only re-pin or hold. (A scrolled-
+    // up restore relies on `pinned` being set false explicitly below, not on this branch.)
+    lastScrollTop = 0;
     navIndex = null;
     const plan = id ? planRestore(scrollPositions, id) : null;
     if (plan && plan !== "bottom") {
@@ -449,11 +457,6 @@
     if (!scroller) return;
     // Ours — don't save transient mid-smooth-scroll positions (see settleScroll).
     progScrollUntil = Date.now() + 900;
-    // Suppress the pin re-eval across the smooth scroll's many `scroll` events: mid-flight
-    // the gap is large and onScroll would flip `pinned` false, fighting the animation (and,
-    // for settle callers, stalling the bottom-chase). Pre-setting `pinned = true` below
-    // isn't enough — the events would undo it. A genuine user scroll lands outside this.
-    suppressPinUntil = Date.now() + 900;
     scroller.scrollTo({ top: scroller.scrollHeight, behavior: "smooth" });
     pinned = true;
     store.clearActiveUnread();
