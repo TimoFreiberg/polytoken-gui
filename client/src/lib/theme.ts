@@ -25,8 +25,19 @@ export function setThemeMode(mode: ThemeMode): void {
 
 /** The concrete palette a mode resolves to right now. */
 export function resolveTheme(mode: ThemeMode): "light" | "dark" {
+  return resolveThemeMode(mode, systemPrefersDark());
+}
+
+/** The pure core of {@link resolveTheme}: a mode → concrete palette given whether the OS
+ *  currently prefers dark. Split out (mirroring notify.ts's shouldNotify pattern) so the
+ *  mode→palette mapping is unit-testable without a window/matchMedia dependency — the
+ *  `system` branch is the only non-deterministic part, threaded in as a boolean. */
+export function resolveThemeMode(
+  mode: ThemeMode,
+  prefersDark: boolean,
+): "light" | "dark" {
   if (mode === "light" || mode === "dark") return mode;
-  return systemPrefersDark() ? "dark" : "light";
+  return prefersDark ? "dark" : "light";
 }
 
 /** Reflect a mode onto <html> as a concrete `data-theme`. The CSS has no media
