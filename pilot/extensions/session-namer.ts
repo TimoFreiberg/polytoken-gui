@@ -355,14 +355,28 @@ export default function (pi: ExtensionAPI) {
     type: "string",
   });
 
-  // Guards a single naming attempt at a time. If the attempt fails the session stays
-  // unnamed, so the next prompt retries; once it succeeds, the getSessionName() check
-  // below short-circuits all future prompts.
+  // FIRST-PROMPT-ONLY NAMING WITH BOUNDED RETRY. The session is named from the text of
+  // the FIRST qualifying input — a snapshot taken once and reused for every retry, so a
+  // failure doesn't cause a later, unrelated prompt to name the session (e.g. prompt #1's
+  // call fails, prompt #2 arrives, and the session gets titled from #2's text, not #1's).
+  // Retries are triggered by the NEXT qualifying input (not a timer), reuse the snapshot,
+  // and are capped so a persistently-broken background model can't fire forever:
+  //   - attempt 1: the first qualifying input captures `firstPrompt` and fires.
+  //   - attempts 2..MAX: a later qualifying input (now that inFlight cleared), reusing
+  //     `firstPrompt` (never re-reading event.text).
+  //   - after MAX: `exhausted` stops further attempts; the session stays unnamed until a
+  //     manual rename (which sets the name and trips the getSessionName() guard anyway).
+  // Success calls setSessionName -> getSessionName() guard short-circuits all future inputs.
+  const MAX_NAMING_ATTEMPTS = 3;
+  let firstPrompt: string | null = null;
+  let attempts = 0;
+  let exhausted = false;
   let inFlight = false;
 
   pi.on("input", async (event, ctx) => {
     if (
       inFlight ||
+      exhausted ||
       event.source === "extension" || // injected by another extension
       event.streamingBehavior !== undefined || // mid-stream steer / queued followup
       !ctx.hasUI || // one-shot -p / json run: no selector to benefit
@@ -371,14 +385,26 @@ export default function (pi: ExtensionAPI) {
       return { action: "continue" };
     }
 
-    const prompt = event.text.trim();
-    if (!prompt) return { action: "continue" };
+    // Capture the first prompt's text ONCE; retries reuse it (never re-read event.text).
+    // This is the load-bearing line for "name from the first prompt only": a 2nd prompt
+    // arriving after a failed 1st call would otherwise re-seed the name from its own text.
+    if (firstPrompt === null) {
+      const text = event.text.trim();
+      if (!text) return { action: "continue" };
+      firstPrompt = text;
+    }
 
+    attempts += 1;
     inFlight = true;
     // Fire-and-forget: returning immediately keeps the agent's first token un-delayed by
-    // the naming round-trip.
-    void nameSession(pi, ctx, prompt).finally(() => {
+    // the naming round-trip. On completion: if the cap is hit AND no name landed (success
+    // would have called setSessionName, tripping the getSessionName() guard), stop trying —
+    // a persistently-broken background model shouldn't fire on every future prompt.
+    void nameSession(pi, ctx, firstPrompt).finally(() => {
       inFlight = false;
+      if (attempts >= MAX_NAMING_ATTEMPTS && !pi.getSessionName()) {
+        exhausted = true;
+      }
     });
 
     return { action: "continue" };

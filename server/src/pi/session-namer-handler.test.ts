@@ -24,6 +24,16 @@
 // pi.getFlag fix specifically is now guarded by the green tsconfig.extensions.json
 // typecheck (the call site typechecks; ctx has no getFlag) plus the source comment.
 // Same structural gap as the other extension ports.
+//
+// ALSO NOT covered: the first-prompt-snapshot + bounded-retry state machine (firstPrompt /
+// attempts / exhausted / inFlight) added so a failed 1st call can't re-seed the name from a
+// later prompt's text, and a persistently-broken background model stops after MAX attempts.
+// That logic lives in the `input` handler AFTER the guards but around the nameSession call —
+// it needs a `pi` stub where getSessionName() returns controllably (empty → retry, then set
+// → stop) + a mockable nameSession, neither of which the bare DefaultResourceLoader path
+// provides (action methods are throwing stubs). Verified by manual state-machine trace in the
+// source comment instead. A future test harness that injects a stub `pi` (bypassing the
+// loader) could cover it; until then, the green extensions typecheck is the regression guard.
 
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
