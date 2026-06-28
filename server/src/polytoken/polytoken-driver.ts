@@ -4,17 +4,23 @@
 // + an SSE event stream; the TUI is just one client of it. So this driver is mostly an
 // HTTP+SSE client that maps polytoken's event vocabulary onto pilot's SessionDriverEvent.
 //
-// Chunk 1 scope: the one-session HAPPY PATH — spawn a daemon, claim the lease
-// (+ heartbeat), subscribe to /events, `prompt`, `abort`, and a minimal event-fold.
-// Chunk 2 (this revision): the FULL 57-variant event-fold is extracted into a pure
-// `mapDaemonEvent` (event-map.ts), and this driver is now just the I/O glue — it
-// feeds SSE envelopes to the pure mapper and EXECUTES the returned effect descriptors
-// (fetchState, reseed, refetchQueue). The richer PilotDriver methods (sessions,
-// models, permissions, history) are later chunks.
+// Chunk 1–3 scope: spawn a daemon, claim the lease (+ heartbeat), subscribe to /events,
+// `prompt`, `abort`, the full 57-variant event-fold (event-map.ts), and the host-UI
+// bridge (ui-bridge.ts). This driver is the I/O glue — it feeds SSE envelopes to the
+// pure mapper and EXECUTES the returned effect descriptors (fetchState, reseed,
+// refetchQueue).
+//
+// Chunk 4 (this revision): SESSIONS & LIFECYCLE — list cold sessions from the on-disk
+// registry (sessions-registry.ts), open/reload by spawning `--resume --session-id` +
+// seeding from GET /history (history-seed.ts), rename via POST /title, the warm POOL
+// with LRU eviction + idle reaper (mirroring pi-driver), worktree integration, the
+// new-session project picker (fs-helpers.ts), and branchFrom → POST /rewind
+// (destructive; the history is linear, no branch DAG — spike §7).
 //
 // Process model (spike §1): one daemon = one session = one port. This driver keeps a
-// Map<SessionId, WarmSession> — for now there's at most one entry (the warm pool
-// with a cap + idle reaper is Chunk 4). Cold (not-spawned) sessions are not yet listed.
+// Map<SessionId, WarmSession>; the cap + idle reaper bound the pool so N background
+// sessions stay warm but idle ones eventually retire. Cold (not-spawned) sessions are
+// listed straight from disk — no daemon needed until opened.
 
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -36,6 +42,20 @@ import type {
   TreeSnapshot,
   WorkspaceRef,
 } from "@pilot/protocol";
+import { ArchiveStore } from "../archive-store.js";
+import { WorktreeStore } from "../worktree-store.js";
+import {
+  listDirOnDisk,
+  resolveGuiPath,
+  statPathOnDisk,
+} from "../fs-helpers.js";
+import {
+  createWorktree,
+  removeWorktree,
+  type WorktreeMeta,
+} from "../pi/worktree.js";
+import { evictionPlan } from "../pi/warm-cap.js";
+import { mergeSessionLists } from "../pi/session-list.js";
 import {
   DaemonClient,
   spawnDaemon,
@@ -50,14 +70,32 @@ import {
   mapDaemonEvent,
   resetAccumulator,
   snapshotFromState,
+  usageFromState as usageFromStatePure,
 } from "./event-map.js";
 import { buildInterrogativeResponse, type PendingInterrogative } from "./ui-bridge.js";
+import { historyToSeedEvents } from "./history-seed.js";
+import {
+  defaultSessionsDir,
+  listColdSessions,
+  readSessionJson as readSessionJsonSync,
+} from "./sessions-registry.js";
 
 interface PolytokenDriverOptions {
   /** Path to the polytoken binary. Defaults to "polytoken" ($PATH lookup). */
   bin?: string;
-  /** Max warm daemons before LRU eviction. Chunk 4 honors this; Chunk 1 holds one. */
+  /** Max warm daemons before LRU eviction. Defaults to 8 — the warm pool keeps
+   *  several sessions hot for instant switching (polytoken's out-of-process model
+   *  makes this its natural advantage, D-A); idle ones are reaped on a timer. */
   warmCap?: number;
+  /** The on-disk sessions registry dir (where `session.json` files live). Defaults
+   *  to polytoken's own default (`$XDG_DATA_HOME/polytoken/sessions` or
+   *  `~/.local/share/polytoken/sessions`). Override to match a daemon spawned with
+   *  `--sessions-dir`. */
+  sessionsDir?: string;
+  /** Idle reap timeout in ms. A warm session untouched (no prompt/switch) for this
+   *  long is disposed — frees the daemon process + port. Defaults to 10 min; 0
+   *  disables reaping (sessions stay warm until the cap evicts them). */
+  idleReapMs?: number;
 }
 
 /** A warm (spawned) daemon session + its pilot-side metadata. */
@@ -83,6 +121,15 @@ interface WarmSession {
    *  InterrogativeResponse shape. Cleared on dispose (a closed session's
    *  pending cards can't be answered). */
   pendingInterrogatives: Map<string, PendingInterrogative>;
+  /** Last-focused timestamp (ms). The idle reaper disposes sessions untouched longer
+   *  than idleReapMs — frees the daemon process + port without losing the session
+   *  (it's still on disk; reopening re-spawns). */
+  lastFocusedAt: number;
+  /** Cached last-seed transcript events (the replayed history). Updated by
+   *  reseedFromHistory so defaultSeed() can return the full transcript synchronously
+   *  (it must not do I/O). Mirrors pi-driver's in-memory `ws.session.messages` —
+   *  without this, a reconnecting client sees the header but an empty transcript. */
+  lastSeed: SessionDriverEvent[];
 }
 
 export async function createPolytokenDriver(
@@ -90,6 +137,14 @@ export async function createPolytokenDriver(
 ): Promise<PilotDriver> {
   const polytokenBin = opts.bin ?? "polytoken";
   const warmCap = opts.warmCap ?? 8;
+  const sessionsDir = opts.sessionsDir ?? defaultSessionsDir();
+  const idleReapMs = opts.idleReapMs ?? 10 * 60 * 1000;
+
+  // Pilot-side stores, mirrored from pi-driver: the archive flag + the worktree
+  // index are pilot's own state (polytoken has no concept of either), keyed by
+  // the session path / cwd. They persist under config.dataDir next to the VAPID key.
+  const archiveStore = new ArchiveStore();
+  const worktreeStore = new WorktreeStore();
 
   // Listeners — the hub subscribes once and folds whatever the driver emits.
   const listeners = new Set<(ev: SessionDriverEvent) => void>();
@@ -103,11 +158,24 @@ export async function createPolytokenDriver(
     }
   };
 
-  // The warm session pool. Chunk 1 holds at most one; the cap + LRU reaper is Chunk 4.
+  // The warm session pool. Insertion order IS recency order (focus moves a session
+  // to the end); eviction reads front-to-back. Bounded by warmCap + the idle reaper.
   const warm = new Map<string, WarmSession>();
   let activeSessionId: string | null = null;
 
   const now = () => new Date().toISOString();
+
+  /** Mark a session most-recently-focused: set it active AND move it to the end of
+   *  the warm map, whose insertion order is the recency order eviction reads. */
+  function focus(id: string): void {
+    activeSessionId = id;
+    const ws = warm.get(id);
+    if (ws) {
+      ws.lastFocusedAt = Date.now();
+      warm.delete(id);
+      warm.set(id, ws);
+    }
+  }
 
   /** Build a workspace ref object for a warm session. */
   function workspaceFor(ws: WarmSession): WorkspaceRef {
@@ -202,16 +270,14 @@ export async function createPolytokenDriver(
         break;
       }
       case "reseed": {
-        // Chunk 4 will do the full GET /history re-broadcast. For now, refresh
-        // the state cache and emit sessionUpdated so the UI reflects the change.
-        // Reset the accumulator first: a reseed means stream state was lost
-        // (stream_discontinuity) or history was truncated (session_rewound /
-        // context_cleared), so any in-flight block or stale turnError is invalid.
+        // The history was truncated (session_rewound / context_cleared) or the SSE
+        // stream gapped (stream_discontinuity). Re-broadcast the FULL transcript from
+        // GET /history so the hub's state matches the daemon's truth — exactly the
+        // openSession path, minus the sessionOpened (the session is already open).
+        // Reset the accumulator first: in-flight block + stale turnError are invalid.
         resetAccumulator(ws.acc);
-        void ws.client.state().then(({ data }) => {
-          if (!data) return;
-          ws.lastState = data;
-          emit(buildPostFetchEvent("sessionUpdated", ctx));
+        void reseedFromHistory(ws, /*emitOpened*/ false).catch((e) => {
+          console.error("[polytoken] reseed failed", e);
         });
         break;
       }
@@ -277,20 +343,111 @@ export async function createPolytokenDriver(
       acc: createAccumulator(),
       lastState: initialState ?? null,
       pendingInterrogatives: new Map(),
+      lastFocusedAt: Date.now(),
+      lastSeed: [],
     };
 
     // Subscribe to the SSE stream and fold every frame.
     ws.unsub = client.subscribe((envelope) => foldEvent(ws, envelope));
 
     warm.set(spawned.sessionId, ws);
-    activeSessionId = spawned.sessionId;
+    focus(spawned.sessionId);
+    // Enforce the warm cap: evict the least-recently-focused sessions (never the
+    // one just warmed). Mirrors pi-driver's evictionPlan.
+    for (const id of evictionPlan(
+      [...warm.keys()],
+      spawned.sessionId,
+      warmCap,
+    )) {
+      const victim = warm.get(id);
+      if (!victim) continue;
+      // Emit a synthetic sessionClosed BEFORE dispose so the hub clears the
+      // running indicator on an evicted mid-run session (dispose tears down SSE,
+      // so the abort's terminal event never arrives). Exactly pi-driver's pattern.
+      emit({
+        sessionRef: victim.ref,
+        timestamp: now(),
+        type: "sessionClosed",
+        reason: "ended",
+      });
+      await disposeSession(victim).catch(() => {});
+      console.log(`[polytoken] evicted LRU warm session ${id}; ${warm.size} warm`);
+    }
+    console.log(
+      `[polytoken] warmed session ${spawned.sessionId} (${cwd}); ${warm.size} warm`,
+    );
     return ws;
+  }
+
+  /** Seed events for a warm session: a `sessionOpened` (with the live snapshot) +
+   *  the replayed transcript from GET /history. The hub resets + folds these
+   *  atomically on open/reload/new. `emitOpened=false` skips the sessionOpened
+   *  (the reseed path — the session is already open, just refresh the transcript).
+   *  Mirrors pi-driver's seedFor. */
+  async function seedFor(
+    ws: WarmSession,
+    emitOpened = true,
+  ): Promise<SessionDriverEvent[]> {
+    const events: SessionDriverEvent[] = [];
+    if (emitOpened) {
+      events.push({
+        sessionRef: ws.ref,
+        timestamp: now(),
+        type: "sessionOpened",
+        snapshot: snapshotFromState(
+          ws.lastState,
+          ws.ref,
+          workspaceFor(ws),
+          statusFromState(ws.lastState),
+          now(),
+        ),
+      });
+    }
+    const historyEvents = await reseedFromHistory(ws, false);
+    return [...events, ...historyEvents];
+  }
+
+  /** Fetch GET /history + GET /state, fold the history into transcript events, and
+   *  return them (for the seed) OR emit them live (for the reseed effect). Resets
+   *  the accumulator first so stale in-flight block state can't leak. The history
+   *  fold (history-seed.ts) is the inverse of the live event-fold: user→userMessage,
+   *  assistant blocks→assistantDelta/toolStarted, tool_result→toolFinished. */
+  async function reseedFromHistory(
+    ws: WarmSession,
+    emitEvents: boolean,
+  ): Promise<SessionDriverEvent[]> {
+    resetAccumulator(ws.acc);
+    // Refresh the state cache first so the snapshot reflects the current truth.
+    const stateRes = await ws.client.state();
+    if (stateRes.data) ws.lastState = stateRes.data;
+    const histRes = await ws.client.history();
+    const items = histRes.data?.items ?? [];
+    const events = historyToSeedEvents(items, { ref: ws.ref });
+    // Cache the transcript so defaultSeed() can return it synchronously (no I/O).
+    ws.lastSeed = events;
+    if (emitEvents) {
+      for (const e of events) emit(e);
+    }
+    return events;
   }
 
   /** Active warm session, or null. */
   function active(): WarmSession | null {
     if (!activeSessionId) return null;
     return warm.get(activeSessionId) ?? null;
+  }
+
+  /** Resolve the warm session a command targets: the explicit id, else the active
+   *  one. Loud (logs) on a miss, never throws — callers drop a no-op. */
+  function target(sessionId?: string): WarmSession | null {
+    const id = sessionId ?? activeSessionId;
+    if (!id) return null;
+    const ws = warm.get(id);
+    if (!ws) {
+      console.error(`[polytoken] no warm session for id=${id}`);
+      return null;
+    }
+    return ws;
   }
 
   /** Tear down a warm session (release lease, terminate daemon, unsubscribe SSE). */
@@ -310,8 +467,97 @@ export async function createPolytokenDriver(
     }
   }
 
-  // Build the driver object. Optional methods are omitted for now (Chunk 1 scope) —
-  // the hub guards with `?.`. Only the core happy-path methods are implemented.
+  // Idle reaper: on a timer, dispose warm sessions untouched longer than idleReapMs
+  // (never the active one). Frees the daemon process + port without losing the
+  // session — it's still on disk; reopening re-spawns. Owns its lifecycle (the
+  // harness turn-hygiene lesson: a long-lived timer is a child — cleared on shutdown).
+  const reaper = idleReapMs > 0
+    ? setInterval(() => {
+        const cutoff = Date.now() - idleReapMs;
+        for (const [id, ws] of [...warm]) {
+          if (id === activeSessionId) continue; // never reap the active session
+          if (ws.lastFocusedAt > cutoff) continue;
+          // Never reap a session mid-turn — background turns keep running (D-A),
+          // and killing the daemon aborts them. The daemon's turn_in_flight is the
+          // authoritative signal (spike §7). A backgrounded running turn is the
+          // headline feature of the warm pool; reaping it would defeat it.
+          if (ws.lastState?.turn_in_flight) continue;
+          // Idle too long — reap. Emit sessionClosed first (mirrors LRU eviction)
+          // so the hub clears the running indicator on an evicted mid-run session.
+          emit({
+            sessionRef: ws.ref,
+            timestamp: now(),
+            type: "sessionClosed",
+            reason: "ended",
+          });
+          void disposeSession(ws).catch(() => {});
+          console.log(`[polytoken] reaped idle warm session ${id}; ${warm.size} warm`);
+        }
+      }, Math.min(idleReapMs, 60_000))
+    : null;
+  reaper?.unref?.();
+
+  // --- Helpers for sessions + worktree resolution (used by the methods below) ---
+
+  /** Extract pilot's SessionUsage from a daemon state snapshot's context_usage.
+   *  Re-exported from event-map's pure helper so the driver + tests share one path. */
+  function usageFromState(
+    state: DaemonStateSnapshot | null,
+  ): SessionUsage | undefined {
+    return usageFromStatePure(state);
+  }
+
+  /** The worktree field for a session's cwd, or undefined. Resolved from the
+   *  worktree store at list time (pilot's own flag — polytoken has no concept).
+   *  Carries `name` + `reaped` so the sidebar can show a tooltip + a tombstoned
+   *  indicator, exactly like pi-driver's worktreeFieldFor. */
+  function worktreeFieldFor(
+    cwd: string,
+  ): { path: string; base: string; name: string; reaped?: boolean } | undefined {
+    const meta = worktreeStore.get(cwd);
+    if (!meta) return undefined;
+    return {
+      path: meta.path,
+      base: meta.base,
+      name: meta.name,
+      reaped: worktreeStore.isReaped(cwd) || undefined,
+    };
+  }
+
+  /** Resolve a polytoken session id from a session.json path (the sidebar's switch
+   *  key). The id is the parent directory's basename. Returns null if the path
+   *  doesn't look like a session.json. */
+  function sessionIdFromPath(path: string): string | null {
+    // The path is `.../sessions/<session_id>/session.json`. Walk up one dir.
+    const parts = path.replace(/\\/g, "/").split("/").filter(Boolean);
+    if (parts.length < 2) return null;
+    if (parts[parts.length - 1] !== "session.json") return null;
+    return parts[parts.length - 2] ?? null;
+  }
+
+  /** Read a session's project_path (cwd) from its on-disk session.json — needed to
+   *  resume a cold session in the right project dir. Returns null if unreadable. */
+  function cwdForSession(dir: string, sessionId: string): string | null {
+    const meta = readSessionJsonSync(join(dir, sessionId, "session.json"));
+    return meta?.project_path ?? null;
+  }
+
+  /** Remove a pilot-created worktree at `cwd` and tombstone it. `force=false` leaves
+   *  a dirty worktree in place (returns removed:false). The index is the gate — we
+   *  never touch a worktree pilot didn't create. Mirrors pi-driver's reapWorktree. */
+  async function reapWorktree(
+    cwd: string,
+    force: boolean,
+  ): Promise<{ removed: boolean; reason?: string }> {
+    const meta = worktreeStore.live(cwd);
+    if (!meta) return { removed: false, reason: "no pilot worktree at this path" };
+    const res = await removeWorktree(meta, force);
+    if (res.removed) worktreeStore.markReaped(cwd);
+    return res;
+  }
+
+  // Build the driver object. Optional methods are implemented where the daemon
+  // supports them; the hub guards the rest with `?.`.
   const driver: PilotDriver = {
     subscribe(listener: (ev: SessionDriverEvent) => void): () => void {
       listeners.add(listener);
@@ -325,10 +571,11 @@ export async function createPolytokenDriver(
       _images?: readonly ImageContent[],
       promptId?: string,
     ): Promise<void> {
-      const ws = sessionId ? warm.get(sessionId) ?? null : active();
+      const ws = target(sessionId);
       if (!ws) {
         throw new Error("no warm polytoken session to prompt");
       }
+      focus(ws.ref.sessionId);
       // Echo the user's message into the transcript immediately (optimistic, like the
       // mock/pi drivers) so the client's row renders before the model streams.
       emit({
@@ -344,7 +591,7 @@ export async function createPolytokenDriver(
     },
 
     abort(sessionId?: SessionId): void {
-      const ws = sessionId ? warm.get(sessionId) ?? null : active();
+      const ws = target(sessionId);
       if (!ws) return;
       void ws.client.cancelTurn();
     },
@@ -370,7 +617,7 @@ export async function createPolytokenDriver(
       //   escape would be cancel. Instead, on POST failure we emit hostUiResolved
       //   (to dismiss the dead card) + an error notify so the operator sees the
       //   failure (the daemon keeps waiting, but the UI isn't frozen on a dead card).
-      const ws = sessionId ? warm.get(sessionId) ?? null : active();
+      const ws = target(sessionId);
       if (!ws) {
         console.error("[polytoken] respondUi: no warm session for", sessionId);
         return;
@@ -460,42 +707,274 @@ export async function createPolytokenDriver(
     },
 
     async listSessions(): Promise<SessionListEntry[]> {
-      // Chunk 4: read the sessions registry from --sessions-dir on disk.
-      // For now, return only the warm session(s).
-      const entries: SessionListEntry[] = [];
-      for (const ws of warm.values()) {
-        const { data } = await ws.client.state();
-        entries.push({
+      // The sidebar wants every session that has ever existed, cold or warm. The
+      // authoritative source is the on-disk registry (sessions-registry.ts): each
+      // `session.json` has the metadata, no daemon needed. Warm sessions not yet
+      // flushed (a just-created one with no turn) are merged in via mergeSessionLists,
+      // mirroring pi-driver. Live usage is overlaid only where a session is warm.
+      const onDisk = listColdSessions(sessionsDir, {
+        archivedFor: (p) => archiveStore.has(p),
+        worktreeFor: (cwd) => worktreeFieldFor(cwd),
+      });
+      const warmEntries: SessionListEntry[] = [];
+      const warmUsage = new Map<string, SessionUsage>();
+      // Snapshot warm.values() before iterating — the reaper/eviction can mutate
+      // `warm` on its timer between this async function's yields. Matches the
+      // reaper's own defensive `[...warm]` spread.
+      for (const ws of [...warm.values()]) {
+        // A warm session's title comes from the live state snapshot; cwd is stable.
+        const title = ws.lastState?.session_title;
+        const sessionPath = join(sessionsDir, ws.ref.sessionId, "session.json");
+        warmEntries.push({
           sessionId: ws.ref.sessionId,
-          path: `polytoken://${ws.ref.sessionId}`,
+          path: sessionPath,
           cwd: ws.cwd,
-          displayName: data?.session_title ?? undefined,
+          displayName: title ?? undefined,
           preview: "",
           userMessageCount: 0,
           updatedAt: now(),
           createdAt: now(),
           lastUserMessageAt: now(),
-          archived: false,
+          archived: archiveStore.has(sessionPath),
+          worktree: worktreeFieldFor(ws.cwd),
         });
+        const u = usageFromState(ws.lastState);
+        if (u) warmUsage.set(ws.ref.sessionId, u);
       }
-      return entries;
+      const merged = mergeSessionLists(onDisk, warmEntries);
+      // Overlay live context usage onto the winning entry (disk supersedes the warm
+      // placeholder, so usage set only on warmEntries would be lost on merge).
+      return merged.map((e) => {
+        const u = warmUsage.get(e.sessionId);
+        return u ? { ...e, usage: u } : e;
+      });
     },
 
     async openSession(path: string): Promise<SessionDriverEvent[]> {
-      // Chunk 4: spawn daemon --resume --session-id, seed from GET /history + GET /state.
-      // For now, throw — the warm-session path (newSession) is the Chunk 1 happy path.
-      throw new Error(`openSession not yet implemented (Chunk 4): ${path}`);
+      // Resume an existing session by spawning `daemon --resume --session-id` and
+      // seeding from GET /history + GET /state. `path` is the session.json path the
+      // sidebar sent (the stable switch key); the session id is its parent dir name.
+      // Already warm? Just refocus — never spawn a second daemon on the same session
+      // (the lease is exclusive; a second claim 409s). This is the instant switch for
+      // a backgrounded session, history and all.
+      const sessionId = sessionIdFromPath(path);
+      const existing = sessionId ? warm.get(sessionId) : undefined;
+      if (existing) {
+        console.log(`[polytoken] refocus warm session ${existing.ref.sessionId}`);
+        focus(existing.ref.sessionId);
+        return seedFor(existing);
+      }
+      if (!sessionId) {
+        throw new Error(`could not resolve session id from path: ${path}`);
+      }
+      // Resolve the cwd from the on-disk session.json so the daemon resumes in the
+      // right project (a daemon needs --working-dir). Fall back to the sessions dir
+      // if the metadata is missing — the daemon will still resume the session.
+      const cwd = cwdForSession(sessionsDir, sessionId) ?? sessionsDir;
+      const ws = await warmSession(cwd, sessionId);
+      return seedFor(ws);
+    },
+
+    async reloadSession(path: string): Promise<SessionDriverEvent[]> {
+      // Recovery path: dispose the warm daemon (if any) and re-spawn from the same
+      // session id. POST /reload exists but a fresh spawn guarantees a clean state
+      // (no stale accumulator, no leaked lease) — and the daemon re-reads its config
+      // + project files on resume. Mirrors pi-driver's reloadSession semantics.
+      const sessionId = sessionIdFromPath(path);
+      if (sessionId && warm.has(sessionId)) {
+        const existing = warm.get(sessionId)!;
+        // Do NOT emit sessionClosed here (unlike LRU eviction): the requester is
+        // viewing this session, so a sessionClosed would flash "ended" into their
+        // transcript for the whole re-warm window. The fresh seed's idle
+        // sessionOpened resets the running indicator when the hub folds it instead.
+        // (Mirrors pi-driver's reloadSession — see its comment at pi-driver.ts.)
+        await disposeSession(existing).catch(() => {});
+        console.log(`[polytoken] reload: disposed warm session ${sessionId}; re-spawning`);
+      }
+      if (!sessionId) {
+        throw new Error(`could not resolve session id from path: ${path}`);
+      }
+      const cwd = cwdForSession(sessionsDir, sessionId) ?? sessionsDir;
+      const ws = await warmSession(cwd, sessionId);
+      return seedFor(ws);
     },
 
     async newSession(opts: NewSessionOpts = {}): Promise<SessionDriverEvent[]> {
-      const cwd = opts.cwd?.trim() || join(homedir(), "projects");
-      // Warm the NEW session first, THEN dispose the old one on success — so a flaky
-      // spawn doesn't lose the previously-working session (warm-then-dispose, not
-      // dispose-then-warm). Chunk 4's warm pool will make this a non-issue.
-      const old = active();
+      // Create a fresh session. The cwd is the project dir (the daemon's
+      // --working-dir); `worktree` isolates it in a fresh jj/git worktree first.
+      // `model`/`thinking` apply after warm-up via POST /model (Chunk 5 wires the
+      // real call; for now they're noted but the daemon's default applies).
+      let cwd = opts.cwd?.trim() || join(homedir(), "projects");
+      cwd = resolveGuiPath(cwd);
+      // Validate the cwd exists + is a dir, loudly — don't let the daemon spawn
+      // against a typo'd path. Mirrors pi-driver's newSession guard.
+      const stat = statPathOnDisk(cwd);
+      if (!stat.exists) throw new Error(`no such directory: ${cwd}`);
+      if (!stat.isDir) throw new Error(`not a directory: ${cwd}`);
+      if (opts.worktree) {
+        const meta = await createWorktree(cwd);
+        worktreeStore.add(meta);
+        cwd = meta.path;
+      }
       const ws = await warmSession(cwd);
-      if (old) await disposeSession(old).catch(() => {});
-      const title = ws.lastState?.session_title ?? "New session";
+      // Apply the draft's model/thinking if given (Chunk 5 wires listModels; the
+      // setModel call works now but needs a valid provider/modelId string).
+      if (opts.model) {
+        try {
+          await ws.client.setModel(
+            `${opts.model.provider}/${opts.model.modelId}`,
+            opts.thinking,
+          );
+          // Refresh the cached state so the seed snapshot reflects the applied model.
+          const { data } = await ws.client.state();
+          if (data) ws.lastState = data;
+        } catch (e) {
+          console.error("[polytoken] newSession: model apply failed", e);
+        }
+      } else if (opts.thinking) {
+        // thinking without a model: read the current model from state, then set.
+        try {
+          const model = ws.lastState?.active_model;
+          if (model) await ws.client.setModel(model, opts.thinking);
+          const { data } = await ws.client.state();
+          if (data) ws.lastState = data;
+        } catch (e) {
+          console.error("[polytoken] newSession: thinking apply failed", e);
+        }
+      }
+      return seedFor(ws);
+    },
+
+    async renameSession(path: string, name: string): Promise<void> {
+      // A warm session is renamed via POST /title (the daemon owns the title; the
+      // session_title_changed event follows, mapped to sessionUpdated by event-map).
+      // A cold session has no daemon — but POST /title requires a warm daemon. So
+      // cold rename spawns the daemon, sets the title, and leaves it warm (the
+      // operator just opened it in everything but name). This differs from pi-driver
+      // (which appends to the .jsonl cold), but polytoken's title is daemon-owned.
+      const next = name.trim();
+      if (!next) return;
+      const sessionId = sessionIdFromPath(path);
+      if (!sessionId) {
+        throw new Error(`could not resolve session id from path: ${path}`);
+      }
+      const existing = warm.get(sessionId);
+      if (existing) {
+        await existing.client.setTitle(next).catch((e) => {
+          console.error("[polytoken] renameSession (warm) failed", e);
+        });
+        return;
+      }
+      // Cold: spawn + set title. The session_title_changed event will flow through
+      // SSE; if nobody's listening the title is still persisted by the daemon.
+      const cwd = cwdForSession(sessionsDir, sessionId) ?? sessionsDir;
+      const ws = await warmSession(cwd, sessionId).catch((e) => {
+        throw new Error(`failed to spawn daemon for cold rename: ${e}`);
+      });
+      await ws.client.setTitle(next).catch((e) => {
+        console.error("[polytoken] renameSession (cold) failed", e);
+      });
+    },
+
+    async branchFrom(
+      entryId: string,
+      _opts: { summarize?: boolean },
+      sessionId?: SessionId,
+    ): Promise<{
+      seed: SessionDriverEvent[];
+      editorText?: string;
+      cancelled: boolean;
+      aborted?: boolean;
+    }> {
+      // polytoken's history is LINEAR (no branch DAG — spike §7, D-B), so this is
+      // NOT a branch — it's a destructive REWIND. POST /rewind drops the target
+      // prompt + everything after it (irreversible), and the prompt text returns to
+      // the input for re-editing. pilot's UX must warn "deletes everything after
+      // this point" (not pi's safe branch-and-keep). `entryId` is a prompt_id or
+      // message index the client derived from the transcript; we pass it through.
+      const ws = target(sessionId);
+      if (!ws) {
+        throw new Error(
+          `no warm session to rewind (id=${sessionId ?? "(none)"})`,
+        );
+      }
+      // The rewind request: rewind to the given prompt_id (entryId). The domains
+      // field is required (an empty array = no domains, just the truncation); we
+      // pass an empty array since we want the transcript truncation only.
+      await ws.client
+        .rewind({ domains: [], to_prompt_id: entryId })
+        .catch((e) => {
+          throw new Error(`POST /rewind failed: ${e}`);
+        });
+      // session_rewound will fire on SSE → the reseed effect re-broadcasts the
+      // truncated history. We also return a fresh seed (WITH sessionOpened) so the
+      // hub resets atomically — the hub's branchFrom handler calls switchTo with
+      // reseed:true, which REPLACES the entire SessionState from the seed, so the
+      // seed MUST include sessionOpened (the snapshot) or the rebuilt state has no
+      // title/status/config. The sessionOpened snapshot is built from the refreshed
+      // lastState (reseedFromHistory refreshes it via GET /state before history).
+      const seed = await seedFor(ws, /*emitOpened*/ true);
+      return { seed, cancelled: false };
+    },
+
+    getUsage(sessionId?: SessionId): SessionUsage | undefined {
+      // The CURRENT context-window fill for a warm session. Read live from the
+      // cached state (refreshed by fetchState effects); the daemon's context_usage
+      // is the authoritative fill. Cold sessions return undefined (not loaded).
+      const ws = target(sessionId);
+      if (!ws) return undefined;
+      return usageFromState(ws.lastState);
+    },
+
+    async setArchived(
+      path: string,
+      archived: boolean,
+    ): Promise<{ worktreeRetained?: { path: string; reason: string } } | void> {
+      // The archive flag is pilot-side state (polytoken has no concept), keyed by
+      // the session.json path. Archiving a worktree-backed session reaps the
+      // worktree when clean (mirrors pi-driver); a dirty one is left in place.
+      archiveStore.set(path, archived);
+      if (!archived) return;
+      // Reap the worktree if this session's cwd is a pilot-created worktree.
+      const sessionId = sessionIdFromPath(path);
+      const cwd = sessionId ? cwdForSession(sessionsDir, sessionId) : undefined;
+      if (!cwd) return;
+      const meta = worktreeStore.live(cwd);
+      if (!meta) return;
+      const res = await reapWorktree(cwd, false).catch((e) => {
+        console.error("[polytoken] archive cleanup failed", e);
+        return { removed: false, reason: String(e) };
+      });
+      if (!res.removed) {
+        return {
+          worktreeRetained: {
+            path: cwd,
+            reason: res.reason ?? "uncommitted changes",
+          },
+        };
+      }
+    },
+
+    async cleanupWorktree(
+      path: string,
+      opts?: { force?: boolean },
+    ): Promise<{ removed: boolean; reason?: string }> {
+      // Remove a pilot-created worktree at `path` (== a session cwd). The index is
+      // the gate — we never touch a worktree pilot didn't create.
+      return reapWorktree(path, opts?.force ?? false);
+    },
+
+    defaultSeed(): SessionDriverEvent[] | null {
+      // Per-client focus: a freshly-connecting client adopts the driver's current
+      // session if one is warm. Returns the snapshot + the cached transcript (from
+      // the last seed/reseed), so a reconnecting phone keeps the full conversation —
+      // not just the header. The transcript cache (lastSeed) is updated by
+      // seedFor/reseedFromHistory; without it a reconnect would show an empty
+      // transcript (the out-of-process daemon isn't readable synchronously).
+      // Mirrors pi-driver, which reads ws.session.messages in-memory here.
+      if (!activeSessionId) return null;
+      const ws = warm.get(activeSessionId);
+      if (!ws) return null;
       return [
         {
           sessionRef: ws.ref,
@@ -509,14 +988,8 @@ export async function createPolytokenDriver(
             now(),
           ),
         },
+        ...ws.lastSeed,
       ];
-    },
-
-    defaultSeed(): SessionDriverEvent[] | null {
-      // The pi driver returns the current warm session's seed; the mock returns its
-      // greeting. For Chunk 1, a fresh-connecting client gets an empty landing until
-      // a session is created — mirroring the real driver's boot (starts empty).
-      return null;
     },
 
     async listModels(): Promise<ModelOption[]> {
@@ -545,34 +1018,37 @@ export async function createPolytokenDriver(
       return [];
     },
 
-    async listDir(_path?: string): Promise<DirListing> {
-      // New-session project picker browses the SERVER's filesystem — same as pi-driver.
-      // Chunk 4 will wire this; for now return an empty listing.
-      return { path: _path ?? homedir(), parent: null, entries: [], error: false };
+    async listDir(path?: string): Promise<DirListing> {
+      // New-session project picker browses the SERVER's filesystem — same as
+      // pi-driver. Empty/blank → $HOME; otherwise expand + resolve on the server.
+      const dir = path?.trim() ? resolveGuiPath(path) : homedir();
+      return listDirOnDisk(dir);
     },
 
     async statPath(path: string): Promise<PathStat> {
-      // Chunk 4: stat the disk for the new-session dir picker.
-      return { path, exists: false, isDir: false };
+      return statPathOnDisk(path);
     },
 
-    setModel(_provider: string, _modelId: string, sessionId?: SessionId): void {
-      const ws = sessionId ? warm.get(sessionId) ?? null : active();
+    setModel(provider: string, modelId: string, sessionId?: SessionId): void {
+      const ws = target(sessionId);
       if (!ws) return;
-      // Chunk 5: POST /model {model, reasoning_effort}. The model string is matched
+      // POST /model {model, reasoning_effort}. The model string is matched
       // against ModelConfig.name (the registry map key), not provider/modelId split.
-      void ws.client.setModel(`${_provider}/${_modelId}`).catch((e) => {
+      // Preserve the current reasoning_effort (setModel requires both fields).
+      const effort = ws.lastState?.active_reasoning_effort ?? undefined;
+      void ws.client.setModel(`${provider}/${modelId}`, effort).catch((e) => {
         console.error("[polytoken] setModel failed", e);
       });
     },
 
     setThinking(level: string, sessionId?: SessionId): void {
-      const ws = sessionId ? warm.get(sessionId) ?? null : active();
+      const ws = target(sessionId);
       if (!ws) return;
       // POST /model with reasoning_effort (the "thinking" lever). We need the current
       // model from state — setModel requires both model + reasoning_effort.
       void ws.client.state().then(({ data }) => {
         if (!data?.active_model) return;
+        ws.lastState = data;
         void ws.client.setModel(data.active_model, level).catch((e) => {
           console.error("[polytoken] setThinking failed", e);
         });
@@ -589,6 +1065,7 @@ export async function createPolytokenDriver(
   // - process.on("exit") (synchronous backstop): can't await HTTP round-trips, so
   //   hard-kill via killNow() (SIGTERM the daemon pid captured from /health).
   const shutdown = async () => {
+    if (reaper) clearInterval(reaper);
     const all = [...warm.values()];
     warm.clear();
     await Promise.allSettled(all.map((ws) => disposeSession(ws)));

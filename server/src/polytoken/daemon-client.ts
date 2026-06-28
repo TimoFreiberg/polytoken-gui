@@ -237,6 +237,9 @@ export class DaemonClient {
     // expires_after_seconds: 30 — heartbeat well before the expiry.
     const heartbeatMs = (data.heartbeat_interval_seconds ?? 5) * 1000;
     const heartbeatTimer = setInterval(() => this.heartbeat(data.lease_id), heartbeatMs);
+    // unref so a missed cleanup path can't keep the process alive on shutdown —
+    // mirrors the driver's reaper timer. clearLease() clears it on the normal path.
+    heartbeatTimer.unref?.();
     this.lease = {
       leaseId: data.lease_id,
       heartbeatIntervalMs: heartbeatMs,

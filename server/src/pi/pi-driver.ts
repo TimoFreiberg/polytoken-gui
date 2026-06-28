@@ -18,9 +18,9 @@
 // This replaces the old runtime-swap model: AgentSessionRuntime exists precisely to
 // replace+dispose the active session, which is the opposite of keeping N warm.
 
-import { type Dirent, readFileSync, readdirSync, statSync } from "node:fs";
+import { readFileSync, statSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
-import { basename, dirname, join, resolve } from "node:path";
+import { basename, join, resolve } from "node:path";
 import {
   type AgentSession,
   AuthStorage,
@@ -36,7 +36,6 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import type {
   CommandInfo,
-  DirListing,
   ExtensionInfo,
   FileInfo,
   HostUiResponse,
@@ -53,6 +52,11 @@ import type {
 import { PILOT_OWNED_EXTENSION_NAMES } from "@pilot/protocol";
 import { ArchiveStore } from "../archive-store.js";
 import { config } from "../config.js";
+import {
+  listDirOnDisk,
+  resolveGuiPath,
+  statPathOnDisk,
+} from "../fs-helpers.js";
 import {
   asBackgroundModelRegistry,
   reconstructPlainSpec,
@@ -370,75 +374,9 @@ async function listFilesWithFd(
   return parseFdLines(await runFd(cwd, args));
 }
 
-/** Expand a GUI-supplied path to an absolute one: `~`/`~/…` -> $HOME, otherwise resolve
- *  relative segments. `~otheruser` is left literal (we can't resolve another user's home)
- *  and falls through to the caller's existence check. Shared by {@link createPiDriver}'s
- *  `newSession` and `listDir` so both expand paths identically. */
-function resolveGuiPath(raw: string): string {
-  const trimmed = raw.trim();
-  const expanded =
-    trimmed === "~" || trimmed.startsWith("~/")
-      ? resolve(homedir(), `.${trimmed.slice(1)}`)
-      : trimmed;
-  return resolve(expanded);
-}
-
-/** Sort directory basenames for the picker: non-hidden first, then case-insensitive. */
-function compareDirNames(a: string, b: string): number {
-  const aHidden = a.startsWith(".");
-  const bHidden = b.startsWith(".");
-  if (aHidden !== bHidden) return aHidden ? 1 : -1;
-  return a.localeCompare(b, undefined, { sensitivity: "base" });
-}
-
-/** List the child directories of an absolute `dir` on the real filesystem (the
- *  new-session picker). Symlinks are followed so a symlinked project dir still shows.
- *  An unreadable `dir` (missing / not a directory / no permission) returns `error: true`
- *  with no entries — surfaced to the UI rather than masquerading as an empty folder. */
-function listDirOnDisk(dir: string): DirListing {
-  const parent = dirname(dir);
-  const parentOrNull = parent === dir ? null : parent;
-  let dirents: Dirent[];
-  try {
-    dirents = readdirSync(dir, {
-      withFileTypes: true,
-    }) as Dirent[];
-  } catch {
-    return { path: dir, parent: parentOrNull, entries: [], error: true };
-  }
-  const entries: string[] = [];
-  for (const d of dirents) {
-    let isDir = d.isDirectory();
-    if (!isDir && d.isSymbolicLink()) {
-      // dirent.isDirectory() is false for a symlink even when it points at a dir;
-      // stat the target (follows the link) so symlinked project dirs still list.
-      try {
-        isDir = statSync(join(dir, d.name)).isDirectory();
-      } catch {
-        isDir = false;
-      }
-    }
-    if (isDir) entries.push(d.name);
-  }
-  entries.sort(compareDirNames);
-  return { path: dir, parent: parentOrNull, entries };
-}
-
-/** Quick stat check for the new-session dir picker's inline validation hint.
- *  Returns whether `path` exists and whether it's a directory, following symlinks. */
-function statPathOnDisk(path: string): {
-  path: string;
-  exists: boolean;
-  isDir: boolean;
-} {
-  const abs = resolveGuiPath(path);
-  try {
-    const s = statSync(abs);
-    return { path: abs, exists: true, isDir: s.isDirectory() };
-  } catch {
-    return { path: abs, exists: false, isDir: false };
-  }
-}
+// resolveGuiPath / listDirOnDisk / statPathOnDisk live in ../fs-helpers.ts now
+// (shared with the polytoken driver). The new-session project picker + inline
+// validation use them directly.
 
 /**
  * Load user-scope extensions once at boot and register every `pi.registerProvider()` they
