@@ -1,8 +1,9 @@
 # Plan — A PolytokenDriver for pilot
 
-> Status: **draft for review** (2026-06-28). This explores wiring pilot to drive
-> **polytoken** (a daemon-first coding agent, `v0.3.3`) instead of / alongside pi.
-> It is a design input, not a TODO list.
+> Status: **draft, design questions settled** (2026-06-28). This explores wiring
+> pilot to drive **polytoken** (a daemon-first coding agent, `v0.3.3`) instead of /
+> alongside pi. Decisions D-A…D-D below are settled with Timo; next step is the
+> Chunk 0 spike. A design input, not a TODO list.
 >
 > **Confidence caveat — read first.** Most of this is reverse-engineered from the
 > polytoken *binary's* self-describing contracts (`polytoken --help`,
@@ -63,6 +64,9 @@ agent."* A third implementor is the intended extension point.
   `--sessions-dir`, `--todo-dir`. **No auth flag** → localhost-only, single-user.
 - `polytoken new --no-attach` → *"Spawn the daemon and print its session id and
   port without attaching."* (the headless-spawn entry point a driver wants).
+- **Daemon auto-names sessions.** `TitleChangeSource = "operator" | "inferred"`,
+  `inferred` = *"the daemon inferred the title automatically"* → pilot needs no
+  session-namer (D-C1).
 - pilot is plain git on `main`, remote `tangled.org/timofreiberg.bsky.social/pilot`.
 
 **Assumed / [VERIFY] in a spike:**
@@ -113,11 +117,11 @@ child daemon processes**:
    into the hub's listener, tagged with this session's `SessionRef`.
 4. **Route** → `prompt/abort/model/compact/…` POST to *this session's port*. The
    driver keeps a `Map<SessionId, { port, lease, sse, heartbeat }>`.
-5. **Pool policy [OPEN A]** — warm-pool size, spawn-on-open vs spawn-on-first-
-   prompt, reap-on-idle. polytoken's out-of-process model actually lets pilot keep
-   **several** sessions warm at once (instant switch, background turns keep
-   running) — better than pi-driver's single-warm-session swap, at the cost of N
-   processes. Pick a default cap + idle reaper.
+5. **Pool policy (D-A — warm pool, decided).** Keep **several** sessions warm at
+   once with a default cap + idle reaper, rather than pi-driver's single-warm-
+   session swap. polytoken's out-of-process model makes this its natural advantage
+   (instant switch, background turns keep running), at the cost of N processes.
+   Cap value lands in Chunk 4.
 
 Cold (not-spawned) sessions: list + preview them straight from the sessions
 registry / `--sessions-dir` on disk, exactly as pi-driver lists `.jsonl` files
@@ -167,8 +171,8 @@ matrix writes itself).
 | `openSession` | spawn `daemon --resume --session-id`; seed from `GET /history` + `GET /state` | seed = the atomic re-broadcast path |
 | `reloadSession` | `POST /reload` (or respawn) | |
 | `newSession` | `polytoken new --no-attach` / `daemon` (no `--resume`) | worktree creation stays pilot-side |
-| `branchFrom` / re-edit | `POST /rewind` → `session_rewound` → re-seed | **[OPEN B]**: does `/history` expose a branch DAG (pi's `/tree`) or only linear history? `getTree`/the tree view depends on this |
-| `getTree` | `GET /history` projected | gated on [OPEN B] |
+| `branchFrom` / re-edit | `POST /rewind` → `session_rewound` → re-seed | **D-B**: does `/history` expose a branch DAG (pi's `/tree`) or only linear history? `getTree`/the tree view depends on this — Timo verifies via the polytoken TUI |
+| `getTree` | `GET /history` projected | gated on D-B |
 | `getUsage` / context meter | `GET /state` | usage in the state snapshot |
 | `listModels` / `setModel` | `polytoken models` / `POST /model` | |
 | `setThinking` | `POST /model` (reasoning variant) | polytoken models carry "selectable reasoning variants" |
@@ -178,14 +182,14 @@ matrix writes itself).
 | `listDir` / `statPath` | pilot server fs (unchanged) | new-session picker browses the *server* fs; not a daemon concern |
 | `renameSession` | `POST /title` (warm) / registry write (cold) | |
 | providers / `oauthLogin` | `polytoken auth provider …` + `config` | likely CLI/config, not daemon **[VERIFY]**; MCP OAuth *is* on the daemon (`/mcp/{}/oauth/*`) |
-| `listExtensions` / `setExtensionEnabled` | `polytoken print-tools` + `extension_registered` events + `config` | polytoken's extension model differs from pi's; **[OPEN C]** |
+| `listExtensions` / `setExtensionEnabled` | n/a (driver skips pi extensions) | **D-C**: this driver loads no pi extensions — tasklist + ask-user-question are polytoken built-ins; auto-naming is daemon-native (D-C1) |
 | (no analog yet) | `POST /facet`, `GET/POST /jobs`, `/subagent/{}/history` | new polytoken concepts — out of scope for v1, candidates later |
 
 ## Mapping B — `DaemonEvent` (56) → `SessionDriverEvent` (17)
 
 | polytoken `event.type` | pilot event | Notes |
 |---|---|---|
-| `session_state_changed` | `sessionUpdated` (status) | `SessionStateDomain` → idle/running/initializing/failed |
+| `session_state_changed` | re-read `GET /state` → `sessionUpdated` | carries an invalidation *domain* string (re-fetch that slice), not the value itself — status itself comes from message/turn events + `/state` |
 | `message_start` | — (accumulator: begin msg) | turn start handled via state-change |
 | `content_block_start` | — (accumulator: set kind) | `ContentBlockKind` |
 | `content_block_delta` | `assistantDelta {channel}` **or** tool-input accrue | text/thinking → delta; tool_use → accrue |
@@ -197,7 +201,7 @@ matrix writes itself).
 | `pending_turn_input_*` (queued/dequeued/drained/discarded) | `queueUpdated` / `queuedMessageStarted` | the steer/follow-up queue |
 | `turn_cancelled` | `sessionUpdated(idle)` | abort ack |
 | `model_error`, `stream_discontinuity`, `retry_wait` | `runFailed` / `hostUiRequest{notify}` | mirror pi's error+auto-retry handling (`event-map.ts:227`) |
-| `session_title_changed` | `sessionUpdated(title)` | |
+| `session_title_changed` | `sessionUpdated(title)` | `source: operator\|inferred` → daemon auto-names natively; `inferred` drives the "auto-named" one-time hint (D-C1) — pilot needs no namer |
 | `model_switch` | `sessionUpdated(config)` | |
 | `context_cleared` | re-seed / `sessionUpdated` | `/clear` |
 | `session_rewound` | re-seed (openSession-style reset) | drives `branchFrom` |
@@ -220,26 +224,36 @@ matrix writes itself).
 17 pilot event types are comfortably covered; the unmapped polytoken variants are
 either new concepts (facets, jobs) or ambient metadata safely ignored in v1.
 
-## Open questions for you
+## Settled decisions (2026-06-28, with Timo)
 
-- **[OPEN A] Pool policy.** Keep multiple polytoken daemons warm (instant switch,
-  background turns survive) with a cap + idle reaper, or mirror pi-driver's
-  single-warm-session model? My lean: small warm pool (say 3) — it's polytoken's
-  natural advantage. Your call on the resource trade.
-- **[OPEN B] Branch tree.** Pilot's `/tree` view + `branchFrom` re-edit assume a
-  branch DAG. If polytoken's `/history` is linear-only, `rewind` still gives
-  "jump back / re-edit" but the tree *view* would be cut from v1. Acceptable?
-- **[OPEN C] Extensions/Host-UI parity.** Pilot's polished UX leans on pi
-  extensions (`answer`/`tasklist`/`session-namer` — see
-  `PLAN-self-contained-extensions.md`) and the bespoke `ctx.ui.qna` bridge.
-  polytoken has its *own* `ask_user_question`/`interrogative` + `print-tools`
-  model. v1 likely maps polytoken's native question events onto pilot's existing
-  `qna`/`select` cards and **drops the pi-extension dependency entirely** — which,
-  ironically, advances the "self-contained" goal. Want me to scope that overlap?
-- **Scope of intent.** Is this "evaluate / prototype a second backend" or "if it's
-  good, migrate pilot to polytoken"? That changes how much I invest in parity vs.
-  a thin spike. (I'm treating it as *prototype-to-evaluate* unless you say
-  otherwise.)
+- **D-A — Warm pool. ✅** Keep several polytoken daemons warm (default cap + idle
+  reaper) rather than pi-driver's single-warm-session swap. polytoken's
+  out-of-process model makes this its natural advantage: instant session switch,
+  background turns keep running. Cap value lands in Chunk 4.
+- **D-B — Adapt to polytoken's history model. ✅ (constraint, not a choice)** Pilot
+  bends to whatever `GET /history` actually exposes. Branch DAG → the `/tree` view +
+  `branchFrom` re-edit port over; linear-only → `POST /rewind` still gives
+  jump-back / re-edit, and the tree *view* is cut from v1. **Timo verifies the
+  history model directly via the polytoken TUI**; the driver is written to the
+  confirmed shape once known. (See [HISTORY-MODEL] in Risks.)
+- **D-C — Skip pi extensions entirely. ✅** The PolytokenDriver loads **no** pi
+  extensions. Two of pilot's three owned extensions are **polytoken built-ins** —
+  the task list and `ask_user_question`/`interrogative` are native daemon events,
+  which pilot maps onto its existing tasklist widget + `qna`/`select` cards (no
+  bespoke `ctx.ui.qna` bridge needed). This *advances* the self-contained goal:
+  `PLAN-self-contained-extensions.md` becomes pi-driver-only.
+- **D-C1 — Auto session naming: daemon-native, pilot does nothing. ✅** The one
+  extension with no built-in twin was `session-namer` — but polytoken **auto-names
+  natively**. `TitleChangeSource` is `"operator" | "inferred"`, where `inferred`
+  is *"the daemon inferred the title automatically."* pilot just consumes
+  `session_title_changed`; the `source` discriminator drives the one-time
+  "auto-named" hint the enum is explicitly designed for. pilot's
+  `background-model.ts` namer path is simply unused under this driver. **[VERIFY]**
+  inferred-naming is on by default (not gated behind config).
+- **D-D — Prototype first, evaluate when dogfoodable. ✅** Build toward a
+  *dogfoodable* prototype and let Timo live on it before judging; don't chase full
+  pi-parity up front. Parity gaps that don't block dogfooding (tree view if D-B
+  says linear, jobs, facets, subagent drill-down) wait.
 
 ## Risks & unknowns
 
@@ -257,6 +271,10 @@ either new concepts (facets, jobs) or ambient metadata safely ignored in v1.
   doubles surface. Decide early whether this is additive or a migration.
 - **`tui-attachment` semantics.** If the lease is single-holder, "TUI + pilot at
   once" doesn't hold and pilot must be the exclusive attacher.
+- **[HISTORY-MODEL] (D-B).** Whether `GET /history` is a branch DAG or a linear log
+  decides if the tree view ships in v1. Timo confirms via the polytoken TUI; until
+  then the driver targets the linear subset (open/rewind/re-edit), and the tree
+  view is additive once the shape is known.
 
 ## Phased plan
 
@@ -292,10 +310,20 @@ centers are **(1)** the event-fold accumulator (Chunk 2) and **(2)** child-daemo
 supervision (Chunk 4). Net: a credible "thin client over a documented daemon,"
 which is the whole reason polytoken is interesting here.
 
-## Decision needed before building
+## Status: ready for Chunk 0
 
-Answer **[OPEN A–C]** + the scope question, then I run **Chunk 0** and report the
-confirmed-vs-wrong shapes before writing any `PolytokenDriver` code.
+Design questions resolved (D-A…D-D). Next step is the **Chunk 0 spike**: drive a
+live daemon by hand and assert the remaining **[VERIFY]** shapes (process-per-
+session, prompt/steer payloads, interrogative + permission shapes, default-on
+auto-naming, lease multi-client). Timo verifies the **history model** (D-B) in
+parallel via the polytoken TUI. Findings land in `docs/polytoken-spike.md` before
+any `PolytokenDriver` code.
+
+**Gating dependency:** Chunk 0 needs polytoken *configured* (provider auth). That
+step is partly Timo's — `polytoken config ui` is interactive and provider
+credentials are his. Path: Timo runs `polytoken config ui` (or I scaffold a config
+non-interactively from `polytoken schemas` + `config edit --user` and he adds
+auth), then the curl-spike is fully automatable.
 
 ---
 
