@@ -78,17 +78,21 @@ export interface ModelOption {
 }
 
 /** One slash command the composer's typeahead can offer — a JSON-safe projection of
- *  pi's `get_commands` (extension commands, prompt templates, skills). The heavy
- *  `sourceInfo` path metadata is dropped; `source` drives a small origin badge.
- *  Commands are cwd/session-scoped (loaded from the focused session's `.pi`), so the
- *  list is re-broadcast on every session switch — see `commandList`. Execution needs
+ *  pi's `get_commands` (extension commands, prompt templates, skills) or, under the
+ *  polytoken driver, the daemon's builtin slash commands. The heavy `sourceInfo`
+ *  path metadata is dropped; `source` drives a small origin badge. Commands are
+ *  cwd/session-scoped (loaded from the focused session's `.pi`), so the list is
+ *  re-broadcast on every session switch — see `commandList`. Execution needs
  *  nothing extra: sending `/name args` as a normal prompt routes through pi's
- *  `prompt()`, which runs extension commands and expands templates/skills. */
+ *  `prompt()` (or polytoken's `/prompt`), which runs extension commands and expands
+ *  templates/skills. */
 export interface CommandInfo {
   /** Invocation name without the leading slash (e.g. "review", "skill:debug"). */
   readonly name: string;
   readonly description?: string;
-  readonly source: "extension" | "prompt" | "skill";
+  /** Origin of the command — drives a small badge in the slash menu. `"builtin"` is
+   *  the polytoken driver's daemon-native commands; the other three are pi's sources. */
+  readonly source: "extension" | "prompt" | "skill" | "builtin";
   /** Usage hint shown after the name (prompt templates only), e.g. "[path]". */
   readonly argumentHint?: string;
 }

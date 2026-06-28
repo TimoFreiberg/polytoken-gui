@@ -1,0 +1,62 @@
+// Unit tests for parseSlashCommands — pure, no binary invocation. Fixtures are the
+// real `polytoken print-slash-commands --format json` output (observed, 0.3.3).
+
+import { test, expect } from "bun:test";
+import { parseSlashCommands } from "./commands.js";
+
+const REAL_OUTPUT = `{"categories":[{"id":"immediate","title":"Immediate commands"},{"id":"choice","title":"Commands that take a choice"},{"id":"free-text","title":"Commands that take free text"}],"commands":[{"canonical":"/clear","aliases":[],"category":"immediate","description":"Clears the working context. Your session history is untouched."},{"canonical":"/reset-shell","aliases":[],"category":"immediate","description":"Restores the shell environment to the state Polytoken captured when the session started."},{"canonical":"/rewind","aliases":[],"category":"immediate","description":"Opens the rewind view to return the conversation to an earlier point."},{"canonical":"/help","aliases":[],"category":"immediate","description":"Opens the help overlay."},{"canonical":"/refresh","aliases":[],"category":"immediate","description":"Refreshes the interface. Use this if the display falls out of step with the session."},{"canonical":"/quit","aliases":["/exit"],"category":"immediate","description":"Ends the session."},{"canonical":"/detach","aliases":[],"category":"immediate","description":"Disconnects the interface and leaves the session running."},{"canonical":"/version","aliases":[],"category":"immediate","description":"Shows the TUI and daemon build versions."},{"canonical":"/model","aliases":["/models"],"category":"choice","description":"Switch the active model."},{"canonical":"/facet","aliases":[],"category":"choice","description":"Switch the active facet."},{"canonical":"/permissions","aliases":["/permission"],"category":"choice","description":"Switch how tool approvals are handled."},{"canonical":"/todo","aliases":["/todos"],"category":"choice","description":"Show todos, or act on one."},{"canonical":"/jobs","aliases":["/job"],"category":"choice","description":"Show running jobs, or act on one."},{"canonical":"/mcp","aliases":[],"category":"choice","description":"Enable or disable an MCP server. Type a server name, then choose enable or disable."},{"canonical":"/title","aliases":[],"category":"free-text","description":"Sets the session title. With no argument, clears your override and reverts to the inferred title."},{"canonical":"/compact","aliases":[],"category":"free-text","description":"Summarizes the context. Optional text steers what the summary keeps."}]}`;
+
+test("parseSlashCommands > parses the real observed output", () => {
+  const cmds = parseSlashCommands(REAL_OUTPUT);
+  // 16 canonicals total, minus /model (omitted — pilot's ModelPicker covers it).
+  // /models is an alias of /model, never a separate canonical, so it's not subtracted.
+  expect(cmds).toHaveLength(15);
+  const clear = cmds.find((c) => c.name === "clear");
+  expect(clear?.description).toContain("Clears the working context");
+  expect(clear?.source).toBe("builtin");
+});
+
+test("parseSlashCommands > strips the leading slash from canonical", () => {
+  const cmds = parseSlashCommands(REAL_OUTPUT);
+  for (const c of cmds) {
+    expect(c.name.startsWith("/")).toBe(false);
+  }
+});
+
+test("parseSlashCommands > omits /model and /models (pilot has native ModelPicker)", () => {
+  const cmds = parseSlashCommands(REAL_OUTPUT);
+  expect(cmds.find((c) => c.name === "model")).toBeUndefined();
+  expect(cmds.find((c) => c.name === "models")).toBeUndefined();
+});
+
+test("parseSlashCommands > every command is tagged source 'builtin'", () => {
+  const cmds = parseSlashCommands(REAL_OUTPUT);
+  for (const c of cmds) {
+    expect(c.source).toBe("builtin");
+  }
+});
+
+test("parseSlashCommands > non-JSON input returns [] (never throws)", () => {
+  expect(parseSlashCommands("not json")).toEqual([]);
+  expect(parseSlashCommands("")).toEqual([]);
+});
+
+test("parseSlashCommands > commands array missing returns []", () => {
+  expect(parseSlashCommands('{"categories":[]}')).toEqual([]);
+});
+
+test("parseSlashCommands > a command without a canonical string is skipped", () => {
+  const out = parseSlashCommands(
+    '{"commands":[{"canonical":"/good"},{"canonical":123,"description":"bad"}]}',
+  );
+  expect(out).toHaveLength(1);
+  expect(out[0]!.name).toBe("good");
+});
+
+test("parseSlashCommands > extra fields on a command are ignored (forward-compatible)", () => {
+  const out = parseSlashCommands(
+    '{"commands":[{"canonical":"/clear","futureField":"x","category":"immediate"}]}',
+  );
+  expect(out).toHaveLength(1);
+  expect(out[0]!.name).toBe("clear");
+});

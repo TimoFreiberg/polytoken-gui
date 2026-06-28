@@ -74,6 +74,10 @@ import {
 } from "./event-map.js";
 import { buildInterrogativeResponse, type PendingInterrogative } from "./ui-bridge.js";
 import { historyToSeedEvents } from "./history-seed.js";
+import { parseModels } from "./models.js";
+import { parseSlashCommands } from "./commands.js";
+import { parseFileCatalog } from "./file-catalog.js";
+import { listFilesWithFd, FILE_INDEX_CAP } from "../file-search.js";
 import {
   defaultSessionsDir,
   listColdSessions,
@@ -164,6 +168,58 @@ export async function createPolytokenDriver(
   let activeSessionId: string | null = null;
 
   const now = () => new Date().toISOString();
+
+  /** Per-cwd cache of parsed slash commands. The set is cwd-scoped and re-broadcast
+   *  on every session switch; re-shelling-out to `polytoken print-slash-commands` on
+   *  each switch would be wasteful when the set rarely changes. Cleared nowhere — a
+   *  config change needs a reload (acceptable for v1 dogfooding; polytoken's own
+   *  /reload re-seeds state but not pilot's caches). */
+  const commandsCache = new Map<string, CommandInfo[]>();
+
+  /** Run `polytoken <args>` and capture stdout/stderr as text. Throws on non-zero
+   *  exit OR on an 8s timeout (mirrors runFd's kill-on-timeout pattern in
+   *  file-search.ts — a hung `polytoken` binary, e.g. one blocking on stdin or
+   *  deadlocked on a config lock, must not permanently wedge the calling hub
+   *  method, which is `void`-fired with no internal timeout). `--working-dir`
+   *  is a GLOBAL option (before the subcommand) — callers that need cwd pass it
+   *  in `args` themselves, matching spawnDaemon's convention. */
+  async function runPolytokenText(
+    bin: string,
+    args: string[],
+  ): Promise<{ stdout: string; stderr: string }> {
+    const proc = Bun.spawn({
+      cmd: [bin, ...args],
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    let timedOut = false;
+    const timer = setTimeout(() => {
+      timedOut = true;
+      try {
+        proc.kill();
+      } catch {
+        // Already dead — best-effort.
+      }
+    }, 8_000);
+    try {
+      const stdout = await new Response(proc.stdout).text();
+      const stderr = await new Response(proc.stderr).text();
+      const exitCode = await proc.exited;
+      if (timedOut) {
+        throw new Error(
+          `polytoken ${args.join(" ")} timed out after 8s:\nstderr: ${stderr.slice(0, 500)}\nstdout: ${stdout.slice(0, 500)}`,
+        );
+      }
+      if (exitCode !== 0) {
+        throw new Error(
+          `polytoken ${args.join(" ")} exited ${exitCode}:\nstderr: ${stderr.slice(0, 500)}\nstdout: ${stdout.slice(0, 500)}`,
+        );
+      }
+      return { stdout, stderr };
+    } finally {
+      clearTimeout(timer);
+    }
+  }
 
   /** Mark a session most-recently-focused: set it active AND move it to the end of
    *  the warm map, whose insertion order is the recency order eviction reads. */
@@ -993,29 +1049,90 @@ export async function createPolytokenDriver(
     },
 
     async listModels(): Promise<ModelOption[]> {
-      // Chunk 5: `polytoken models` lists configured models + reasoning variants.
-      // For now, return an empty list — the model picker will be empty under this driver.
-      return [];
+      // `polytoken models` prints a human-readable config dump (NOT JSON — no
+      // --format flag on this subcommand). parseModels is the pure parser over it.
+      // Shell out each call: the model set can change via `polytoken auth` /
+      // config edits between calls, and a stale list would offer unswitchable
+      // models. The dump is small (a few KB) and the call is driver-wide (not
+      // per-session), so the cost is negligible. Errors degrade to an empty list
+      // (an honest "no models available") rather than blank the picker on a
+      // misconfigured polytoken.
+      try {
+        const { stdout } = await runPolytokenText(polytokenBin, ["models"]);
+        return parseModels(stdout).models;
+      } catch (e) {
+        console.error("[polytoken] listModels failed", e);
+        return [];
+      }
     },
 
     async listCommands(_sessionId?: SessionId): Promise<CommandInfo[]> {
-      // Chunk 5: `polytoken print-slash-commands` (JSON), cached per cwd.
-      return [];
+      // `polytoken print-slash-commands --format json` is the daemon's slash-menu
+      // metadata (canonical, aliases, category, description). Cached per cwd because
+      // the set is cwd-scoped (loaded from the workspace's config) and re-broadcast
+      // on every session switch — re-shelling-out on each switch would be wasteful
+      // when the set rarely changes. parseSlashCommands is the pure parser.
+      const cwd = active()?.cwd;
+      if (!cwd) return [];
+      const cached = commandsCache.get(cwd);
+      if (cached) return cached;
+      try {
+        const { stdout } = await runPolytokenText(polytokenBin, [
+          "--working-dir",
+          cwd,
+          "print-slash-commands",
+          "--format",
+          "json",
+        ]);
+        const cmds = parseSlashCommands(stdout);
+        commandsCache.set(cwd, cmds);
+        return cmds;
+      } catch (e) {
+        console.error("[polytoken] listCommands failed", e);
+        return [];
+      }
     },
 
     async listFileIndex(
-      _sessionId?: SessionId,
+      sessionId?: SessionId,
     ): Promise<{ files: FileInfo[]; truncated: boolean }> {
-      // Chunk 5: GET /files (daemon-native file index) — may replace pilot's fd.
-      return { files: [], truncated: false };
+      // The daemon owns a native file index (GET /files, ignore-aware, alphabetical,
+      // dirs trailing `/`). This is the @-mention index the client fuzzy-matches
+      // locally — it replaces pilot's `fd`-based index under this driver. The daemon
+      // does not expose a cap param, so we cap client-side to FILE_INDEX_CAP (the same
+      // cap pi-driver's fd index uses) and report `truncated: true` on overflow —
+      // matching pi-driver's contract exactly, so the client's per-query `fd` fallback
+      // (listFiles) engages on a large repo identically under both drivers. A cold
+      // (no-warm-session) call returns empty — there's no daemon to ask.
+      const ws = target(sessionId);
+      if (!ws) return { files: [], truncated: false };
+      try {
+        const { data } = await ws.client.files();
+        if (!data) return { files: [], truncated: false };
+        const all = parseFileCatalog(data.files);
+        const truncated = all.length > FILE_INDEX_CAP;
+        return {
+          files: truncated ? all.slice(0, FILE_INDEX_CAP) : all,
+          truncated,
+        };
+      } catch (e) {
+        console.error("[polytoken] listFileIndex failed", e);
+        return { files: [], truncated: false };
+      }
     },
 
     async listFiles(
-      _query: string,
-      _sessionId?: SessionId,
-      _cwd?: string,
+      query: string,
+      sessionId?: SessionId,
+      cwd?: string,
     ): Promise<FileInfo[]> {
-      return [];
+      // Fallback @-mention search when the index was truncated (or for a new-session
+      // draft with no session). The daemon's GET /files has no query param, so the
+      // fallback is the shared `fd` search — the same path the pi driver uses. `cwd`
+      // (the draft's target dir) overrides; otherwise resolve from the session.
+      const root = cwd ?? target(sessionId)?.cwd;
+      if (!root) return [];
+      return listFilesWithFd(root, query);
     },
 
     async listDir(path?: string): Promise<DirListing> {

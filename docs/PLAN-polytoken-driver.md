@@ -348,6 +348,19 @@ either new concepts (facets, jobs) or ambient metadata safely ignored in v1.
 - **Chunk 5 — Settings & polish.** models/thinking, providers (CLI/config), MCP
   status, compaction, context meter, `branchFrom`/tree if [OPEN B] allows.
 
+> **Chunk 5 status (2026-06-28): DONE for v1 dogfooding, provider panel deferred.**
+> `listModels` shells out to `polytoken models` (text → `parseModels`); `listCommands`
+> shells out to `polytoken print-slash-commands --format json` (cached per cwd →
+> `parseSlashCommands`); `listFileIndex` uses the daemon's `GET /files` capped
+> client-side to `FILE_INDEX_CAP` (matching pi-driver); `listFiles` falls back to the
+> shared `file-search.ts` `fd` search. The `fd` helpers were extracted to a shared
+> module both drivers import. Compaction, MCP events, context meter, `setModel`/
+> `setThinking`, `branchFrom` landed in prior chunks. Adversarial review (2 passes)
+> passed. **Provider auth (Settings panel) was deferred** per D-D: `polytoken auth
+> provider` is CLI/config-level (no `list-all`, interactive OAuth), not a daemon
+> endpoint, so the panel stays empty under this driver — model switching works via
+> `listModels`; auth setup happens via `polytoken config ui`/CLI.
+
 ## Effort read
 
 Smaller than the original pi integration, despite the new process-supervision

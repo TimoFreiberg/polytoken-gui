@@ -37,6 +37,7 @@ export type PermissionMonitorRequest = S["PermissionMonitorRequest"];
 export type SessionHistorySnapshot = S["SessionHistorySnapshot"];
 export type FacetRequest = S["FacetRequest"];
 export type CompactRequest = S["CompactRequest"];
+export type FileCatalogResponse = S["FileCatalogResponse"];
 
 /** Result of spawning a daemon — parsed from `polytoken new --no-attach` stdout. */
 export interface SpawnedDaemon {
@@ -347,6 +348,16 @@ export class DaemonClient {
     if (limit !== undefined) params.set("limit", String(limit));
     const qs = params.toString();
     return this.get<SessionHistorySnapshot>(`/history${qs ? `?${qs}` : ""}`);
+  }
+
+  /** `GET /files` — the daemon's ignore-aware project file index (alphabetical, dirs
+   *  trailing `/`). `include_ignored` disables .gitignore/.claudeignore/.polytokenignore
+   *  (dotfiles + the project private dir stay excluded). Returns `[]` when the project
+   *  root is unavailable. The daemon owns this index natively — pilot doesn't run its
+   *  own `fd` for the index under this driver (spike §8). */
+  files(opts?: { includeIgnored?: boolean }): Promise<{ status: number; data: FileCatalogResponse | null; error: string | null }> {
+    const qs = opts?.includeIgnored ? "?include_ignored=true" : "";
+    return this.get<FileCatalogResponse>(`/files${qs}`);
   }
 
   // --- Other endpoints used by the driver ---
