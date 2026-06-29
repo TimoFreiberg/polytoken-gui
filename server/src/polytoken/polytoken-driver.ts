@@ -1231,25 +1231,21 @@ async function waitForHealth(
   timeoutMs = 10_000,
 ): Promise<void> {
   // The daemon writes `startup.json {state:"ready"}` once its HTTP server is about
-  // to bind, but there's a window where the port isn't accepting connections yet —
-  // `fetch` THROWS (TypeError: fetch failed) on connection-refused rather than
-  // returning a status. Catch those throws and keep polling; only a real 200 means
-  // healthy. Same for the post/get helpers' fetch — a transient ECONNREFUSED must
-  // not escape this loop as "Unable to connect".
+  // to bind, but there's a window where the port isn't accepting connections yet.
+  // safeFetch catches the connection-refused throw and returns {status:0, error};
+  // a non-200 (incl. status 0) means not-yet-healthy — keep polling. Only a real
+  // 200 means healthy. The stale-startup.json fix above means we're now polling
+  // OUR daemon's port, so a persistent status 0 here is a real bind failure, not
+  // a dead prior daemon's port.
   const deadline = Date.now() + timeoutMs;
-  let lastErr: unknown = null;
+  let lastErr: string | null = null;
   while (Date.now() < deadline) {
-    try {
-      const { status } = await client.health();
-      if (status === 200) return;
-      lastErr = null;
-    } catch (e) {
-      // fetch threw (connection refused / not yet bound) — keep polling.
-      lastErr = e;
-    }
+    const { status, error } = await client.health();
+    if (status === 200) return;
+    if (status === 0 && error) lastErr = error;
     await new Promise((r) => setTimeout(r, 150));
   }
   throw new Error(
-    `daemon did not become healthy within ${timeoutMs}ms${lastErr ? ` (last error: ${lastErr instanceof Error ? lastErr.message : String(lastErr)})` : ""}`,
+    `daemon did not become healthy within ${timeoutMs}ms${lastErr ? ` (last error: ${lastErr})` : ""}`,
   );
 }

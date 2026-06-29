@@ -122,30 +122,53 @@ function readStartupJson(sessionDir: string): StartupJson | null {
 /** Wait for a `polytoken daemon` (foreground) to write a `ready` startup.json,
  *  polling every 100ms up to `timeoutMs`. Returns the port. Throws on `failed`,
  *  timeout, or a malformed startup.json. The daemon writes `startup.json` to its
- *  session dir (under the sessions dir) once it has bound its port. */
-async function waitForDaemonStartup(
+ *  session dir (under the sessions dir) once it has bound its port.
+ *
+ *  `expectPid` — the pid of the daemon process we just spawned. A `startup.json`
+ *  left behind by a PRIOR daemon (state:"ready", a now-dead pid + port) sits in
+ *  the session dir from the last run. Without this guard, waitForDaemonStartup
+ *  reads that stale file on the very first poll, returns the dead daemon's port,
+ *  and `waitForHealth` spins for 10s against an unbound port → every cold resume
+ *  of an old session times out. Only trust a `ready` file whose `pid` matches the
+ *  process we started. */
+// Exported for testing (the spawn path is exercised via a temp dir).
+export async function waitForDaemonStartup(
   sessionsDir: string,
   sessionId: string,
   timeoutMs: number,
+  expectPid?: number,
 ): Promise<number> {
   const sessionDir = join(sessionsDir, sessionId);
   const deadline = Date.now() + timeoutMs;
+  let lastJson: StartupJson | null = null;
   for (;;) {
     const json = readStartupJson(sessionDir);
     if (json) {
+      lastJson = json;
       if (json.state === "ready" && typeof json.port === "number") {
-        return json.port;
+        // Stale startup.json from a prior (now-dead) daemon: its pid won't match
+        // the process we just spawned. Keep polling for OUR daemon's file.
+        if (expectPid !== undefined && json.pid !== expectPid) {
+          // The file is stale — but note it so the timeout message is useful.
+          // (The prior daemon's pid is dead; our daemon hasn't written yet.)
+        } else {
+          return json.port;
+        }
       }
       if (json.state === "failed") {
-        throw new Error(
-          `polytoken daemon failed to start: ${json.message ?? "no message"}`,
-        );
+        // A failed file from a prior run (wrong pid) must not abort our wait —
+        // only a failure from our own daemon is terminal.
+        if (expectPid === undefined || json.pid === expectPid) {
+          throw new Error(
+            `polytoken daemon failed to start: ${json.message ?? "no message"}`,
+          );
+        }
       }
       // state is something else (e.g. "starting") — keep polling.
     }
     if (Date.now() >= deadline) {
       throw new Error(
-        `polytoken daemon did not become ready within ${timeoutMs}ms (startup.json: ${JSON.stringify(readStartupJson(sessionDir))})`,
+        `polytoken daemon did not become ready within ${timeoutMs}ms (startup.json: ${JSON.stringify(lastJson)}; expected pid: ${expectPid ?? "any"})`,
       );
     }
     await new Promise((r) => setTimeout(r, 100));
@@ -220,6 +243,7 @@ async function spawnResumeDaemon(
       opts.sessionsDir,
       opts.sessionId,
       15_000,
+      proc.pid,
     );
     return { sessionId: opts.sessionId, port };
   } catch (e) {
@@ -333,23 +357,39 @@ export class DaemonClient {
   /** Run a fetch and return a structured result, catching connection errors
    *  (the daemon's port not yet bound / process died) as a status-0 error rather
    *  than letting them throw out of the caller. A thrown fetch ("Unable to connect")
-   *  would otherwise escape retry loops and surface as a raw TypeError message. */
+   *  would otherwise escape retry loops and surface as a raw TypeError message.
+   *
+   *  AbortGuard: fetch has no default timeout. A daemon that accepts the TCP
+   *  connection but never responds (wedged mid-config, deadlocked on a lock) would
+   *  hang until the OS TCP keepalive gives up — minutes. That stalls the hub's
+   *  switch-queue indefinitely. An AbortController gives every request a hard
+   *  ceiling; a wedged daemon returns a status-0 timeout instead of hanging. */
   private async safeFetch(
     url: string,
     init?: RequestInit,
+    timeoutMs = 10_000,
   ): Promise<{ status: number; data: unknown; error: string | null } | null> {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), timeoutMs);
     try {
-      const res = await fetch(url, init);
+      const res = await fetch(url, { ...init, signal: ctrl.signal });
       const text = await res.text();
       return { status: res.status, data: text, error: null };
     } catch (e) {
-      // fetch throws on connection refused / process gone — surface as status 0
-      // with the error message so callers can retry or report cleanly.
+      // fetch throws on connection refused / process gone / abort — surface as
+      // status 0 with the error message so callers can retry or report cleanly.
       return {
         status: 0,
         data: null,
-        error: e instanceof Error ? e.message : String(e),
+        error:
+          e instanceof DOMException && e.name === "AbortError"
+            ? `request timed out after ${timeoutMs}ms`
+            : e instanceof Error
+              ? e.message
+              : String(e),
       };
+    } finally {
+      clearTimeout(timer);
     }
   }
 
