@@ -20,7 +20,7 @@ See `docs/` siblings for context: `DESIGN.md` (architecture + roadmap), `DECISIO
       driving? Related jank: opening the same session in pilot that the TUI is viewing makes
       the TUI error briefly then detach (the TUI's own lease-loss handling) — need a clean
       protocol for coexistence. (Readable error + connection-race fix landed in `69585952`.)
-- [ ] **polytoken: new-session draft doesn't default to the dynamic (umans) model.**
+- [x] **polytoken: new-session draft doesn't default to the dynamic (umans) model.**
       Surfaced 2026-06-29: `polytoken models` lists `deepseek/deepseek-v4-*` (static config)
       + `umans/umans-*` (dynamic, discovered at runtime). The new-session draft's model
       picker shows the static list but doesn't surface the dynamic default the way the TUI
@@ -28,6 +28,27 @@ See `docs/` siblings for context: `DESIGN.md` (architecture + roadmap), `DECISIO
       runtime-resolved default model (not just `config.yaml`'s `default_model`), or the
       new-session flow to query the daemon's effective default after spawn. May be a
       polytoken-side gap (whether dynamic models surface via `polytoken models` at all).
+      → Done 2026-06-29: the polytoken driver now implements `getModelDefaults()` (it
+      was missing entirely — `broadcastModelDefaults()` silently no-opped), seeding the
+      draft from the `default_model` marker; `listModels()` synthesizes pickable
+      `ModelOption` entries for catalog defaults not in the `models:` section; and the
+      pre-existing `${provider}/${modelId}` join bug in `setModel`/`newSession` (which
+      doubled the prefix and broke picking *any* model from the draft) is fixed to POST
+      the full registry name directly via `modelPostKey()`. Part 2 (the synthesis) is a
+      TEMPORARY workaround pending an upstream `polytoken models` feature to list
+      catalog-provider models as `models:` blocks — remove once native.
+- [ ] **polytoken: event-map bare modelId shows bare id on active-session badge.**
+      Surfaced 2026-06-29 while resolving catalog models: `event-map.ts`
+      (`snapshotFromState` + the `model_switch` handler) splits `active_model` on `/`
+      and takes `[1]` as the **bare** modelId for `SessionSnapshot.config`, while
+      `ModelOption.modelId` (from `parseModels`) is the **full** `provider/id`. So after
+      a model switch, the active-session badge shows the bare id (e.g. `umans-glm-5.2`)
+      instead of the friendly label — `ModelPicker.svelte`'s `store.models.find()`
+      matches against the full form and misses, falling back to the raw bare id. This is
+      display-only (switching itself works — the client POSTs the full `ModelOption`
+      modelId, never the bare `session.config` one). Fix: use the full `active_model` as
+      `config.modelId` in both sites. Has its own test surface in `event-map.test.ts`.
+      Flagged with `// NOTE:` comments at the two split sites.
 - [ ] **e2e: dir-picker `.row.up` "go up" button times out (pre-existing flake).** Surfaced
       during the Chunk 0.5 Settings-nav verification (2026-06-26): 5 `e2e/sessions.e2e.ts`
       worktree/dir-picker tests (`started in a directory chosen via the browser`, `worktree

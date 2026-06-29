@@ -204,6 +204,12 @@ export function snapshotFromState(
   // active_model is stored as "provider/modelId" (e.g. "anthropic/claude-sonnet-4").
   // If a model string ever lacks a slash (a custom/local name), provider gets the
   // whole string and modelId is undefined — config is display-only and degrades.
+  // NOTE: modelId here is the BARE id (split on `/`), while ModelOption.modelId
+  // (from parseModels) is the FULL `provider/id` registry name. So after a model
+  // switch, the active-session badge shows the bare id instead of the friendly
+  // label (ModelPicker's store.models.find() matches the full form and misses).
+  // Display-only — switching itself works (the client POSTs the full ModelOption
+  // modelId, never this bare config one). To be unified in a follow-up.
   const config = state?.active_model
     ? {
         provider: state.active_model.split("/")[0],
@@ -759,6 +765,12 @@ export function mapDaemonEvent(
       // with the NEW config directly (no state fetch needed).
       // Same provider/modelId split as snapshotFromState — degrades gracefully if
       // the model string lacks a slash (config is display-only).
+      // NOTE: modelId here is the BARE id (split on `/`), while ModelOption.modelId
+      // is the FULL `provider/id`. So the active-session badge shows the bare id
+      // instead of the friendly label (ModelPicker's store.models.find() matches
+      // the full form and misses). Display-only — switching itself works (the
+      // client POSTs the full ModelOption modelId, never this bare config one).
+      // To be unified in a follow-up.
       const config = {
         provider: ev.to_model.split("/")[0],
         modelId: ev.to_model.split("/")[1],

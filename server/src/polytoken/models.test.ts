@@ -2,7 +2,12 @@
 // `polytoken models` output shapes (observed, polytoken 0.3.3).
 
 import { test, expect } from "bun:test";
-import { parseModels } from "./models.js";
+import {
+  defaultModelRef,
+  modelPostKey,
+  parseModels,
+  synthesizeDefaultModels,
+} from "./models.js";
 
 // The actual observed output from `polytoken models` on the mini (2 models).
 const REAL_OUTPUT = `default_model: umans/umans-glm-5.2
@@ -105,4 +110,62 @@ test("parseModels > no models: section yields no models", () => {
   );
   expect(out.models).toEqual([]);
   expect(out.defaultModel).toBe("umans/umans-glm-5.2");
+});
+
+test("defaultModelRef > keeps modelId as the full registry name (provider/id)", () => {
+  // modelId is polytoken's ModelConfig.name / POST key — the FULL `provider/id`,
+  // NOT the bare id. provider is just the prefix (the picker's group key).
+  const ref = defaultModelRef("umans/umans-glm-5.2");
+  expect(ref.provider).toBe("umans");
+  expect(ref.modelId).toBe("umans/umans-glm-5.2");
+});
+
+test("defaultModelRef > falls back to the whole string when there's no slash", () => {
+  const ref = defaultModelRef("local-model");
+  expect(ref.provider).toBe("local-model");
+  expect(ref.modelId).toBe("local-model");
+});
+
+test("modelPostKey > is the identity (no provider/modelId join)", () => {
+  // The POST key IS the full modelId — polytoken's ModelConfig.name is the full
+  // `provider/id`. Guards against a revert to `${provider}/${modelId}` that
+  // doubled the prefix (deepseek/deepseek-v4-pro/deepseek/deepseek-v4-pro).
+  expect(modelPostKey("umans/umans-glm-5.2")).toBe("umans/umans-glm-5.2");
+  expect(modelPostKey("deepseek/deepseek-v4-pro")).toBe(
+    "deepseek/deepseek-v4-pro",
+  );
+  expect(modelPostKey("local-model")).toBe("local-model");
+});
+
+test("synthesizeDefaultModels > emits entries for markers not in the models list", () => {
+  const parsed = parseModels(REAL_OUTPUT);
+  // Neither umans model appears in the models: section, so both are synthesized.
+  const synth = synthesizeDefaultModels(parsed);
+  expect(synth).toHaveLength(2);
+  expect(synth[0]!.provider).toBe("umans");
+  expect(synth[0]!.modelId).toBe("umans/umans-glm-5.2");
+  expect(synth[0]!.label).toBe("umans/umans-glm-5.2");
+  expect(synth[0]!.thinkingLevels).toBeUndefined();
+  expect(synth[1]!.provider).toBe("umans");
+  expect(synth[1]!.modelId).toBe("umans/umans-flash");
+  expect(synth[1]!.thinkingLevels).toBeUndefined();
+});
+
+test("synthesizeDefaultModels > does not duplicate a marker already in the models list", () => {
+  // AC.4: if polytoken later lists a default model natively as a models: block,
+  // the synthesis must skip it (no duplicate row in the picker).
+  const out = parseModels(
+    "default_model: deepseek/deepseek-v4-pro\ndefault_small_model: umans/umans-flash\n\nmodels:\n- deepseek/deepseek-v4-pro\n  provider: deepseek/deepseek-v4-pro\n  reasoning: levels=high; can_disable=yes\n",
+  );
+  const synth = synthesizeDefaultModels(out);
+  // Only the umans marker is absent from models: — it's the sole synthesized row.
+  expect(synth).toHaveLength(1);
+  expect(synth[0]!.modelId).toBe("umans/umans-flash");
+});
+
+test("synthesizeDefaultModels > null markers yield an empty array", () => {
+  const out = parseModels("models:\n- m1\n  provider: m1\n");
+  expect(out.defaultModel).toBeNull();
+  expect(out.defaultSmallModel).toBeNull();
+  expect(synthesizeDefaultModels(out)).toEqual([]);
 });

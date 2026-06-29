@@ -75,7 +75,12 @@ import {
 } from "./event-map.js";
 import { buildInterrogativeResponse, type PendingInterrogative } from "./ui-bridge.js";
 import { historyToSeedEvents } from "./history-seed.js";
-import { parseModels } from "./models.js";
+import {
+  defaultModelRef,
+  modelPostKey,
+  parseModels,
+  synthesizeDefaultModels,
+} from "./models.js";
 import { parseSlashCommands } from "./commands.js";
 import { parseFileCatalog } from "./file-catalog.js";
 import { listFilesWithFd, FILE_INDEX_CAP } from "../file-search.js";
@@ -927,8 +932,10 @@ export async function createPolytokenDriver(
       // setModel call works now but needs a valid provider/modelId string).
       if (opts.model) {
         try {
+          // opts.model.modelId is the FULL registry name (provider/id) — POST it
+          // directly via modelPostKey, no join (see setModel notes).
           await ws.client.setModel(
-            `${opts.model.provider}/${opts.model.modelId}`,
+            modelPostKey(opts.model.modelId),
             opts.thinking,
           );
           // Refresh the cached state so the seed snapshot reflects the applied model.
@@ -1109,10 +1116,40 @@ export async function createPolytokenDriver(
       // misconfigured polytoken.
       try {
         const { stdout } = await runPolytokenText(polytokenBin, ["models"]);
-        return parseModels(stdout).models;
+        const parsed = parseModels(stdout);
+        // TEMPORARY: catalog providers surface only as default markers, not as
+        // models: blocks. Synthesize pickable entries for them so the draft
+        // picker offers the configured default. Remove once polytoken models
+        // lists catalog models natively (feature request sent 2026-06-29).
+        return [...parsed.models, ...synthesizeDefaultModels(parsed)];
       } catch (e) {
         console.error("[polytoken] listModels failed", e);
         return [];
+      }
+    },
+
+    async getModelDefaults(): Promise<ModelDefaults> {
+      // Resolve the catalog default from the `default_model` marker — polytoken
+      // exposes no /models enumeration endpoint, so `polytoken models` (the text
+      // dump) is the only source. Shells out fresh each call (same rationale as
+      // listModels). Only `defaultModel` (the large/primary default) seeds the
+      // draft; `defaultSmallModel` is the mini/background default — surfaced for
+      // the Settings panel later, not used here. modelId is the FULL registry
+      // name (provider/id), which is what POST /model and the picker ModelOption
+      // both expect.
+      try {
+        const { stdout } = await runPolytokenText(polytokenBin, ["models"]);
+        const { defaultModel } = parseModels(stdout);
+        const ref = defaultModel ? defaultModelRef(defaultModel) : undefined;
+        return {
+          provider: ref?.provider,
+          modelId: ref?.modelId,
+          thinkingLevel: undefined, // dump carries no default thinking level
+          favorites: [], // polytoken has no favorites concept yet
+        };
+      } catch (e) {
+        console.error("[polytoken] getModelDefaults failed", e);
+        return { favorites: [] };
       }
     },
 
@@ -1200,10 +1237,13 @@ export async function createPolytokenDriver(
       const ws = target(sessionId);
       if (!ws) return;
       // POST /model {model, reasoning_effort}. The model string is matched
-      // against ModelConfig.name (the registry map key), not provider/modelId split.
-      // Preserve the current reasoning_effort (setModel requires both fields).
+      // against ModelConfig.name (the registry map key) — which is the FULL
+      // `provider/id` that modelId already carries, so POST it directly via
+      // modelPostKey (no join). `provider` is kept for the PilotDriver contract
+      // (pi-driver uses it for modelRegistry.find) but unused here. Preserve the
+      // current reasoning_effort (setModel requires both fields).
       const effort = ws.lastState?.active_reasoning_effort ?? undefined;
-      void ws.client.setModel(`${provider}/${modelId}`, effort).catch((e) => {
+      void ws.client.setModel(modelPostKey(modelId), effort).catch((e) => {
         console.error("[polytoken] setModel failed", e);
       });
     },

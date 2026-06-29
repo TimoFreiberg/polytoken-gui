@@ -128,3 +128,41 @@ export function parseModels(stdout: string): ParsedModels {
   flush();
   return { models, defaultModel, defaultSmallModel };
 }
+
+/** Split a full `provider/id` registry name into the picker's {provider, modelId}
+ *  shape. `modelId` stays the FULL registry name (polytoken's POST /model key),
+ *  NOT the bare id — see setModel notes. Falls back to the whole string as both
+ *  when there's no slash (mirrors parseModels' provider fallback). */
+export function defaultModelRef(marker: string): {
+  provider: string;
+  modelId: string;
+} {
+  const slash = marker.indexOf("/");
+  if (slash < 0) return { provider: marker, modelId: marker };
+  return { provider: marker.slice(0, slash), modelId: marker };
+}
+
+/** The model string to POST to /model. Polytoken's ModelConfig.name (the registry
+ *  key) is the FULL `provider/id`, which is exactly what ModelOption.modelId and
+ *  the default markers already carry — so the POST key IS the modelId, unmodified.
+ *  (Contrast pi, where modelId is bare and the driver joins provider/modelId for
+ *  modelRegistry.find.) Centralized here so setModel/newSession share one tested
+ *  path instead of each inlining a (previously buggy) `${provider}/${modelId}` join. */
+export function modelPostKey(modelId: string): string {
+  return modelId;
+}
+
+/** Synthesize ModelOption entries for default-marker models that aren't already
+ *  in the parsed models list (catalog providers whose models appear only as
+ *  default_model markers, not as models: blocks).
+ *  Temporary: remove once polytoken models lists catalog models natively. */
+export function synthesizeDefaultModels(parsed: ParsedModels): ModelOption[] {
+  const existing = new Set(parsed.models.map((m) => m.modelId));
+  const out: ModelOption[] = [];
+  for (const marker of [parsed.defaultModel, parsed.defaultSmallModel]) {
+    if (!marker || existing.has(marker)) continue;
+    const { provider, modelId } = defaultModelRef(marker);
+    out.push({ provider, modelId, label: modelId, thinkingLevels: undefined });
+  }
+  return out;
+}
