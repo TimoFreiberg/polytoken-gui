@@ -1228,13 +1228,28 @@ export async function createPolytokenDriver(
  *  moment to bind its port after `new --no-attach` returns the port. */
 async function waitForHealth(
   client: DaemonClient,
-  timeoutMs = 5000,
+  timeoutMs = 10_000,
 ): Promise<void> {
+  // The daemon writes `startup.json {state:"ready"}` once its HTTP server is about
+  // to bind, but there's a window where the port isn't accepting connections yet —
+  // `fetch` THROWS (TypeError: fetch failed) on connection-refused rather than
+  // returning a status. Catch those throws and keep polling; only a real 200 means
+  // healthy. Same for the post/get helpers' fetch — a transient ECONNREFUSED must
+  // not escape this loop as "Unable to connect".
   const deadline = Date.now() + timeoutMs;
+  let lastErr: unknown = null;
   while (Date.now() < deadline) {
-    const { status } = await client.health();
-    if (status === 200) return;
-    await new Promise((r) => setTimeout(r, 100));
+    try {
+      const { status } = await client.health();
+      if (status === 200) return;
+      lastErr = null;
+    } catch (e) {
+      // fetch threw (connection refused / not yet bound) — keep polling.
+      lastErr = e;
+    }
+    await new Promise((r) => setTimeout(r, 150));
   }
-  throw new Error(`daemon did not become healthy within ${timeoutMs}ms`);
+  throw new Error(
+    `daemon did not become healthy within ${timeoutMs}ms${lastErr ? ` (last error: ${lastErr instanceof Error ? lastErr.message : String(lastErr)})` : ""}`,
+  );
 }

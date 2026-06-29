@@ -277,6 +277,34 @@ export async function spawnDaemon(
   return spawnNewDaemon(polytokenBin, { cwd: opts.cwd });
 }
 
+/** Parse a 409 lease-held error body into a readable holder description.
+ *  The body shape (observed): `{"active":{"active_pid":..., "active_terminal_label":"...",
+ *  "last_seen_at":"...", "expires_at":"..."}, "message":"an interactive TUI is..."}`.
+ *  Returns null if the body isn't the expected shape (caller falls back to raw). */
+function parseLeaseHeldError(error: string | null): string | null {
+  if (!error) return null;
+  try {
+    const body = JSON.parse(error) as {
+      active?: {
+        active_terminal_label?: string;
+        active_pid?: number;
+        expires_at?: string;
+      };
+      message?: string;
+    };
+    const a = body.active;
+    if (!a) return body.message ?? null;
+    const label = a.active_terminal_label ?? "unknown TUI";
+    const pid = a.active_pid ? ` pid ${a.active_pid}` : "";
+    const expires = a.expires_at
+      ? `, lease expires ${new Date(a.expires_at).toLocaleTimeString()}`
+      : "";
+    return `"${label}"${pid}${expires}`;
+  } catch {
+    return null;
+  }
+}
+
 /**
  * A typed client for one live polytoken daemon process. Owns the HTTP surface, the
  * attachment lease (+ heartbeat timer), and the SSE subscriber. Call `close()` to
@@ -302,16 +330,41 @@ export class DaemonClient {
 
   // --- HTTP helpers ---
 
+  /** Run a fetch and return a structured result, catching connection errors
+   *  (the daemon's port not yet bound / process died) as a status-0 error rather
+   *  than letting them throw out of the caller. A thrown fetch ("Unable to connect")
+   *  would otherwise escape retry loops and surface as a raw TypeError message. */
+  private async safeFetch(
+    url: string,
+    init?: RequestInit,
+  ): Promise<{ status: number; data: unknown; error: string | null } | null> {
+    try {
+      const res = await fetch(url, init);
+      const text = await res.text();
+      return { status: res.status, data: text, error: null };
+    } catch (e) {
+      // fetch throws on connection refused / process gone — surface as status 0
+      // with the error message so callers can retry or report cleanly.
+      return {
+        status: 0,
+        data: null,
+        error: e instanceof Error ? e.message : String(e),
+      };
+    }
+  }
+
   private async post<T>(
     path: string,
     body?: unknown,
   ): Promise<{ status: number; data: T | null; error: string | null }> {
-    const res = await fetch(`${this.baseUrl}${path}`, {
+    const res = await this.safeFetch(`${this.baseUrl}${path}`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: body !== undefined ? JSON.stringify(body) : undefined,
     });
-    const text = await res.text();
+    if (!res) return { status: 0, data: null, error: "fetch returned null" };
+    if (res.status === 0) return { status: 0, data: null, error: res.error };
+    const text = res.data as string;
     let data: T | null = null;
     if (text) {
       try {
@@ -324,15 +377,17 @@ export class DaemonClient {
     return {
       status: res.status,
       data,
-      error: res.ok ? null : (data as { error?: string } | null)?.error ?? text.slice(0, 200),
+      error: res.status < 400 ? null : (data as { error?: string } | null)?.error ?? text.slice(0, 200),
     };
   }
 
   private async get<T>(
     path: string,
   ): Promise<{ status: number; data: T | null; error: string | null }> {
-    const res = await fetch(`${this.baseUrl}${path}`);
-    const text = await res.text();
+    const res = await this.safeFetch(`${this.baseUrl}${path}`);
+    if (!res) return { status: 0, data: null, error: "fetch returned null" };
+    if (res.status === 0) return { status: 0, data: null, error: res.error };
+    const text = res.data as string;
     let data: T | null = null;
     if (text) {
       try {
@@ -341,7 +396,7 @@ export class DaemonClient {
         return { status: res.status, data: null, error: text.slice(0, 500) };
       }
     }
-    return { status: res.status, data, error: res.ok ? null : text.slice(0, 200) };
+    return { status: res.status, data, error: res.status < 400 ? null : text.slice(0, 200) };
   }
 
   // --- Lifecycle ---
@@ -384,6 +439,11 @@ export class DaemonClient {
    * Claim the TUI attachment lease. The lease is pid-bound and EXCLUSIVE (a second
    * claim while one is live → 409). Pilot is the sole attacher; the local TUI
    * detaches while pilot drives. Starts the heartbeat timer automatically.
+   *
+   * On 409 (an active TUI holds the lease), the error is surfaced as a readable
+   * message naming the holder + lease expiry — the raw JSON body is not useful to
+   * the operator. The holder's lease auto-expires (~30s); retrying after it lapses
+   * succeeds.
    */
   async claimLease(label = "pilot"): Promise<TuiAttachClaimResponse> {
     const body: TuiAttachClaimRequest = {
@@ -395,6 +455,17 @@ export class DaemonClient {
       body,
     );
     if (status !== 200 || !data) {
+      // 409 = an interactive TUI is already attached. Parse the structured body to
+      // name the holder + when its lease expires, so the operator knows to either
+      // /detach in the TUI or wait ~30s for the lease to lapse.
+      if (status === 409) {
+        const held = parseLeaseHeldError(error);
+        throw new Error(
+          held
+            ? `another TUI is attached to this session (${held}). Detach it there (/detach) or wait ~30s for its lease to lapse.`
+            : `lease claim failed (409): ${error}`,
+        );
+      }
       throw new Error(`lease claim failed (${status}): ${error}`);
     }
     // Start the heartbeat timer. The spike confirmed heartbeat_interval_seconds: 5,
