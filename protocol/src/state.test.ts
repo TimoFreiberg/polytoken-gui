@@ -436,4 +436,61 @@ describe("foldEvent", () => {
     ]);
     expect(s.items[0]).toMatchObject({ kind: "assistant", streaming: true });
   });
+
+  test("snapshot.facet propagates to state.facet (the badge data path)", () => {
+    // Without the foldEvent guard, facet lands on the wire snapshot but is dropped
+    // at the fold, so store.session.facet is always undefined and the badge never
+    // renders. This is the test that would have caught the critical gap.
+    const s = foldAll([
+      base({
+        type: "sessionUpdated",
+        snapshot: {
+          ref,
+          workspace: { workspaceId: "w", path: "/p" },
+          title: "t",
+          status: "idle",
+          updatedAt: "t",
+          facet: "plan",
+        },
+      }),
+    ]);
+    expect(s.facet).toBe("plan");
+  });
+
+  test("a snapshot without facet leaves an existing state.facet intact", () => {
+    // Mirrors usage's overwrite-guarded semantics: a snapshot that carries facet
+    // overwrites; one that omits it (older daemon, usage-less mock abort) must
+    // not blank a known facet.
+    const s = initialSessionState();
+    foldEvent(
+      s,
+      base({
+        type: "sessionUpdated",
+        snapshot: {
+          ref,
+          workspace: { workspaceId: "w", path: "/p" },
+          title: "t",
+          status: "idle",
+          updatedAt: "t1",
+          facet: "plan",
+        },
+      }),
+    );
+    expect(s.facet).toBe("plan");
+    // A later snapshot that omits facet must not erase the known value.
+    foldEvent(
+      s,
+      base({
+        type: "sessionUpdated",
+        snapshot: {
+          ref,
+          workspace: { workspaceId: "w", path: "/p" },
+          title: "t",
+          status: "idle",
+          updatedAt: "t2",
+        },
+      }),
+    );
+    expect(s.facet).toBe("plan");
+  });
 });

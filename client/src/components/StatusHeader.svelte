@@ -50,6 +50,13 @@
       : s.ambient.title || s.title || "pilot",
   );
 
+  // Facet indicator: show a badge when the active facet is not the default
+  // "execute" (e.g. "plan" → "Plan mode"). Display-only — facet switching is
+  // daemon-side, not a pilot UI action yet.
+  const facet = $derived(
+    s.facet && s.facet !== "execute" ? s.facet : null,
+  );
+
   // The "where am I" subtitle. The folded snapshot carries no cwd/worktree, so we
   // read the active session's list entry (same lookup the sidebar uses) — its cwd
   // is the project, its worktree.base the parent repo for worktree sessions.
@@ -124,6 +131,13 @@
         ></span>
       {/if}
       <span class="title">{title}</span>
+      {#if facet}
+        <span
+          class="facet-badge"
+          data-testid="facet-badge"
+          title="Active facet: {facet}"
+        >{facet === "plan" ? "Plan mode" : facet}</span>
+      {/if}
     </span>
     <div class="sub">
       <span class="path" title={subtitleTitle}>{subtitle}</span>
@@ -214,6 +228,21 @@
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
+  }
+  /* Facet indicator pill — accent-tinted, uppercase, small. Appears only when
+     the active facet is not the default "execute" (e.g. plan mode). */
+  .facet-badge {
+    flex-shrink: 0;
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--accent);
+    background: var(--accent-soft);
+    border: 1px solid color-mix(in srgb, var(--accent) 30%, transparent);
+    border-radius: 999px;
+    padding: 1px 7px;
+    line-height: 1.6;
   }
   /* A small rotating ring beside the title while the focused session warms up. */
   .init-spinner {

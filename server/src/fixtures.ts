@@ -1605,6 +1605,94 @@ export function selectMany(): ScriptStep[] {
   ];
 }
 
+/** A plan-handoff approval card: renders the plan markdown body + 3 action buttons
+ *  (Implement new context | Implement current context | Cancel). Exercises the
+ *  `plan` HostUiRequest kind, the scrollable Markdown region, and the 3-up action
+ *  layout. The planText is multi-paragraph (headings, a list, a code block) so the
+ *  scroll cap + markdown rendering both get coverage. */
+export function planHandoff(): ScriptStep[] {
+  const planText = `# Plan: Add facet indicator + plan-handoff card
+
+## Goal
+Stop discarding plan-mode data the daemon already streams. Render the plan
+markdown in the handoff card and show a facet badge in the header.
+
+## Steps
+1. Add a \`plan\` variant to \`HostUiRequest\` in the protocol.
+2. Thread \`plan_text\` through the server event-map.
+3. Render markdown + 3 buttons in \`ApprovalLayer.svelte\`.
+4. Add a facet badge to \`StatusHeader.svelte\`.
+
+## Code
+\`\`\`ts
+case "plan_handoff": {
+  const ph = ev.plan_handoff;
+  const labels = ph
+    ? [ph.action_labels.implement_new_context,
+       ph.action_labels.implement_current_context,
+       ph.action_labels.cancel]
+    : ["Implement (new context)", "Implement (current context)", "Cancel"];
+  pending.planHandoffLabels = labels;
+}
+\`\`\`
+
+## Risks
+- \`plan_text\` can be several KB; the card caps height at ~50vh and scrolls.
+- The default-facet sentinel is \`"execute"\`; a different default would show the
+  badge spuriously.
+
+Once approved, the chosen label round-trips to a \`plan_handoff_answer\` decision
+via the reverse mapping in \`ui-bridge.ts\` (no change needed there).`;
+  return [
+    {
+      wait: 0,
+      event: {
+        ...base(),
+        type: "hostUiRequest",
+        request: {
+          kind: "plan",
+          requestId: "req-plan-handoff-1",
+          title: "Plan handoff",
+          planText,
+          displayPath: "plan.md",
+          targetFacet: "execute",
+          actionLabels: [
+            "Implement (new context)",
+            "Implement (current context)",
+            "Cancel",
+          ],
+        },
+      },
+    },
+  ];
+}
+
+/** Drives the StatusHeader facet badge: emits a sessionUpdated snapshot carrying
+ *  `facet: "plan"` so the badge appears, dwells long enough to assert it, then
+ *  emits a snapshot with `facet: "execute"` so the badge disappears. Exercises the
+ *  full snapshot→foldEvent→state.facet→UI path (the critical data path). */
+export function planFacet(): ScriptStep[] {
+  return [
+    {
+      wait: 0,
+      event: {
+        ...base(),
+        type: "sessionUpdated",
+        snapshot: snapshot({ facet: "plan", status: "idle" }),
+      },
+    },
+    {
+      // Dwell so the badge is stable on capture, then revert to execute (badge hides).
+      wait: 1500,
+      event: {
+        ...base(),
+        type: "sessionUpdated",
+        snapshot: snapshot({ facet: "execute", status: "idle" }),
+      },
+    },
+  ];
+}
+
 /** A newly-created session that is still WARMING UP: it surfaces in the `initializing`
  *  phase (model load / history replay / trust resolution), dwells there long enough to
  *  screenshot the distinct spinner, then transitions to idle once "ready". Drives the

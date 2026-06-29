@@ -42,7 +42,7 @@
       typeof window !== "undefined" &&
       window.matchMedia(PHONE_MQ).matches,
   );
-  const scripts = ["reply", "markdown", "search", "thinkingtools", "skill", "confirm", "trust", "input", "qna", "answercard", "answerleadup", "ambient", "compat", "bgrun", "bgwait", "queue", "deliverqueue", "initializing", "editdiff", "images", "error", "idle", "streamhold", "staleidle", "pendinghold", "timeout", "yesno", "journalnudge", "contextfull", "longoutput", "selectmany", "failnewsession"];
+  const scripts = ["reply", "markdown", "search", "thinkingtools", "skill", "confirm", "trust", "input", "qna", "answercard", "answerleadup", "ambient", "compat", "bgrun", "bgwait", "queue", "deliverqueue", "initializing", "editdiff", "images", "error", "idle", "streamhold", "staleidle", "pendinghold", "timeout", "yesno", "journalnudge", "contextfull", "longoutput", "selectmany", "planhandoff", "planfacet", "failnewsession"];
 
   onMount(() => store.start());
 

@@ -271,6 +271,9 @@ export interface SessionSnapshot {
   readonly usage?: SessionUsage;
   readonly runningRunId?: RunId;
   readonly queuedMessages?: readonly SessionQueuedMessage[];
+  /** The active facet (e.g. "execute", "plan"). Undefined means unknown / default;
+   *  the StatusHeader shows a badge only when this is set and not "execute". */
+  readonly facet?: string;
 }
 
 /**
@@ -408,6 +411,24 @@ export type HostUiRequest =
       readonly questions: readonly QnaQuestion[];
       readonly timeoutMs?: number;
     }
+  | {
+      readonly kind: "plan";
+      readonly requestId: string;
+      readonly title: string;
+      /** The plan document's markdown body — rendered by Markdown.svelte. Empty when
+       *  the daemon sent the interrogative without its context (degraded but not
+       *  silent: the body renders blank + the action buttons). */
+      readonly planText: string;
+      /** Friendly path of the plan doc the operator is approving (display-only). */
+      readonly displayPath?: string;
+      /** Facet the handoff targets (e.g. "execute"). Display-only context. */
+      readonly targetFacet?: string;
+      /** The 3 action button labels, in PlanHandoffDecision order:
+       *  [implement_new_context, implement_current_context, cancel]. The card
+       *  responds with `{value: chosenLabel}` — same shape as `select`. */
+      readonly actionLabels: readonly [string, string, string];
+      readonly timeoutMs?: number;
+    }
   // FIRE-AND-FORGET — ambient UI, no response
   | {
       readonly kind: "notify";
@@ -445,7 +466,8 @@ export type HostUiDialogKind =
   | "input"
   | "select"
   | "editor"
-  | "qna";
+  | "qna"
+  | "plan";
 
 export function isDialogRequest(
   r: HostUiRequest,
@@ -455,7 +477,8 @@ export function isDialogRequest(
     r.kind === "input" ||
     r.kind === "select" ||
     r.kind === "editor" ||
-    r.kind === "qna"
+    r.kind === "qna" ||
+    r.kind === "plan"
   );
 }
 

@@ -223,6 +223,7 @@ export function snapshotFromState(
     updatedAt: now,
     config,
     usage: usageFromState(state),
+    facet: state?.active_facet ?? undefined,
   };
 }
 
@@ -381,6 +382,8 @@ function buildInterrogativeMapping(
       // the button text; the index order matches ui-bridge's PLAN_HANDOFF_DECISIONS.
       // Capture the rendered labels so the reverse builder can map the chosen
       // label → index → decision (the client sends the label, not an index).
+      // Unlike `select`, the `plan` kind carries the plan markdown so ApprovalLayer
+      // renders it instead of a blind generic dropdown.
       const ph = ev.plan_handoff;
       const labels = ph
         ? [
@@ -394,10 +397,13 @@ function buildInterrogativeMapping(
         ...meta,
         type: "hostUiRequest",
         request: {
-          kind: "select",
+          kind: "plan",
           requestId,
           title: ph?.title ?? "Plan handoff",
-          options: labels,
+          planText: ph?.plan_text ?? "",
+          displayPath: ph?.display_path ?? undefined,
+          targetFacet: ph?.target_facet ?? undefined,
+          actionLabels: labels as [string, string, string],
         },
       };
       return { event, pending };

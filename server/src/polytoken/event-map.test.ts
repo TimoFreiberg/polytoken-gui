@@ -811,7 +811,7 @@ describe("mapDaemonEvent", () => {
     });
   });
 
-  test("interrogative (plan_handoff) -> select card with action labels", () => {
+  test("interrogative (plan_handoff) -> plan card with markdown + action labels", () => {
     const out = fold({
       type: "interrogative",
       interrogative_id: "i4",
@@ -834,15 +834,18 @@ describe("mapDaemonEvent", () => {
     expect(out.events[0]).toMatchObject({
       type: "hostUiRequest",
       request: {
-        kind: "select",
+        kind: "plan",
         requestId: "i4",
         title: "Review plan",
-        options: ["Implement fresh", "Implement here", "Cancel"],
+        planText: "the plan",
+        displayPath: "/plan.md",
+        targetFacet: "execute",
+        actionLabels: ["Implement fresh", "Implement here", "Cancel"],
       },
     });
   });
 
-  test("interrogative (plan_handoff) with null plan_handoff -> fallback labels", () => {
+  test("interrogative (plan_handoff) with null plan_handoff -> fallback labels + empty body", () => {
     const out = fold({
       type: "interrogative",
       interrogative_id: "i4",
@@ -853,7 +856,9 @@ describe("mapDaemonEvent", () => {
     });
     expect(out.events[0]).toMatchObject({
       request: {
-        options: ["Implement (new context)", "Implement (current context)", "Cancel"],
+        kind: "plan",
+        planText: "",
+        actionLabels: ["Implement (new context)", "Implement (current context)", "Cancel"],
       },
     });
   });
@@ -1446,5 +1451,28 @@ describe("snapshotFromState config", () => {
   test("null state -> undefined config", () => {
     const snap = snapshotFromState(null, ref, workspace, "idle", "t");
     expect(snap.config).toBeUndefined();
+  });
+});
+
+describe("snapshotFromState", () => {
+  test("threads active_facet onto the snapshot", () => {
+    // The event-map step of the facet data path: a daemon state carrying
+    // active_facet produces a SessionSnapshot whose facet field is set, which
+    // foldEvent then propagates to state.facet (covered in protocol/state.test.ts).
+    const snap = snapshotFromState(
+      { ...baseState, active_facet: "plan" },
+      ref,
+      workspace,
+      "idle",
+      "t",
+    );
+    expect(snap.facet).toBe("plan");
+  });
+
+  test("defaults facet to undefined when active_facet is absent", () => {
+    // An older/partial daemon state (or a null state) must not synthesize a facet —
+    // the badge hides when facet is undefined / "execute".
+    const snap = snapshotFromState(null, ref, workspace, "idle", "t");
+    expect(snap.facet).toBeUndefined();
   });
 });

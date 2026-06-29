@@ -2,6 +2,7 @@
   import { isDialogRequest } from "@pilot/protocol";
   import { store } from "../lib/store.svelte.js";
   import Button from "./ui/Button.svelte";
+  import Markdown from "./Markdown.svelte";
 
   // Show one dialog at a time — the oldest pending. `qna` is rendered inline in the
   // chat column by QnaInline, not as a floating sheet, so skip it here (the two can
@@ -156,6 +157,7 @@
     if (c.kind === "confirm") confirm(true);
     else if (c.kind === "input" || c.kind === "editor") submitValue(inputValue);
     else if (c.kind === "select" && binarySelect) submitValue(binarySelect.affirmative);
+    else if (c.kind === "plan") submitValue(c.actionLabels[0]);
   }
 
   // Arrow-key roving for the non-binary select (a radiogroup). ↑/↓ move focus between
@@ -272,6 +274,19 @@
         </div>
         <div class="actions"><Button variant="secondary" size="lg" block title="Cancel this request" onclick={cancel}>Cancel</Button></div>
       {/if}
+    {:else if current.kind === "plan"}
+      <h2 id="approval-title">{current.title}</h2>
+      {#if current.displayPath}
+        <p class="plan-path" title="Plan document path">{current.displayPath}</p>
+      {/if}
+      <div class="plan-body">
+        <Markdown content={current.planText} final />
+      </div>
+      <div class="actions three">
+        <Button variant="secondary" size="lg" block title={current.actionLabels[2]} onclick={() => submitValue(current.actionLabels[2])}>{current.actionLabels[2]}</Button>
+        <Button variant="secondary" size="lg" block title={current.actionLabels[1]} onclick={() => submitValue(current.actionLabels[1])}>{current.actionLabels[1]}</Button>
+        <Button variant="primary" size="lg" block title={current.actionLabels[0]} onclick={() => submitValue(current.actionLabels[0])}>{current.actionLabels[0]}</Button>
+      </div>
     {:else if current.kind === "input"}
       <h2 id="approval-title">{current.title}</h2>
       <input class="field" bind:value={inputValue} placeholder={current.placeholder ?? ""} />
@@ -360,6 +375,34 @@
     display: flex;
     gap: 10px;
     margin-top: 14px;
+  }
+  .actions.two {
+    flex-direction: row;
+  }
+  /* Plan handoff: 3 actions (Cancel | Implement here | Implement new). Stacks to
+     a single column on narrow (phone) widths so each button is a full-width tap
+     target rather than a cramped third. */
+  .actions.three {
+    flex-direction: column;
+  }
+  @media (min-width: 600px) {
+    .actions.three {
+      flex-direction: row;
+    }
+  }
+  .plan-path {
+    color: var(--text-faint);
+    font-family: var(--font-mono);
+    font-size: 12px;
+    margin: 0 0 12px;
+    word-break: break-all;
+  }
+  .plan-body {
+    max-height: 50vh;
+    overflow-y: auto;
+    /* Subtle scroll affordance without a heavy scrollbar on touch. */
+    overscroll-behavior: contain;
+    -webkit-overflow-scrolling: touch;
   }
   .options {
     display: flex;

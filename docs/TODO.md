@@ -774,6 +774,20 @@ the trivial ones shipped inline this same day.
 
 ## 🔵 Later
 
+- [x] **Plan-mode handoff card + facet indicator** → done 2026-06-29. Stopped
+      discarding plan-mode data the daemon already streams: the `plan_handoff`
+      interrogative now renders as a dedicated approval card showing the plan
+      markdown (`plan_text`) in a scrollable region + the 3 action buttons
+      (Implement new context / Implement current context / Cancel), instead of a
+      blind generic `select`. Added a `plan` `HostUiRequest` variant + `facet?` on
+      `SessionSnapshot`, threaded `active_facet` through `snapshotFromState` and the
+      `foldEvent` reducer (the critical fold step that was dropping the field), and
+      rendered a "Plan mode" badge in `StatusHeader` when the facet isn't the default
+      `execute`. Response mechanism unchanged — the card replies `{value: label}`,
+      and the reverse mapping (`ui-bridge.ts`) maps it to the `plan_handoff_answer`
+      decision via the already-captured labels. **Deferred:** the live plan overlay
+      (B — watching the plan doc update as the agent authors it; content-source
+      unknown) and per-facet accent-color theming.
 - [x] **@-completion in new-session draft uses wrong cwd** → done 2026-06-21. The `@`
       typeahead used the pushed file index, which is the previously-focused session's cwd — so
       a draft showed the wrong project's files. Now while drafting the composer suppresses that

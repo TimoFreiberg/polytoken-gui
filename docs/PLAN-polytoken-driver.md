@@ -260,7 +260,7 @@ matrix writes itself).
 | `mcp_server_*` (connected/disconnected/reconnecting/disabled) | Settings MCP status | new ambient channel or reuse `extensionCompatibilityIssue` |
 | `image_reference_resolved` | (feeds `images` on messages/tools) | |
 | `extension_registered` | refresh `listExtensions` | |
-| `facet_switch` (+ `/facet`, `/adventurous-handoff`) | header facet indicator (name + accent color) + **plan-handoff approval** | v1-surface: built-in plan/execute is a headline feature; `PlanHandoffContext` → an approval card. Facet *authoring* is config-side |
+| `facet_switch` (+ `/facet`, `/adventurous-handoff`) | header facet indicator (**name only** — accent color deferred) + **plan-handoff approval card** (renders `plan_text` markdown) | v1-surface: built-in plan/execute is a headline feature; `PlanHandoffContext` → an approval card showing the plan markdown + 3 action buttons. Facet *authoring* is config-side. Live plan overlay (B) + accent-color theming deferred |
 | `classifier_decision`, `job_*` | — (v1 ignore) | autonomous-mode internals; jobs = "Managing Work", later |
 | `heartbeat` | — (liveness only) | also confirms SSE alive |
 

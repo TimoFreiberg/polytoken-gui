@@ -114,6 +114,9 @@ export interface SessionState {
   /** Context-window fill for the active model; undefined until a snapshot carries it
    *  (or when the model exposes no context window). Drives the composer's meter. */
   usage?: SessionUsage;
+  /** Active facet (e.g. "execute", "plan"); undefined until a snapshot carries it.
+   *  Drives the StatusHeader badge. Mirrors `usage`'s overwrite-guarded semantics. */
+  facet?: string;
   items: TranscriptItem[];
   /** Blocking dialogs awaiting a response, in arrival order. */
   pendingApprovals: HostUiRequest[];
@@ -226,6 +229,10 @@ export function foldEvent(
       // (e.g. the mock's abort) doesn't blank a known meter value. A defined usage
       // with tokens:null is still meaningful (window known, count pending).
       if (s.usage) state.usage = s.usage;
+      // Same overwrite-guarded semantics as usage: a snapshot that carries facet
+      // overwrites; one that omits it (older daemon, usage-less mock abort) must
+      // not blank a known facet.
+      if (s.facet !== undefined) state.facet = s.facet;
       // Queue changes have their own authoritative `queueUpdated` event. A snapshot that
       // carries the queue replaces it (including []); an older/partial snapshot that omits
       // the field must not erase live queue state.
