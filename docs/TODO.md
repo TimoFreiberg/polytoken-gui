@@ -9,6 +9,25 @@ See `docs/` siblings for context: `DESIGN.md` (architecture + roadmap), `DECISIO
 
 ## 🔴 Next (urgent / blocking)
 
+- [ ] **polytoken: opening a session that's live in the TUI causes a 409 lease conflict.**
+      Surfaced 2026-06-29 (first dogfood): a session with an active TUI attachment rejects
+      pilot's lease claim with 409 (the lease is exclusive, spike §2). The error is now
+      readable (names the TUI holder + lease expiry), but the UX is still a hard failure —
+      the operator has to `/detach` in the TUI or wait ~30s. A clean fix would detect the
+      409 at `openSession` and surface a "this session is open in the TUI — force-attach?"
+      affordance, or retry-with-backoff until the lease lapses. The deeper product question:
+      should pilot preemptively detach (or refuse to open) a session the TUI is actively
+      driving? Related jank: opening the same session in pilot that the TUI is viewing makes
+      the TUI error briefly then detach (the TUI's own lease-loss handling) — need a clean
+      protocol for coexistence. (Readable error + connection-race fix landed in `69585952`.)
+- [ ] **polytoken: new-session draft doesn't default to the dynamic (umans) model.**
+      Surfaced 2026-06-29: `polytoken models` lists `deepseek/deepseek-v4-*` (static config)
+      + `umans/umans-*` (dynamic, discovered at runtime). The new-session draft's model
+      picker shows the static list but doesn't surface the dynamic default the way the TUI
+      does on a fresh session. Likely needs `listModels` to also surface the daemon's
+      runtime-resolved default model (not just `config.yaml`'s `default_model`), or the
+      new-session flow to query the daemon's effective default after spawn. May be a
+      polytoken-side gap (whether dynamic models surface via `polytoken models` at all).
 - [ ] **e2e: dir-picker `.row.up` "go up" button times out (pre-existing flake).** Surfaced
       during the Chunk 0.5 Settings-nav verification (2026-06-26): 5 `e2e/sessions.e2e.ts`
       worktree/dir-picker tests (`started in a directory chosen via the browser`, `worktree
