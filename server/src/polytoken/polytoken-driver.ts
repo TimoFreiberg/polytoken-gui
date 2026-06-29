@@ -500,6 +500,35 @@ export async function createPolytokenDriver(
     const histRes = await ws.client.history();
     const items = histRes.data?.items ?? [];
     const events = historyToSeedEvents(items, { ref: ws.ref });
+    // Close any open assistant bubble and settle orphaned running tools, exactly as a
+    // finished live turn would — runCompleted is the ONLY event that closes a
+    // streaming bubble (foldEvent's closeOpenAssistant on a non-running snapshot
+    // covers it too, but runCompleted also calls interruptRunningTools). Without this
+    // the replayed transcript's last assistant stays streaming:true and any tool
+    // without a persisted tool_result stays "running" → turnActive stays true → the
+    // sidebar spinner + working indicator show on an idle reopened session. This was
+    // the "open an existing session shows as in-progress" bug. Mirrors pi-driver's
+    // historyToEvents, which appends a trailing runCompleted(idle). The idle snapshot
+    // is correct here because reseedFromHistory already refreshed lastState above, so
+    // statusFromState reflects the daemon's authoritative turn_in_flight (false for a
+    // resumed idle session). On the refocus path (a genuinely running warm session),
+    // the sessionOpened snapshot carries "running" and arrives BEFORE this trailing
+    // event, so a live turn's spinner is preserved — same ordering as pi-driver.
+    if (events.length > 0) {
+      const ts = now();
+      events.push({
+        sessionRef: ws.ref,
+        timestamp: ts,
+        type: "runCompleted",
+        snapshot: snapshotFromState(
+          ws.lastState,
+          ws.ref,
+          workspaceFor(ws),
+          statusFromState(ws.lastState),
+          ts,
+        ),
+      });
+    }
     // Cache the transcript so defaultSeed() can return it synchronously (no I/O).
     ws.lastSeed = events;
     if (emitEvents) {

@@ -1186,6 +1186,65 @@ describe("SessionHub", () => {
     }
   });
 
+  // Regression for the "open an existing session shows as in-progress" bug. A
+  // history seed replays assistant deltas (which leave the last bubble
+  // streaming:true) but no terminal close event — so without a trailing
+  // runCompleted the folded state stays streaming + turnActive. The polytoken
+  // driver's reseedFromHistory appends a trailing runCompleted(idle) to settle
+  // it (mirroring pi-driver's historyToEvents). This test pins the hub-side
+  // contract: a seed whose snapshot is idle + a trailing runCompleted leaves the
+  // session NOT running, even when the replayed transcript's last item is a
+  // streaming assistant delta.
+  test("a reopened idle session whose seed ends in a streaming delta settles to idle", async () => {
+    const d = new FakeDriver();
+    // openSession returns a sessionOpened(idle) + a replayed assistantDelta (which
+    // opens a streaming:true bubble) + the trailing runCompleted(idle) the driver
+    // appends to close it.
+    d.openSession = async () => [
+      evFor("s3", {
+        type: "sessionOpened",
+        snapshot: { ...snap("s3"), status: "idle" },
+      }),
+      evFor("s3", {
+        type: "assistantDelta",
+        text: "prior answer",
+        channel: "text",
+      }),
+      evFor("s3", {
+        type: "runCompleted",
+        snapshot: { ...snap("s3"), status: "idle" },
+      }),
+    ];
+    const hub = new SessionHub(d);
+    const a = client();
+    hub.addClient(a.send);
+    await flush();
+    a.received.length = 0;
+
+    hub.handleClient(a.send, { type: "openSession", path: "/s3.jsonl" });
+    await flush();
+
+    // The session must NOT be in the running set.
+    const st = a.received.filter((m) => m.type === "sessionStatus").at(-1);
+    if (st?.type === "sessionStatus")
+      expect(st.runningIds).not.toContain("s3");
+
+    // And the folded snapshot the client adopts must report idle status with the
+    // streaming bubble closed (no streaming assistant).
+    const snapMsg = a.received.find(
+      (m) => m.type === "snapshot",
+    ) as { type: "snapshot"; state: { status: string; items: unknown[] } } | undefined;
+    expect(snapMsg?.type).toBe("snapshot");
+    if (snapMsg?.type === "snapshot") {
+      expect(snapMsg.state.status).toBe("idle");
+      const last = snapMsg.state.items[snapMsg.state.items.length - 1] as
+        | { kind: string; streaming?: boolean }
+        | undefined;
+      expect(last?.kind).toBe("assistant");
+      expect(last?.streaming).toBe(false);
+    }
+  });
+
   test("a fresh client is told what's already running on connect", () => {
     const d = new FakeDriver();
     const hub = new SessionHub(d);
