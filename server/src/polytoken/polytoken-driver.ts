@@ -457,6 +457,15 @@ export async function createPolytokenDriver(
     emitOpened = true,
   ): Promise<SessionDriverEvent[]> {
     const events: SessionDriverEvent[] = [];
+    // Refresh the state cache BEFORE building the sessionOpened snapshot. The
+    // cached `lastState` may be stale (a warm session backgrounded mid-turn may
+    // have since gone idle; the daemon's turn_in_flight is the authoritative
+    // signal). Without this refresh, the sessionOpened snapshot carries a stale
+    // `turn_in_flight:true` → the hub marks the session "running" and it stays
+    // that way until the next SSE-driven sessionUpdated corrects it. This was
+    // the "warm an existing session shows as in-progress" bug.
+    const stateRes = await ws.client.state();
+    if (stateRes.data) ws.lastState = stateRes.data;
     if (emitOpened) {
       events.push({
         sessionRef: ws.ref,

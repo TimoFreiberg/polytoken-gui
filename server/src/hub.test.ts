@@ -801,6 +801,54 @@ describe("SessionHub", () => {
     ).toBe(false);
   });
 
+  test("a switch failure surfaces a friendly, kinded error (not the raw throw)", async () => {
+    // The classifier maps known daemon/lease errors to a friendly message +
+    // kind:"session-switch" so the client renders a dismissible toast, not the
+    // alarming generic banner. Unknown errors keep the generic banner (no kind).
+    const d = new FakeDriver();
+    // biome-ignore lint/suspicious/noExplicitAny: test stub override
+    (d as any).openSession = () =>
+      Promise.reject(
+        new Error("polytoken daemon failed to start: invalid config"),
+      );
+    const hub = new SessionHub(d);
+    const a = client();
+    hub.addClient(a.send);
+
+    hub.handleClient(a.send, { type: "openSession", path: "/a.jsonl" });
+    await flush();
+
+    const err = a.received.find((m) => m.type === "error");
+    expect(err?.type).toBe("error");
+    if (err?.type === "error") {
+      expect(err.kind).toBe("session-switch");
+      expect(err.message).not.toContain("polytoken daemon failed to start");
+      expect(err.message).toContain("Couldn't open this session");
+      expect(err.message).toContain("invalid config");
+    }
+  });
+
+  test("an unrecognized switch failure keeps the generic banner (no kind)", async () => {
+    const d = new FakeDriver();
+    // biome-ignore lint/suspicious/noExplicitAny: test stub override
+    (d as any).openSession = () =>
+      Promise.reject(new Error("something completely unexpected happened"));
+    const hub = new SessionHub(d);
+    const a = client();
+    hub.addClient(a.send);
+
+    hub.handleClient(a.send, { type: "openSession", path: "/a.jsonl" });
+    await flush();
+
+    const err = a.received.find((m) => m.type === "error");
+    expect(err?.type).toBe("error");
+    if (err?.type === "error") {
+      expect(err.kind).toBeUndefined();
+      expect(err.message).toContain("session switch failed");
+      expect(err.message).toContain("something completely unexpected");
+    }
+  });
+
   test("only a client's focused session reaches its transcript stream", () => {
     const d = new FakeDriver();
     const hub = new SessionHub(d);

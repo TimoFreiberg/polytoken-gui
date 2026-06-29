@@ -103,6 +103,65 @@ function requestTitle(
   return request.kind === "qna" ? "Questions need answers" : "Waiting on you";
 }
 
+/** Classify a raw session-switch error into a friendly, operator-facing message.
+ *  Returns { kind: "session-switch" } so the client renders it as a dismissible
+ *  toast rather than the alarming generic error banner — these are known, common
+ *  failures (the daemon didn't start, the port didn't bind, a lease conflict),
+ *  not unexpected crashes. Unrecognized errors return kind: undefined so they
+ *  keep the generic banner (don't silently swallow the unknown). */
+function classifySwitchError(raw: unknown): {
+  message: string;
+  kind?: "session-switch";
+} {
+  const text = raw instanceof Error ? raw.message : String(raw);
+  // Daemon failed to start (startup.json state:"failed") — the message already
+  // names the config/parse error; surface it plainly without the stack-ish prefix.
+  const failedMatch = text.match(
+    /polytoken daemon failed to start:\s*(.+?)(?:\n|$)/,
+  );
+  if (failedMatch) {
+    return {
+      message: `Couldn't open this session — the daemon failed to start (${failedMatch[1].trim()}). Try again, or open it in the TUI to diagnose.`,
+      kind: "session-switch",
+    };
+  }
+  // Daemon didn't bind its port in time (spawn or health timeout).
+  if (/did not become (ready|healthy) within/.test(text)) {
+    return {
+      message:
+        "Couldn't open this session — the daemon took too long to start. Try again.",
+      kind: "session-switch",
+    };
+  }
+  // Lease conflict (409) — claimLease already formatted a readable message naming
+  // the holder. Surface it; the operator needs to /detach in the TUI or wait.
+  if (/another TUI is attached|lease claim failed \(409\)/.test(text)) {
+    return {
+      message: text.includes("another TUI is attached")
+        ? text
+        : "This session is open in the TUI. Detach it there (/detach) or wait ~30s for its lease to lapse.",
+      kind: "session-switch",
+    };
+  }
+  // Connection refused / timed out reaching the daemon (port not bound, wedged).
+  if (/lease claim failed \(0\)|request timed out|fetch failed|ECONNREFUSED/.test(text)) {
+    return {
+      message:
+        "Couldn't reach the session daemon. Try again — if it persists, the daemon may be wedged.",
+      kind: "session-switch",
+    };
+  }
+  // Could not resolve session id from path — a client-side path issue.
+  if (/could not resolve session id from path/.test(text)) {
+    return {
+      message: "Couldn't open this session — its path wasn't recognized.",
+      kind: "session-switch",
+    };
+  }
+  // Fallback: unknown error → keep the generic banner, don't prettify blindly.
+  return { message: `session switch failed: ${text}` };
+}
+
 /** One connected client (WS connection). Focus is per-connection: each browser picks
  *  which session it's looking at independently, so the phone switching can't move the
  *  desktop underneath it. Durable session state + actions stay shared. Keyed in the hub
@@ -1167,8 +1226,10 @@ export class SessionHub {
         // already moved on, so this failure is stale — suppress it and let the
         // queued switch surface its own outcome. (Mirrors the success path's
         // `if (conn.pendingSwitch) return sid;` below.)
-        if (!conn.pendingSwitch)
-          conn.send({ type: "error", message: `session switch failed: ${e}` });
+        if (!conn.pendingSwitch) {
+          const { message, kind } = classifySwitchError(e);
+          conn.send({ type: "error", message, kind });
+        }
         return null;
       }
       // Fold into a fresh state to learn the authoritative session id — the seed's

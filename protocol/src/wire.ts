@@ -314,7 +314,7 @@ export type ServerMessage =
    *  client so its archived toast can explain the leftover and offer a force-delete.
    *  `path` == the worktree dir (== the session's cwd), the key `cleanupWorktree` takes. */
   | { type: "worktreeRetained"; path: string; reason: string }
-  | { type: "error"; message: string };
+  | { type: "error"; message: string; kind?: "session-switch" };
 
 export type ClientMessage =
   | { type: "hello"; auth?: string }
