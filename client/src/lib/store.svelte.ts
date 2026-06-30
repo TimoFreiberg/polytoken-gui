@@ -304,6 +304,9 @@ class PilotStore {
   // Session-tree (/tree) view open/closed — per-client view state. The tree data itself
   // is server-authoritative (fetched via queryTree on open, re-pushed after a branch).
   treeOpen = $state(false);
+  // The PlanView overlay — a modal rendering of the active plan document's
+  // markdown. Ephemeral (not persisted); toggled by the StatusHeader button or ⌘P.
+  planViewOpen = $state(false);
   // The focused session's branch tree, or null until the first treeState arrives. Carries
   // the session it belongs to so a tree that lands after a switch can be ignored.
   tree = $state<{
@@ -1899,6 +1902,9 @@ class PilotStore {
   toggleTree(): void {
     if (this.treeOpen) this.closeTree();
     else this.openTree();
+  }
+  togglePlanView(): void {
+    this.planViewOpen = !this.planViewOpen;
   }
   /** Change the theme override (system/light/dark); persisted + applied immediately. */
   setTheme(mode: ThemeMode): void {

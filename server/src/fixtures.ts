@@ -1760,6 +1760,40 @@ export function planFacet(): ScriptStep[] {
   ];
 }
 
+/** Drives the PlanView overlay: emits a sessionUpdated snapshot carrying
+ *  `facet: "plan"` + `activePlan` (a short markdown plan), so the Plan button
+ *  appears in the StatusHeader and the overlay can be opened. Exercises the full
+ *  snapshot→foldEvent→state.activePlan→UI path. */
+export function planView(): ScriptStep[] {
+  return [
+    {
+      wait: 0,
+      event: {
+        ...base(),
+        type: "sessionUpdated",
+        snapshot: snapshot({
+          facet: "plan",
+          activePlan: PLAN_VIEW_TEXT,
+          status: "idle",
+        }),
+      },
+    },
+  ];
+}
+
+/** A short markdown plan used by the planView fixture. */
+const PLAN_VIEW_TEXT = `# Plan: Wire up the plan overlay
+
+## Steps
+1. Add \`activePlan\` to the SessionSnapshot protocol
+2. Thread \`active_plan\` through the event-map
+3. Build the PlanView modal + StatusHeader button
+
+## Notes
+- The overlay is read-only — no editing from inside it
+- Renders via Markdown.svelte (same as the plan-handoff card)
+`;
+
 /** A newly-created session that is still WARMING UP: it surfaces in the `initializing`
  *  phase (model load / history replay / trust resolution), dwells there long enough to
  *  screenshot the distinct spinner, then transitions to idle once "ready". Drives the
@@ -2136,6 +2170,7 @@ export const SCRIPTS: Record<string, () => ScriptStep[]> = {
   pendinghold: pendingHold,
   timeout: timeoutConfirm,
   yesno: yesNoSelect,
+  planview: planView,
 };
 
 // --- Session listing + switching (Increment 2) ------------------------------

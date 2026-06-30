@@ -117,6 +117,9 @@ export interface SessionState {
   /** Active facet (e.g. "execute", "plan"); undefined until a snapshot carries it.
    *  Drives the StatusHeader badge. Mirrors `usage`'s overwrite-guarded semantics. */
   facet?: string;
+  /** The active plan document's markdown; undefined until a snapshot carries it.
+   *  Drives the PlanView overlay. Same overwrite-guarded semantics as `facet`. */
+  activePlan?: string;
   items: TranscriptItem[];
   /** Blocking dialogs awaiting a response, in arrival order. */
   pendingApprovals: HostUiRequest[];
@@ -233,6 +236,9 @@ export function foldEvent(
       // overwrites; one that omits it (older daemon, usage-less mock abort) must
       // not blank a known facet.
       if (s.facet !== undefined) state.facet = s.facet;
+      // Same overwrite-guarded semantics as facet: a snapshot that carries
+      // activePlan overwrites; one that omits it must not blank a known plan.
+      if (s.activePlan !== undefined) state.activePlan = s.activePlan;
       // Queue changes have their own authoritative `queueUpdated` event. A snapshot that
       // carries the queue replaces it (including []); an older/partial snapshot that omits
       // the field must not erase live queue state.

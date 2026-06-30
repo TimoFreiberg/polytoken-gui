@@ -1581,4 +1581,23 @@ describe("snapshotFromState", () => {
     const snap = snapshotFromState(null, ref, workspace, "idle", "t");
     expect(snap.facet).toBeUndefined();
   });
+
+  test("threads active_plan onto the snapshot as activePlan", () => {
+    // The event-map step of the plan-overlay data path: a daemon state carrying
+    // active_plan produces a SessionSnapshot whose activePlan field is set.
+    const snap = snapshotFromState(
+      { ...baseState, active_plan: "# My Plan\n- Step 1" },
+      ref,
+      workspace,
+      "idle",
+      "t",
+    );
+    expect(snap.activePlan).toBe("# My Plan\n- Step 1");
+  });
+
+  test("defaults activePlan to undefined when active_plan is absent", () => {
+    // An older/partial daemon state (or a null state) must not synthesize a plan.
+    const snap = snapshotFromState(null, ref, workspace, "idle", "t");
+    expect(snap.activePlan).toBeUndefined();
+  });
 });

@@ -226,6 +226,7 @@ export function snapshotFromState(
     config,
     usage: usageFromState(state),
     facet: state?.active_facet ?? undefined,
+    activePlan: state?.active_plan ?? undefined,
   };
 }
 

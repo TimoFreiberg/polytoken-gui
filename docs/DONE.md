@@ -5,6 +5,21 @@ and its resolution note. Latest completions first.
 
 ---
 
+- [x] **polytoken: plan-mode plan display overlay.**
+      Surfaced 2026-06-29 (second dogfood): when running in the `plan` facet, there
+      should be a plan display overlay in the Pilot UI — a persistent, visible
+      rendering of the current plan (the structured handoff doc the plan facet
+      produces). Currently there's no way to view the plan from the GUI; it's
+      TUI-only. Needs a design for how the plan renders (inline in transcript?
+      sidebar panel? floating overlay?) and where it lives in the layout.
+      → Done 2026-06-30: added `activePlan?: string` to `SessionSnapshot` (protocol)
+      + overwrite-guarded fold propagation (mirroring `facet`). The event-map
+      threads `state.active_plan` → `snapshot.activePlan`. A `PlanView.svelte`
+      modal (scrim + dialog + Markdown render, the TreeView pattern) renders the
+      plan markdown read-only. Triggered by a StatusHeader "Plan" IconButton
+      (gated on `activePlan` truthiness — no button when no plan exists) and the
+      `⌘P` hotkey. A `planview` mock fixture exercises the full path in e2e.
+
 - [x] **polytoken: facet switching has no GUI affordance.**
       Surfaced 2026-06-29 (second dogfood): the TUI cycles facets with Shift+Tab,
       but that doesn't map cleanly to a GUI. Pilot needs a hotkey (TBD) and/or a

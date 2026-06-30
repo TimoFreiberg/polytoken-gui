@@ -515,4 +515,59 @@ describe("foldEvent", () => {
     );
     expect(s.facet).toBe("plan");
   });
+
+  test("snapshot.activePlan propagates to state.activePlan (the overlay data path)", () => {
+    const planText = "# Plan\n- Step 1\n- Step 2";
+    const s = foldAll([
+      base({
+        type: "sessionUpdated",
+        snapshot: {
+          ref,
+          workspace: { workspaceId: "w", path: "/p" },
+          title: "t",
+          status: "idle",
+          updatedAt: "t",
+          activePlan: planText,
+        },
+      }),
+    ]);
+    expect(s.activePlan).toBe(planText);
+  });
+
+  test("a snapshot without activePlan leaves an existing state.activePlan intact", () => {
+    // Same overwrite-guarded semantics as facet: omitting activePlan must not
+    // blank a known plan (an older/partial snapshot shouldn't erase live plan state).
+    const s = initialSessionState();
+    const planText = "# My Plan\nDo the thing.";
+    foldEvent(
+      s,
+      base({
+        type: "sessionUpdated",
+        snapshot: {
+          ref,
+          workspace: { workspaceId: "w", path: "/p" },
+          title: "t",
+          status: "idle",
+          updatedAt: "t1",
+          activePlan: planText,
+        },
+      }),
+    );
+    expect(s.activePlan).toBe(planText);
+    // A later snapshot that omits activePlan must not erase the known value.
+    foldEvent(
+      s,
+      base({
+        type: "sessionUpdated",
+        snapshot: {
+          ref,
+          workspace: { workspaceId: "w", path: "/p" },
+          title: "t",
+          status: "idle",
+          updatedAt: "t2",
+        },
+      }),
+    );
+    expect(s.activePlan).toBe(planText);
+  });
 });

@@ -14,6 +14,7 @@
   import TokenGate from "./components/TokenGate.svelte";
   import Settings from "./components/Settings.svelte";
   import TreeView from "./components/TreeView.svelte";
+  import PlanView from "./components/PlanView.svelte";
   import Tooltip from "./components/Tooltip.svelte";
   import Toast from "./components/Toast.svelte";
   import ImageLightbox from "./components/ImageLightbox.svelte";
@@ -42,7 +43,7 @@
       typeof window !== "undefined" &&
       window.matchMedia(PHONE_MQ).matches,
   );
-  const scripts = ["reply", "markdown", "search", "thinkingtools", "skill", "confirm", "trust", "input", "qna", "answercard", "answerleadup", "ambient", "compat", "bgrun", "bgwait", "queue", "deliverqueue", "initializing", "editdiff", "images", "error", "idle", "streamhold", "staleidle", "pendinghold", "timeout", "yesno", "journalnudge", "contextfull", "longoutput", "selectmany", "planhandoff", "planhandofftimeout", "planfacet", "permission", "failnewsession", "failsession"];
+  const scripts = ["reply", "markdown", "search", "thinkingtools", "skill", "confirm", "trust", "input", "qna", "answercard", "answerleadup", "ambient", "compat", "bgrun", "bgwait", "queue", "deliverqueue", "initializing", "editdiff", "images", "error", "idle", "streamhold", "staleidle", "pendinghold", "timeout", "yesno", "journalnudge", "contextfull", "longoutput", "selectmany", "planhandoff", "planhandofftimeout", "planfacet", "planview", "permission", "failnewsession", "failsession"];
 
   onMount(() => store.start());
 
@@ -197,6 +198,14 @@
         e.preventDefault();
         store.openSearch();
         break;
+      case "p":
+      case "P":
+        // ⌘P — toggle the plan view overlay (only when a plan exists).
+        if (store.session.activePlan) {
+          e.preventDefault();
+          store.togglePlanView();
+        }
+        break;
     }
   }
 </script>
@@ -243,6 +252,7 @@
 <TrustCard />
 <Settings />
 <TreeView />
+<PlanView />
 <!-- Shared full-screen viewer for any read-only transcript image (user attachments,
      tool image output). Opened via imageViewer.open(batch, index) from Transcript /
      ToolCard; the composer drives its own local lightbox. -->

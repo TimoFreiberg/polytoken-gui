@@ -9,13 +9,6 @@ See `docs/` siblings for context: `DESIGN.md` (architecture + roadmap), `DECISIO
 
 ## 🔴 Next (urgent / blocking)
 
-- [ ] **polytoken: plan-mode plan display overlay.**
-      Surfaced 2026-06-29 (second dogfood): when running in the `plan` facet, there
-      should be a plan display overlay in the Pilot UI — a persistent, visible
-      rendering of the current plan (the structured handoff doc the plan facet
-      produces). Currently there's no way to view the plan from the GUI; it's
-      TUI-only. Needs a design for how the plan renders (inline in transcript?
-      sidebar panel? floating overlay?) and where it lives in the layout.
 - [ ] **e2e: dir-picker `.row.up` "go up" button times out (pre-existing flake).** Surfaced
       during the Chunk 0.5 Settings-nav verification (2026-06-26): 5 `e2e/sessions.e2e.ts`
       worktree/dir-picker tests (`started in a directory chosen via the browser`, `worktree

@@ -273,6 +273,9 @@ export interface SessionSnapshot {
   /** The active facet (e.g. "execute", "plan"). Undefined means unknown / default;
    *  the StatusHeader shows a badge only when this is set and not "execute". */
   readonly facet?: string;
+  /** The active plan document's markdown (set when the plan facet produces a
+   *  plan). Undefined means no plan exists / the facet isn't "plan". */
+  readonly activePlan?: string;
 }
 
 /**
