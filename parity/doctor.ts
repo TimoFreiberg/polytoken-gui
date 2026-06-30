@@ -1,15 +1,17 @@
 // parity/doctor.ts — preflight. Fails LOUD before the harness builds on a broken base.
 //
 // The last check (a real prompt round-trip) is the one that catches the precondition
-// that WILL bite: polytoken's config references provider keys via env vars
-// (e.g. $DEEPSEEK_API_KEY). If unset, the WHOLE config fails to load — no model runs,
-// not even the umans default. We run `polytoken exec` with the isolation env exported
-// (so it tests the SAME config+sessions the harness will use), and surface the exact
-// remediation on failure.
+// that WILL bite: the generated config pins a cheap model whose provider key comes from an
+// env var (e.g. $DEEPSEEK_API_KEY for deepseek-v4-flash). If unset, the WHOLE config fails
+// to load — no model runs. We pre-check the chosen model's key, then run `polytoken exec`
+// with the isolation env exported (so it tests the SAME config+sessions the harness uses),
+// surfacing the exact remediation on failure.
 
 import { ensureProject } from "./project.ts";
 import {
+  ensureEnv,
   isolationEnv,
+  modelSpec,
   paths,
   POLYTOKEN_BIN,
   TMUX_BIN,
@@ -55,22 +57,37 @@ export async function preflight(
     detail: POLYTOKEN_BIN,
   });
 
-  // 3. PARITY_ROOT writable + test project present
+  // 3. PARITY_ROOT writable + test project + generated config present
   let projectOk = false;
   let projectDetail = p.project;
   try {
+    ensureEnv(p); // writes the cheap-model config.yaml if we own the config dir
     await ensureProject(p);
     projectOk = true;
   } catch (e) {
     projectDetail = `${p.project} — ${e instanceof Error ? e.message : String(e)}`;
   }
   checks.push({
-    name: "test project ready",
+    name: "test project + config ready",
     ok: projectOk,
     detail: projectDetail,
   });
 
-  // 4. real prompt round-trips (the auth/config-load check)
+  // 4. the chosen model's provider key is set (the generated config references it)
+  const spec = modelSpec(p.model);
+  const keySet = !!process.env[spec.keyEnv]?.trim();
+  checks.push({
+    name: `provider key ($${spec.keyEnv}) set`,
+    ok: keySet || !p.generateConfig, // an external config dir manages its own auth
+    detail: p.generateConfig
+      ? keySet
+        ? `${p.model} → $${spec.keyEnv} present`
+        : `${p.model} needs $${spec.keyEnv} — export it, or set PILOT_PARITY_MODEL/` +
+          `PILOT_PARITY_CONFIG_DIR`
+      : `using external config ($PILOT_PARITY_CONFIG_DIR) — auth is its own concern`,
+  });
+
+  // 5. real prompt round-trips (the auth/config-load check)
   if (!hasPoly) {
     checks.push({
       name: "model usable (polytoken exec)",
@@ -118,9 +135,10 @@ async function execProbe(p: Paths): Promise<{ ok: boolean; detail: string }> {
   const stdout = (await new Response(proc.stdout).text()).trim();
   const stderr = (await new Response(proc.stderr).text()).trim();
   if (code !== 0) {
+    const spec = modelSpec(p.model);
     const hint = /env var \$\w+ referenced/.test(stderr)
-      ? "\n      → provider key unset: export the key (e.g. DEEPSEEK_API_KEY), OR set " +
-        "$PILOT_PARITY_CONFIG_DIR to an isolated config whose default model is usable here."
+      ? `\n      → provider key unset: export $${spec.keyEnv} (for ${p.model}), switch with ` +
+        `PILOT_PARITY_MODEL, or point $PILOT_PARITY_CONFIG_DIR at a working config.`
       : "";
     return {
       ok: false,
@@ -148,8 +166,10 @@ if (import.meta.main) {
     console.log(`  ${c.ok ? "✓" : "✗"} ${c.name} — ${c.detail}`);
   }
   console.log(
-    `\n${ok ? "PASS" : "FAIL"} · root=${p.root} · sessions=${p.sessionsDir} · config=${
-      p.xdgConfig ?? "(shared real ~/.config/polytoken)"
+    `\n${ok ? "PASS" : "FAIL"} · root=${p.root} · model=${p.model} · config=${
+      p.generateConfig
+        ? `${p.xdgConfig} (generated)`
+        : `${p.xdgConfig} (external)`
     }`,
   );
   process.exit(ok ? 0 : 1);

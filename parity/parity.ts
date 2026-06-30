@@ -34,8 +34,10 @@ async function main(): Promise<number> {
       for (const c of checks)
         console.log(`  ${c.ok ? "✓" : "✗"} ${c.name} — ${c.detail}`);
       console.log(
-        `\n${ok ? "PASS" : "FAIL"} · root=${p.root} · config=${
-          p.xdgConfig ?? "(shared real ~/.config/polytoken)"
+        `\n${ok ? "PASS" : "FAIL"} · root=${p.root} · model=${p.model} · config=${
+          p.generateConfig
+            ? `${p.xdgConfig} (generated)`
+            : `${p.xdgConfig} (external)`
         }`,
       );
       return ok ? 0 : 1;

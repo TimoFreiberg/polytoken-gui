@@ -19,7 +19,7 @@
 
 import { join } from "node:path";
 import {
-  ensureDirs,
+  ensureEnv,
   freePort,
   isolationEnv,
   paths,
@@ -52,7 +52,7 @@ async function waitForHealth(
 }
 
 export async function launch(p: Paths = paths()): Promise<void> {
-  ensureDirs(p);
+  ensureEnv(p);
   await ensureProject(p);
 
   // Vite needs a KNOWN port (an agent points a browser at it). Under Claude_Preview's

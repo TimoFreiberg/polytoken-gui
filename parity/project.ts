@@ -6,14 +6,14 @@
 
 import { cpSync, existsSync, rmSync } from "node:fs";
 import { join } from "node:path";
-import { ensureDirs, paths, type Paths } from "./lib.ts";
+import { ensureEnv, paths, type Paths } from "./lib.ts";
 
 const FIXTURE = join(import.meta.dir, "fixtures", "project");
 
 /** Recreate $PARITY_ROOT/project from the fixture and git-init + commit once. Destructive:
  *  wipes any existing project dir first (it's a throwaway). */
 export async function resetProject(p: Paths = paths()): Promise<string> {
-  ensureDirs(p);
+  ensureEnv(p);
   rmSync(p.project, { recursive: true, force: true });
   cpSync(FIXTURE, p.project, { recursive: true });
   // git init + a single commit so trust/worktree code sees a real repo.
@@ -45,8 +45,11 @@ export async function resetProject(p: Paths = paths()): Promise<string> {
   return p.project;
 }
 
-/** Ensure the project exists; reset it only if missing. */
+/** Ensure the project AND the isolated env (dirs + generated config) exist; reset the
+ *  project only if missing. ensureEnv runs unconditionally so the config.yaml is present
+ *  even when the project dir already exists. */
 export async function ensureProject(p: Paths = paths()): Promise<string> {
+  ensureEnv(p);
   if (!existsSync(join(p.project, ".git"))) return resetProject(p);
   return p.project;
 }

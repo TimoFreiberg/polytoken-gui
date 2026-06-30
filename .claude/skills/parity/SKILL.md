@@ -32,21 +32,26 @@ agrees with that ground truth. Clean handoff between surfaces goes **through ses
 history**: fully release a session on side A before opening it on side B (there is no
 per-session "close" in pilot — see flow GUI→TUI below).
 
-## Preconditions (will bite — check first)
+## The test config (prefilled, cheap model) + preconditions
 
-`polytoken`'s config references provider keys via env vars (e.g. `$DEEPSEEK_API_KEY`,
-`$UMANS_API_KEY`). If unset, the **whole config fails to load** and NO model runs — not
-even the default. The live desktop app has these in its env; a bare shell may not.
+The harness generates an **isolated `config.yaml`** under the root that pins a **cheap,
+fast default model** so test runs never burn the full model. Default:
+**`deepseek-v4-flash`** (cheap, reliable TTFT); switch with **`PILOT_PARITY_MODEL=umans-flash`**
+(free, but spiky TTFT lately). It declares only that one provider, so only **one** key is
+needed — `$DEEPSEEK_API_KEY` (deepseek) or `$UMANS_API_KEY` (umans), referenced as an env
+var like the real config. The live desktop app has these; a bare shell may not. Override
+the whole config by pointing `$PILOT_PARITY_CONFIG_DIR` at your own dir.
 
-**Always run `bun parity/parity.ts doctor` first.** It spawns a real `polytoken exec` in
-the isolated env and fails loud with remediation if auth/model is broken (export the key,
-or set `$PILOT_PARITY_CONFIG_DIR` to an isolated config whose default model works here).
+**Always run `bun parity/parity.ts doctor` first.** It generates the config, checks the
+chosen model's key is set, and spawns a real `polytoken exec` to confirm the model runs —
+failing loud with the exact remediation (which key to export / how to switch models).
 
 ## Commands
 
 ```bash
-bun parity/parity.ts doctor            # PREFLIGHT — run first (real prompt round-trip)
-bun parity/parity.ts doctor --quick    # skip the model call (plumbing only)
+bun parity/parity.ts doctor            # PREFLIGHT — run first (config + key + real exec)
+bun parity/parity.ts doctor --quick    # skip the real exec (plumbing + key check only)
+PILOT_PARITY_MODEL=umans-flash bun parity/parity.ts doctor   # swap the cheap model
 bun parity/parity.ts project reset     # recreate the isolated test project (git repo)
 
 # GUI (pilot → polytoken). Either:

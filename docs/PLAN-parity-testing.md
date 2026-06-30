@@ -124,7 +124,7 @@ $PARITY_ROOT/
   project/                 # the test project (git repo; the session cwd)
   xdg-data/                # → XDG_DATA_HOME  (polytoken sessions/, logs/, tui_state.json)
   xdg-cache/               # → XDG_CACHE_HOME (provider-catalogs; regenerable)
-  xdg-config/              # → XDG_CONFIG_HOME ONLY if $PILOT_PARITY_CONFIG_DIR is set (else real config shared)
+  xdg-config/              # → XDG_CONFIG_HOME; generated config.yaml pinning a cheap model (override: $PILOT_PARITY_CONFIG_DIR)
   pilot-data/              # pilot PILOT_DATA_DIR (push keys, archive index)
   run/<runId>/
     env                    # sourced by every helper: PARITY_ROOT, SESSIONS_DIR, the XDG_* exports,
@@ -132,12 +132,16 @@ $PARITY_ROOT/
     pilot.pid, pilot.log
 ```
 
-- **Writable/stateful XDG is isolated; config is shared by default.**
-  `XDG_DATA_HOME=$PARITY_ROOT/xdg-data` and `XDG_CACHE_HOME=$PARITY_ROOT/xdg-cache` are
-  exported into pilot **and** every tmux pane. `XDG_CONFIG_HOME` is **left at the real
-  `~/.config`** by default (so models+auth work) — set `$PILOT_PARITY_CONFIG_DIR` to
-  isolate it (then it's exported as `XDG_CONFIG_HOME`). So the only thing test and prod
-  share by default is the read-mostly config/auth; everything writable is isolated.
+- **All three XDG roots are isolated; config is a generated cheap-model config.**
+  `XDG_DATA_HOME=$PARITY_ROOT/xdg-data`, `XDG_CACHE_HOME=$PARITY_ROOT/xdg-cache`, **and
+  `XDG_CONFIG_HOME=$PARITY_ROOT/xdg-config`** are exported into pilot **and** every tmux
+  pane. Into the config dir the harness **generates a prefilled `config.yaml`** that pins a
+  **cheap/fast default model** — `deepseek-v4-flash` by default, `umans-flash` via
+  `PILOT_PARITY_MODEL` — declaring **only that one provider**, so test runs never burn the
+  full `umans-glm-5.2` and only **one** provider key is needed (vs the real config's two).
+  This matches the TODO's "tmp dir with prefilled config that sets the model to a cheap fast
+  one." Auth is an env-ref (`${DEEPSEEK_API_KEY}`/`${UMANS_API_KEY}`), like the real config;
+  point `$PILOT_PARITY_CONFIG_DIR` at a hand-maintained dir to override wholesale.
   *(No separate flag plumbing is needed for config isolation: pilot derives its resume
   daemon's `--global-config-dir` from its own inherited `XDG_CONFIG_HOME` via
   `defaultGlobalConfigDir()` (`daemon-client.ts:94`), so exporting `XDG_CONFIG_HOME` into
@@ -188,7 +192,7 @@ plus a skill, docs, a launch config, and **one small additive server change**.
 |---|---|
 | **`server/src/index.ts` (edit)** | Plumb `PILOT_IDLE_REAP_MS` + `PILOT_WARM_CAP` into `createPolytokenDriver({ idleReapMs, warmCap })`. **Additive, defaults unchanged** (10 min / 8). Lets the harness shrink the warm-hold so a GUI→TUI handoff frees the lease promptly (§7 flow 4). Also useful for prod ops. |
 | `parity/lib.ts` | Isolation env builder (the XDG_* exports), free-port alloc, `run/<id>/env` read/write, run discovery, the **`polytokenSessions()` wrapper that ALWAYS injects `--sessions-dir $SESSIONS_DIR`** (bare `polytoken sessions` lists PROD — safety-critical), daemon/gui/tui oracle helpers, daemon-port discovery (live via `polytoken sessions --sessions-dir`, else spawn-resume-read-terminate). |
-| `parity/doctor.ts` | **Preflight** with the isolation env exported: `tmux`+`polytoken` on PATH, `PARITY_ROOT` writable, test project present, and **a real trivial prompt round-trips** (spawn a throwaway daemon in the isolated sessions-dir, `POST /prompt`, await `message_complete`, `/terminate`). Must export `XDG_CONFIG_HOME`/`XDG_DATA_HOME` into the child or it silently tests prod config. Fails loud with remediation: export the key, or set `$PILOT_PARITY_CONFIG_DIR`. |
+| `parity/doctor.ts` | **Preflight** with the isolation env exported: `tmux`+`polytoken` on PATH, `PARITY_ROOT` writable, test project + generated config present, the chosen model's key set, and **a real prompt round-trips** via `polytoken exec` (which uses the generated cheap-model config + isolated `XDG_DATA_HOME`). Must export the isolation env into the child or it tests prod config. Fails loud with remediation: export `$DEEPSEEK_API_KEY`/`$UMANS_API_KEY`, switch `PILOT_PARITY_MODEL`, or set `$PILOT_PARITY_CONFIG_DIR`. |
 | `parity/up.ts` | Run doctor; launch pilot (`PILOT_DRIVER=polytoken PILOT_AUTO_PORT=1`, isolation env, short `PILOT_IDLE_REAP_MS`, free Vite `$PORT`); gate on `/health`; write `run/env`; print `GUI_URL` + sessions-dir. |
 | `parity/down.ts` | Teardown, idempotent: **SIGTERM** pilot (graceful daemon drain), then `polytokenSessions()` (always `--sessions-dir`) → `/terminate` any still-live isolated daemons, then `tmux -L <sock> kill-server`; `--purge` wipes `PARITY_ROOT`. Never SIGKILL pilot; never bare `polytoken sessions`. |
 | `parity/tui.ts` | TUI driver on the dedicated tmux server, every pane spawned with the **full XDG_* env** + `--sessions-dir`. Subcommands: `new`, `attach <id>`, `continue <id>`, `keys <chord…>` (`Enter`/`C-d`/`C-c`), `type <text>`, `prompt <text>` (type+submit), `capture`, `detach` (C-d), `end` (C-c C-c **back-to-back**, then poll `polytokenSessions` until the id is gone), `ls`. |
@@ -298,9 +302,12 @@ config whose default model is usable here.
    the GUI→TUI handoff prompt without a new protocol message. *Recommendation: do it;
    it's 2 lines and also a sane prod knob.* (The alternative — a full "end session"
    protocol message + driver method — is more invasive and out of scope.)
-2. **Config sharing.** Default shares real `~/.config/polytoken` (auth works; prod+test
-   share one read-mostly file). `$PILOT_PARITY_CONFIG_DIR` fully isolates it. *Rec: share
-   by default.*
+2. **Config: generated cheap-model config (RESOLVED per TODO).** ~~Earlier draft shared the
+   real `~/.config/polytoken`~~ — reversed after re-reading the TODO header ("prefilled config
+   that sets the model to a cheap fast one"). The harness now **generates** an isolated
+   `config.yaml` pinning `deepseek-v4-flash` (default) / `umans-flash` (`PILOT_PARITY_MODEL`),
+   one provider, one key. `$PILOT_PARITY_CONFIG_DIR` overrides wholesale. This also halves the
+   key requirement (one provider, not two) and never burns the full model.
 3. **Parity granularity.** v1 `assert` is transcript-text-contains (model-noise-tolerant);
    raw oracles exposed for stricter ad-hoc structural checks. *Rec: text-contains v1.*
 4. **GUI driving.** Preview MCP / Playwright (render-faithful) for parity; WS only for
