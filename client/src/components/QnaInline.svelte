@@ -80,5 +80,10 @@
     border: 1px solid var(--border);
     border-radius: var(--radius);
     box-shadow: var(--shadow-pop);
+    /* One scaled base — children in `em` inherit it, mirroring the Transcript's
+       `.col` pattern. Controls (Button.svelte) keep their own px sizing and stay
+       at body size regardless of --font-scale (the "zoom what you read, not the
+       controls" intent). */
+    font-size: calc(15px * var(--font-scale, 1));
   }
 </style>

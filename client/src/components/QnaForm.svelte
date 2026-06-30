@@ -395,13 +395,13 @@
     margin-bottom: 12px;
   }
   h2 {
-    font-size: 16px;
+    font-size: 1.0667em;
     margin: 0;
     font-weight: 600;
   }
   .progress {
     color: var(--text-faint);
-    font-size: 12px;
+    font-size: 0.8em;
     white-space: nowrap;
   }
   .head-right {
@@ -437,14 +437,14 @@
     overflow-y: auto;
   }
   .q {
-    font-size: 15px;
+    font-size: 1em;
     font-weight: 550;
     margin: 0 0 6px;
     line-height: 1.4;
   }
   .ctx {
     color: var(--text-muted);
-    font-size: 13px;
+    font-size: 0.8667em;
     margin: 0 0 12px;
     line-height: 1.5;
   }
@@ -462,7 +462,7 @@
     border: 1px solid var(--border-strong);
     border-radius: var(--radius-sm);
     padding: 11px 13px;
-    font-size: 15px;
+    font-size: 1em;
     color: var(--text);
     cursor: pointer;
   }
@@ -480,7 +480,7 @@
     justify-content: center;
     border: 1px solid var(--border-strong);
     border-radius: var(--radius-xs);
-    font-size: 12px;
+    font-size: 0.8em;
     line-height: 1;
     color: var(--text);
   }
@@ -521,7 +521,7 @@
   }
   .lbl-desc {
     color: var(--text-muted);
-    font-size: 12px;
+    font-size: 0.8em;
     line-height: 1.4;
   }
   .field {
@@ -530,7 +530,7 @@
     border: 1px solid var(--border-strong);
     border-radius: var(--radius-sm);
     padding: 11px 13px;
-    font-size: 15px;
+    font-size: 1em;
     color: var(--text);
     font-family: inherit;
     outline: none;

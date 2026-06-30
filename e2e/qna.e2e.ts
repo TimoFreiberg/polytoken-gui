@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { drive, gotoFresh } from "./helpers.js";
+import { drive, gotoFresh, openSettings } from "./helpers.js";
 
 test.beforeEach(async ({ page }) => {
   await gotoFresh(page);
@@ -132,4 +132,54 @@ test("qna form: Cancel dismisses without answering", async ({ page }) => {
   await qnaForm(page).getByRole("button", { name: "Cancel" }).click();
   await expect(qnaForm(page)).toBeHidden();
   await expect(page.getByText("Dialog cancelled.")).toBeVisible();
+});
+
+test("qna question text scales with --font-scale; action buttons do not", async ({
+  page,
+}) => {
+  // The Q&A widget renders outside the Transcript's scaled `.col`, so it used to
+  // miss font scaling entirely. Now `.qna-inline` carries a scaled base and the
+  // form's text rules are in `em`, so reading text tracks --font-scale while the
+  // action buttons (Button.svelte, chrome) stay at body size.
+  await drive(page, "qna");
+  const form = qnaForm(page);
+  const q = form.locator(".q");
+  const submit = form.getByRole("button", { name: "Submit" });
+  // Surface the Submit button (last question on the 3-card walk).
+  await form.getByRole("button", { name: "Next" }).click();
+  await form.getByRole("button", { name: "Next" }).click();
+  await expect(submit).toBeVisible();
+
+  const qSize = async () =>
+    Number.parseFloat(await q.evaluate((el) => getComputedStyle(el).fontSize));
+  const btnSize = async () =>
+    Number.parseFloat(
+      await submit.evaluate((el) => getComputedStyle(el).fontSize),
+    );
+
+  // AC.1 — at default scale the question text is ~15px (1em of the 15px base).
+  const baseQ = await qSize();
+  expect(baseQ).toBeCloseTo(15, 0);
+  const baseBtn = await btnSize();
+
+  // AC.2 — bump the scale via the real Settings stepper; question text grows.
+  await openSettings(page, "appearance");
+  const panel = page.getByTestId("settings-panel");
+  await panel.getByTestId("font-larger").click();
+  await panel.getByTestId("font-larger").click();
+  // Close settings so the form is interactable/visible again. Assert the panel
+  // actually closed: Escape routes to the focused stepper button (inside Settings,
+  // not the Q&A form's `.qna` keydown), so it closes Settings without cancelling
+  // the form — but make that invariant explicit so a future refactor promoting
+  // either handler to window-scope surfaces a clear "settings didn't close" error
+  // instead of a confusing "font-size didn't grow" failure.
+  await page.keyboard.press("Escape");
+  await expect(panel).toBeHidden();
+
+  const grownQ = await qSize();
+  expect(grownQ).toBeGreaterThan(baseQ);
+
+  // AC.3 — the Submit button's font-size is unchanged (controls stay unscaled).
+  const grownBtn = await btnSize();
+  expect(grownBtn).toBeCloseTo(baseBtn, 0);
 });
