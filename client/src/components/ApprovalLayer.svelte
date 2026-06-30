@@ -304,6 +304,35 @@
         <Button variant="secondary" size="lg" block title="Cancel this request" onclick={cancel}>Cancel</Button>
         <Button variant="primary" size="lg" block title="Save your edits" onclick={() => submitValue(inputValue)}>Save</Button>
       </div>
+    {:else if current.kind === "permission"}
+      <h2 id="approval-title">{current.title}</h2>
+      {#if current.toolName}
+        <p class="tool-name" title="The tool requesting approval">{current.toolName}</p>
+      {/if}
+      {#if current.toolInput}
+        <pre class="tool-input" title="The tool's input (JSON)">{current.toolInput}</pre>
+      {/if}
+      <div
+        class="options"
+        role="radiogroup"
+        aria-labelledby="approval-title"
+        tabindex="-1"
+        onkeydown={onOptionsKeydown}
+      >
+        {#each current.options as opt (opt)}
+          <button
+            class="opt"
+            class:sel={selectedOption === opt}
+            role="radio"
+            aria-checked={selectedOption === opt}
+            tabindex={(selectedOption ?? current.options[0]) === opt ? 0 : -1}
+            title={`Choose: ${opt}`}
+            onclick={() => submitValue(opt)}
+            onfocus={() => (selectedOption = opt)}>{opt}</button
+          >
+        {/each}
+      </div>
+      <div class="actions"><Button variant="secondary" size="lg" block title="Cancel this request" onclick={cancel}>Cancel</Button></div>
     {:else if isDialogRequest(current)}
       <!-- unreachable: all dialog kinds handled above -->
     {:else}
@@ -406,6 +435,29 @@
     /* Subtle scroll affordance without a heavy scrollbar on touch. */
     overscroll-behavior: contain;
     -webkit-overflow-scrolling: touch;
+  }
+  .tool-name {
+    color: var(--text-muted);
+    font-family: var(--font-mono);
+    font-size: 13px;
+    margin: 0 0 8px;
+  }
+  .tool-input {
+    background: var(--surface-sunken);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    padding: 10px 12px;
+    font-family: var(--font-mono);
+    font-size: 12px;
+    line-height: 1.45;
+    color: var(--text);
+    max-height: 180px;
+    overflow: auto;
+    overscroll-behavior: contain;
+    -webkit-overflow-scrolling: touch;
+    margin: 0 0 4px;
+    white-space: pre-wrap;
+    word-break: break-word;
   }
   .options {
     display: flex;

@@ -14,6 +14,7 @@ import {
   PERMISSION_APPROVAL_CHOICES,
   PERMISSION_APPROVAL_LABELS,
   buildInterrogativeResponse,
+  pruneApprovalOptions,
   type PendingInterrogative,
 } from "./ui-bridge.js";
 
@@ -230,6 +231,63 @@ describe("buildInterrogativeResponse", () => {
       value: "Maybe",
     });
     expect(out).toBeNull();
+  });
+
+  // ===== permission (pruned subset — the new permissionChoices path) =====
+
+  test("permission + pruned subset + 'Allow for session' -> correct grant/target", () => {
+    // keep_targets=[session] prunes to Deny, Allow once, Allow for session.
+    // The chosen label must still map to {granted:true, target:session}.
+    const choices = pruneApprovalOptions(["session"]);
+    const out = buildInterrogativeResponse(
+      pending("permission", { permissionChoices: choices }),
+      { requestId: "i1", value: "Allow for session" },
+    );
+    expect(out).toEqual({
+      kind: "permission_answer",
+      granted: true,
+      persistence_target: "session",
+    });
+  });
+
+  test("permission + pruned subset + 'Deny' -> granted:false", () => {
+    const choices = pruneApprovalOptions(["user"]);
+    const out = buildInterrogativeResponse(
+      pending("permission", { permissionChoices: choices }),
+      { requestId: "i1", value: "Deny" },
+    );
+    expect(out).toEqual({
+      kind: "permission_answer",
+      granted: false,
+      persistence_target: null,
+    });
+  });
+
+  test("permission + pruned subset + 'Allow for user' (pruned out) -> null", () => {
+    // keep_targets=[session] prunes out user grants. A response carrying a
+    // pruned-out label (stale/raced card) must NOT reach the daemon.
+    const choices = pruneApprovalOptions(["session"]);
+    const out = buildInterrogativeResponse(
+      pending("permission", { permissionChoices: choices }),
+      { requestId: "i1", value: "Allow for user" },
+    );
+    expect(out).toBeNull();
+  });
+
+  test("permission + no permissionChoices (fallback) -> fixed-array lookup still works", () => {
+    // Backward compat: an in-flight card from before this change has no
+    // permissionChoices. The reverse builder must fall back to the full array
+    // and resolve any known label. This pins the fallback as intentional, not
+    // incidental (AC.3 test strategy).
+    const out = buildInterrogativeResponse(pending("permission"), {
+      requestId: "i1",
+      value: "Allow for project",
+    });
+    expect(out).toEqual({
+      kind: "permission_answer",
+      granted: true,
+      persistence_target: "project",
+    });
   });
 
   // ===== ask_user_question (the qna round trip) =====

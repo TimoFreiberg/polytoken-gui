@@ -1208,6 +1208,21 @@ and its resolution note. Latest completions first.
   (parent-aware), trusts the launch cwd, denies other untrusted paths.
   Interactive card still open above.
 
+- [x] **Permission popup: show request content + prune invalid options** —
+  Added a dedicated `permission` HostUiRequest kind that surfaces the tool
+  name + a JSON preview of the tool's input (from the daemon's
+  `permission_tool_call`), and prunes the 7 approval choices down to those
+  whose persistence target the daemon's `keep_targets` rule allows (Deny +
+  Allow once always kept). A shared `pruneApprovalOptions` helper is the
+  single source of truth, used by both the forward mapping (event-map.ts)
+  and the mock fixture (fixtures.ts) so the logic can't drift. The reverse
+  mapping (ui-bridge.ts) resolves the chosen label via the full labels
+  index (stable), then accepts it via reference equality against the
+  captured pruned subset — a stale/raced response to a pruned-out option
+  returns null. Verified by 4 unit tests (event-map) + 4 reverse-mapping
+  tests (ui-bridge, incl. the backward-compat fallback) + 6 desktop +
+  2 mobile e2e specs.
+
 - [x] **Persistence rework** (D13) — driver resumes via
   `SessionManager.continueRecent(cwd)`, discovers via `list`, switches via
   `runtime.switchSession`, rebuilds state from session files on load

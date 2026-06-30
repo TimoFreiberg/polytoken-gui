@@ -70,6 +70,12 @@ export interface PendingInterrogative {
    *  selectedOptionIndices index into optionLabels; the builder maps them to the
    *  daemon's option ids. Also determines question count + ordering for the reply. */
   questions?: readonly PendingQuestion[];
+  /** For permission interrogatives: the rendered approval choices (the pruned
+   *  subset from pruneApprovalOptions), in order. The reverse builder maps the
+   *  chosen label → its index here → the grant/target pair. Absent = fall back
+   *  to the full fixed PERMISSION_APPROVAL_CHOICES array (backward compat for
+   *  in-flight cards from before this change — the ui-bridge tests rely on it). */
+  permissionChoices?: readonly ApprovalChoice[];
 }
 
 // ---------------------------------------------------------------------------
@@ -85,10 +91,14 @@ export interface PendingInterrogative {
 // ---------------------------------------------------------------------------
 
 /** The grant + persistence pair for one approval choice. Index 0 is the deny. */
-interface ApprovalChoice {
+export interface ApprovalChoice {
   granted: boolean;
   persistenceTarget: components["schemas"]["PersistenceTarget"] | null;
 }
+
+/** Re-export the daemon's persistence-target union so the pruning helper's
+ *  signature is self-documenting without callers importing wire-types. */
+export type PersistenceTarget = components["schemas"]["PersistenceTarget"];
 
 /** pilot's approval card order: Deny (0), then grants by escalating scope.
  *  This is the SINGLE source of truth for the index↔target mapping —
@@ -132,6 +142,34 @@ function approvalFromIndex(idx: number): ApprovalChoice | null {
     return null;
   }
   return PERMISSION_APPROVAL_CHOICES[idx] ?? null;
+}
+
+/** Prune the 7 approval choices down to those valid for the current request.
+ *
+ *  The daemon's `permission_candidate_rule.keep_targets` lists the persistence
+ *  targets a grant may use for THIS request. When present, grant choices whose
+ *  `persistenceTarget` is NOT in `keepTargets` are invalid (the daemon would
+ *  reject them) so we don't offer them. Always kept:
+ *  - Deny (index 0, null target — a refusal is always valid)
+ *  - Allow once (index 1, null target — this occurrence only, no persistence)
+ *
+ *  When `keepTargets` is null/absent (no candidate rule, or a degraded daemon
+ *  that didn't send one), return all 7 — backward compat with the pre-pruning
+ *  behavior, so an operator still sees every option.
+ *
+ *  This is the SINGLE source of truth for pruning — used by the forward mapping
+ *  (event-map.ts) AND the mock fixture (fixtures.ts) so both paths agree. */
+export function pruneApprovalOptions(
+  keepTargets?: readonly PersistenceTarget[] | null,
+): readonly ApprovalChoice[] {
+  if (!keepTargets || keepTargets.length === 0) {
+    return PERMISSION_APPROVAL_CHOICES;
+  }
+  return PERMISSION_APPROVAL_CHOICES.filter((choice) => {
+    // Deny (index 0) + Allow once (index 1) have null targets — always valid.
+    if (choice.persistenceTarget === null) return true;
+    return keepTargets.includes(choice.persistenceTarget);
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -216,12 +254,19 @@ export function buildInterrogativeResponse(
 
     case "permission": {
       // pilot permission card → a select whose value is the chosen LABEL string.
-      // The labels are the constant PERMISSION_APPROVAL_LABELS (the forward
-      // mapping renders exactly those), so map label → index → the choice.
+      // The label↔choice mapping is ALWAYS via the full PERMISSION_APPROVAL_LABELS
+      // index (a label always maps to the same grant/target, pruning or not).
+      // When the forward mapping pruned options (permissionChoices captured),
+      // reject labels whose choice didn't survive pruning — a stale/raced
+      // response to a pruned-out option shouldn't reach the daemon. The fallback
+      // (no permissionChoices) accepts any known label (backward compat — the
+      // existing ui-bridge tests call pending("permission") with no choices).
       if ("value" in response) {
         const idx = PERMISSION_APPROVAL_LABELS.indexOf(response.value);
         const choice = approvalFromIndex(idx);
         if (!choice) return null;
+        const choices = pending.permissionChoices;
+        if (choices && !choices.includes(choice)) return null;
         return {
           kind: "permission_answer",
           granted: choice.granted,

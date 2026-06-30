@@ -428,6 +428,22 @@ export type HostUiRequest =
       readonly actionLabels: readonly [string, string, string];
       readonly timeoutMs?: number;
     }
+  | {
+      readonly kind: "permission";
+      readonly requestId: string;
+      readonly title: string;
+      /** The tool being approved (e.g. "shell_exec"). null when the daemon
+       *  sent no permission_tool_call context (degraded but not silent). */
+      readonly toolName: string | null;
+      /** The tool's parsed input, JSON-stringified for display. Truncated to
+       *  ~500 chars to bound the card. null when no context. */
+      readonly toolInput: string | null;
+      /** The pruned approval options, in PERMISSION_APPROVAL_LABELS order.
+       *  Always includes "Deny" (index 0) + "Allow once"; grants are pruned
+       *  by keep_targets when the daemon provides a candidate rule. */
+      readonly options: readonly string[];
+      readonly timeoutMs?: number;
+    }
   // FIRE-AND-FORGET — ambient UI, no response
   | {
       readonly kind: "notify";
@@ -466,7 +482,8 @@ export type HostUiDialogKind =
   | "select"
   | "editor"
   | "qna"
-  | "plan";
+  | "plan"
+  | "permission";
 
 export function isDialogRequest(
   r: HostUiRequest,
@@ -477,7 +494,8 @@ export function isDialogRequest(
     r.kind === "select" ||
     r.kind === "editor" ||
     r.kind === "qna" ||
-    r.kind === "plan"
+    r.kind === "plan" ||
+    r.kind === "permission"
   );
 }
 

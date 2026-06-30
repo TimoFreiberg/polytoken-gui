@@ -280,6 +280,28 @@ describe("foldEvent", () => {
     expect(s.pendingApprovals).toHaveLength(0);
   });
 
+  test("permission dialog request queues + resolves like other dialogs", () => {
+    const s = initialSessionState();
+    foldEvent(
+      s,
+      base({
+        type: "hostUiRequest",
+        request: {
+          kind: "permission",
+          requestId: "perm1",
+          title: "Run bash?",
+          toolName: "shell_exec",
+          toolInput: '{"command":"ls"}',
+          options: ["Deny", "Allow once", "Allow for session"],
+        },
+      }),
+    );
+    expect(s.pendingApprovals).toHaveLength(1);
+    expect(s.pendingApprovals[0]).toMatchObject({ kind: "permission", requestId: "perm1" });
+    foldEvent(s, base({ type: "hostUiResolved", requestId: "perm1" }));
+    expect(s.pendingApprovals).toHaveLength(0);
+  });
+
   test("ambient status upserts and clears; widget keyed", () => {
     const s = initialSessionState();
     foldEvent(

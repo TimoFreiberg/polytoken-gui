@@ -19,6 +19,11 @@ import type {
   TreeSnapshot,
   TrustRequest,
 } from "@pilot/protocol";
+import {
+  PERMISSION_APPROVAL_CHOICES,
+  PERMISSION_APPROVAL_LABELS,
+  pruneApprovalOptions,
+} from "./polytoken/ui-bridge.js";
 
 /** Thinking levels the mock's models "support" — drives the picker's thinking menu. */
 export const MOCK_THINKING_LEVELS = ["off", "low", "medium", "high"] as const;
@@ -1691,6 +1696,38 @@ export function planHandoffTimeout(): ScriptStep[] {
             "Cancel",
           ],
           timeoutMs: 1200,
+        },
+      },
+    },
+  ];
+}
+
+/** A permission approval popup that surfaces the tool name + input preview and
+ *  a PRUNED option list (keep_targets=[session] → Deny + Allow once + Allow for
+ *  session only). Mirrors what the real daemon sends (permission_tool_call +
+ *  permission_candidate_rule) so e2e + screenshots exercise the new card.
+ *  Uses the shared `pruneApprovalOptions` helper so the pruning logic can't
+ *  drift from the forward mapping. */
+export function permissionDialog(): ScriptStep[] {
+  const keepTargets = ["session"] as const;
+  const choices = pruneApprovalOptions(keepTargets);
+  const options = choices
+    .map((choice) => PERMISSION_APPROVAL_CHOICES.indexOf(choice))
+    .map((i) => PERMISSION_APPROVAL_LABELS[i])
+    .filter((l): l is string => !!l);
+  return [
+    {
+      wait: 0,
+      event: {
+        ...base(),
+        type: "hostUiRequest",
+        request: {
+          kind: "permission",
+          requestId: "req-permission-1",
+          title: "Run bash?",
+          toolName: "shell_exec",
+          toolInput: JSON.stringify({ command: "rm -rf /tmp/test" }, null, 2),
+          options,
         },
       },
     },

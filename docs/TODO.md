@@ -20,22 +20,6 @@ See `docs/` siblings for context: `DESIGN.md` (architecture + roadmap), `DECISIO
       driving? Related jank: opening the same session in pilot that the TUI is viewing makes
       the TUI error briefly then detach (the TUI's own lease-loss handling) — need a clean
       protocol for coexistence. (Readable error + connection-race fix landed in `69585952`.)
-- [ ] **polytoken: permission popup doesn't show what's being requested.**
-      Surfaced 2026-06-29 (second dogfood, via Pilot): the permission popup
-      triggered by tool calls (e.g. `shell_exec`) doesn't display the actual
-      content of the request — the command string, the file path being written,
-      the tool args. The operator is asked to approve/deny blind. The popup body
-      should surface the tool name + the substantive payload so the operator can
-      make an informed decision. (Mirrors the AGENTS.md convention: every UI
-      action needs a tooltip — the permission popup is the most consequential
-      action of all and currently has the least context.)
-- [ ] **polytoken: permission popup shows options that aren't actually available.**
-      Surfaced 2026-06-29 (second dogfood): the permission popup can render more
-      options/buttons than are actually valid in the current context — i.e. buttons
-      that don't map to real harness actions. Need to audit which permission
-      actions the popup exposes vs. what the harness actually supports, and prune
-      any non-functional buttons. A button that does nothing on click is worse
-      than no button.
 - [ ] **polytoken: retry button re-sends the last prompt instead of resuming.**
       Surfaced 2026-06-29 (second dogfood): the "retry" button re-sends the last
       user prompt verbatim. Mid-flow (e.g. after a tool was cancelled/denied) this

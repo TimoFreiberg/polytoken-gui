@@ -863,7 +863,9 @@ describe("mapDaemonEvent", () => {
     });
   });
 
-  test("interrogative (permission) -> select card with 7 approval choices", () => {
+  test("interrogative (permission) with null context -> permission card, all 7 options", () => {
+    // No permission_tool_call + no permission_candidate_rule: degraded but not
+    // silent. All 7 options render (backward compat), no tool context (AC.3).
     const out = fold({
       type: "interrogative",
       interrogative_id: "i5",
@@ -874,8 +876,11 @@ describe("mapDaemonEvent", () => {
     expect(out.events[0]).toMatchObject({
       type: "hostUiRequest",
       request: {
-        kind: "select",
+        kind: "permission",
         requestId: "i5",
+        title: "Run bash?",
+        toolName: null,
+        toolInput: null,
         options: [
           "Deny",
           "Allow once",
@@ -887,6 +892,107 @@ describe("mapDaemonEvent", () => {
         ],
       },
     });
+    // All 7 choices captured (no pruning — keep_targets absent).
+    const eff = out.effects[0] as Extract<
+      (typeof out.effects)[number],
+      { type: "registerInterrogative" }
+    >;
+    expect(eff).toMatchObject({
+      type: "registerInterrogative",
+      pending: {
+        interrogativeId: "i5",
+        interrogativeType: "permission",
+      },
+    });
+    expect(eff.pending.permissionChoices).toHaveLength(7);
+    expect(eff.pending.permissionChoices![0]).toMatchObject({
+      granted: false,
+      persistenceTarget: null,
+    });
+  });
+
+  test("interrogative (permission) with tool_call -> permission card shows tool name + input", () => {
+    // AC.1: the tool name + a JSON preview of the tool input render in the card.
+    const out = fold({
+      type: "interrogative",
+      interrogative_id: "i6",
+      interrogative_type: "permission",
+      prompt_id: "p1",
+      question: "Run bash?",
+      permission_tool_call: {
+        tool_name: "shell_exec",
+        tool_use_id: "tu1",
+        input: { command: "rm -rf /tmp/test" },
+      },
+    });
+    expect(out.events[0]).toMatchObject({
+      request: {
+        kind: "permission",
+        toolName: "shell_exec",
+        toolInput: JSON.stringify({ command: "rm -rf /tmp/test" }, null, 2),
+      },
+    });
+  });
+
+  test("interrogative (permission) with keep_targets=[session] -> only 3 options render", () => {
+    // AC.2: only Deny + Allow once + Allow for session render (project/user pruned).
+    const out = fold({
+      type: "interrogative",
+      interrogative_id: "i7",
+      interrogative_type: "permission",
+      prompt_id: "p1",
+      question: "Run bash?",
+      permission_candidate_rule: {
+        keep_targets: ["session"],
+        default_target: "session",
+        candidate_rule_raw: "rule",
+        candidate_rule_resolved_today: "rule-today",
+        floor_context: { tool_name: "shell_exec" },
+      },
+    });
+    expect(out.events[0]).toMatchObject({
+      request: {
+        kind: "permission",
+        options: ["Deny", "Allow once", "Allow for session"],
+      },
+    });
+    // The pruned subset is captured (3 choices, not 7).
+    const eff = out.effects[0] as Extract<
+      (typeof out.effects)[number],
+      { type: "registerInterrogative" }
+    >;
+    expect(eff.pending.permissionChoices).toHaveLength(3);
+    expect(eff.pending.permissionChoices![2]).toMatchObject({
+      granted: true,
+      persistenceTarget: "session",
+    });
+  });
+
+  test("interrogative (permission) with keep_targets=[user] -> Deny + Allow once + Allow for user (local) + Allow for user", () => {
+    const out = fold({
+      type: "interrogative",
+      interrogative_id: "i8",
+      interrogative_type: "permission",
+      prompt_id: "p1",
+      question: "Run bash?",
+      permission_candidate_rule: {
+        keep_targets: ["user_local", "user"],
+        default_target: "user",
+        candidate_rule_raw: "rule",
+        candidate_rule_resolved_today: "rule-today",
+        floor_context: { tool_name: "shell_exec" },
+      },
+    });
+    expect(out.events[0]).toMatchObject({
+      request: {
+        options: ["Deny", "Allow once", "Allow for user (local)", "Allow for user"],
+      },
+    });
+    const eff = out.effects[0] as Extract<
+      (typeof out.effects)[number],
+      { type: "registerInterrogative" }
+    >;
+    expect(eff.pending.permissionChoices).toHaveLength(4);
   });
 
   test("ask_user_question -> qna card + question/option ids captured", () => {

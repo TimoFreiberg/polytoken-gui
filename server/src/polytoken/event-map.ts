@@ -29,8 +29,10 @@ import type {
 import { defaultModelRef } from "./models.js";
 import type { PendingInterrogative } from "./ui-bridge.js";
 import {
+  PERMISSION_APPROVAL_CHOICES,
   PERMISSION_APPROVAL_LABELS,
   type PendingQuestion,
+  pruneApprovalOptions,
 } from "./ui-bridge.js";
 
 type DaemonEvent = components["schemas"]["DaemonEvent"];
@@ -409,20 +411,11 @@ function buildInterrogativeMapping(
       return { event, pending };
     }
     case "permission": {
-      // Permission approval: 7 choices (deny + 6 grants). The index↔target
-      // mapping lives in ui-bridge.ts's PERMISSION_APPROVAL_CHOICES — this just
-      // renders the labels in that exact order.
-      const event: SessionDriverEvent = {
-        ...meta,
-        type: "hostUiRequest",
-        request: {
-          kind: "select",
-          requestId,
-          title: "Approve?",
-          options: [...PERMISSION_APPROVAL_LABELS],
-        },
-      };
-      return { event, pending };
+      // Permission approval: surfaces the tool name + input preview + pruned
+      // options (only grants whose persistence target the daemon allows). The
+      // buildPermissionRequest helper captures the pruned choices in pending so
+      // the reverse builder maps the chosen label → the right grant/target pair.
+      return buildPermissionRequest(ev, meta, pending);
     }
     default: {
       // Runtime safety: a compile-time exhaustiveness guard can't catch an
@@ -449,6 +442,69 @@ function buildInterrogativeMapping(
       };
       return { event, pending: null };
     }
+  }
+}
+
+/** Build the pilot `permission` hostUiRequest + pending metadata for a
+ *  permission interrogative. Surfaces the tool name + a JSON preview of the
+ *  tool's input (from the daemon's permission_tool_call), and prunes the 7
+ *  approval choices down to those whose persistence target the daemon's
+ *  keep_targets rule allows.
+ *
+ *  The pruned choices are captured in `pending.permissionChoices` so the
+ *  reverse builder (ui-bridge.ts) can map the chosen label → its grant/target
+ *  pair. Pruning uses the shared `pruneApprovalOptions` helper — the single
+ *  source of truth, also used by the mock fixture. */
+function buildPermissionRequest(
+  ev: Extract<DaemonEvent, { type: "interrogative" }>,
+  meta: { sessionRef: SessionRef; timestamp: string },
+  pending: PendingInterrogative,
+): { event: SessionDriverEvent; pending: PendingInterrogative } {
+  const tc = ev.permission_tool_call;
+  const toolName = tc?.tool_name ?? null;
+  // JSON-stringify the tool input for display, truncating to bound the card.
+  // A null tool_call → null input (degraded but not silent).
+  let toolInput: string | null = null;
+  if (tc) {
+    const json = safeStringify(tc.input);
+    toolInput = json.length > 500 ? `${json.slice(0, 499)}…` : json;
+  }
+
+  const keepTargets = ev.permission_candidate_rule?.keep_targets ?? null;
+  const choices = pruneApprovalOptions(keepTargets);
+  pending.permissionChoices = choices;
+  // Map each pruned choice to its label via the ORIGINAL index in the full
+  // choices array (a choice's label is at the same index in
+  // PERMISSION_APPROVAL_LABELS). Using the pruned array's index would misalign
+  // labels after the first pruned entry.
+  const options = choices
+    .map((choice) => PERMISSION_APPROVAL_CHOICES.indexOf(choice))
+    .map((i) => PERMISSION_APPROVAL_LABELS[i])
+    .filter((l): l is string => !!l);
+
+  const event: SessionDriverEvent = {
+    ...meta,
+    type: "hostUiRequest",
+    request: {
+      kind: "permission",
+      requestId: ev.interrogative_id,
+      title: ev.question || "Approve?",
+      toolName,
+      toolInput,
+      options,
+    },
+  };
+  return { event, pending };
+}
+
+/** JSON.stringify with a fallback for non-serializable values (BigInt, cycles).
+ *  The tool input is `unknown` from the wire; a failed stringify shouldn't crash
+ *  the fold — fall back to String() so SOMETHING shows. */
+function safeStringify(value: unknown): string {
+  try {
+    return JSON.stringify(value, null, 2);
+  } catch {
+    return String(value);
   }
 }
 
