@@ -36,11 +36,13 @@ per-session "close" in pilot — see flow GUI→TUI below).
 
 The harness generates an **isolated `config.yaml`** under the root that pins a **cheap,
 fast default model** so test runs never burn the full model. Default:
-**`deepseek-v4-flash`** (cheap, reliable TTFT); switch with **`PILOT_PARITY_MODEL=umans-flash`**
-(free, but spiky TTFT lately). It declares only that one provider, so only **one** key is
-needed — `$DEEPSEEK_API_KEY` (deepseek) or `$UMANS_API_KEY` (umans), referenced as an env
-var like the real config. The live desktop app has these; a bare shell may not. Override
-the whole config by pointing `$PILOT_PARITY_CONFIG_DIR` at your own dir.
+**`deepseek-v4-flash`** (cheap, reliable TTFT). `$PILOT_PARITY_MODEL` accepts a preset
+(`deepseek-v4-flash`, `umans-flash`) **or any `provider/model` ref** (e.g.
+`umans/umans-glm-5.2`) — so any umans model works too (umans is flat-rate/unlimited, just
+slower; cost isn't the concern, latency is). It declares only that one provider, so only
+**one** key is needed — `$DEEPSEEK_API_KEY` (deepseek) or `$UMANS_API_KEY` (umans),
+referenced as an env var like the real config. The live desktop app has these; a bare
+shell may not. Override the whole config by pointing `$PILOT_PARITY_CONFIG_DIR` at your own dir.
 
 **Always run `bun parity/parity.ts doctor` first.** It generates the config, checks the
 chosen model's key is set, and spawns a real `polytoken exec` to confirm the model runs —

@@ -47,6 +47,10 @@ So test runs never burn the full `umans-glm-5.2`, the harness writes
 
 - **`deepseek-v4-flash`** — default (cheap, reliable TTFT). Needs `$DEEPSEEK_API_KEY`.
 - **`umans-flash`** — `PILOT_PARITY_MODEL=umans-flash` (free, but spiky TTFT lately). Needs `$UMANS_API_KEY`.
+- **any `provider/model` ref** — `PILOT_PARITY_MODEL=umans/umans-glm-5.2` (or any other) works
+  without a code change; the provider's key is inferred (`umans`→`$UMANS_API_KEY`,
+  `deepseek`→`$DEEPSEEK_API_KEY`). umans is flat-rate/unlimited (just slower), so using a
+  fuller umans model is fine — latency, not cost, is the only tradeoff.
 
 Auth is an env-ref like the real config — the live desktop app has the keys; a bare shell
 may not. Override the whole config by pointing `$PILOT_PARITY_CONFIG_DIR` at your own dir.
