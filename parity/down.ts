@@ -21,7 +21,9 @@ import {
   type Paths,
 } from "./lib.ts";
 
-/** Is `pid` alive and does its command line look like our pilot launcher (guards pid reuse)? */
+/** Is `pid` alive and does its command line look like OUR pilot launcher (guards pid reuse)?
+ *  Matches only the specific launcher/server entry points — NOT a bare `bun`, which would
+ *  match any bun process (the agent harness, other dev servers) reusing a recycled pid. */
 async function isOurPilot(pid: number): Promise<boolean> {
   const proc = Bun.spawn({
     cmd: ["ps", "-p", String(pid), "-o", "command="],
@@ -30,10 +32,9 @@ async function isOurPilot(pid: number): Promise<boolean> {
   });
   if ((await proc.exited) !== 0) return false; // not alive
   const cmd = (await new Response(proc.stdout).text()).trim();
-  return (
-    /parity\/launch\.ts|server\/src\/index\.ts|src\/index\.ts/.test(cmd) ||
-    /\bbun\b/.test(cmd)
-  );
+  // The recorded pid is our launcher entry point: `bun run parity/launch.ts` (preview) or
+  // `bun run parity/parity.ts up` (script path). Match those specifically — never bare bun.
+  return /parity\/(launch|parity)\.ts/.test(cmd);
 }
 
 export async function down(

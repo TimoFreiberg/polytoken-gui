@@ -269,64 +269,8 @@ export interface LiveSession {
   sessionId: string;
   port: number;
   pid: number;
-  startedAt: string;
   projectPath: string;
 }
-
-/** Parse the `polytoken sessions` table: a header row then
- *  `SESSION_ID  PORT  PID  STARTED_AT  PROJECT_PATH` rows. */
-export function parseSessionsTable(stdout: string): LiveSession[] {
-  const out: LiveSession[] = [];
-  const lines = stdout.split("\n");
-  for (const raw of lines) {
-    const line = raw.trim();
-    if (!line || line.startsWith("SESSION_ID")) continue;
-    // Split into at most 5 columns; the 5th (project path) may itself contain spaces.
-    const m = line.match(/^(\S+)\s+(\d+)\s+(\d+)\s+(\S+)\s+(.+)$/);
-    if (!m) continue;
-    out.push({
-      sessionId: m[1]!,
-      port: Number(m[2]),
-      pid: Number(m[3]),
-      startedAt: m[4]!,
-      projectPath: m[5]!.trim(),
-    });
-  }
-  return out;
-}
-
-/** SAFETY-CRITICAL: the ONLY way to list polytoken sessions in this harness. Always sets
- *  the isolated XDG_DATA_HOME *and* --sessions-dir, so it can never see — and a caller can
- *  never `/terminate` — a prod daemon. Do not call `polytoken sessions` any other way. */
-export async function polytokenSessions(
-  p: Paths = paths(),
-): Promise<LiveSession[]> {
-  const proc = Bun.spawn({
-    cmd: [POLYTOKEN_BIN, "sessions", "--sessions-dir", p.sessionsDir],
-    env: { ...process.env, ...isolationEnv(p) },
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  await proc.exited;
-  const stdout = await new Response(proc.stdout).text();
-  return parseSessionsTable(stdout);
-}
-
-/** Read a session's on-disk session.json (for project_path / created_at). null if absent. */
-export function readSessionJson(
-  sessionId: string,
-  p: Paths = paths(),
-): { project_path?: string; created_at?: string } | null {
-  const file = join(p.sessionsDir, sessionId, "session.json");
-  if (!existsSync(file)) return null;
-  try {
-    return JSON.parse(readFileSync(file, "utf8"));
-  } catch {
-    return null;
-  }
-}
-
-// --- the daemon oracle (ground truth: GET /history) ---
 
 interface StartupJson {
   state?: string;
@@ -344,6 +288,70 @@ function readStartupJson(sessionId: string, p: Paths): StartupJson | null {
     return null;
   }
 }
+
+/** Read a session's on-disk session.json (for project_path / created_at). null if absent. */
+export function readSessionJson(
+  sessionId: string,
+  p: Paths = paths(),
+): { project_path?: string; created_at?: string } | null {
+  const file = join(p.sessionsDir, sessionId, "session.json");
+  if (!existsSync(file)) return null;
+  try {
+    return JSON.parse(readFileSync(file, "utf8"));
+  } catch {
+    return null;
+  }
+}
+
+/** Extract live session IDs from `polytoken sessions` output. We take ONLY the first
+ *  whitespace token of each non-header data row — the SESSION_ID column, which is column 1
+ *  in every layout — so this is robust to the table's other columns changing (PORT present
+ *  or not, absolute vs. relative timestamps). Port/pid are read from startup.json instead. */
+export function parseLiveSessionIds(stdout: string): string[] {
+  const ids: string[] = [];
+  for (const raw of stdout.split("\n")) {
+    const line = raw.trim();
+    if (!line || line.startsWith("SESSION_ID")) continue;
+    const id = line.split(/\s+/)[0];
+    if (id) ids.push(id);
+  }
+  return ids;
+}
+
+/** SAFETY-CRITICAL: the ONLY way to list polytoken sessions in this harness. Always sets
+ *  the isolated XDG_DATA_HOME *and* --sessions-dir, so it can never see — and a caller can
+ *  never `/terminate` — a prod daemon. Do not call `polytoken sessions` any other way.
+ *
+ *  `polytoken sessions` is the authority on WHICH sessions are live (it stale-cleans dead
+ *  entries); each live session's bound PORT is read from its own startup.json (the daemon's
+ *  record of the port it bound), NOT from the table — so a column-format change can't break
+ *  teardown/oracle. A listed session whose startup.json isn't ready (no port yet) is omitted. */
+export async function polytokenSessions(
+  p: Paths = paths(),
+): Promise<LiveSession[]> {
+  const proc = Bun.spawn({
+    cmd: [POLYTOKEN_BIN, "sessions", "--sessions-dir", p.sessionsDir],
+    env: { ...process.env, ...isolationEnv(p) },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  await proc.exited;
+  const stdout = await new Response(proc.stdout).text();
+  const out: LiveSession[] = [];
+  for (const id of parseLiveSessionIds(stdout)) {
+    const su = readStartupJson(id, p);
+    if (su?.state !== "ready" || typeof su.port !== "number") continue;
+    out.push({
+      sessionId: id,
+      port: su.port,
+      pid: su.pid ?? 0,
+      projectPath: readSessionJson(id, p)?.project_path ?? "",
+    });
+  }
+  return out;
+}
+
+// --- the daemon oracle (ground truth: GET /history) ---
 
 /** Fetch a daemon's full history snapshot (a big-limit GET /history). */
 export async function daemonHistory(port: number): Promise<unknown> {
@@ -421,10 +429,13 @@ export async function withDaemonHistory<T>(
     }
     return await fn(port);
   } finally {
-    // Graceful terminate, hard-kill fallback.
-    await fetch(`http://127.0.0.1:${port ?? 0}/terminate`, {
-      method: "POST",
-    }).catch(() => {});
+    // Graceful terminate only if we learned the port; otherwise the kill() below is the
+    // sole cleanup (a never-ready daemon has no port to POST to — don't fetch :0).
+    if (port != null) {
+      await fetch(`http://127.0.0.1:${port}/terminate`, {
+        method: "POST",
+      }).catch(() => {});
+    }
     try {
       proc.kill();
     } catch {

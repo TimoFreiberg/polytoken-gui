@@ -85,8 +85,9 @@ Full command list + the canonical handoff/coexistence flows: the `parity` skill.
   first: `bun parity/parity.ts down` (SIGTERM releases the lease) — or, keeping pilot alive,
   focus a *different* session and wait out the short `PILOT_IDLE_REAP_MS` (the reaper skips
   the active/in-flight session).
-- **Vite seems down on `127.0.0.1`.** It binds IPv6 `localhost` (`::1`); use the `guiUrl`
-  from `$ROOT/run/env.json` (it uses `localhost`).
+- **GUI URL.** Both pilot's backend and Vite are bound to `127.0.0.1`, and `guiUrl` in
+  `$ROOT/run/env.json` uses it — reachable by curl and a browser alike (no IPv6/`::1`
+  ambiguity).
 - **Two harnesses at once.** Give each its own `$PILOT_PARITY_ROOT` (separate ports, sessions,
   tmux socket, everything).
 

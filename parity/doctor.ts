@@ -95,10 +95,14 @@ export async function preflight(
       detail: "skipped — polytoken not on PATH",
     });
   } else if (!promptCheck) {
+    const why =
+      process.env.PARITY_SKIP_PROMPT_CHECK === "1"
+        ? "PARITY_SKIP_PROMPT_CHECK=1"
+        : "--quick";
     checks.push({
       name: "model usable (polytoken exec)",
       ok: true,
-      detail: "skipped (PARITY_SKIP_PROMPT_CHECK=1)",
+      detail: `skipped (${why}) — run \`parity doctor\` (no --quick) for the real check`,
     });
   } else {
     const r = await execProbe(p);

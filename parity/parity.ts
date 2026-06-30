@@ -16,6 +16,7 @@ import { launch } from "./launch.ts";
 import {
   daemonHistoryContains,
   daemonHistoryText,
+  modelSpec,
   paths,
   TMUX_BIN,
 } from "./lib.ts";
@@ -46,14 +47,16 @@ async function main(): Promise<number> {
     case "up": {
       // Foreground/blocking. The agent runs this with run_in_background (Bash tool) or via
       // the Claude_Preview `pilot-parity` config; `parity down` SIGTERMs the recorded pid.
-      const { ok, checks } = await preflight({ promptCheck: false }); // quick: skip token burn
-      if (!ok) {
-        for (const c of checks)
-          console.log(`  ${c.ok ? "✓" : "✗"} ${c.name} — ${c.detail}`);
+      // The GUI server boots WITHOUT a provider key (daemons spawn lazily on session-open),
+      // so we DON'T gate launch on the key/model check — we just warn. Run `parity doctor`
+      // for the full model round-trip before driving sessions.
+      await ensureProject(p); // ensures the isolated env + generated config + project
+      const spec = modelSpec(p.model);
+      if (p.generateConfig && !process.env[spec.keyEnv]?.trim()) {
         console.error(
-          "[parity up] preflight failed — run `parity doctor` for the model check",
+          `[parity up] WARNING: $${spec.keyEnv} unset — the GUI boots, but sessions can't ` +
+            `run until it's set (model ${p.model}). Run \`parity doctor\` to verify.`,
         );
-        return 1;
       }
       await launch(p);
       return 0;

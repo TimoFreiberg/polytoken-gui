@@ -67,9 +67,12 @@ export async function launch(p: Paths = paths()): Promise<void> {
   const backendPort = Number(
     process.env.PILOT_PARITY_BACKEND_PORT ?? (await freePort()),
   );
-  const serverUrl = `http://localhost:${backendPort}`;
-  const guiUrl = `http://localhost:${vitePort}`;
-  const wsUrl = `ws://localhost:${backendPort}/ws`;
+  // Use 127.0.0.1 everywhere: the backend binds 127.0.0.1 (config.host default), so a
+  // `localhost` proxy/WS target could resolve to ::1 and miss it. Vite is bound to
+  // 127.0.0.1 below too, so guiUrl is reachable by both curl and a browser.
+  const serverUrl = `http://127.0.0.1:${backendPort}`;
+  const guiUrl = `http://127.0.0.1:${vitePort}`;
+  const wsUrl = `ws://127.0.0.1:${backendPort}/ws`;
 
   // Bun resolves some CJS provider deps from the cache; NODE_PATH must point at this
   // workspace's symlink forest before Bun starts (mirrors scripts/dev.ts).
@@ -130,7 +133,18 @@ export async function launch(p: Paths = paths()): Promise<void> {
   }
 
   const vite = Bun.spawn(
-    ["bun", "run", "dev", "--port", String(vitePort), "--strictPort"],
+    // --host 127.0.0.1 so guiUrl (127.0.0.1) is reachable — Vite otherwise binds ::1
+    // (localhost), which a 127.0.0.1 curl/agent can't reach.
+    [
+      "bun",
+      "run",
+      "dev",
+      "--host",
+      "127.0.0.1",
+      "--port",
+      String(vitePort),
+      "--strictPort",
+    ],
     {
       cwd: join(REPO_ROOT, "client"),
       env: {
