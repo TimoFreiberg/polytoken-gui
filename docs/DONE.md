@@ -5,6 +5,26 @@ and its resolution note. Latest completions first.
 
 ---
 
+- [x] **polytoken: retry button re-sends the last prompt instead of resuming.**
+      Surfaced 2026-06-29 (second dogfood): the "retry" button re-sends the last
+      user prompt verbatim. Mid-flow (e.g. after a tool was cancelled/denied) this
+      restarts the whole turn instead of nudging the agent to proceed. If retry is
+      meant to resume, it should send a fixed minimal signal — "continue" or an
+      empty string — rather than replaying the full prior message. If both
+      "resume after interruption" and "retry the whole turn" are wanted, give them
+      separate buttons with distinct semantics.
+      → Done 2026-06-30: the error-notice card's "Retry" button (shown on `runFailed`)
+      is renamed to "Resume" and now sends `"continue"` via `this.prompt("continue")`
+      instead of re-sending `lastPrompt` verbatim. Key insight: `runFailed` only fires
+      after the prompt was already accepted by the daemon (the turn started via
+      `message_start`, then failed at `message_complete` with a turn error) — so the
+      prompt text is already in the daemon's history and re-sending it is wasteful.
+      The rejected-prompt row (`promptResult` with `accepted: false`) keeps its
+      existing "Retry" button (`retryPending`) — that path re-sends prompts that were
+      never accepted (409 turn-in-flight, 422 hook denied, etc.). The dead `lastPrompt`
+      field + its two writes are removed. No wire protocol or daemon changes — Resume
+      is just a `POST /prompt` with content `"continue"`.
+
 - [x] **polytoken: opening a session that's live in the TUI causes a 409 lease conflict.**
       Surfaced 2026-06-29 (first dogfood): a session with an active TUI attachment rejects
       pilot's lease claim with 409 (the lease is exclusive, spike §2). The error is now

@@ -330,8 +330,6 @@ class PilotStore {
   // auto-update can't replace the .app). Server-pushed via `updateStatus`; drives the durable
   // rebuild dot on the sidebar build stamp. Stays false in a plain browser (no stamped app).
   desktopStale = $state(false);
-  // The last prompt text sent — lets the run-failed error card re-send it on Retry.
-  lastPrompt = $state("");
   // Global hotkey dispatch — incremented so $effect catches every keystroke.
   hotkeyAction = $state<{ which: "model" | "thinking"; n: number } | null>(
     null,
@@ -1310,7 +1308,6 @@ class PilotStore {
   ): Promise<boolean> {
     const t = text.trim();
     if (!t && (!images || images.length === 0)) return false;
-    this.lastPrompt = t;
     // This call is a user gesture — the moment to ask for notification permission
     // (tab-open path) and register a Web Push subscription (closed-phone path).
     ensurePermission();
@@ -1362,9 +1359,13 @@ class PilotStore {
   requestForceUpdate(): void {
     send({ type: "forceUpdate" });
   }
-  /** Re-send the last prompt after a run-failed (the error card's Retry). */
-  retryLast(): void {
-    if (this.lastPrompt) void this.prompt(this.lastPrompt);
+  /** Resume after a run-failed: send a minimal "continue" signal. The prior prompt
+   *  was already accepted by the daemon (runFailed only fires after the turn
+   *  started — message_start → message_complete with a turn error), so re-sending
+   *  it verbatim is wasteful. "continue" nudges the agent to proceed without
+   *  replaying the full prior message (which is already in the daemon's history). */
+  resumeTurn(): void {
+    void this.prompt("continue");
   }
   async retryPending(promptId: string): Promise<void> {
     const old = this.pendingPrompts.find((item) => item.promptId === promptId);
@@ -1783,7 +1784,6 @@ class PilotStore {
     if (!d) return false;
     const t = text.trim();
     if (!t && (!images || images.length === 0)) return false;
-    this.lastPrompt = t;
     ensurePermission();
     void ensurePushSubscription().then((s) => {
       this.pushState = s;

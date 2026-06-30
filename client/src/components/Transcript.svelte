@@ -822,13 +822,11 @@
           <span class="ntext">{item.text}</span>
           {#if item.level === "error"}
             <span class="nactions">
-              {#if store.lastPrompt}
-                <button
-                  class="naction"
-                  title="Re-send the last prompt"
-                  onclick={() => store.retryLast()}>Retry</button
-                >
-              {/if}
+              <button
+                class="naction"
+                title="Send a continue signal to resume the turn"
+                onclick={() => store.resumeTurn()}>Resume</button
+              >
               <button
                 class="naction"
                 title="Copy the error message"

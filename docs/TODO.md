@@ -9,14 +9,6 @@ See `docs/` siblings for context: `DESIGN.md` (architecture + roadmap), `DECISIO
 
 ## 🔴 Next (urgent / blocking)
 
-- [ ] **polytoken: retry button re-sends the last prompt instead of resuming.**
-      Surfaced 2026-06-29 (second dogfood): the "retry" button re-sends the last
-      user prompt verbatim. Mid-flow (e.g. after a tool was cancelled/denied) this
-      restarts the whole turn instead of nudging the agent to proceed. If retry is
-      meant to resume, it should send a fixed minimal signal — "continue" or an
-      empty string — rather than replaying the full prior message. If both
-      "resume after interruption" and "retry the whole turn" are wanted, give them
-      separate buttons with distinct semantics.
 - [ ] **polytoken: facet switching has no GUI affordance.**
       Surfaced 2026-06-29 (second dogfood): the TUI cycles facets with Shift+Tab,
       but that doesn't map cleanly to a GUI. Pilot needs a hotkey (TBD) and/or a

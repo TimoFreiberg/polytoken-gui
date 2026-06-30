@@ -114,10 +114,10 @@ test("typing a prompt then sending clears the composer", async ({ page }) => {
   await expect(box).toHaveValue("");
 });
 
-test("run-failed shows an error card whose Retry re-sends the last prompt", async ({
+test("run-failed shows an error card whose Resume sends continue", async ({
   page,
 }) => {
-  // Send a prompt so there's a "last prompt" to retry.
+  // Send a prompt so the scenario reflects a real accepted-then-failed turn.
   const box = page.getByPlaceholder("Message pilot…");
   await box.fill("run the failing thing");
   await box.press("Enter");
@@ -129,9 +129,17 @@ test("run-failed shows an error card whose Retry re-sends the last prompt", asyn
   await expect(notice).toBeVisible();
   await expect(notice).toContainText("529 overloaded");
 
-  // Retry re-sends the last prompt → a second user message with that text appears.
-  await notice.getByRole("button", { name: "Retry" }).click();
-  await expect(page.getByText("run the failing thing")).toHaveCount(2);
+  // The error notice shows a Resume button (not Retry) — the prior prompt was
+  // already accepted by the daemon (runFailed only fires after the turn started),
+  // so re-sending it verbatim would be wasteful. Resume sends "continue".
+  await expect(notice.getByRole("button", { name: "Resume" })).toBeVisible();
+  await expect(notice.getByRole("button", { name: "Retry" })).toHaveCount(0);
+
+  // Resume sends a "continue" signal → a new user message appears in the transcript.
+  await notice.getByRole("button", { name: "Resume" }).click();
+  await expect(page.getByText("continue")).toHaveCount(1);
+  // The original prompt is NOT re-sent — it's already in the daemon's history.
+  await expect(page.getByText("run the failing thing")).toHaveCount(1);
 });
 
 test("the delivery toggle is the source of truth: Enter respects it, Alt+Enter is a one-shot follow-up", async ({
