@@ -45,6 +45,11 @@ See `docs/` siblings for context: `DESIGN.md` (architecture + roadmap), `DECISIO
 - [ ] set up a test environment for automated testing using the actual polytoken backend, both interactive UI and tmux-driven tui polytoken (to compare features) - set up a tmp dir as a test project and run the agent sessions in there, configure the dir to either use umans-flash or deepseek-v4-flash as default agent and then ensure all agent features are testable by the dev agent in that dir
 - [ ] add UI support for `goal` (polytoken shows the text "(goal)" next to the facet in the sidebar, we can find a nicer place but we should also show it, if the protocol exposes it)
 
+## Full automated gui <-> tui parity testing via playwright + tmux
+
+I'd like to set up affordances/infra for an agent to drive a real pilot gui using a real polytoken backend in a test project (tmp dir with prefilled config that sets the model to a cheap fast one, try both umans-flash (free) and deepseek-v4-flash (very cheap, likely more reliable - umans-flash had some ttft spikes recently)).
+Then, enumerate all polytoken features that you get from the tui and run "manual" agent-driven test runs to explore those features and find divergences/jank/missing features
+
 ## 🟢 Polish / fast-follow
 
 
