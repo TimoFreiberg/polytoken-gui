@@ -17,7 +17,6 @@ import {
   commandOnPath,
   daemonHistoryContains,
   daemonHistoryText,
-  modelSpec,
   paths,
   POLYTOKEN_BIN,
   TMUX_BIN,
@@ -37,7 +36,7 @@ async function main(): Promise<number> {
       for (const c of checks)
         console.log(`  ${c.ok ? "✓" : "✗"} ${c.name} — ${c.detail}`);
       console.log(
-        `\n${ok ? "PASS" : "FAIL"} · root=${p.root} · model=${p.model} · config=${
+        `\n${ok ? "PASS" : "FAIL"} · root=${p.root} · model=${p.model.label} · config=${
           p.generateConfig
             ? `${p.xdgConfig} (generated)`
             : `${p.xdgConfig} (external)`
@@ -60,11 +59,11 @@ async function main(): Promise<number> {
         );
         return 1;
       }
-      const spec = modelSpec(p.model);
+      const spec = p.model;
       if (p.generateConfig && !process.env[spec.keyEnv]?.trim()) {
         console.error(
           `[parity up] WARNING: $${spec.keyEnv} unset — the GUI boots, but sessions can't ` +
-            `run until it's set (model ${p.model}). Run \`parity doctor\` to verify.`,
+            `run until it's set (model ${spec.label}). Run \`parity doctor\` to verify.`,
         );
       }
       await launch(p);

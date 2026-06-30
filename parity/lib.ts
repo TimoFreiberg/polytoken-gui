@@ -36,86 +36,101 @@ export function parityRoot(): string {
   return join(stateHome, "pilot-parity");
 }
 
-// --- the default model the generated test config pins ---
+// --- the model pair the generated test config pins ---
 //
-// The harness generates an ISOLATED polytoken config.yaml pinning ONE model + its provider,
-// so test runs use a cheap/fast model (not the prod default umans/umans-glm-5.2) and only
-// ONE provider key is needed (vs the real config's two). $PILOT_PARITY_MODEL accepts either
-// a short PRESET name or any fully-qualified `provider/model` ref (so any umans/deepseek
-// model works without a code change — umans is flat-rate/unlimited, just slower).
+// polytoken's config has TWO default slots with TIER constraints: `defaults.full` must be a
+// Full-tier model (the agent's main model) and `defaults.mini` a Mini-tier model (cheap
+// background tasks). A model like deepseek-v4-flash is Mini-only, so it CANNOT be `full` —
+// the daemon rejects the config ("references X, which is Mini, not Full"). So a preset is a
+// matched (full, mini) PAIR within ONE provider (so only one key is needed). Verified valid
+// via `polytoken config validate`.
+//
+// $PILOT_PARITY_MODEL selects a preset; $PILOT_PARITY_FULL + $PILOT_PARITY_MINI (both, same
+// provider) override with an explicit pair; $PILOT_PARITY_CONFIG_DIR overrides wholesale.
 
-/** A `PILOT_PARITY_MODEL` value: a preset name or a `provider/model` ref. */
-export type ParityModel = string;
+/** A preset name selecting a (full, mini) model pair. */
+export type ParityModel = "deepseek" | "umans";
 
 export interface ModelSpec {
+  /** Display label (the preset name, or "custom" for an explicit FULL/MINI override). */
+  label: string;
   /** Provider block name (== catalog name; catalog providers resolve model ids dynamically,
    *  so no `models:` section is needed — mirrors the real config). */
   provider: string;
-  /** Fully-qualified `provider/model` for the `defaults` block. */
-  ref: string;
+  /** `provider/model` for `defaults.full` — must be a Full-tier model (the agent's model). */
+  full: string;
+  /** `provider/model` for `defaults.mini` — a Mini-tier model (cheap background tasks). */
+  mini: string;
   /** The env var the provider's static_key references — the ONLY key this config needs. */
   keyEnv: string;
 }
 
-/** Known cheap/fast presets (short names). Any other `provider/model` ref also resolves. */
-const PRESETS: Record<string, ModelSpec> = {
-  // Default: cheap, and (per the owner) more reliable TTFT than umans-flash lately.
-  "deepseek-v4-flash": {
+/** Matched (full, mini) pairs, each within one provider so a single key suffices. */
+const PRESETS: Record<ParityModel, ModelSpec> = {
+  // Default: deepseek (owner's reliability pick). Full=v4-pro, Mini=v4-flash. Metered but
+  // cheap. Both tiers validated via `polytoken config validate`.
+  deepseek: {
+    label: "deepseek",
     provider: "deepseek",
-    ref: "deepseek/deepseek-v4-flash",
+    full: "deepseek/deepseek-v4-pro",
+    mini: "deepseek/deepseek-v4-flash",
     keyEnv: "DEEPSEEK_API_KEY",
   },
-  // Free / flat-rate, but had TTFT spikes recently.
-  "umans-flash": {
+  // umans: flat-rate / unlimited (cost-free, just slower TTFT). Mirrors the real config's
+  // default_model / default_small_model.
+  umans: {
+    label: "umans",
     provider: "umans",
-    ref: "umans/umans-flash",
+    full: "umans/umans-glm-5.2",
+    mini: "umans/umans-flash",
     keyEnv: "UMANS_API_KEY",
   },
 };
 
-/** The env var each known provider's static_key references. An unknown provider falls back
- *  to the `<PROVIDER>_API_KEY` convention (the daemon errors clearly if that's wrong). */
+/** The env var each known provider's static_key references (for an explicit FULL/MINI pair). */
 const PROVIDER_KEYS: Record<string, string> = {
   deepseek: "DEEPSEEK_API_KEY",
   umans: "UMANS_API_KEY",
 };
 
-/** The chosen model string (PILOT_PARITY_MODEL), defaulting to deepseek-v4-flash. */
-export function parityModel(): ParityModel {
-  return process.env.PILOT_PARITY_MODEL?.trim() || "deepseek-v4-flash";
-}
-
-/** Resolve a preset name OR a `provider/model` ref to a ModelSpec. */
-export function modelSpec(model: ParityModel = parityModel()): ModelSpec {
-  const preset = PRESETS[model];
-  if (preset) return preset;
-  const slash = model.indexOf("/");
-  if (slash <= 0) {
+/** Resolve the active model pair: an explicit `PILOT_PARITY_FULL`+`PILOT_PARITY_MINI` pair
+ *  (same provider) if both are set, else the `PILOT_PARITY_MODEL` preset (default deepseek). */
+export function modelSpec(): ModelSpec {
+  const full = process.env.PILOT_PARITY_FULL?.trim();
+  const mini = process.env.PILOT_PARITY_MINI?.trim();
+  if (full && mini) {
+    const provider = full.split("/")[0] ?? "";
+    return {
+      label: "custom",
+      provider,
+      full,
+      mini,
+      keyEnv: PROVIDER_KEYS[provider] ?? `${provider.toUpperCase()}_API_KEY`,
+    };
+  }
+  const name = process.env.PILOT_PARITY_MODEL?.trim() || "deepseek";
+  const preset = PRESETS[name as ParityModel];
+  if (!preset) {
     throw new Error(
-      `PILOT_PARITY_MODEL="${model}" is not a known preset (${Object.keys(PRESETS).join(", ")}) ` +
-        `and not a "provider/model" ref`,
+      `PILOT_PARITY_MODEL="${name}" unknown — presets: ${Object.keys(PRESETS).join(", ")} ` +
+        `(or set both PILOT_PARITY_FULL + PILOT_PARITY_MINI to an explicit same-provider pair)`,
     );
   }
-  const provider = model.slice(0, slash);
-  return {
-    provider,
-    ref: model,
-    keyEnv: PROVIDER_KEYS[provider] ?? `${provider.toUpperCase()}_API_KEY`,
-  };
+  return preset;
 }
 
-/** Render a minimal, self-contained polytoken config.yaml that pins `model` as the default
- *  and declares ONLY that model's provider — so the daemon loads with just one key set.
- *  Auth is an env-ref (the owner has the keys in their app env), matching the real config. */
-export function renderConfig(model: ParityModel = parityModel()): string {
-  const spec = modelSpec(model);
-  return `# Generated by the parity harness (parity/lib.ts) — pins a cheap/fast default model
-# so automated GUI⇄TUI test runs don't burn the full model. Swap via PILOT_PARITY_MODEL,
-# or point $PILOT_PARITY_CONFIG_DIR at your own config to override wholesale.
+/** Render a minimal, self-contained polytoken config.yaml pinning the (full, mini) pair and
+ *  declaring ONLY that provider — so the daemon loads with just one key set. Auth is an
+ *  env-ref (the owner has the keys in their env), matching the real config. */
+export function renderConfig(spec: ModelSpec = modelSpec()): string {
+  return `# Generated by the parity harness (parity/lib.ts) — pins a cheap (full, mini) pair so
+# automated GUI⇄TUI test runs don't burn the prod default. Swap via PILOT_PARITY_MODEL
+# (deepseek|umans) or PILOT_PARITY_FULL+PILOT_PARITY_MINI, or point $PILOT_PARITY_CONFIG_DIR
+# at your own config to override wholesale.
 version: 2
 defaults:
-  full: ${spec.ref}
-  mini: ${spec.ref}
+  full: ${spec.full}
+  mini: ${spec.mini}
 providers:
   ${spec.provider}:
     kind:
@@ -139,14 +154,14 @@ export interface Paths {
   /** → XDG_CACHE_HOME: provider-catalogs (regenerable). */
   xdgCache: string;
   /** → XDG_CONFIG_HOME. Defaults to an ISOLATED dir under the root holding a generated,
-   *  prefilled config.yaml that pins a cheap/fast default model (see parityModel/renderConfig).
+   *  prefilled config.yaml that pins a cheap (full, mini) model pair (see modelSpec/renderConfig).
    *  Override with $PILOT_PARITY_CONFIG_DIR to point at a hand-maintained config (e.g. the
    *  real ~/.config) — then nothing is generated. */
   xdgConfig: string;
   /** True when xdgConfig is the harness-owned dir we generate config.yaml into (no override). */
   generateConfig: boolean;
-  /** The cheap/fast default model the generated config pins. */
-  model: ParityModel;
+  /** The resolved (full, mini) model pair the generated config pins. */
+  model: ModelSpec;
   /** The polytoken sessions registry (under xdgData). */
   sessionsDir: string;
   /** The global config dir a spawned daemon resolves to (real or isolated). Used for
@@ -181,7 +196,7 @@ export function paths(root = parityRoot()): Paths {
     xdgCache: join(root, "xdg-cache"),
     xdgConfig,
     generateConfig: !override,
-    model: parityModel(),
+    model: modelSpec(),
     sessionsDir: join(xdgData, "polytoken", "sessions"),
     // The global config dir polytoken resolves to: $XDG_CONFIG_HOME/polytoken (mirrors
     // daemon-client.ts defaultGlobalConfigDir()). Used for the resume-daemon oracle's

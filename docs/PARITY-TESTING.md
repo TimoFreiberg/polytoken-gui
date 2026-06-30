@@ -41,19 +41,19 @@ prod polytoken sessions intact.
 
 ## The generated config (cheap model)
 
-So test runs never burn the full `umans-glm-5.2`, the harness writes
-`$ROOT/xdg-config/polytoken/config.yaml` pinning a **cheap/fast default model**, declaring
-**only that one provider** (so only one key is needed):
+So test runs never use the prod default, the harness writes
+`$ROOT/xdg-config/polytoken/config.yaml` pinning a **(full, mini) model pair** from one
+provider (so only one key is needed). polytoken enforces tiers: `defaults.full` must be a
+**Full**-tier model (the agent's main model), `defaults.mini` a **Mini**-tier one — so a
+cheap model like `deepseek-v4-flash` (Mini-only) can only be the *mini*. Presets
+(`PILOT_PARITY_MODEL`):
 
-- **`deepseek-v4-flash`** — default (cheap, reliable TTFT). Needs `$DEEPSEEK_API_KEY`.
-- **`umans-flash`** — `PILOT_PARITY_MODEL=umans-flash` (free, but spiky TTFT lately). Needs `$UMANS_API_KEY`.
-- **any `provider/model` ref** — `PILOT_PARITY_MODEL=umans/umans-glm-5.2` (or any other) works
-  without a code change; the provider's key is inferred (`umans`→`$UMANS_API_KEY`,
-  `deepseek`→`$DEEPSEEK_API_KEY`). umans is flat-rate/unlimited (just slower), so using a
-  fuller umans model is fine — latency, not cost, is the only tradeoff.
+- **`deepseek`** (default) — full `deepseek/deepseek-v4-pro`, mini `deepseek/deepseek-v4-flash`. `$DEEPSEEK_API_KEY`. Metered but cheap.
+- **`umans`** — full `umans/umans-glm-5.2`, mini `umans/umans-flash`. `$UMANS_API_KEY`. Flat-rate/unlimited (cost-free, just slower).
 
-Auth is an env-ref like the real config — the live desktop app has the keys; a bare shell
-may not. Override the whole config by pointing `$PILOT_PARITY_CONFIG_DIR` at your own dir.
+For a custom same-provider pair, set both `$PILOT_PARITY_FULL` + `$PILOT_PARITY_MINI`
+(`provider/model` refs). Auth is an env-ref like the real config — the live desktop app has
+the keys; a bare shell may not. Override the whole config via `$PILOT_PARITY_CONFIG_DIR`.
 `default_permission_matcher: bypass_plus` (unattended-friendly); switch the runtime
 permission monitor to exercise approval popups.
 

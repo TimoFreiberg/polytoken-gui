@@ -135,13 +135,15 @@ $PARITY_ROOT/
 - **All three XDG roots are isolated; config is a generated cheap-model config.**
   `XDG_DATA_HOME=$PARITY_ROOT/xdg-data`, `XDG_CACHE_HOME=$PARITY_ROOT/xdg-cache`, **and
   `XDG_CONFIG_HOME=$PARITY_ROOT/xdg-config`** are exported into pilot **and** every tmux
-  pane. Into the config dir the harness **generates a prefilled `config.yaml`** that pins a
-  **cheap/fast default model** — `deepseek-v4-flash` by default, `umans-flash` via
-  `PILOT_PARITY_MODEL` — declaring **only that one provider**, so test runs never burn the
-  full `umans-glm-5.2` and only **one** provider key is needed (vs the real config's two).
-  This matches the TODO's "tmp dir with prefilled config that sets the model to a cheap fast
-  one." Auth is an env-ref (`${DEEPSEEK_API_KEY}`/`${UMANS_API_KEY}`), like the real config;
-  point `$PILOT_PARITY_CONFIG_DIR` at a hand-maintained dir to override wholesale.
+  pane. Into the config dir the harness **generates a prefilled `config.yaml`** pinning a
+  **cheap (full, mini) model pair** from one provider (polytoken enforces tiers:
+  `defaults.full` must be Full-tier, `defaults.mini` Mini-tier — so `deepseek-v4-flash`, being
+  Mini-only, can only be the *mini*). `PILOT_PARITY_MODEL` selects a preset: **`deepseek`**
+  (default; full `deepseek-v4-pro` + mini `deepseek-v4-flash`, `$DEEPSEEK_API_KEY`) or
+  **`umans`** (full `umans-glm-5.2` + mini `umans-flash`, `$UMANS_API_KEY`, flat-rate). Only
+  **one** key is needed (vs the real config's two). This matches the TODO's "tmp dir with
+  prefilled config that sets the model to a cheap fast one." A custom same-provider pair:
+  `PILOT_PARITY_FULL`+`PILOT_PARITY_MINI`; wholesale override: `$PILOT_PARITY_CONFIG_DIR`.
   *(No separate flag plumbing is needed for config isolation: pilot derives its resume
   daemon's `--global-config-dir` from its own inherited `XDG_CONFIG_HOME` via
   `defaultGlobalConfigDir()` (`daemon-client.ts:94`), so exporting `XDG_CONFIG_HOME` into
@@ -305,9 +307,12 @@ config whose default model is usable here.
 2. **Config: generated cheap-model config (RESOLVED per TODO).** ~~Earlier draft shared the
    real `~/.config/polytoken`~~ — reversed after re-reading the TODO header ("prefilled config
    that sets the model to a cheap fast one"). The harness now **generates** an isolated
-   `config.yaml` pinning `deepseek-v4-flash` (default) / `umans-flash` (`PILOT_PARITY_MODEL`),
-   one provider, one key. `$PILOT_PARITY_CONFIG_DIR` overrides wholesale. This also halves the
-   key requirement (one provider, not two) and never burns the full model.
+   `config.yaml` pinning a cheap **(full, mini) pair** from one provider — preset `deepseek`
+   (default) or `umans` via `PILOT_PARITY_MODEL` — one key. (polytoken enforces Full/Mini tiers,
+   so `defaults.full` needs a Full model and a Mini-only model like `deepseek-v4-flash` can only
+   be the mini; both presets validated via `polytoken config validate` + a live `doctor` exec.)
+   `$PILOT_PARITY_CONFIG_DIR` overrides wholesale. Halves the key requirement (one provider,
+   not two) and never uses the prod default.
 3. **Parity granularity.** v1 `assert` is transcript-text-contains (model-noise-tolerant);
    raw oracles exposed for stricter ad-hoc structural checks. *Rec: text-contains v1.*
 4. **GUI driving.** Preview MCP / Playwright (render-faithful) for parity; WS only for

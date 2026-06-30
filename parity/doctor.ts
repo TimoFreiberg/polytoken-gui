@@ -12,7 +12,6 @@ import {
   commandOnPath as onPath,
   ensureEnv,
   isolationEnv,
-  modelSpec,
   paths,
   POLYTOKEN_BIN,
   TMUX_BIN,
@@ -65,16 +64,16 @@ export async function preflight(
     detail: projectDetail,
   });
 
-  // 4. the chosen model's provider key is set (the generated config references it)
-  const spec = modelSpec(p.model);
+  // 4. the chosen model pair's provider key is set (the generated config references it)
+  const spec = p.model;
   const keySet = !!process.env[spec.keyEnv]?.trim();
   checks.push({
     name: `provider key ($${spec.keyEnv}) set`,
     ok: keySet || !p.generateConfig, // an external config dir manages its own auth
     detail: p.generateConfig
       ? keySet
-        ? `${p.model} → $${spec.keyEnv} present`
-        : `${p.model} needs $${spec.keyEnv} — export it, or set PILOT_PARITY_MODEL/` +
+        ? `${spec.label} (full ${spec.full}) → $${spec.keyEnv} present`
+        : `${spec.label} needs $${spec.keyEnv} — export it, or set PILOT_PARITY_MODEL/` +
           `PILOT_PARITY_CONFIG_DIR`
       : `using external config ($PILOT_PARITY_CONFIG_DIR) — auth is its own concern`,
   });
@@ -131,9 +130,9 @@ async function execProbe(p: Paths): Promise<{ ok: boolean; detail: string }> {
   const stdout = (await new Response(proc.stdout).text()).trim();
   const stderr = (await new Response(proc.stderr).text()).trim();
   if (code !== 0) {
-    const spec = modelSpec(p.model);
+    const spec = p.model;
     const hint = /env var \$\w+ referenced/.test(stderr)
-      ? `\n      → provider key unset: export $${spec.keyEnv} (for ${p.model}), switch with ` +
+      ? `\n      → provider key unset: export $${spec.keyEnv} (for ${spec.label}), switch with ` +
         `PILOT_PARITY_MODEL, or point $PILOT_PARITY_CONFIG_DIR at a working config.`
       : "";
     return {
@@ -162,7 +161,7 @@ if (import.meta.main) {
     console.log(`  ${c.ok ? "✓" : "✗"} ${c.name} — ${c.detail}`);
   }
   console.log(
-    `\n${ok ? "PASS" : "FAIL"} · root=${p.root} · model=${p.model} · config=${
+    `\n${ok ? "PASS" : "FAIL"} · root=${p.root} · model=${p.model.label} (full ${p.model.full}) · config=${
       p.generateConfig
         ? `${p.xdgConfig} (generated)`
         : `${p.xdgConfig} (external)`

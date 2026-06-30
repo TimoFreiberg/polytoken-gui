@@ -34,15 +34,18 @@ per-session "close" in pilot — see flow GUI→TUI below).
 
 ## The test config (prefilled, cheap model) + preconditions
 
-The harness generates an **isolated `config.yaml`** under the root that pins a **cheap,
-fast default model** so test runs never burn the full model. Default:
-**`deepseek-v4-flash`** (cheap, reliable TTFT). `$PILOT_PARITY_MODEL` accepts a preset
-(`deepseek-v4-flash`, `umans-flash`) **or any `provider/model` ref** (e.g.
-`umans/umans-glm-5.2`) — so any umans model works too (umans is flat-rate/unlimited, just
-slower; cost isn't the concern, latency is). It declares only that one provider, so only
-**one** key is needed — `$DEEPSEEK_API_KEY` (deepseek) or `$UMANS_API_KEY` (umans),
-referenced as an env var like the real config. The live desktop app has these; a bare
-shell may not. Override the whole config by pointing `$PILOT_PARITY_CONFIG_DIR` at your own dir.
+The harness generates an **isolated `config.yaml`** under the root pinning a **cheap
+(full, mini) model pair** so test runs never use the prod default. polytoken requires
+`defaults.full` to be a **Full-tier** model (the agent's main model) and `defaults.mini` a
+**Mini-tier** one — so a single cheap model like `deepseek-v4-flash` can only be the *mini*.
+`$PILOT_PARITY_MODEL` selects a preset (each a matched same-provider pair, so only **one**
+key is needed):
+- **`deepseek`** (default) — full `deepseek/deepseek-v4-pro`, mini `deepseek/deepseek-v4-flash`. Needs `$DEEPSEEK_API_KEY`. Metered but cheap; owner's reliability pick.
+- **`umans`** — full `umans/umans-glm-5.2`, mini `umans/umans-flash`. Needs `$UMANS_API_KEY`. Flat-rate/unlimited (cost-free, just slower TTFT).
+
+For a custom same-provider pair set both `$PILOT_PARITY_FULL` + `$PILOT_PARITY_MINI`
+(`provider/model` refs). Override the whole config via `$PILOT_PARITY_CONFIG_DIR`. The keys
+are env-refs like the real config — the live desktop app has them; a bare shell may not.
 
 **Always run `bun parity/parity.ts doctor` first.** It generates the config, checks the
 chosen model's key is set, and spawns a real `polytoken exec` to confirm the model runs —
@@ -53,7 +56,7 @@ failing loud with the exact remediation (which key to export / how to switch mod
 ```bash
 bun parity/parity.ts doctor            # PREFLIGHT — run first (config + key + real exec)
 bun parity/parity.ts doctor --quick    # skip the real exec (plumbing + key check only)
-PILOT_PARITY_MODEL=umans-flash bun parity/parity.ts doctor   # swap the cheap model
+PILOT_PARITY_MODEL=umans bun parity/parity.ts doctor   # swap to the flat-rate provider
 bun parity/parity.ts project reset     # recreate the isolated test project (git repo)
 
 # GUI (pilot → polytoken). Either:
