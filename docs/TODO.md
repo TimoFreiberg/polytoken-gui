@@ -10,18 +10,6 @@ See `docs/` siblings for context: `DESIGN.md` (architecture + roadmap), `DECISIO
 ## 🔴 Next (urgent / blocking)
 
 - [ ] hotkey for hiding/showing the question widget? hotkey choice needs discussion
-- [ ] **Show + edit the agent's permission level in the UI.** The polytoken daemon exposes
-      the runtime permission monitor — `GET/POST /permission-monitor`
-      (`server/src/polytoken/wire-types.ts:389`, `:1996–2021`), with `PermissionMonitorMode`
-      `standard` | `bypass` | `autonomous` (the autonomous variant carries a classifier model,
-      rules, and `max_consecutive_denials`), and emits a `permission_monitor_switch` event
-      (`from_monitor`→`to_monitor`, `wire-types.ts:1078–1082`) when it changes. None of this
-      reaches pilot today. Needs: a `PilotDriver` seam to read/switch the monitor, the hub to
-      relay state + switch event, `foldEvent` to land it on `SessionState` (overwrite-guarded
-      like `facet`), and a UI control (beside the facet badge in `StatusHeader.svelte` or in
-      Settings) to display the current mode and switch it. Mirror the `setFacet` wire shape
-      (`protocol/src/wire.ts:346`) for the change request. 2026-06-30.
-      permission should be a UI element in the bottom bar, next to model and effort level!
 - [ ] **Drop the steer/follow-up toggle + investigate steer behavior (BUG).** The
       composer exposes a `steer` ↔ `follow-up` SegmentedControl
       (`client/src/components/Composer.svelte:30,37–48`) whose chosen `deliverAs` is passed

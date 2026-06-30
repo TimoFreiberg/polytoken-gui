@@ -5,6 +5,34 @@ and its resolution note. Latest completions first.
 
 ---
 
+- [x] **Show + edit the agent's permission level in the UI.** The polytoken daemon exposes
+      the runtime permission monitor — `GET/POST /permission-monitor`
+      (`server/src/polytoken/wire-types.ts:389`, `:1996–2021`), with `PermissionMonitorMode`
+      `standard` | `bypass` | `autonomous` (the autonomous variant carries a classifier model,
+      rules, and `max_consecutive_denials`), and emits a `permission_monitor_switch` event
+      (`from_monitor`→`to_monitor`, `wire-types.ts:1078–1082`) when it changes. None of this
+      reaches pilot today. Needs: a `PilotDriver` seam to read/switch the monitor, the hub to
+      relay state + switch event, `foldEvent` to land it on `SessionState` (overwrite-guarded
+      like `facet`), and a UI control (beside the facet badge in `StatusHeader.svelte` or in
+      Settings) to display the current mode and switch it. Mirror the `setFacet` wire shape
+      (`protocol/src/wire.ts:346`) for the change request. 2026-06-30.
+      permission should be a UI element in the bottom bar, next to model and effort level!
+      → Done 2026-06-30: landed the per-session permission monitor end-to-end, mirroring
+      `setFacet`. Added `PermissionMonitorMode` (protocol/session-driver.ts, mirrors the
+      daemon OpenAPI source) + `permissionMonitor?` on `SessionState`/`SessionSnapshot`
+      (overwrite-guarded fold like `facet`) + `setPermissionMonitor` wire. Required
+      `PilotDriver.setPermissionMonitor` seam + hub handler. Mock: `setPermissionMonitor`
+      emits a snapshot; `snapshot()` base seeds `"standard"`. Polytoken: `getPermissionMonitor()`
+      (GET) seeds `ws.monitorMode` once at warm-up (one extra request, not per-snapshot);
+      `setMonitorMode` effect + the `permission_monitor_switch` event (was a toast → now a
+      `sessionUpdated` snapshot carrying the new mode + cache update) keep it in sync;
+      `setPermissionMonitor` POSTs `/permission-monitor` (optimistic cache update). Threaded
+      `monitorMode` through all 4 `snapshotFromState` call sites. New `PermissionBadge.svelte`
+      chip (mirrors ModelPicker: badge + 3-item panel-up, accent-tinted when non-standard,
+      keyboard-navigable) in `.toolbar-right` left of FacetBadge. 3 new e2e + 2 new fold unit
+      tests; the toast unit test rewritten. Follow-up (not done): a global hotkey to open the
+      badge (hotkey choice needs discussion). Commit `a8bf7ee6`.
+
 - [x] **Facet badge: show the current facet value, and reclaim Shift+Tab as a focus move.**
       `StatusHeader.svelte:141` renders the badge as the literal strings `"Plan"` (when
       execute/unknown) or `"Plan mode"` (when plan) — it never shows "Execute", so the control
