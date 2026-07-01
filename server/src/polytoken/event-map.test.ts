@@ -673,19 +673,85 @@ describe("mapDaemonEvent", () => {
 
   // ===== System reminders =====
 
-  test("system_reminder -> customMessage (display:false)", () => {
+  test("system_reminder (non-plan-review reason) -> customMessage (display:false)", () => {
     const out = fold({
       type: "system_reminder",
       body: "Don't forget the tests",
       display_name: "Reminder",
       emitted_at: "2026-06-28T10:00:00Z",
-      reason: "turn_split",
+      reason: { type: "session_start" },
       slug: "test-reminder",
     });
     expect(out.events[0]).toMatchObject({
       type: "customMessage",
       customType: "test-reminder",
       text: "Don't forget the tests",
+      display: false,
+    });
+  });
+
+  test("system_reminder (plan_review_required) -> visible customMessage", () => {
+    const out = fold({
+      type: "system_reminder",
+      body: "The plan reviewer flagged a missing error-handling path.",
+      display_name: "Reminder",
+      emitted_at: "2026-06-28T10:00:00Z",
+      reason: { type: "plan_review_required" },
+      slug: "plan-review-1",
+    });
+    expect(out.events[0]).toMatchObject({
+      type: "customMessage",
+      customType: "Plan review required",
+      text: "The plan reviewer flagged a missing error-handling path.",
+      display: true,
+    });
+  });
+
+  test("system_reminder (plan_mode_reinforcement) -> visible customMessage", () => {
+    const out = fold({
+      type: "system_reminder",
+      body: "Stay in plan mode until the design is settled.",
+      display_name: "Reminder",
+      emitted_at: "2026-06-28T10:00:00Z",
+      reason: { type: "plan_mode_reinforcement" },
+      slug: "plan-reinforce-1",
+    });
+    expect(out.events[0]).toMatchObject({
+      type: "customMessage",
+      customType: "Plan mode reminder",
+      display: true,
+    });
+  });
+
+  test("system_reminder (plan_verification) -> visible customMessage", () => {
+    const out = fold({
+      type: "system_reminder",
+      body: "Verify the implementation matches the approved plan.",
+      display_name: "Reminder",
+      emitted_at: "2026-06-28T10:00:00Z",
+      reason: { type: "plan_verification" },
+      slug: "plan-verify-1",
+    });
+    expect(out.events[0]).toMatchObject({
+      type: "customMessage",
+      customType: "Plan verification",
+      display: true,
+    });
+  });
+
+  test("system_reminder (unknown reason type) -> customMessage (display:false, forward-compat)", () => {
+    const out = fold({
+      type: "system_reminder",
+      body: "Some future reason not yet in the enum.",
+      display_name: "Reminder",
+      emitted_at: "2026-06-28T10:00:00Z",
+      reason: { type: "some_future_reason" },
+      slug: "future-reminder",
+    });
+    expect(out.events[0]).toMatchObject({
+      type: "customMessage",
+      customType: "future-reminder",
+      text: "Some future reason not yet in the enum.",
       display: false,
     });
   });

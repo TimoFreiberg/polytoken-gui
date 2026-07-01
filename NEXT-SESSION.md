@@ -141,13 +141,14 @@ work."
   (`wire-types.ts PromptRequest`); if so, wire images through; if not, surface an "images not
   supported" hint instead of silently dropping.
 
-### B9. 🟡 Plan-review signals are swallowed
-- **What:** plan doc + `plan_handoff` approve are solid (tested). But the plan-reviewer
+### B9. 🟢 Plan-review signals are surfaced
+- **What:** plan doc + `plan_handoff` approve are solid (tested). The plan-reviewer
   subagent verdict and `plan_review_required`/`plan_mode_reinforcement`/`plan_verification`
-  nudges are folded into `display:false` inject items (`event-map.ts:996`) — the operator gets
-  **no signal** a review is required.
-- **Fix:** add a visible notice/card for plan-review slugs; consider a dedicated tool card for
-  `write_plan`/`edit_plan` (currently generic).
+  nudges now surface as visible inject pills (`event-map.ts:1022`) — the operator sees
+  a "Plan review required" (etc.) pill that expands to the reminder body. Previously
+  these were folded into `display:false` — the operator got no signal.
+- **Fix:** branched on `ev.reason.type` in the `system_reminder` case; plan-review
+  reasons get `display:true` with a human-readable label, all others stay `display:false`.
 
 ### B10. 🟢 Minor
 - **New-session spurious error:** `newSession` applies the model on create even when it equals
@@ -205,7 +206,7 @@ work."
 5. Environment row (🟡 "not exercised") → **dead-by-design** on this branch (B10).
 6. Todos pill "fed by parsing `todo_*` tool calls" → actually fed by the ambient **`tasklist`
    widget** (B7).
-7. Plan-mode ("machinery represented") **overstates** it — review signals are swallowed (B9).
+7. Plan-mode ("machinery represented") — review signals now surface as inject pills (B9 🟢).
 8. Permission card "7-choice" → usually pruned to ~3; all 7 only in the no-rule fallback.
 
 ---

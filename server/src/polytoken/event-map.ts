@@ -177,6 +177,15 @@ function events(events: SessionDriverEvent[], effects: DaemonEffect[] = []): Fol
   return { events, effects };
 }
 
+/** System-reminder reason types that surface as visible inject pills instead of
+ *  silent turn-boundary markers. Maps the daemon's `SystemReminderReason.type`
+ *  to a human-readable pill label. */
+const PLAN_REVIEW_LABELS: Record<string, string> = {
+  plan_review_required: "Plan review required",
+  plan_mode_reinforcement: "Plan mode reminder",
+  plan_verification: "Plan verification",
+};
+
 // ---------------------------------------------------------------------------
 // Pure helpers
 // ---------------------------------------------------------------------------
@@ -1020,17 +1029,20 @@ export function mapDaemonEvent(
     // ===== System reminders =====
 
     case "system_reminder": {
-      // A system-injected reminder — like the original driver's role:"custom" message with
-      // display:false: it splits the turn (a robustness net) without rendering
-      // user-facing content. Chunk 5 may surface some reminders visibly.
+      // A system-injected reminder — like the original driver's role:"custom" message.
+      // Most reasons are turn-boundary markers (display:false, robustness net only).
+      // Plan-review reasons surface visibly so the operator sees a review is needed.
+      const reasonType = ev.reason.type;
+      const label = PLAN_REVIEW_LABELS[reasonType];
+      const visible = label !== undefined;
       return events([
         {
           ...meta,
           type: "customMessage",
           id: `reminder-${ev.slug}-${meta.timestamp}`,
-          customType: ev.slug,
+          customType: visible ? label : ev.slug,
           text: ev.body,
-          display: false,
+          display: visible,
         },
       ]);
     }
