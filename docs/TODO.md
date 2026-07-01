@@ -27,7 +27,21 @@ See `docs/` siblings for context: `DESIGN.md` (architecture + roadmap), `DECISIO
       dedicated hotkeys so they stay out of the cycle.
 - [x] add UI support for `goal` (polytoken shows the text "(goal)" next to the facet in the sidebar, we can find a nicer place but we should also show it, if the protocol exposes it)
 - [x] use the updated `polytoken models` that loads dynamic models (from catalog providers) now - remove obsolete fallbacks that emulated this behavior
-- [ ] use `polytoken validate {skill,facet,subagent}` for gui config stuff
+- [~] use `polytoken validate {skill,facet,subagent}` for gui config stuff —
+      **investigated 2026-07-01.** `polytoken validate` is a CLI that parses +
+      validates a skill/facet/subagent definition file using the daemon's startup
+      logic, reporting errors + exiting non-zero on failure. Two intended uses:
+      (1) **During config loading** — shell out to `polytoken validate` for each
+      available skill/facet/subagent (read from `GET /state`'s `available_skills`/
+      `available_subagents` fields) during warm-up, and surface any validation
+      errors as a notice in the transcript (the daemon silently skips malformed
+      definitions; this gives the operator actionable feedback). (2) **Future
+      config UI** — if pilot grows a Skills/Facets/Subagents settings section,
+      `polytoken validate <name>` is the validation hook for it. Deferred: the
+      "run during config loading" path needs design (when to run — warm-up only
+      or on every switch? how to surface — notice vs toast? how to avoid N shell
+      calls per warm-up?). Revisit when a malformed definition is observed in
+      practice.
 
 ## Full automated gui <-> tui parity testing via playwright + tmux
 
