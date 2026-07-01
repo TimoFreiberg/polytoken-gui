@@ -11,6 +11,14 @@ test("the Stop pill + working indicator show while a normal turn streams", async
   await drive(page, "streamhold"); // goes running and stays running
   await expect(page.getByTestId("working-indicator")).toBeVisible();
   await expect(page.locator(".composer-wrap .stop")).toBeVisible();
+  // The toolbar hint signals that Enter queues a follow-up mid-turn (the driver
+  // routes mid-turn sends to /turn/input). Enter clears the box (the message is
+  // queued) — guards the composer-side behavior the removed toggle tests covered.
+  await expect(page.getByText("queues a follow-up")).toBeVisible();
+  const box = page.getByPlaceholder("Queue a message…");
+  await box.fill("a queued nudge");
+  await box.press("Enter");
+  await expect(box).toHaveValue("");
 });
 
 test("the Stop pill disables while offline (a remote turn can't be stopped)", async ({

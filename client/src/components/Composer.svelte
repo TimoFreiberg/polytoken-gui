@@ -22,32 +22,12 @@
   import FacetBadge from "./FacetBadge.svelte";
   import PermissionBadge from "./PermissionBadge.svelte";
   import ContextMeter from "./ContextMeter.svelte";
-  import SegmentedControl from "./ui/SegmentedControl.svelte";
   import IconButton from "./ui/IconButton.svelte";
   import Chevron from "./ui/Chevron.svelte";
   import TaskList from "./TaskList.svelte";
   import QueueTray from "./QueueTray.svelte";
   import { parseTasklist } from "../lib/tasklist.js";
 
-  let deliverAs = $state<"steer" | "followUp">("steer");
-  // True while the Opt/Alt key is physically held. Holding Opt previews the one-shot
-  // Alt+Enter delivery (a follow-up) by sliding the toggle there WITHOUT committing it —
-  // an honest "Enter right now would queue a follow-up" hint that snaps back on release.
-  let altHeld = $state(false);
-  // Delivery-mode options for the steer/follow-up switch. Typed so the SegmentedControl
-  // generic infers `"steer" | "followUp"` and `bind:value={deliverAs}` stays type-safe.
-  const deliverModes: { value: "steer" | "followUp"; label: string; title: string }[] = [
-    {
-      value: "steer",
-      label: "steer",
-      title: "Steer — deliver after the agent's current step, nudging the run in flight",
-    },
-    {
-      value: "followUp",
-      label: "follow-up",
-      title: "Follow-up — hold until the agent would stop, then deliver as a fresh turn",
-    },
-  ];
   let ta = $state<HTMLTextAreaElement>();
   let box = $state<HTMLDivElement>();
   let fileInput = $state<HTMLInputElement>();
@@ -91,12 +71,6 @@
   // "A turn is in flight" — the robust signal (see store.turnActive), so the stop pill +
   // steer/queue affordances stay correct even if the folded status glitches mid-turn.
   const streaming = $derived(store.turnActive);
-  // The segment the slider shows: the Opt-held preview when held (only meaningful while a
-  // turn streams — that's the only time Alt+Enter forces follow-up and the toggle is shown),
-  // otherwise the committed choice. `undefined` lets SegmentedControl fall back to `value`.
-  const deliverDisplay = $derived(
-    altHeld && streaming ? ("followUp" as const) : undefined,
-  );
   // Drafting a brand-new session: the composer doubles as the new-session form (config
   // chips above, first prompt below). Send creates the session + delivers the prompt.
   const drafting = $derived(store.draft != null);
@@ -308,10 +282,10 @@
     return () => clearTimeout(stashTimer);
   });
 
-  // `deliverOverride` is a per-send, one-shot mode (Alt+Enter forces follow-up) that does
-  // NOT mutate the `deliverAs` toggle. The toggle is the persistent source of truth, set
-  // only by clicking it; plain Enter / the Send button send with whatever it shows.
-  async function submit(deliverOverride?: "steer" | "followUp") {
+  // Submit the composer text. Enter always sends — the polytoken driver routes
+  // mid-turn sends to the queue (/turn/input) and idle sends to a new turn
+  // (/prompt), so there's no separate steer/follow-up mode to pick.
+  async function submit() {
     if (submitting) return;
     const text = store.composerDraft;
     // `/tree` is a client-native view, not a daemon command (the daemon's /tree is a TUI builtin that
@@ -331,11 +305,7 @@
     try {
       queued = drafting
         ? await store.submitDraft(text, imgs)
-        : await store.prompt(
-            text,
-            streaming ? (deliverOverride ?? deliverAs) : undefined,
-            imgs,
-          );
+        : await store.prompt(text, undefined, imgs);
     } finally {
       submitting = false;
     }
@@ -669,10 +639,10 @@
     // Desktop keeps Enter-to-send. The slash/file menus already consumed their Enter above.
     if (isTouch && !(e.metaKey || e.ctrlKey)) return;
     e.preventDefault();
-    // While the agent runs, plain Enter sends with the toggle's selected mode; Alt+Enter
-    // is a one-shot "queue a follow-up" override (it does NOT flip the toggle, so the
-    // toggle stays an honest persistent choice the user controls by clicking it).
-    submit(streaming && e.altKey ? "followUp" : undefined);
+    // Enter sends — the polytoken driver routes mid-turn sends to the queue
+    // (/turn/input) and idle sends to a new turn (/prompt), so there's no
+    // separate steer/follow-up mode to pick.
+    submit();
   }
 
   // Type-to-focus: a printable keystroke while nothing is focused lands in the
@@ -729,27 +699,11 @@
     function onPageHide() {
       store.stashDraft();
     }
-    // Track whether Opt/Alt is physically down so the delivery slider can preview the
-    // follow-up it'd queue. Sync off `e.altKey` (true through any combo, false on the
-    // Alt keyup itself); reset on blur because a key released while the window is
-    // unfocused (⌘-Tab away mid-hold) never fires keyup here, which would strand it.
-    function onAltSync(e: KeyboardEvent) {
-      altHeld = e.altKey;
-    }
-    function onWindowBlur() {
-      altHeld = false;
-    }
     window.addEventListener("keydown", onWindowKeydown);
-    window.addEventListener("keydown", onAltSync);
-    window.addEventListener("keyup", onAltSync);
-    window.addEventListener("blur", onWindowBlur);
     window.addEventListener("resize", onResize);
     window.addEventListener("pagehide", onPageHide);
     return () => {
       window.removeEventListener("keydown", onWindowKeydown);
-      window.removeEventListener("keydown", onAltSync);
-      window.removeEventListener("keyup", onAltSync);
-      window.removeEventListener("blur", onWindowBlur);
       window.removeEventListener("resize", onResize);
       window.removeEventListener("pagehide", onPageHide);
     };
@@ -809,7 +763,6 @@
 
     {#if streaming}
       <div class="streamrow">
-        <SegmentedControl size="sm" ariaLabel="Delivery mode" options={deliverModes} bind:value={deliverAs} displayValue={deliverDisplay} />
         <button
           class="stop"
           onclick={() => store.abort()}
@@ -938,12 +891,12 @@
         {/if}
       </div>
       {#if streaming}
-        <!-- The steer/follow-up hint lives INSIDE the always-present toolbar rather than
-             on its own row that toggles with the run — so finishing a turn doesn't add/
-             remove a line and jump the layout. Hidden on touch viewports, where there's
-             no Enter/Alt+Enter to hint at. -->
+        <!-- A hint that Enter while the agent works queues a follow-up (the driver
+             routes mid-turn sends to /turn/input). Lives inside the always-present
+             toolbar so finishing a turn doesn't add/remove a line and jump the
+             layout. Hidden on touch viewports, where there's no Enter to hint at. -->
         <div class="toolbar-hint">
-          <kbd>Enter</kbd> sends as selected · <kbd>Alt</kbd>+<kbd>Enter</kbd> queues a follow-up
+          <kbd>Enter</kbd> queues a follow-up
         </div>
       {/if}
       <div class="toolbar-right">
@@ -1288,7 +1241,7 @@
     border-radius: var(--radius-xs);
     padding: 0 4px;
   }
-  /* Touch has no Enter/Alt+Enter, and the row is tighter — drop the hint there. */
+  /* Touch has no Enter, and the row is tighter — drop the hint there. */
   @media (max-width: 859px) {
     .toolbar-hint {
       display: none;

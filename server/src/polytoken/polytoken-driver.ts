@@ -718,7 +718,7 @@ export async function createPolytokenDriver(
 
     async prompt(
       text: string,
-      _deliverAs?: "steer" | "followUp",
+      deliverAs?: "steer" | "followUp",
       sessionId?: string,
       _images?: readonly ImageContent[],
       promptId?: string,
@@ -737,9 +737,16 @@ export async function createPolytokenDriver(
         id: promptId ?? `pt-${Date.now()}`,
         text,
       });
-      // POST /prompt — the happy-path turn starter. Steering/follow-up (mid-turn)
-      // would route to /turn/input, but deliverAs is pilot-side UX only (spike §3).
-      await ws.client.prompt(text);
+      // Mid-turn (a turn is in flight): queue as input the agent reads between
+      // steps via POST /turn/input. Otherwise start a new turn via POST /prompt.
+      // deliverAs is pilot-side UX only — the daemon's queue API has no
+      // steer/follow-up discriminator (every drained queued message is "steer").
+      // The param stays on the signature to avoid a wire/seam change.
+      if (ws.lastState?.turn_in_flight) {
+        await ws.client.queueTurnInput(text);
+      } else {
+        await ws.client.prompt(text);
+      }
     },
 
     abort(sessionId?: SessionId): void {
