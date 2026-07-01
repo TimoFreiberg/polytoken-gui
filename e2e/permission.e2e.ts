@@ -64,3 +64,20 @@ test("permission panel is keyboard-navigable (Esc closes, arrows move, Enter pic
   await expect(panel).toBeHidden();
   await expect(badge).toContainText("Bypass");
 });
+
+test("⌘⇧M cycles permission mode", async ({ page }) => {
+  const badge = page.getByTestId("permission-badge");
+  await expect(badge).toContainText("Standard");
+
+  // ⌘⇧M cycles: Standard → Bypass.
+  await page.keyboard.press("Control+Shift+M");
+  await expect(badge).toContainText("Bypass");
+
+  // Again: Bypass → Autonomous.
+  await page.keyboard.press("Control+Shift+M");
+  await expect(badge).toContainText("Autonomous");
+
+  // Again: Autonomous → Standard (wraps).
+  await page.keyboard.press("Control+Shift+M");
+  await expect(badge).toContainText("Standard");
+});

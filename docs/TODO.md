@@ -512,11 +512,16 @@ New parity/UX items from the owner, grounded against current source.
       event-fold). Live todo events (`StateDelta`, not `DaemonEvent`) also deferred — todos
       update on snapshot refresh only. Session diffs (`SourceControlSnapshot`) deferred.
 
-- [ ] **Hotkey for permission mode selector.** The permission monitor mode UI
+- [x] **Hotkey for permission mode selector.** The permission monitor mode UI
       (`PermissionBadge.svelte`, mounted in the Composer toolbar) is clickable but
       has no keyboard shortcut — every UI action needs a hotkey (repo rule). Add a
       hotkey that cycles/cycles through permission modes, with a tooltip naming the
       shortcut.
+      **Done 2026-07-02:** added `⌘⇧M` (Ctrl+Shift+M) global hotkey in `App.svelte`
+      that cycles permission monitor mode: Standard → Bypass → Autonomous → Standard
+      (wraps). The `PermissionBadge` tooltip now names the shortcut
+      ("Permission mode: {mode} — click to switch (⌘⇧M)"). E2e test in
+      `permission.e2e.ts` verifies the cycle wraps correctly.
 
 - [ ] **Find out where the effort toggle has gone.** The effort/thinking-level toggle
       (previously exposed in the pi driver era) is no longer visible in the UI.

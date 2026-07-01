@@ -63,7 +63,7 @@
       class="badge"
       class:nonstandard={!isStandard}
       data-testid="permission-badge"
-      title={`Permission mode: ${mode} — click to switch`}
+      title={`Permission mode: ${mode} — click to switch (⌘⇧M)`}
       aria-haspopup="listbox"
       aria-expanded={open}
       onclick={toggle}

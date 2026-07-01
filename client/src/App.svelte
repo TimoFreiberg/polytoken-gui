@@ -28,6 +28,7 @@
   import { STEP as FONT_STEP } from "./lib/font-scale.js";
   import { edgeSwipe } from "./lib/edge-swipe.js";
   import { createEdgeSwipe } from "./lib/edge-swipe.svelte.js";
+  import type { PermissionMonitorMode } from "@pilot/protocol";
 
   // Dev affordance: ?dev shows buttons that drive the mock to any UI state, so the
   // screenshot harness can reach approval/ambient/error states deterministically.
@@ -196,6 +197,22 @@
         store.setFacet(next);
         return;
       }
+    }
+    // ⌘Shift+M — cycle permission monitor mode (Standard → Bypass → Autonomous → Standard).
+    // Must run before the modifier early-return below (has Shift).
+    if (
+      (e.metaKey || e.ctrlKey) &&
+      e.shiftKey &&
+      !e.altKey &&
+      (e.key === "M" || e.key === "m")
+    ) {
+      e.preventDefault();
+      const modes: PermissionMonitorMode[] = ["standard", "bypass", "autonomous"];
+      const current = store.session.permissionMonitor ?? "standard";
+      const idx = modes.indexOf(current);
+      const next = modes[(idx + 1) % modes.length]!;
+      store.setPermissionMonitor(next);
+      return;
     }
     const mod = e.metaKey || e.ctrlKey;
     if (!mod || e.altKey || e.shiftKey) return;
