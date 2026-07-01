@@ -157,9 +157,15 @@ work."
   note `post()` (`:524`) reads a nonexistent `error` field; must read parsed `data.code`
   (`ErrorBody` uses `code`/`message`, `:1365-1370`). 409 also means `turn_in_flight`/
   `edit_format_locked`, so key on the **code**, not the status.
-- **Environment settings are dead-by-design:** login-shell + background-model only drive
-  Settings display text; never forwarded to the out-of-process daemon (`login-env.ts:14`
-  `status` never mutated). Either wire them at daemon spawn/attach or label them clearly.
+- **Login-shell env is now wired live:** `captureLoginEnv` runs at polytoken-driver
+  construction, spawns `<shell> -l -c 'env'` (login only, not interactive), and passes
+  the result as `env` to every daemon spawn (login env wins over pilot's launchd PATH).
+  `getLoginEnvStatus` reports the captured state; the "restart to apply" logic in
+  `hub.ts` compares the resolved shell to the active one.
+- **Background model is still dead-by-design:** `backgroundModel` only drives Settings
+  display text + a warning (resolved against the cached model list); it is never
+  forwarded to the out-of-process daemon. Wire it at daemon spawn/attach or label it
+  clearly as display-only.
 - **Archive UX:** the dirty-worktree reap path *is* wired live (not mock-only) and shows a
   "Worktree kept" toast; polish gaps: no pre-click warning that Archive reaps a clean
   worktree (`Sidebar.svelte:850`), and a warm-rename failure is silently swallowed
@@ -203,7 +209,8 @@ work."
    `/turn/input` is never called (see B4). Stronger bug than described.
 4. Image attachments row (🟡 "not exercised") → live driver **drops images** (B8): a functional
    no-op, not merely untested.
-5. Environment row (🟡 "not exercised") → **dead-by-design** on this branch (B10).
+5. Environment row (was 🟡 "not exercised") → login-shell is now **wired live** at daemon
+   spawn (B10 updated); background-model remains display-only.
 6. Todos pill "fed by parsing `todo_*` tool calls" → actually fed by the ambient **`tasklist`
    widget** (B7).
 7. Plan-mode ("machinery represented") — review signals now surface as inject pills (B9 🟢).

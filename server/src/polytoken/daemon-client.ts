@@ -18,6 +18,13 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import type { components } from "./wire-types.js";
 
+// Test seam: allows tests to intercept Bun.spawn and assert call args.
+// Production code uses the real Bun.spawn; tests override via _setSpawnForTesting.
+let _spawn: typeof Bun.spawn = Bun.spawn;
+export function _setSpawnForTesting(fn: typeof Bun.spawn | null): void {
+  _spawn = fn ?? Bun.spawn;
+}
+
 // Pull out the wire types we need from the generated schema. These are the shapes
 // the daemon's HTTP surface accepts/returns and the SSE stream carries.
 type S = components["schemas"];
@@ -182,15 +189,19 @@ export async function waitForDaemonStartup(
  *  the daemon runs detached. */
 async function spawnNewDaemon(
   polytokenBin: string,
-  opts: { cwd?: string },
+  opts: { cwd?: string; loginEnv?: Record<string, string> },
 ): Promise<SpawnedDaemon> {
   const globalArgs: string[] = [];
   if (opts.cwd) globalArgs.push("--working-dir", opts.cwd);
-  const proc = Bun.spawn({
+  const spawnOpts: Parameters<typeof Bun.spawn>[0] = {
     cmd: [polytokenBin, ...globalArgs, "new", "--no-attach"],
     stdout: "pipe",
     stderr: "pipe",
-  });
+  };
+  if (opts.loginEnv && Object.keys(opts.loginEnv).length > 0) {
+    spawnOpts.env = { ...process.env, ...opts.loginEnv };
+  }
+  const proc = _spawn(spawnOpts);
   const exitCode = await proc.exited;
   const stdout = await new Response(proc.stdout).text();
   const stderr = await new Response(proc.stderr).text();
@@ -219,6 +230,7 @@ async function spawnResumeDaemon(
     cwd: string;
     sessionsDir: string;
     globalConfigDir: string;
+    loginEnv?: Record<string, string>;
   },
 ): Promise<SpawnedDaemon> {
   const args = [
@@ -233,11 +245,15 @@ async function spawnResumeDaemon(
     "--sessions-dir",
     opts.sessionsDir,
   ];
-  const proc = Bun.spawn({
+  const spawnOpts: Parameters<typeof Bun.spawn>[0] = {
     cmd: [polytokenBin, ...args],
     stdout: "pipe",
     stderr: "pipe",
-  });
+  };
+  if (opts.loginEnv && Object.keys(opts.loginEnv).length > 0) {
+    spawnOpts.env = { ...process.env, ...opts.loginEnv };
+  }
+  const proc = _spawn(spawnOpts);
   // Poll startup.json for readiness (the daemon writes it once it has bound its
   // port). 15s is generous — a cold config load + history replay can take a moment.
   try {
@@ -279,6 +295,10 @@ export async function spawnDaemon(
     sessionsDir?: string;
     /** Required for resume: the global config dir. Ignored for new sessions. */
     globalConfigDir?: string;
+    /** Login-shell env to pass to the daemon (so it gets the user's real PATH +
+     *  tool env instead of pilot's minimal launchd env). Merged over process.env:
+     *  login env wins. */
+    loginEnv?: Record<string, string>;
   } = {},
 ): Promise<SpawnedDaemon> {
   if (opts.sessionId) {
@@ -297,10 +317,11 @@ export async function spawnDaemon(
       cwd: opts.cwd,
       sessionsDir: opts.sessionsDir,
       globalConfigDir: opts.globalConfigDir,
+      loginEnv: opts.loginEnv,
     });
   }
   // New session path.
-  return spawnNewDaemon(polytokenBin, { cwd: opts.cwd });
+  return spawnNewDaemon(polytokenBin, { cwd: opts.cwd, loginEnv: opts.loginEnv });
 }
 
 /** The parsed 409 lease-held body — the holder label/pid + the expiry Date.

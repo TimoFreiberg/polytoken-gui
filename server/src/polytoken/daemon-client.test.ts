@@ -2,7 +2,12 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { DaemonClient, waitForDaemonStartup } from "./daemon-client.js";
+import {
+  DaemonClient,
+  _setSpawnForTesting,
+  spawnDaemon,
+  waitForDaemonStartup,
+} from "./daemon-client.js";
 
 /**
  * The stale-startup.json regression: a session dir left behind by a prior daemon
@@ -167,5 +172,74 @@ describe("DaemonClient.setModel 409 handling", () => {
     const msg = "A turn is currently running";
     mockFetch(409, { code: "turn_in_flight", message: msg });
     await expect(client.setModel("anthropic/claude-sonnet-4")).rejects.toThrow(msg);
+  });
+});
+
+/**
+ * `spawnDaemon` env passthrough: when `loginEnv` is provided, it should be merged
+ * over process.env (login env wins) and passed to the spawn call. When absent,
+ * no `env` key should be present (current behavior — inherits process.env).
+ *
+ * Uses the `_setSpawnForTesting` seam to intercept the spawn call without actually
+ * spawning a daemon.
+ */
+describe("spawnDaemon loginEnv passthrough", () => {
+  let capturedOpts: Parameters<typeof Bun.spawn>[0] | null = null;
+
+  /** A fake proc that looks like a successful `new --no-attach` run.
+   *  stdout/stderr must be ReadableStream — the real code wraps them with
+   *  `new Response(proc.stdout).text()`. */
+  function fakeProc() {
+    const out = "session_id=fake-session port=99999\n";
+    return {
+      exited: Promise.resolve(0),
+      stdout: new Response(out).body,
+      stderr: new Response("").body,
+      pid: 12345,
+      kill: () => {},
+    };
+  }
+
+  beforeEach(() => {
+    capturedOpts = null;
+    _setSpawnForTesting((opts) => {
+      capturedOpts = opts;
+      return fakeProc() as ReturnType<typeof Bun.spawn>;
+    });
+  });
+
+  afterEach(() => {
+    _setSpawnForTesting(null);
+  });
+
+  test("passes merged env (login env wins over process.env) when loginEnv is present", async () => {
+    await spawnDaemon("polytoken", {
+      cwd: "/tmp/test",
+      loginEnv: { PATH: "/custom/bin", CUSTOM_VAR: "hello" },
+    });
+
+    expect(capturedOpts).not.toBeNull();
+    const env = (capturedOpts as { env?: Record<string, string> }).env;
+    expect(env).toBeDefined();
+    expect(env!.PATH).toBe("/custom/bin");
+    expect(env!.CUSTOM_VAR).toBe("hello");
+    // process.env values are preserved for keys not in loginEnv.
+    expect(env!.HOME).toBe(process.env.HOME);
+  });
+
+  test("omits env when loginEnv is absent", async () => {
+    await spawnDaemon("polytoken", { cwd: "/tmp/test" });
+
+    expect(capturedOpts).not.toBeNull();
+    const env = (capturedOpts as { env?: Record<string, string> }).env;
+    expect(env).toBeUndefined();
+  });
+
+  test("omits env when loginEnv is an empty object", async () => {
+    await spawnDaemon("polytoken", { cwd: "/tmp/test", loginEnv: {} });
+
+    expect(capturedOpts).not.toBeNull();
+    const env = (capturedOpts as { env?: Record<string, string> }).env;
+    expect(env).toBeUndefined();
   });
 });

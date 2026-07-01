@@ -90,6 +90,8 @@ import {
   listColdSessions,
   readSessionJson as readSessionJsonSync,
 } from "./sessions-registry.js";
+import { captureLoginEnv, setLoginEnvStatus } from "../shared/login-env.js";
+import { readPilotSettings } from "../settings-store.js";
 
 interface PolytokenDriverOptions {
   /** Path to the polytoken binary. Defaults to "polytoken" ($PATH lookup). */
@@ -161,6 +163,16 @@ export async function createPolytokenDriver(
   const sessionsDir = opts.sessionsDir ?? defaultSessionsDir();
   const globalConfigDir = opts.globalConfigDir ?? defaultGlobalConfigDir();
   const idleReapMs = opts.idleReapMs ?? 10 * 60 * 1000;
+
+  // Capture the login-shell env ONCE at construction so every daemon spawn gets the
+  // user's real PATH + tool env (pilot launched from the .app bundle inherits
+  // launchd's minimal PATH — no brew/nvm). Login shell only (NOT interactive) to
+  // avoid sourcing .zshrc where p10k/direnv/pyenv/nvm can hang. Never throws — a
+  // failure degrades to {} (empty merge = current behavior).
+  const { env: loginEnv, status: loginStatus } = await captureLoginEnv(
+    readPilotSettings().loginShell,
+  );
+  setLoginEnvStatus(loginStatus);
 
   // Pilot-side stores, mirrored from the original driver: the archive flag + the worktree
   // index are pilot's own state (polytoken has no concept of either), keyed by
@@ -414,6 +426,7 @@ export async function createPolytokenDriver(
       sessionId,
       sessionsDir,
       globalConfigDir,
+      loginEnv,
     });
     const client = new DaemonClient(spawned.sessionId, spawned.port, process.pid);
 

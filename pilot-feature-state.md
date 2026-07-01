@@ -3,8 +3,8 @@
 > ⚠️ **A follow-up source-verification pass corrected a few rows here.** See
 > [`NEXT-SESSION.md`](NEXT-SESSION.md) §D for the corrections (notably: `setClientPresence`
 > is unimplemented *everywhere* not mock-only; steer/follow-up both hit `/prompt` and never
-> queue; images are silently *dropped* live; Environment settings are dead-by-design; the
-> todos pill reads the ambient `tasklist` widget) and §B for exact fix sites + repro recipes.
+> queue; images are silently *dropped* live; login-shell env is now wired live at daemon
+> spawn; the todos pill reads the ambient `tasklist` widget) and §B for exact fix sites + repro recipes.
 
 For each polytoken feature (see [`polytoken-features.md`](polytoken-features.md)): does **pilot
 support it properly** — reliably, no jank, good UX?
@@ -157,7 +157,7 @@ non-functional against the live daemon:**
 | **Providers / API keys** | 🔴 | "No providers reported by the server" — `listProviders`/`setProviderApiKey` are mock-only. |
 | **OAuth sign-in/out** | 🔴 | `oauthLogin`/`oauthLogout` mock-only; the OAuth dialog + e2e exist but aren't wired to the polytoken daemon. (Owner already flagged "partial pending real-world use.") |
 | **Extensions enable/disable** | 🔴 | "No extensions loaded for this session" — `listExtensions`/`setExtensionEnabled` mock-only. (Parity config also loads none, but the methods are absent regardless.) |
-| Environment (login shell, background model) | 🟡 | UI present (`setLoginShell`, `setBackgroundModel` wired); not exercised live. |
+| Environment (login shell, background model) | 🟢/🟡 | Login shell wired live: captured at driver construction and passed as `env` to every daemon spawn (so the daemon gets the user's real PATH). Background model still deferred (TODO in NEXT-SESSION.md B10). |
 | Access token | ✅ | Present. |
 | **MCP server management** | 🔴 | `/mcp` slash passthrough only; no Settings UI for enable/disable/reconnect/OAuth despite full daemon support. |
 | Daemon reload / reset-shell | 🟡 | `/daemon-reload`, `/reset-shell` via slash passthrough only. |
