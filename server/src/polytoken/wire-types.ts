@@ -116,6 +116,70 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/goal": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["goal_status"];
+        put?: never;
+        post: operations["set_goal"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/goal/clear": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["clear_goal"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/goal/pause": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["pause_goal"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/goal/resume": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["resume_goal"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/health": {
         parameters: {
             query?: never;
@@ -726,6 +790,20 @@ export interface components {
             selected_option_ids?: string[];
         };
         /**
+         * @description One entry in the daemon's available-model list, carried in
+         *     `SessionStateSnapshot.available_models` so the TUI can populate its
+         *     `@model:` typeahead from the daemon's resolved config (including dynamic
+         *     provider models) rather than from a client-side config snapshot.
+         */
+        AvailableModelEntry: {
+            /** @description Provider-qualified display label (e.g. `umans/umans-glm-5.2`). */
+            label: string;
+            /** @description Registry key matching `ModelConfig.name`. */
+            name: string;
+            /** @description Reasoning capability metadata for this model. */
+            reasoning: components["schemas"]["WireModelReasoningCapability"];
+        };
+        /**
          * @description An incremental update to a content block, emitted by
          *     `ContentBlockDelta`.
          *
@@ -894,6 +972,62 @@ export interface components {
              *     usage is unavailable, `SessionStateSnapshot.context_usage` is omitted.
              */
             used_tokens: number;
+        };
+        /**
+         * @description The snapshot object for the active goal of a session.
+         *
+         *     Every field is stable public surface. Optional timestamp and terminal-reason
+         *     fields are omitted from the wire when absent. A cleared goal is the absence
+         *     of a current goal (a `None` value), not a distinct lifecycle state.
+         */
+        CurrentGoal: {
+            /**
+             * Format: date-time
+             * @description When the goal most recently became active.
+             */
+            activated_at: string;
+            /**
+             * Format: date-time
+             * @description When the goal most recently became blocked, if it has.
+             */
+            blocked_at?: string | null;
+            /**
+             * Format: date-time
+             * @description When the goal reached a completed state, if it has.
+             */
+            completed_at?: string | null;
+            /**
+             * Format: int32
+             * @description Number of times the session has continued this goal across resumptions.
+             */
+            continuation_count: number;
+            /**
+             * Format: date-time
+             * @description When the goal was first created.
+             */
+            created_at: string;
+            /** @description The goal markdown file reference. */
+            file: components["schemas"]["GoalFileReference"];
+            /** @description Stable identifier for the goal. */
+            id: components["schemas"]["GoalId"];
+            /**
+             * Format: date-time
+             * @description When the goal summary was last reiterated into the active context, if it
+             *     has been.
+             */
+            last_reiterated_at?: string | null;
+            /** @description Lifecycle state of the goal. */
+            lifecycle: components["schemas"]["GoalLifecycle"];
+            /** @description How the goal came to be the active goal. */
+            source: components["schemas"]["GoalSource"];
+            /** @description Short, human-readable summary of the goal. */
+            summary: string;
+            terminal_reason?: null | components["schemas"]["TerminalReason"];
+            /**
+             * Format: date-time
+             * @description When the goal was last updated.
+             */
+            updated_at: string;
         };
         DaemonEvent: {
             subagent_handle?: string | null;
@@ -1083,6 +1217,7 @@ export interface components {
         } | {
             clarification_options?: components["schemas"]["ClarificationOption"][] | null;
             extension_context?: null | components["schemas"]["ExtensionContext"];
+            goal_proposal?: null | components["schemas"]["GoalProposalContext"];
             interrogative_id: components["schemas"]["InterrogativeId"];
             interrogative_type: components["schemas"]["InterrogativeType"];
             permission_candidate_rule?: null | components["schemas"]["PermissionCandidateRuleContext"];
@@ -1201,6 +1336,13 @@ export interface components {
             /** @enum {string} */
             type: "tool_exposure_changed";
         } | {
+            goal?: null | components["schemas"]["CurrentGoal"];
+            proposed_summary?: string | null;
+            subagent_handle?: string | null;
+            transition: components["schemas"]["GoalTransition"];
+            /** @enum {string} */
+            type: "goal_driver_update";
+        } | {
             call_id: string;
             outcome: components["schemas"]["ClassifierOutcome"];
             prompt_id: components["schemas"]["PromptId"];
@@ -1299,6 +1441,14 @@ export interface components {
             /** @enum {string} */
             type: "image_reference_resolved";
         } | {
+            action: components["schemas"]["UsageAction"];
+            prompt_id?: null | components["schemas"]["PromptId"];
+            provider: string;
+            snapshot: components["schemas"]["ProviderUsageSnapshot"];
+            subagent_handle?: string | null;
+            /** @enum {string} */
+            type: "usage_throttle";
+        } | {
             /**
              * Format: int32
              * @description 1-indexed retry attempt number for the active retry policy. A
@@ -1310,7 +1460,12 @@ export interface components {
             delay_ms: number;
             /** @description Bounded summary: error type + truncated message. */
             error_summary: string;
-            /** @description Serde tag discriminator of the ProviderError variant. */
+            /**
+             * @description Discriminator identifying the kind of error being retried. For
+             *     transient provider errors this is the serde tag of the
+             *     `ProviderError` variant (e.g. `rate_limited`, `transport`). For
+             *     provider stream idle stalls the value is `stream_idle_timeout`.
+             */
             error_type: string;
             /**
              * Format: int32
@@ -1321,6 +1476,13 @@ export interface components {
             subagent_handle?: string | null;
             /** @enum {string} */
             type: "retry_wait";
+        } | {
+            path: string;
+            prompt_id?: null | components["schemas"]["PromptId"];
+            subagent_handle?: string | null;
+            tool_name: string;
+            /** @enum {string} */
+            type: "agent_block_violation";
         };
         DiffPreviewContent: {
             lines: components["schemas"]["DiffPreviewLine"][];
@@ -1437,6 +1599,78 @@ export interface components {
         /** @enum {string} */
         FlagMode: "included" | "referenced";
         /**
+         * @description The markdown file a goal is persisted to, and its operator-facing display
+         *     path.
+         */
+        GoalFileReference: {
+            /** @description The operator-facing display path for the goal file. */
+            display_path: string;
+            /** @description The path the goal markdown file is persisted to. */
+            path: string;
+        };
+        /**
+         * @description Stable identifier for a saved-session goal.
+         *
+         *     Opaque on the wire: a plain JSON string. Two goals are equal when their
+         *     identifiers are equal.
+         */
+        GoalId: string;
+        /** @description The lifecycle state of an active goal. Known values (open set; other strings are forward-compatible): active, paused, blocked, complete. */
+        GoalLifecycle: string;
+        /** @description Body of the 200 response from `POST /goal/pause` and `POST /goal/resume`. */
+        GoalLifecycleResponse: {
+            /** @description The goal after the lifecycle transition. */
+            goal: components["schemas"]["CurrentGoal"];
+        };
+        /**
+         * @description Labels for the binary approval affordance on a goal proposal. Approval is
+         *     binary (`accepted` / `rejected`), so there is an accept label and a reject
+         *     label only.
+         */
+        GoalProposalActionLabels: {
+            /** @description Label for accepting the proposed goal. */
+            accept: string;
+            /** @description Label for rejecting the proposed goal. */
+            reject: string;
+        };
+        /**
+         * @description Structured payload attached to a goal-proposal interrogative. The
+         *     presentation strings are carried on the event so non-TUI clients can render
+         *     the same review surface without reconstructing daemon-local state.
+         */
+        GoalProposalContext: {
+            /** @description Labels for the binary approve/reject affordance. */
+            action_labels: components["schemas"]["GoalProposalActionLabels"];
+            /** @description Optional proposed path for the goal markdown file. */
+            proposed_file_path?: string | null;
+            /** @description The proposed short summary of the goal. */
+            proposed_summary: string;
+            /** @description Operator-facing title for the proposal. */
+            title: string;
+        };
+        /** @description Body of `POST /goal` requests that create or replace the current goal. */
+        GoalSetRequest: {
+            /** @description The short, human-readable summary of the goal. */
+            summary: string;
+        };
+        /** @description Body of the 200 response from `POST /goal`. */
+        GoalSetResponse: {
+            /** @description The newly created or replacement goal, now the active goal. */
+            goal: components["schemas"]["CurrentGoal"];
+        };
+        /** @description How a goal came to be the active goal. Known values (open set; other strings are forward-compatible): user, model, resumed. */
+        GoalSource: string;
+        /**
+         * @description Body of the 200 response from `GET /goal`.
+         *
+         *     The current goal is absent (`None`) when no goal is set for the session.
+         */
+        GoalStatusResponse: {
+            current_goal?: null | components["schemas"]["CurrentGoal"];
+        };
+        /** @description The kind of change to the active goal. Known values (open set; other strings are forward-compatible): proposed, accepted, rejected, created, replaced, paused, resumed, cleared, completed, blocked, reiterated. */
+        GoalTransition: string;
+        /**
          * @description Body of `GET /health`.
          *
          *     Explicitly enumerates the wire fields (rather than `#[serde(flatten)]`-ing
@@ -1537,12 +1771,16 @@ export interface components {
             /** @enum {string} */
             kind: "plan_handoff_answer";
         } | {
+            accepted: boolean;
+            /** @enum {string} */
+            kind: "goal_proposal_answer";
+        } | {
             answers: components["schemas"]["AskUserQuestionReply"][];
             /** @enum {string} */
             kind: "ask_user_question_answers";
         };
         /** @enum {string} */
-        InterrogativeType: "permission" | "confirmation" | "clarification" | "capability" | "plan_handoff";
+        InterrogativeType: "permission" | "confirmation" | "clarification" | "capability" | "plan_handoff" | "goal_proposal";
         /** @enum {string} */
         JobKind: "shell" | "subagent";
         /** @enum {string} */
@@ -1615,6 +1853,12 @@ export interface components {
             type: "session_lifecycle";
         }) | (components["schemas"]["HistoryItemMeta"] & {
             content: string;
+            /**
+             * @description Whether this user message was typed by a human or automatically
+             *     injected by the Goal Driver continuation system. Absent in legacy
+             *     history means a normal human-authored message.
+             */
+            kind?: components["schemas"]["MessageUserKind"];
             prompt_id: components["schemas"]["PromptId"];
         } & {
             /** @enum {string} */
@@ -1763,6 +2007,7 @@ export interface components {
             type: "session_lifecycle";
         } | {
             content: string;
+            kind?: components["schemas"]["MessageUserKind"];
             prompt_id: components["schemas"]["PromptId"];
             /** @enum {string} */
             type: "user";
@@ -1867,6 +2112,12 @@ export interface components {
             /** @enum {string} */
             type: "subagent_complete";
         };
+        /**
+         * @description Identifies whether a user-shaped message came from the human operator or
+         *     from daemon-owned Goal Driver reiteration.
+         * @enum {string}
+         */
+        MessageUserKind: "human" | "reiterated";
         /**
          * @description Possible 409 bodies from `POST /model`.
          *
@@ -2005,6 +2256,9 @@ export interface components {
             /** @enum {string} */
             type: "bypass";
         } | {
+            /** @enum {string} */
+            type: "bypass_plus";
+        } | {
             classifier_model?: null | components["schemas"]["ModelLocator"];
             classifier_rules?: string | null;
             /** Format: int32 */
@@ -2016,7 +2270,7 @@ export interface components {
          * @description Mode selector accepted by `POST /permission-monitor` requests.
          * @enum {string}
          */
-        PermissionMonitorMode: "standard" | "bypass" | "autonomous";
+        PermissionMonitorMode: "standard" | "bypass" | "bypass_plus" | "autonomous";
         /** @description Body of `POST /permission-monitor` requests. */
         PermissionMonitorRequest: {
             mode: components["schemas"]["PermissionMonitorMode"];
@@ -2174,6 +2428,33 @@ export interface components {
             http_status?: number | null;
             message_char_length?: number | null;
             phase: components["schemas"]["ProviderErrorPhase"];
+        };
+        /** @description Raw usage numbers from the provider for observability. */
+        ProviderUsageSnapshot: {
+            /** @description Optional provider-supplied low-priority or degraded cooldown timestamp, serialized as RFC3339 text if present. */
+            boxed_until?: string | null;
+            /** Format: int32 */
+            concurrency_hard_cap?: number | null;
+            /** Format: int32 */
+            concurrency_limit?: number | null;
+            /** Format: int32 */
+            concurrent_sessions?: number | null;
+            degraded?: boolean;
+            /** Format: int32 */
+            remaining_requests?: number | null;
+            /** Format: int32 */
+            request_hard_cap?: number | null;
+            /** Format: int32 */
+            request_limit?: number | null;
+            /**
+             * Format: int32
+             * @description Request-window utilization as basis points, from 0 to 10000, when the provider reports a finite request window.
+             */
+            request_utilization_bps?: number | null;
+            /** Format: int32 */
+            request_window_seconds?: number | null;
+            /** Format: int32 */
+            requests_in_window?: number | null;
         };
         /**
          * @description Provider-facing reasoning-effort label selected for one runtime turn.
@@ -2343,9 +2624,18 @@ export interface components {
              *     exposes `handoff_plan`. Defaults to `false` for older clients.
              */
             adventurous_handoff_active?: boolean;
+            /**
+             * @description All models available in this session, including dynamic provider models
+             *     discovered at startup or on `/reload`. The TUI uses this to populate
+             *     the `@model:` typeahead so it always reflects the daemon's resolved
+             *     config rather than a stale client-side snapshot. Empty for older daemons
+             *     that do not emit the field.
+             */
+            available_models?: components["schemas"]["AvailableModelEntry"][];
             available_skills?: string[];
             available_subagents?: string[];
             context_usage?: null | components["schemas"]["ContextUsageSnapshot"];
+            current_goal?: null | components["schemas"]["CurrentGoal"];
             cwd?: string | null;
             cwd_stack_depth?: number | null;
             env: {
@@ -2361,6 +2651,12 @@ export interface components {
             project_cwd?: string | null;
             session_title?: string;
             source_control?: null | components["schemas"]["SourceControlSnapshot"];
+            /**
+             * @description Symlinked config/context files skipped during the most recent config
+             *     discovery. Empty when no symlinks were encountered or when
+             *     `daemon.follow_symlinks_for_configs` is enabled.
+             */
+            symlink_warnings?: components["schemas"]["SymlinkWarningInfo"][];
             todos: components["schemas"]["TodoSnapshot"][];
             /**
              * @description Whether a turn is currently running in this session. Use this as the
@@ -2513,6 +2809,11 @@ export interface components {
             /** @enum {string} */
             type: "scratch_clear";
         } | {
+            goal?: null | components["schemas"]["CurrentGoal"];
+            transition: components["schemas"]["GoalTransition"];
+            /** @enum {string} */
+            type: "goal_metadata_changed";
+        } | {
             path: string;
             /** @enum {string} */
             type: "pushd";
@@ -2526,6 +2827,19 @@ export interface components {
         };
         /** @enum {string} */
         SubagentResultKind: "success" | "failure" | "cancelled";
+        /**
+         * @description Information about a symlinked config/context file that was skipped during
+         *     daemon config discovery. Surfaced to the TUI as a local-only warning card.
+         */
+        SymlinkWarningInfo: {
+            /**
+             * @description Human-readable description of what was skipped (e.g. "AGENTS.md context
+             *     file", "skill directory").
+             */
+            description: string;
+            /** @description The display path of the symlinked file or directory. */
+            path: string;
+        };
         /**
          * @description Daemon-owned reminder context that is provider-visible but hidden from the
          *     TUI unless the operator opts in.
@@ -2587,6 +2901,9 @@ export interface components {
             type: "todo_status_nudge";
         } | {
             /** @enum {string} */
+            type: "goal_reminder";
+        } | {
+            /** @enum {string} */
             type: "plan_mode_reinforcement";
         } | {
             /** @enum {string} */
@@ -2598,6 +2915,9 @@ export interface components {
             /** @enum {string} */
             type: "cwd_changed";
         } | {
+            /** @enum {string} */
+            type: "working_directory_deleted";
+        } | {
             server_name: string;
             /** @enum {string} */
             type: "mcp_server_disabled";
@@ -2605,7 +2925,23 @@ export interface components {
             server_name: string;
             /** @enum {string} */
             type: "mcp_server_enabled";
+        } | {
+            tool_name: string;
+            /** @enum {string} */
+            type: "permission_rule_message";
+        } | {
+            /** @enum {string} */
+            type: "empty_response_nudge";
         };
+        /** @description The reason a goal reached a terminal state, with optional detail. */
+        TerminalReason: {
+            /** @description Optional human-readable detail about the terminal reason. */
+            detail?: string | null;
+            /** @description The category of terminal reason. */
+            kind: components["schemas"]["TerminalReasonKind"];
+        };
+        /** @description The category of reason a goal reached a terminal state. Known values (open set; other strings are forward-compatible): completed, blocked, abandoned. */
+        TerminalReasonKind: string;
         /** @description Body of `POST /terminate`. */
         TerminateResponse: {
             status: components["schemas"]["TerminateStatus"];
@@ -2878,6 +3214,21 @@ export interface components {
             /** @enum {string} */
             type: "usage";
         };
+        /** @description A provider's recommendation about whether to throttle the next request. */
+        UsageAction: {
+            /** @enum {string} */
+            kind: "proceed";
+        } | {
+            /** Format: int64 */
+            delay_ms: number;
+            /** @enum {string} */
+            kind: "delay";
+        } | {
+            /** @enum {string} */
+            kind: "backoff";
+            /** Format: int64 */
+            retry_after_ms: number;
+        };
         /**
          * @description Body of `GET /version`.
          *
@@ -2885,6 +3236,39 @@ export interface components {
          */
         VersionResponse: {
             version: string;
+        };
+        /**
+         * @description Reasoning capability metadata for a model, expressed as a wire type.
+         *
+         *     This mirrors `polytoken_config::ModelReasoningCapability` but lives in the
+         *     core vocabulary crate so the daemon and TUI can exchange it without a
+         *     core-to-config dependency. Conversion impls live in `polytoken-config`.
+         */
+        WireModelReasoningCapability: {
+            /** @enum {string} */
+            type: "no_reasoning";
+        } | {
+            /** @description Whether the model can turn reasoning off. */
+            can_disable: boolean;
+            /**
+             * @description Default reasoning effort when you do not name one. Must be one of
+             *     `levels` when present.
+             */
+            default_level?: string | null;
+            /**
+             * @description Effort family the levels belong to (for example an OpenAI
+             *     reasoning effort set).
+             */
+            effort_set: string;
+            /** @description Discrete effort levels the model accepts, in provider order. */
+            levels: string[];
+            /** @enum {string} */
+            type: "effort";
+        } | {
+            /** @description Whether the model can turn thinking off. */
+            can_disable: boolean;
+            /** @enum {string} */
+            type: "thinking";
         };
     };
     responses: never;
@@ -3140,8 +3524,10 @@ export interface operations {
     files: {
         parameters: {
             query?: {
-                /** @description When true, ignore rules (.gitignore, .claudeignore, .polytokenignore) are disabled; dotfiles and the project's private directory remain excluded. Defaults to false. */
+                /** @description When true, ignore rules (.gitignore, .claudeignore, .polytokenignore) are disabled and dotfiles and the project's Polytoken directory become visible; VCS metadata directories (.git, .hg, .svn, .jj, .sl) remain excluded. Defaults to false. */
                 include_ignored?: boolean;
+                /** @description When present and starting with `..`, `/`, or `~`, switches to shallow browse mode returning the immediate children of the resolved directory. Absent or empty uses the recursive project walk. Any other value returns HTTP 400. */
+                path?: string;
             };
             header?: never;
             path?: never;
@@ -3149,13 +3535,248 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Confined, ignore-respecting project-relative file and directory candidates (alphabetical; directories carry a trailing slash). An empty list is returned when the project root is unavailable. */
+            /** @description Confined, ignore-respecting project-relative file and directory candidates (alphabetical; directories carry a trailing slash). An empty list is returned when the project root is unavailable. With `path`, returns bare child names of the browsed directory. */
             200: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
                     "application/json": components["schemas"]["FileCatalogResponse"];
+                };
+            };
+            /** @description The `path` parameter does not start with a recognized browse prefix (`..`, `/`, `~`). */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    goal_status: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Current goal status. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GoalStatusResponse"];
+                };
+            };
+            /** @description Internal error. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    set_goal: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["GoalSetRequest"];
+            };
+        };
+        responses: {
+            /** @description Goal created or replaced. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GoalSetResponse"];
+                };
+            };
+            /** @description Summary invalid. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Turn in flight. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Persistence or internal error. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Dispatch failure. */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    clear_goal: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Goal cleared, or no goal was set (idempotent). */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Turn in flight. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Internal error. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Dispatch failure. */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    pause_goal: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Goal paused. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GoalLifecycleResponse"];
+                };
+            };
+            /** @description No active goal, invalid transition, or turn in flight. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Internal error. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Dispatch failure. */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    resume_goal: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Goal resumed. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GoalLifecycleResponse"];
+                };
+            };
+            /** @description No active goal, invalid transition, or turn in flight. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Internal error. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Dispatch failure. */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
                 };
             };
         };

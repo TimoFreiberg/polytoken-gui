@@ -38,6 +38,8 @@ describe("buildInterrogativeResponse", () => {
       "plan_handoff",
       "permission",
       "ask_user_question",
+      "goal_proposal",
+      "unknown",
     ] as const) {
       const out = buildInterrogativeResponse(pending(type), cancel);
       expect(out).toEqual({ kind: "cancel" });
@@ -353,6 +355,50 @@ describe("buildInterrogativeResponse", () => {
       { requestId: "i1", confirmed: true },
     );
     expect(out).toBeNull();
+  });
+
+  // ===== goal_proposal =====
+
+  test("goal_proposal + confirmed:true -> goal_proposal_answer{accepted:true}", () => {
+    const out = buildInterrogativeResponse(pending("goal_proposal"), {
+      requestId: "i1",
+      confirmed: true,
+    });
+    expect(out).toEqual({ kind: "goal_proposal_answer", accepted: true });
+  });
+
+  test("goal_proposal + confirmed:false -> goal_proposal_answer{accepted:false}", () => {
+    const out = buildInterrogativeResponse(pending("goal_proposal"), {
+      requestId: "i1",
+      confirmed: false,
+    });
+    expect(out).toEqual({ kind: "goal_proposal_answer", accepted: false });
+  });
+
+  test("goal_proposal + wrong shape (value) -> null", () => {
+    const out = buildInterrogativeResponse(pending("goal_proposal"), {
+      requestId: "i1",
+      value: "something",
+    });
+    expect(out).toBeNull();
+  });
+
+  // ===== unknown (deny-safe default arm) =====
+
+  test("unknown + confirmed:false -> kind:cancel (Dismiss button)", () => {
+    const out = buildInterrogativeResponse(pending("unknown"), {
+      requestId: "i1",
+      confirmed: false,
+    });
+    expect(out).toEqual({ kind: "cancel" });
+  });
+
+  test("unknown + confirmed:true -> kind:cancel (affirmative also cancels)", () => {
+    const out = buildInterrogativeResponse(pending("unknown"), {
+      requestId: "i1",
+      confirmed: true,
+    });
+    expect(out).toEqual({ kind: "cancel" });
   });
 });
 

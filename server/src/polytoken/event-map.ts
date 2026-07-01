@@ -24,11 +24,11 @@ import type {
   SessionSnapshot,
   SessionStatus,
   SessionUsage,
-  type PermissionMonitorMode,
+  PermissionMonitorMode,
   WorkspaceRef,
 } from "@pilot/protocol";
 import { defaultModelRef } from "./models.js";
-import type { PendingInterrogative } from "./ui-bridge.js";
+import type { PendingInterrogative, PendingInterrogativeType } from "./ui-bridge.js";
 import {
   PERMISSION_APPROVAL_CHOICES,
   PERMISSION_APPROVAL_LABELS,
@@ -345,10 +345,10 @@ function drainedQueueMessage(
 
 /** Build the pilot hostUiRequest + pending metadata for an `interrogative` event.
  *  One interrogative_type → one card kind. The card carries a stable requestId
- *  equal to the daemon's interrogative_id, so respondUi can look it up. Returns
- *  `pending: null` for an unrecognized type (a runtime-only path — the
- *  `_exhaustive` guard catches codegen'd types): the caller emits the notify
- *  but registers no pending, since no answerable card was rendered. */
+ *  equal to the daemon's interrogative_id, so respondUi can look it up. For an
+ *  unrecognized type (a runtime-only path — the `_exhaustive` guard catches
+ *  codegen'd types), the default arm emits a blocking `confirm` dialog and
+ *  registers the pending so the operator can dismiss it → {kind:"cancel"}. */
 function buildInterrogativeMapping(
   ev: Extract<DaemonEvent, { type: "interrogative" }>,
   meta: { sessionRef: SessionRef; timestamp: string },
@@ -435,30 +435,47 @@ function buildInterrogativeMapping(
       // the reverse builder maps the chosen label → the right grant/target pair.
       return buildPermissionRequest(ev, meta, pending);
     }
+    case "goal_proposal": {
+      // Goal proposal: the daemon proposes a goal and asks accept/reject. The
+      // GoalProposalContext carries title + proposed_summary + optional file
+      // path + action_labels (accept/reject button text). We render a confirm
+      // card (Accept/Reject = confirmed true/false). The response maps to
+      // goal_proposal_answer{accepted: boolean}.
+      const gp = ev.goal_proposal;
+      const title = gp?.title ?? "Goal proposal";
+      const summary = gp?.proposed_summary ?? "";
+      const message = summary || title;
+      const event: SessionDriverEvent = {
+        ...meta,
+        type: "hostUiRequest",
+        request: { kind: "confirm", requestId, title, message },
+      };
+      return { event, pending };
+    }
     default: {
       // Runtime safety: a compile-time exhaustiveness guard can't catch an
       // out-of-enum `interrogative_type` from a newer daemon (the wire is
-      // JSON.parse'd). Surface it as a notify (loud-failure principle) so the
-      // fold stays live — the operator sees an unknown interrogative was
-      // dropped rather than a silent stall. No pending is registered: the notify
-      // card is fire-and-forget (no requestId == interrogative_id), so there's
-      // nothing for respondUi to match. The daemon's turn is stuck waiting (the
-      // operator can cancel/abort), but that's strictly better than crashing
-      // the whole SSE fold.
+      // JSON.parse'd). Instead of a fire-and-forget notify (which left the
+      // daemon's turn permanently blocked), emit a BLOCKING confirm dialog
+      // with requestId == interrogative_id so respondUi can match it and
+      // POST {kind:"cancel"} when the operator dismisses it. This prevents
+      // any future unknown interrogative type from wedging the session.
       const _exhaustive: never = ev.interrogative_type;
       void _exhaustive;
       const unknownType = (ev as { interrogative_type?: string }).interrogative_type ?? "unknown";
+      pending.interrogativeType = "unknown" as PendingInterrogativeType;
       const event: SessionDriverEvent = {
         ...meta,
         type: "hostUiRequest",
         request: {
-          kind: "notify",
-          requestId: `unknown-interrogative-${meta.timestamp}`,
-          message: `Unrecognized interrogative type: ${unknownType}`,
-          level: "warning",
+          kind: "confirm",
+          requestId,
+          title: `⚠ Unknown request type: ${unknownType}`,
+          message:
+            "The agent sent a request type this version of pilot doesn't recognize. Dismiss to cancel it and unblock the session.",
         },
       };
-      return { event, pending: null };
+      return { event, pending };
     }
   }
 }
@@ -1028,10 +1045,11 @@ export function mapDaemonEvent(
     // the approval CARDS surface via interrogative{type:"permission"}).
 
     case "interrogative": {
-      // The 5 interrogative_types each map to a pilot card kind. The card's
+      // The 6 interrogative_types each map to a pilot card kind. The card's
       // requestId == the daemon's interrogative_id, so respondUi can look up the
       // pending metadata to build the InterrogativeResponse. An unrecognized type
-      // returns a notify + null pending (no registerInterrogative effect).
+      // (runtime-only) renders a blocking confirm dialog + non-null pending so
+      // the operator can dismiss it → {kind:"cancel"}.
       const { event, pending } = buildInterrogativeMapping(ev, meta);
       return pending
         ? events([event], [{ type: "registerInterrogative", pending }])
@@ -1098,6 +1116,9 @@ export function mapDaemonEvent(
     case "job_expiring":
     case "job_cancelled":
     case "job_updated":
+    case "goal_driver_update":
+    case "agent_block_violation":
+    case "usage_throttle":
       return EMPTY;
 
     default: {

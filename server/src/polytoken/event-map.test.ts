@@ -1051,6 +1051,86 @@ describe("mapDaemonEvent", () => {
     });
   });
 
+  test("interrogative (goal_proposal) -> confirm card + registerInterrogative", () => {
+    const out = fold({
+      type: "interrogative",
+      interrogative_id: "g1",
+      interrogative_type: "goal_proposal",
+      goal_proposal: {
+        title: "Ship feature X",
+        proposed_summary: "Implement the new dashboard widget",
+        proposed_file_path: "/goal.md",
+        action_labels: { accept: "Accept", reject: "Reject" },
+      },
+      prompt_id: "p1",
+      question: "Propose goal?",
+    });
+    expect(out.events).toHaveLength(1);
+    expect(out.events[0]).toMatchObject({
+      type: "hostUiRequest",
+      request: {
+        kind: "confirm",
+        requestId: "g1",
+        title: "Ship feature X",
+        message: "Implement the new dashboard widget",
+      },
+    });
+    expect(out.effects).toEqual([
+      {
+        type: "registerInterrogative",
+        pending: { interrogativeId: "g1", interrogativeType: "goal_proposal" },
+      },
+    ]);
+  });
+
+  test("interrogative (goal_proposal) with null goal_proposal -> fallback title", () => {
+    const out = fold({
+      type: "interrogative",
+      interrogative_id: "g2",
+      interrogative_type: "goal_proposal",
+      goal_proposal: null,
+      prompt_id: "p1",
+      question: "Propose goal?",
+    });
+    expect(out.events[0]).toMatchObject({
+      request: {
+        kind: "confirm",
+        requestId: "g2",
+        title: "Goal proposal",
+      },
+    });
+    expect(out.effects[0]).toMatchObject({
+      type: "registerInterrogative",
+      pending: { interrogativeId: "g2", interrogativeType: "goal_proposal" },
+    });
+  });
+
+  test("interrogative (unknown_type) -> confirm dialog (deny-safe) + registerInterrogative", () => {
+    // Cast to bypass the TS type — the runtime path is JSON.parse'd wire data.
+    const out = fold({
+      type: "interrogative",
+      interrogative_id: "u1",
+      interrogative_type: "some_future_type",
+      prompt_id: "p1",
+      question: "?",
+    } as unknown as Parameters<typeof fold>[0]);
+    expect(out.events).toHaveLength(1);
+    expect(out.events[0]).toMatchObject({
+      type: "hostUiRequest",
+      request: {
+        kind: "confirm",
+        requestId: "u1",
+        title: "⚠ Unknown request type: some_future_type",
+      },
+    });
+    expect(out.effects).toEqual([
+      {
+        type: "registerInterrogative",
+        pending: { interrogativeId: "u1", interrogativeType: "unknown" },
+      },
+    ]);
+  });
+
   test("interrogative with subagent_handle is skipped (not top-level)", () => {
     const out = fold({
       type: "interrogative",
@@ -1283,6 +1363,38 @@ describe("mapDaemonEvent", () => {
       events: [],
       effects: [],
     });
+  });
+
+  test("goal_driver_update -> empty", () => {
+    expect(
+      fold({
+        type: "goal_driver_update",
+        goal: null,
+        proposed_summary: null,
+        transition: "proposed",
+      }),
+    ).toEqual({ events: [], effects: [] });
+  });
+
+  test("agent_block_violation -> empty", () => {
+    expect(
+      fold({
+        type: "agent_block_violation",
+        path: "/some/path",
+        tool_name: "shell_exec",
+      }),
+    ).toEqual({ events: [], effects: [] });
+  });
+
+  test("usage_throttle -> empty", () => {
+    expect(
+      fold({
+        type: "usage_throttle",
+        action: "other",
+        provider: "anthropic",
+        snapshot: { input_tokens: 100, output_tokens: 50 },
+      }),
+    ).toEqual({ events: [], effects: [] });
   });
 
   test("unknown variant type -> empty + console.warn (observable, not silent)", () => {

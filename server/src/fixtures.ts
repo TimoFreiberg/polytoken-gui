@@ -973,6 +973,43 @@ export function confirmDialog(): ScriptStep[] {
   ];
 }
 
+export function goalProposal(): ScriptStep[] {
+  return [
+    {
+      wait: 0,
+      event: {
+        ...base(),
+        type: "hostUiRequest",
+        request: {
+          kind: "confirm",
+          requestId: "req-goal-1",
+          title: "Ship feature X",
+          message: "Implement the new dashboard widget",
+        },
+      },
+    },
+  ];
+}
+
+export function unknownInterrogative(): ScriptStep[] {
+  return [
+    {
+      wait: 0,
+      event: {
+        ...base(),
+        type: "hostUiRequest",
+        request: {
+          kind: "confirm",
+          requestId: "req-unknown-1",
+          title: "⚠ Unknown request type: some_future_type",
+          message:
+            "The agent sent a request type this version of pilot doesn't recognize. Dismiss to cancel it and unblock the session.",
+        },
+      },
+    },
+  ];
+}
+
 // The interactive project-trust card (D12). NOT a ScriptStep — it rides the driver's
 // out-of-band trust channel, not the session event stream — so the mock emits it
 // directly via emitTrust rather than through play(). Mirrors the five options the daemon's CLI
@@ -2161,6 +2198,8 @@ export const SCRIPTS: Record<string, () => ScriptStep[]> = {
   journalnudge: journalNudge,
   skill: skillLoad,
   confirm: confirmDialog,
+  goal: goalProposal,
+  unknown: unknownInterrogative,
   input: inputDialog,
   qna: qnaDialog,
   ambient,

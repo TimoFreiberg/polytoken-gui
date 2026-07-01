@@ -43,7 +43,7 @@ work."
 
 ## B. Fix to-do — ordered by impact, with exact fix sites + repro
 
-### B1. 🔴 `goal_proposal` interrogative wedges the session (worst bug)
+### B1. 🟢 `goal_proposal` interrogative wedges the session — FIXED
 - **What:** daemon 0.4.x emits an `interrogative` of type `goal_proposal` (from `/goal set`
   or an agent `propose_goal`). Pilot's vendored `InterrogativeType` (`wire-types.ts:1545`) is
   `permission|confirmation|clarification|capability|plan_handoff` — **no `goal_proposal`**. It
@@ -54,11 +54,18 @@ work."
   (`polytoken-driver.ts:260-262`), so it stays lit; a page reload re-derives running from
   `GET /state` and can't self-heal. (Empirically abort didn't clear it either — that's a
   daemon behavior for interrogative-blocked turns; worth confirming daemon-side.)
-- **Fix sites:** add `goal_proposal` to `InterrogativeType` (`wire-types.ts:1545`) + a case in
-  `event-map.ts:352`. **Minimum-viable safety even without a real card:** make the `default:`
-  arm **deny-safe** — register the interrogative and POST `{kind:"cancel"}` (`wire-types.ts:1511-1514`
-  — cancel is a valid response kind) so an unknown type never leaves the daemon blocked.
-- **Repro:** live driver → `/goal set anything` → notify card + permanent "Working".
+- **Fix:** regenerated `wire-types.ts` from the live 0.4.x daemon (`polytoken openapi`).
+  Added `case "goal_proposal":` in `buildInterrogativeMapping` — renders a `confirm` card
+  (Accept/Reject) from the `GoalProposalContext` (title + proposed_summary). Added
+  `case "goal_proposal":` in `buildInterrogativeResponse` — maps `{confirmed}` →
+  `{kind:"goal_proposal_answer", accepted: boolean}`. Made the `default:` arm deny-safe:
+  emits a blocking `confirm` dialog (not a fire-and-forget `notify`) with
+  `requestId == interrogative_id`, registers the pending, and `case "unknown"` in
+  `buildInterrogativeResponse` returns `{kind:"cancel"}` for ANY response — so any future
+  unknown interrogative type can be dismissed to unblock the daemon's turn. Also added
+  `bypass_plus` to `PermissionMonitorMode`, and new DaemonEvent variants
+  (`goal_driver_update`, `agent_block_violation`, `usage_throttle`) to the `return EMPTY`
+  list.
 - Then add goal *display* (open TODO: polytoken shows "(goal)" by the facet).
 
 ### B2. 🔴 Whole Settings/tree/trust areas are mock-only (dead vs the real daemon)
@@ -164,11 +171,11 @@ work."
 - **Core loop:** prompt → stream → tool cards → completion; markdown/inline-code render well.
 - **Model picker:** searchable, provider-grouped, favorites, keyboard nav. `setModel`/thinking work.
 - **`ask_user_question` card:** first-class; full answer round-trip verified live.
-- **All 5 vendored interrogative types are handled** (`permission, confirmation, clarification,
-  capability, plan_handoff`) — the `never` guard at `event-map.ts:439` enforces exhaustiveness
-  (a future 6th type breaks the build there — that's the tripwire that *should* have caught
-  goal_proposal but the enum was never updated). *(This refutes an earlier worry that
-  `confirmation`/`capability` fall through — they don't.)*
+- **All 6 interrogative types are handled** (`permission, confirmation, clarification,
+  capability, plan_handoff, goal_proposal`) — the `never` guard at `event-map.ts:439` enforces exhaustiveness
+  (a future 7th type breaks the build there). The `default:` arm is now deny-safe: it renders
+  a blocking `confirm` dialog and returns `{kind:"cancel"}` for any response, so an unknown
+  type can be dismissed to unblock the daemon's turn instead of wedging it.
 - **Permission approval card:** code-complete + mock fixture + desktop/mobile e2e. Renders the
   daemon-pruned scope subset (usually ~3, up to 7 in the no-rule fallback). Only doesn't fire
   live because the parity config is `bypass_plus`. To see it: `PILOT_DRIVER=mock`, `/?dev`,
@@ -205,9 +212,10 @@ work."
 
 ## E. Still unverified (honest gaps)
 
-- The "abort can't recover a `goal_proposal`-wedged turn" leg is an *observed daemon* behavior,
-  not provable from pilot source — confirm daemon-side whether `/turn/cancel` cancels an
-  interrogative-blocked turn.
+- The "abort can't recover a `goal_proposal`-wedged turn" leg was an *observed daemon* behavior.
+  Now mitigated pilot-side: the deny-safe default arm lets the operator dismiss any interrogative
+  to POST `{kind:"cancel"}`, unblocking the turn without needing abort. Whether `/turn/cancel`
+  *also* cancels an interrogative-blocked turn is still a daemon-side question.
 - Project-trust flow with a genuinely **untrusted** dir (parity config was `bypass_plus` +
   pre-trusted, so the trust path never fired live). Needs a clean untrusted-dir test.
 - Compaction (`/compact`) progress rendering, `/clear`, `/reset-shell`, `/daemon-reload`,

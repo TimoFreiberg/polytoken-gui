@@ -23,7 +23,7 @@ type InterrogativeType = components["schemas"]["InterrogativeType"];
  *  interrogative_type) but responds via the same /interrogative/{id}/respond
  *  endpoint with kind:"ask_user_question_answers". Unifying it here lets the
  *  driver store one pending map keyed by interrogative id. */
-export type PendingInterrogativeType = InterrogativeType | "ask_user_question";
+export type PendingInterrogativeType = InterrogativeType | "ask_user_question" | "unknown";
 
 /** One question's id + its option ids + rendered labels, in pilot's render order.
  *  The qna card returns selectedOptionIndices (into optionLabels); this maps them
@@ -295,6 +295,21 @@ export function buildInterrogativeResponse(
         };
       });
       return { kind: "ask_user_question_answers", answers: replies };
+    }
+
+    case "goal_proposal": {
+      // pilot confirm card → {requestId, confirmed}. Maps directly to
+      // goal_proposal_answer{accepted: boolean}.
+      if (!("confirmed" in response)) return null;
+      return { kind: "goal_proposal_answer", accepted: response.confirmed };
+    }
+
+    case "unknown": {
+      // Unknown interrogative type (from the deny-safe default arm in
+      // buildInterrogativeMapping). Cancel is the only valid action — both
+      // the confirm(true) and confirm(false) button paths produce
+      // {kind:"cancel"} so the daemon's turn is always unblocked.
+      return { kind: "cancel" };
     }
 
     default: {

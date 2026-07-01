@@ -24,15 +24,15 @@ running GUI; "code" = grounded in `server/`/`client/` source.
 
 ## TL;DR — the headline findings
 
-1. 🔴 **Goals are broken and wedge the session.** Setting a goal (`/goal set …`, or any
-   agent `propose_goal`) makes the daemon emit a **`goal_proposal` interrogative**, which
-   pilot doesn't recognize — it renders **"⚠ Unrecognized interrogative type: goal_proposal"**
-   and the turn gets **stuck in "Working…" permanently**. Abort doesn't clear it, and it
-   **survives a full page reload** (the hub's authoritative state is wedged, not just the
-   client). Root cause: pilot's vendored `InterrogativeType` (`wire-types.ts:1545`) predates
-   daemon 0.4.x and is missing `goal_proposal`; the `default` arm in `event-map.ts:431` just
-   emits a notice and never sends the deny-safe `cancel` the daemon accepts. *Recovery in
-   testing required POSTing `{"kind":"cancel"}` to the daemon directly.*
+1. 🟢 **Goals were broken and wedged the session — FIXED.** Setting a goal (`/goal set …`,
+   or any agent `propose_goal`) makes the daemon emit a **`goal_proposal` interrogative**,
+   which pilot previously didn't recognize — it rendered **"⚠ Unrecognized interrogative
+   type: goal_proposal"** and the turn got **stuck in "Working…" permanently**. **Fixed:**
+   `wire-types.ts` regenerated from the live 0.4.x daemon; `goal_proposal` now renders a
+   `confirm` card (Accept/Reject) and maps to `goal_proposal_answer{accepted}`. The
+   `default:` arm is now deny-safe — any future unknown interrogative type renders a
+   blocking dialog that dismisses to `{kind:"cancel"}`, so no unknown type can wedge the
+   session again.
 2. 🔴 **Whole feature areas are implemented only in the mock driver, not the live polytoken
    driver** — so they pass e2e (mock) but are dead against the real daemon: **Providers / API
    keys / OAuth, Extensions, global model defaults & favorites, the Session-tree view, and the
@@ -76,7 +76,7 @@ shows empty/loading):
 | Thinking block | 🟡 | `ThinkingBlock.svelte` + a "Hide thinking blocks" toggle (default **On**) exist; thinking folds into the collapsed "Worked for Ns" summary. Present, not separately spot-verified live. |
 | Tool-call cards | ✅ (live) / 🟡 (settled) | While streaming, each tool renders as a clean one-line card: bold name + input + duration + green/✓ status + expand chevron (`todo_create {…}`, `shell_exec echo …`). **But** on turn completion they **collapse into one opaque "Worked for 1m 10s"** — the over-merge the team already flagged (TODO: "Stop merging subsequent tool calls"). Hides distinct steps. |
 | Mid-turn queue (steer/follow-up) | 🟡 | A `steer \| follow-up` SegmentedControl + "Queue a message…" appears mid-turn ("Enter sends as selected · Alt+Enter queues a follow-up"). **The toggle is cosmetic** — the daemon's `POST /turn/input` has no steer/followup discriminator (`daemon-client.ts`), so both do the same thing. Known TODO + suspected steer bug. |
-| Abort / Stop | 🟡 | "■ Stop" button cancels a normally-streaming turn. **But it could not recover a turn wedged on the unrecognized `goal_proposal`** (timer kept climbing through repeated Stops) — abort only cancels active streaming, not an interrogative-blocked turn. |
+| Abort / Stop | 🟡 | "■ Stop" button cancels a normally-streaming turn. (Previously could not recover a `goal_proposal`-wedged turn — now fixed; the deny-safe default arm lets any interrogative be dismissed.) |
 | Context meter | ✅ | Bottom-bar ring + "%" updates per turn (`getUsage` implemented). |
 | Compaction (`/compact`) | 🟡 | Only via slash passthrough; `compaction_*` events fold into the transcript, but there's no dedicated "compact" affordance or progress UI. |
 | Clear context (`/clear`) | 🟡 | Slash passthrough only; no dedicated button. |
@@ -95,7 +95,7 @@ shows empty/loading):
 | Model picker | ✅ | Excellent: searchable, provider-grouped ("UMANS 2"), shows active model, favorites, kbd hints (`↑↓ move · ↵ select · esc cancel`). Per-session `setModel` works. |
 | Reasoning/thinking level | ✅ | "high" badge in the bar; `ModelPicker` thinking levels with `⌘⇧E`. |
 | Facet switch | 🟡 | `FacetBadge` is a **2-way toggle** (execute↔plan). Fine for the 2 shipped facets, but the TUI offers a facet **typeahead/menu** — pilot can't reach a 3rd+ custom facet. |
-| **Permission monitor mode** | 🔴 | No UI to show/switch the mode (standard/bypass/autonomous). Only `/permissions` text passthrough. Urgent TODO ("show + edit permission level… next to model and effort"). The permission *approval cards* work (see §4); the *mode control* is missing. |
+| **Permission monitor mode** | 🔴 | No UI to show/switch the mode (standard/bypass/bypass_plus/autonomous). Only `/permissions` text passthrough. Urgent TODO ("show + edit permission level… next to model and effort"). The permission *approval cards* work (see §4); the *mode control* is missing. |
 | Set global default model / thinking / favorites | 🔴 | `Settings ▸ Models` can **read** defaults (`getModelDefaults`) but **can't write** them — `setDefaultModel`/`setDefaultThinking`/`setFavoriteModels` are mock-only. |
 
 ### 4. Approvals / interrogatives
@@ -107,13 +107,14 @@ shows empty/loading):
 | `permission` | ✅ (code) | 7-choice approval card (`event-map.ts:422`, `ui-bridge.ts`). Not triggered live (parity config is `bypass_plus`). |
 | `plan_handoff` | ✅ (code) | Plan-review select (`event-map.ts:391`). |
 | `confirmation`, `capability` | ✅ (code) | In the vendored enum; handled. |
-| **`goal_proposal`** | 🔴 | **Unrecognized** → "⚠ Unrecognized interrogative type: goal_proposal" + wedged session (see TL;DR #1). Missing from vendored `InterrogativeType`. |
+| **`goal_proposal`** | 🟢 | Handled — renders a `confirm` card (Accept/Reject) from `GoalProposalContext`; maps to `goal_proposal_answer{accepted}`. Default arm is deny-safe for future unknowns. |
 
-### 5. Goals — 🔴 broken end-to-end
+### 5. Goals — 🟡 approval fixed, display still missing
 
-No goal display (TODO: "polytoken shows '(goal)' next to the facet"), **and** the
-`goal_proposal` approval path is unhandled and wedges the session. Goals are effectively
-unusable from pilot. Highest-impact gap found.
+No goal display (TODO: "polytoken shows '(goal)' next to the facet"), but the
+`goal_proposal` approval path is now handled — renders an Accept/Reject card and
+maps to `goal_proposal_answer{accepted}`. The `default:` arm is deny-safe so no
+future unknown interrogative type can wedge the session.
 
 ### 6. Todos / jobs / subagents / flags (the TUI right sidebar)
 
@@ -141,7 +142,7 @@ write/edit/review machinery is represented. Not exercised live this run.
 | Worktree sessions | ✅ (code) | Composer worktree toggle → `newSession({worktree})`; `cleanupWorktree` implemented. |
 | Reload session (recovery) | ✅ (code) | `reloadSession` implemented (dispose+rewarm) — the intended recovery for a wedged session. |
 | Title | 🟡 | `/title` slash passthrough; session title also shown in header ("main"). No dedicated rename-to-title affordance beyond sidebar rename. |
-| Stale "Working…" lifecycle | 🔴 | The hub can get stuck believing a session is streaming (the `goal_proposal` wedge) with no self-heal short of `reloadSession`. |
+| Stale "Working…" lifecycle | 🟡 | Previously the hub could get stuck believing a session is streaming (the `goal_proposal` wedge) with no self-heal. Fixed — the deny-safe default arm lets any interrogative be dismissed to unblock the turn. |
 
 ### 9. Providers / auth / config (Settings panel)
 
@@ -216,9 +217,11 @@ route by sending `/name args` as a normal prompt (the daemon interprets builtins
 
 ## Suggested priority order to close gaps
 
-1. **`goal_proposal` interrogative** — add to the vendored enum + handle (or at minimum
-   deny-safe `cancel` unknown interrogatives so they never wedge the session). Then add the
-   goal display. *(Fixes the worst reliability bug.)*
+1. ~~**`goal_proposal` interrogative**~~ — ✅ done. Vendored enum regenerated from the live
+   0.4.x daemon; `goal_proposal` handled with a confirm card → `goal_proposal_answer`; the
+   `default:` arm is now deny-safe (blocking dialog → `{kind:"cancel"}`) so no future
+   unknown interrogative can wedge the session. Remaining: goal *display* (the "(goal)"
+   badge next to the facet).
 2. **Wire the mock-only driver methods into the polytoken driver** — `getTree`, `listProviders`
    + key/OAuth, `listExtensions`, `setDefaultModel`/`setFavoriteModels`, `subscribeTrust`.
    These features look done (and pass e2e) but are dead against the real daemon.

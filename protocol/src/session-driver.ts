@@ -30,7 +30,7 @@ export type SessionStatus = "idle" | "initializing" | "running" | "failed";
  *  OpenAPI-generated `PermissionMonitorMode` (server/src/polytoken/wire-types.ts)
  *  — the single source of truth is the daemon spec; this copy is the shared
  *  client/server import. Keep in sync if the daemon adds a mode. */
-export type PermissionMonitorMode = "standard" | "bypass" | "autonomous";
+export type PermissionMonitorMode = "standard" | "bypass" | "bypass_plus" | "autonomous";
 export type SessionMessageDeliveryMode = "steer" | "followUp";
 
 /** An image attachment for a user message, as the daemon carries them. Base64-encoded

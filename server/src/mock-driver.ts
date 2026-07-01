@@ -43,6 +43,7 @@ import {
   editDiff,
   errorRun,
   GREETING_PROMPT,
+  goalProposal,
   greeting,
   contextFull,
   idleNoComplete,
@@ -86,6 +87,7 @@ import {
   snapshot,
   streamHold,
   timeoutConfirm,
+  unknownInterrogative,
   yesNoSelect,
 } from "./fixtures.js";
 
@@ -1078,6 +1080,8 @@ export class MockDriver implements PilotDriver {
     const map: Record<string, () => ScriptStep[]> = {
       confirm: confirmDialog,
       contextfull: contextFull,
+      goal: goalProposal,
+      unknown: unknownInterrogative,
       input: inputDialog,
       qna: qnaDialog,
       selectmany: selectMany,
