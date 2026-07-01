@@ -16,7 +16,6 @@ import type {
   SessionDriverEvent,
   SessionId,
   SessionListEntry,
-  TreeNodeInfo,
 } from "./session-driver.js";
 import type { SessionState } from "./state.js";
 
@@ -176,16 +175,6 @@ export type ServerMessage =
    *  composer's typeahead. Server-authoritative like `modelList`; re-broadcast on
    *  session switch because the set is cwd-scoped. See {@link CommandInfo}. */
   | { type: "commandList"; commands: readonly CommandInfo[] }
-  /** The focused session's full branch tree (the daemon's /tree). Sent on demand when a client
-   *  opens the tree view (it sends {@link queryTree}) and re-broadcast after a `branch` so
-   *  an open tree view refreshes. `sessionId` is the session the tree belongs to, so a
-   *  client that has since switched away can drop a late tree. See {@link TreeNodeInfo}. */
-  | {
-      type: "treeState";
-      sessionId: SessionId | null;
-      nodes: readonly TreeNodeInfo[];
-      leafId: string | null;
-    }
   /** The full file index for the focused session's cwd, pushed on connect + session
    *  switch (like {@link commandList}). The client fuzzy-matches it locally so the
    *  @-mention menu is instant (no per-keystroke round-trip). Capped server-side;
@@ -381,9 +370,6 @@ export type ClientMessage =
   | { type: "cleanupWorktree"; path: string; force?: boolean }
   /** Ask the server to re-read the focused session's commands and re-broadcast them. */
   | { type: "listCommands" }
-  /** Ask the server for the focused session's branch tree (the tree view just opened).
-   *  The server responds with {@link treeState}. Omit sessionId to target the focused one. */
-  | { type: "queryTree"; sessionId?: SessionId }
   /** Fallback file search for a composer @-mention query (the text after `@`). Only sent
    *  when the {@link fileIndex} was truncated and local matches are thin — the common case
    *  is served entirely client-side from the index. The server responds with {@link fileList}.

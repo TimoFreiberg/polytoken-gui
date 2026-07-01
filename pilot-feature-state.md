@@ -35,10 +35,12 @@ running GUI; "code" = grounded in `server/`/`client/` source.
    session again.
 2. 🔴 **Whole feature areas are implemented only in the mock driver, not the live polytoken
    driver** — so they pass e2e (mock) but are dead against the real daemon: **Providers / API
-   keys / OAuth, Extensions, global model defaults & favorites, the Session-tree view, and the
+   keys / OAuth, Extensions, global model defaults & favorites, and the
    project-trust card.** (Capability matrix below.)
-3. 🔴 **Session-tree view hangs on "Loading tree…" forever** — `getTree` isn't implemented in
-   the polytoken driver, and the hub returns early without telling the client (`hub.ts:882`).
+3. ✅ ~~🔴 **Session-tree view hangs on "Loading tree…" forever**~~ — **Removed 2026-07-01.**
+   The entire tree view was deleted (the daemon's history is linear — `POST /rewind`
+   destructively truncates, it doesn't branch). `getTree`, `treeState`, `TreeView.svelte`,
+   and all tree types are gone. The inline rewind buttons + `⌘⇧↑` hotkey stay.
 4. 🟡 **"Branch from this prompt" is actually a destructive rewind.** `branchFrom` maps to
    `POST /rewind`, which "drops the target prompt and everything after" (`polytoken-driver.ts:1009`).
    The button says *Branch*; the daemon does a *destructive rewind*.
@@ -54,7 +56,7 @@ shows empty/loading):
 
 | Implemented (live) | Omitted (mock-only ⇒ dead in GUI) |
 |---|---|
-| prompt, abort, respondUi, subscribe | `getTree` → tree view hangs |
+| prompt, abort, respondUi, subscribe | ~~`getTree`~~ (removed), `listProviders`, `setProviderApiKey`, `removeProviderApiKey` → Providers tab empty |
 | listSessions, openSession, newSession | `listProviders`, `setProviderApiKey`, `removeProviderApiKey` → Providers tab empty |
 | branchFrom (=rewind), reloadSession, defaultSeed | `oauthLogin`, `oauthLogout` → OAuth sign-in dead |
 | renameSession, setArchived, cleanupWorktree | `listExtensions`, `setExtensionEnabled` → Extensions tab empty |
@@ -85,7 +87,7 @@ shows empty/loading):
 
 | Feature | State | Evidence |
 |---|---|---|
-| Session-tree view | 🔴 | The "Session tree" overlay opens with a nice shell (Default/All/Prompts/Labeled filters, search, kbd legend) but **stays on "Loading tree…" indefinitely** — `getTree` not implemented; `hub.ts:882` returns without sending `treeState` or any "unsupported" signal. |
+| Session-tree view | ~~🔴~~ ✅ Removed | **Removed 2026-07-01** — the daemon's history is linear (`POST /rewind` destructively truncates), so the branching tree was fiction. `getTree`, `TreeView.svelte`, `tree-view.ts`, and all tree protocol types are deleted. The inline rewind buttons + `⌘⇧↑` hotkey stay. |
 | Per-prompt rewind | 🟡 | "Branch from this prompt" exists per user message and routes to `POST /rewind`. Functional, **but it's a destructive rewind mislabeled as "Branch"** (`polytoken-driver.ts:1009`: "NOT a branch — it's a destructive REWIND"). No non-destructive branching. |
 
 ### 3. Models / reasoning / facets / permissions
@@ -175,7 +177,8 @@ untrusted-dir test.
 🟡 The slash menu surfaces the **full** command set with descriptions, each badged BUILTIN
 (`/clear /compact /daemon-reload /detach /facet /goal /help /inputdebug /jobs /mcp
 /permissions /quit /refresh /reset-shell /rewind /title /version`). `/model`/`/models` are
-correctly omitted (native picker) and `/tree` is intercepted for the native view. Commands
+correctly omitted (native picker). `/tree` was intercepted for the native view but
+  **is now removed** (2026-07-01 — the tree view was deleted). Commands
 route by sending `/name args` as a normal prompt (the daemon interprets builtins).
 **Caveats:** (a) several are **TUI-only and meaningless in a web UI** yet still listed —
 `/detach`, `/inputdebug`, `/refresh`, `/quit`; (b) routing ≠ rendering — e.g. `/goal`
@@ -222,7 +225,8 @@ route by sending `/name args` as a normal prompt (the daemon interprets builtins
    `default:` arm is now deny-safe (blocking dialog → `{kind:"cancel"}`) so no future
    unknown interrogative can wedge the session. Remaining: goal *display* (the "(goal)"
    badge next to the facet).
-2. **Wire the mock-only driver methods into the polytoken driver** — `getTree`, `listProviders`
+2. **Wire the mock-only driver methods into the polytoken driver** — ~~`getTree`~~ (removed),
+   `listProviders`
    + key/OAuth, `listExtensions`, `setDefaultModel`/`setFavoriteModels`, `subscribeTrust`.
    These features look done (and pass e2e) but are dead against the real daemon.
 3. **Permission-monitor control** in the bottom bar (urgent TODO).

@@ -23,7 +23,6 @@ import {
   type SessionSnapshot,
   type SessionQueuedMessage,
   type SessionUsage,
-  type TreeSnapshot,
 } from "@pilot/protocol";
 import type { NewSessionOpts, PilotDriver, TrustEvent } from "./driver.js";
 import { writePilotSettings } from "./settings-store.js";
@@ -49,7 +48,6 @@ import {
   journalNudge,
   longOutput,
   markdownShowcase,
-  mockTree,
   qnaDialog,
   planHandoff,
   planHandoffTimeout,
@@ -691,12 +689,12 @@ export class MockDriver implements PilotDriver {
     return this.openSession(path);
   }
 
-  /** Deterministic stand-in for the driver's navigateTree. Branching from a USER node rewinds to
-   *  an empty branch and hands that prompt's text back to prefill the composer (the re-edit
-   *  gesture, mirroring navigateTree on a user message); any other node re-seeds the
-   *  greeting unchanged (a no-op continue-from-here jump). The user prompts come from the
-   *  tree fixture so any tree-view selection of a user node behaves consistently. Real tree
-   *  navigation lives in the polytoken driver. */
+  /** Deterministic stand-in for the driver's navigateTree. Branching from a user prompt
+   *  rewinds to an empty branch and hands that prompt's text back to prefill the composer
+   *  (the re-edit gesture, mirroring navigateTree on a user message); any other entry
+   *  re-seeds the greeting unchanged (a no-op continue-from-here jump). The two known user
+   *  entry ids (e-u1, e-u2) are matched inline. Real tree navigation lives in the
+   *  polytoken driver. */
   async branchFrom(
     entryId: string,
     _opts: { summarize?: boolean },
@@ -706,20 +704,17 @@ export class MockDriver implements PilotDriver {
     cancelled: boolean;
   }> {
     this.cancelTimers();
-    const node = mockTree().nodes.find((n) => n.id === entryId);
-    if (node?.kind === "user")
+    const isUser = entryId === "e-u1" || entryId === "e-u2";
+    if (isUser)
       return {
         seed: branchedSeed(),
-        editorText: entryId === "e-u1" ? GREETING_PROMPT : node.preview,
+        editorText:
+          entryId === "e-u1"
+            ? GREETING_PROMPT
+            : "actually, put it in a separate health-router module",
         cancelled: false,
       };
     return { seed: greeting().map((s) => s.event), cancelled: false };
-  }
-
-  /** The mock's branch tree — a fixed multi-branch fixture so the /tree view can be built
-   *  and screenshot-verified without a real daemon session that's been navigated. */
-  async getTree(): Promise<TreeSnapshot> {
-    return mockTree();
   }
 
   async newSession(opts: NewSessionOpts = {}): Promise<SessionDriverEvent[]> {

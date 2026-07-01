@@ -68,7 +68,7 @@ work."
   list.
 - Then add goal *display* (open TODO: polytoken shows "(goal)" by the facet).
 
-### B2. 🔴 Whole Settings/tree/trust areas are mock-only (dead vs the real daemon)
+### B2. 🔴 Whole Settings/trust areas are mock-only (dead vs the real daemon)
 - **What:** the live `polytoken-driver.ts` object literal (`:678-1278`) implements 24 methods
   and **omits 15** that exist in `mock-driver.ts`, so they pass e2e (mock) but are dead live:
   `getTree, clearQueue, listExtensions, setExtensionEnabled, listProviders, setProviderApiKey,
@@ -76,6 +76,8 @@ work."
   setFavoriteModels, subscribeTrust, respondTrust`. The hub guards each with `?.`/early-return;
   most fail **silently** (tree hangs, Providers/Extensions show empty, trust card never fires),
   except `clearQueue` (`hub.ts:1391`) and `oauthLogin` (`hub.ts:1006`) which send an error toast.
+  **Note 2026-07-01:** `getTree` no longer applies — the tree view was removed entirely.
+  The count is now 13 mock-only methods (B3 is obsolete).
 - **Fix:** implement the 14 mock-only methods in the polytoken driver literal against the
   daemon (auth.json/global-settings for providers/OAuth/defaults, extension loader for
   extensions, and see B3 for tree).
@@ -84,7 +86,7 @@ work."
   call-site + a test stub). The polytoken driver's own trust-prompt doc (`driver.ts:276-283`)
   *needs* it to deny-safe when no client is connected, so implement it there too.
 
-### B3. 🔴 Session-tree view hangs on "Loading tree…"
+### B3. 🔴 Session-tree view hangs on "Loading tree…" — **OBSOLETE (removed)**
 - **What:** `getTree` unimplemented → `hub.ts:882` (`sendTree`) early-returns with no
   `treeState`; the client only clears its loading state on `treeState`
   (`TreeView.svelte:193`), so it hangs forever. Same guard disables the post-branch tree
@@ -93,6 +95,12 @@ work."
   tree (note: **the daemon has no `/tree` HTTP endpoint** — build it from `GET /history`).
   Defense-in-depth: have `sendTree` emit an explicit empty/"unsupported" `treeState` (or the
   client time out) so it degrades instead of hanging.
+- **Obsolete 2026-07-01:** the entire tree view was removed — `getTree`, `sendTree`,
+  `treeState`, `queryTree`, `TreeView.svelte`, `tree-view.ts`, and the `TreeSnapshot`/
+  `TreeNodeInfo`/`TreeNodeKind` types no longer exist. The daemon's history is linear
+  (`POST /rewind` destructively truncates), so the branching tree was fiction. The inline
+  rewind buttons + `⌘⇧↑` hotkey in Transcript.svelte stay (they use `store.branch` →
+  `POST /rewind` directly, independent of the tree view).
 
 ### B4. 🔴 Mid-turn "steer/follow-up" doesn't queue — it starts a new turn (real bug)
 - **What:** stronger than "cosmetic toggle." Both steer *and* follow-up call `POST /prompt`
@@ -110,7 +118,7 @@ work."
   confirmation dialog** anywhere on the path (`Transcript.svelte:697` → `store.branch`
   `store.svelte.ts:1463` → `/rewind`).
 - **Fix:** add a destructive-confirm gate (`Transcript.svelte:697` or `store.branch`) **and**
-  relabel tooltip/aria (`Transcript.svelte:702-704`, `TreeView.svelte:116`) to
+  relabel tooltip/aria (`Transcript.svelte:702-704`) to
   "Rewind — deletes everything after this point."
 
 ### B6. 🟠 Permission-monitor MODE has no UI
@@ -193,7 +201,7 @@ work."
 - **Context meter, facet toggle** (binary execute↔plan — can't reach a 3rd custom facet),
   thinking-level picker, Settings Appearance/Notifications, Web Push (verified on iPhone).
 - **Slash menu** surfaces the full command set (BUILTIN), routes `/name args` as a prompt;
-  `/model` omitted (native picker), `/tree` intercepted (native view). Caveat: TUI-only
+  `/model` omitted (native picker). Caveat: TUI-only
   commands (`/detach /inputdebug /refresh /quit`) are listed but meaningless in a web UI;
   routing ≠ rich result rendering (e.g. `/jobs`, `/todo`, `/help`).
 

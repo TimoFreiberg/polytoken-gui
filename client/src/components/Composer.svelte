@@ -288,14 +288,6 @@
   async function submit() {
     if (submitting) return;
     const text = store.composerDraft;
-    // `/tree` is a client-native view, not a daemon command (the daemon's /tree is a TUI builtin that
-    // can't run headless). Intercept it before send: open the tree view and clear the box.
-    if (text.trim() === "/tree") {
-      store.composerDraft = "";
-      store.openTree();
-      queueMicrotask(autosize);
-      return;
-    }
     if (!text.trim() && images.length === 0) return;
     // These are `$state` proxies; that's fine to pass on. `savePendingPrompt` is the
     // single boundary that rebuilds plain data before IndexedDB's structured clone.

@@ -38,7 +38,6 @@ import type {
   SessionId,
   SessionListEntry,
   SessionUsage,
-  TreeSnapshot,
   WorkspaceRef,
 } from "@pilot/protocol";
 import { ArchiveStore } from "../archive-store.js";

@@ -14,13 +14,9 @@
       e.preventDefault();
       store.hotkeyAction = { which: "model", n: ++hotkeyN };
     } else if (e.key === "e" || e.key === "E") {
-      // ⌘⇧E — thinking/effort level. (T was freed up for the tree, below.)
+      // ⌘⇧E — thinking/effort level.
       e.preventDefault();
       store.hotkeyAction = { which: "thinking", n: ++hotkeyN };
-    } else if (e.key === "t" || e.key === "T") {
-      // ⌘⇧T — the session tree (/tree).
-      e.preventDefault();
-      store.toggleTree();
     } else if (e.key === "j" || e.key === "J") {
       // ⌘⇧J — the right context panel (flagged files + todos).
       e.preventDefault();
@@ -172,20 +168,6 @@
         </svg>
       </IconButton>
     {/if}
-    <IconButton
-      data-testid="tree-toggle"
-      title="Session tree — branches & jump (⌘⇧T or /tree)"
-      aria-label="Session tree"
-      onclick={() => store.toggleTree()}
-    >
-      <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-        <circle cx="6" cy="5" r="2.2" />
-        <circle cx="6" cy="19" r="2.2" />
-        <circle cx="18" cy="9" r="2.2" />
-        <path d="M6 7.2v9.6" />
-        <path d="M18 11.2v.6a4 4 0 0 1-4 4H6" />
-      </svg>
-    </IconButton>
     <IconButton
       data-testid="context-toggle"
       title="Context panel — flagged files & todos (⌘⇧J)"

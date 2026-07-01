@@ -23,7 +23,7 @@ See `docs/` siblings for context: `DESIGN.md` (architecture + roadmap), `DECISIO
       pattern), a new attention-cycle controller (tracks active surfaces, owns the cycle order +
       which is currently focused/minimized), and a global `⌘\` handler in `App.svelte`
       `onGlobalKeydown`. Every minimized pill needs a tooltip (repo rule). Phase 2 could extend
-      the cycle to user-driven modals (Settings, TreeView, PlanView) but those already have
+      the cycle to user-driven modals (Settings, PlanView) but those already have
       dedicated hotkeys so they stay out of the cycle.
 - [x] add UI support for `goal` (polytoken shows the text "(goal)" next to the facet in the sidebar, we can find a nicer place but we should also show it, if the protocol exposes it)
 - [x] use the updated `polytoken models` that loads dynamic models (from catalog providers) now - remove obsolete fallbacks that emulated this behavior
@@ -92,6 +92,8 @@ elsewhere in this file are not duplicated here.
       doc needs it to deny-safe when no client is connected. **Fix:** implement the 14 methods
       against the daemon (auth.json/global-settings for providers/OAuth/defaults, extension
       loader for extensions, GET /history projection for tree).
+      **Note 2026-07-01:** `getTree` is no longer in the count — the tree view was removed
+      entirely (see "Remove tree view entirely" below). The remaining 13 methods still apply.
       **Investigated 2026-07-01:** 5 of 14 are implementable now (no daemon changes needed):
       `getTree` (project from GET /history), `listProviders` (parse from `polytoken models`),
       `subscribeTrust`/`respondTrust` (use existing interrogative SSE + POST
@@ -129,7 +131,7 @@ elsewhere in this file are not duplicated here.
       default-thinking selector. The Models tab now shows only the background-model
       spec (which stays — it's pilot-local settings, not daemon config). E2e tests
       rewritten to remove all provider/OAuth/extension/favorites/default-model tests.
-- [ ] **Remove tree view entirely (daemon history is linear).** The daemon has no branch
+- [x] **Remove tree view entirely (daemon history is linear).** The daemon has no branch
       DAG — `POST /rewind` destructively truncates, it doesn't branch. The mock's `getTree`
       fakes a branching tree that can never exist live, so e2e tests exercise a fiction.
       Remove: `getTree` from the mock + `PilotDriver` interface, `TreeSnapshot`/`TreeNodeInfo`
@@ -140,6 +142,12 @@ elsewhere in this file are not duplicated here.
       ⌘↑/⌘↓ prompt navigation (see next two todos).
       **Decided 2026-07-01:** remove entirely — no bespoke linear-history navigator, just
       delete the tree view. The ⌘↑/⌘↓ prompt navigation stays (it's separate from the tree).
+      **Done 2026-07-01:** removed `getTree` from the driver interface + mock, `TreeSnapshot`/
+      `TreeNodeInfo`/`TreeNodeKind` protocol types, `treeState`/`queryTree` wire messages,
+      `tree-view.ts` + tests, `TreeView.svelte`, `store.treeOpen`/`tree` state + `openTree`/
+      `closeTree`/`toggleTree`, the `⌘⇧T` hotkey + header IconButton, the `/tree` slash-command
+      interception, `e2e/tree.e2e.ts`, and `mockTree()` fixture. The inline rewind buttons +
+      `⌘⇧↑` hotkey in Transcript.svelte are untouched.
 - [ ] **Implement the 4 ready polytoken driver methods.** These have daemon APIs and just
       need wiring: `subscribeTrust`/`respondTrust` (use existing interrogative SSE +
       `POST /interrogative/{id}/respond`), `setClientPresence` (trivial local callback —
@@ -177,6 +185,8 @@ elsewhere in this file are not duplicated here.
       degrades to "No history in this session yet." instead of hanging on "Loading tree…".
       The `getTree` implementation (projecting from GET /history) is tracked under the
       mock-only-driver-methods TODO above — it's implementable but not yet done.
+      **Moot 2026-07-01:** the entire tree view was removed (see "Remove tree view entirely"
+      above). `getTree`, `sendTree`, `treeState`, and `TreeView.svelte` no longer exist.
 - [x] **"Branch from this prompt" = irreversible history deletion, no guard.** `branchFrom` →
       `POST /rewind` (`polytoken-driver.ts:1051`: "NOT a branch — it's a destructive REWIND"),
       which drops the target prompt and everything after. The button says *Branch* and there
@@ -335,6 +345,7 @@ New parity/UX items from the owner, grounded against current source.
       list goes stale. Add a reload button or menu action that re-runs
       `polytoken vfs ls polytoken://facets` and refreshes the FacetBadge picker. Pairs with
       the "show all available facets" todo above.
+      **human input**: this could be in the settings tbh, or in the sidebar at the bottom. doesn't need to be prominent
 
 - [ ] **Ctrl+R prompt-history popup** (polytoken TUI parity — nice-to-have polish,
       bottom of parity work). The polytoken TUI offers a ctrl+r popup showing a few
@@ -388,7 +399,7 @@ New parity/UX items from the owner, grounded against current source.
       the daemon exposes that pilot doesn't surface — add a Settings toggle and wire the
       events to update the cached state (mirror `permission_monitor_switch`'s pattern).
 
-- [ ] **Adventurous handoff (stretch).** `GET/POST /adventurous-handoff` exists
+- [ ] **Adventurous handoff.** `GET/POST /adventurous-handoff` exists
       (`wire-types.ts:7`), `adventurous_handoff_active` is on the snapshot
       (`wire-types.ts:2626`), pilot never reads it. Niche — only surface if dogfooding
       shows a need. Track so it's not forgotten.
@@ -474,6 +485,15 @@ New parity/UX items from the owner, grounded against current source.
       behavior. Fix: stop eagerly adding queued prompts to the transcript; show
       them as a separate pending state and merge them into history on actual
       delivery/acknowledgement by the daemon.
+
+## Bug reports (from claude fable, not human verified)
+
+- [ ] Reseed is a silent no-op — polytoken-driver.ts:375 calls reseedFromHistory(ws, /*emitOpened*/ false), but the second param is actually emitEvents. The comment above says "Re-broadcast the FULL transcript" — it broadcasts nothing. So /clear, rewind, and stream_discontinuity recovery refresh the driver's cache but connected clients keep stale transcripts. The proper fix needs a driver→hub reset channel (naively passing true would duplicate the transcript, since the fold is additive).
+- [ ] Pending interrogatives are never recovered — the daemon exposes pending_interrogatives on GET /state exactly so a reconnecting client can re-render blocked approvals; nothing in the repo reads it (only the generated type mentions it). An approval pending across a server restart or re-warm = permanently wedged "Working…" with no card.
+- [ ] No SSE reconnect, no liveness, no daemon-exit watcher — the subscribe loop just ends on error; nobody re-subscribes or tells the hub. The id: SSE lines aren't even parsed. A warm session can die silently.
+- [ ] N4 is worse than documented — rawSend discards ws.send()'s return and the hub's try/catch around broadcast is dead code (Bun signals drop by return code, not throw). Also: the switchTo window (two HTTP round-trips) loses deltas for a streaming background session you focus — an unlisted race.
+- [ ] Medium-tier: optimistic userMessage before the POST leaves ghost rows on failure; renaming a cold session hijacks activeSessionId (and spawns a daemon); the idle reaper can kill a session another client is viewing; phone-wake half-open sockets show a green "live" LED over a dead link; ⌘F can't search collapsed "Worked for Ns" bodies (DOM-only search); PROTOCOL_VERSION is sent but never checked (stale cached PWA misfolds silently); /debug/reset is exposed in prod behind only the app token and wipes real settings; reloaded transcripts show "56y ago" (synthetic epoch timestamps — a daemon gap, see ask #1); and the e2e suite asserts mock behaviors the live driver never produces.
+
 
 
 ## ⚡ Performance & network efficiency (2026-06-26 audit)
@@ -615,7 +635,10 @@ the trivial ones shipped inline this same day.
         → `session.navigateTree` (pi) / deterministic fixture (mock); the hub re-seeds every
         client through the same atomic path as `openSession`. Gated on `!turnActive` (a
         mid-turn navigate would interleave the run into the new branch). `e2e/branch*.e2e.ts`.
-  - [x] **T2 — full tree-view modal.** _Shipped 2026-06-20._ A browsable visualization of the
+  - [x] **T2 — full tree-view modal.** _Shipped 2026-06-20. **Removed 2026-07-01** — the
+        daemon's history is linear (`POST /rewind` destructively truncates), so the branching
+        tree was fiction live. All tree-view code, protocol types, and tests deleted. The
+        inline rewind buttons (T1) stay._ A browsable visualization of the
         whole session DAG so you can jump to / fork from *any* node, not just the always-visible
         prompts + turn-final answers (e.g. an abandoned branch, a mid-turn assistant step).
         As built: a new on-demand `treeState` server msg projects `getTree()`+`getLeafId()` into
@@ -791,7 +814,7 @@ path, not a cleanup of a bad one.
 The drift article's "state modules getting too large and mixed concern" applies squarely. The
 `PilotStore` class owns ~40 `$state` fields spanning unrelated domains (session/transcript,
 sessions list, attention/unread, models/providers, file index, dir/path picker, trust, OAuth,
-composer draft + pending-prompt delivery, sidebar, search, tree, theme, font-scale, SW/app
+composer draft + pending-prompt delivery, sidebar, search, theme, font-scale, SW/app
 update, push, toasts) **and** the transport orchestration: a ~210-line `onServer(msg)` switch
 over ~30 server-message types (lines ~537–768), plus `start` / `authenticate` / `reconnect`.
 
@@ -832,7 +855,7 @@ benign and well-commented; listed so the pattern stays visible instead of multip
   `ModelPicker` modelQuery on close (~94), `ApprovalLayer` field reset (~17), `QnaInline`
   collapsed (~33).
 - **Seed-on-open / auto-select**: `DirPicker` top-match (~72), `ModelPicker` expandedProviders
-  (~100), `Settings` expandedFavProviders (~118), `TreeView` valid-row (~45).
+  (~100), `Settings` expandedFavProviders (~118).
 
 ### Optional: make the effect discipline a guardrail, not a habit (💡 article's actual thesis)
 

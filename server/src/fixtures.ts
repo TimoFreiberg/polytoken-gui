@@ -13,7 +13,6 @@ import type {
   SessionRef,
   SessionSnapshot,
   SessionUsage,
-  TreeSnapshot,
   TrustRequest,
 } from "@pilot/protocol";
 import {
@@ -362,74 +361,6 @@ export function greeting(): ScriptStep[] {
     },
   );
   return steps;
-}
-
-/** A deterministic multi-branch session tree for the /tree view (mock driver getTree).
- *  Mirrors the greeting transcript's active path (e-u1 -> e-a1 -> …) and then forks at the
- *  plan step into the active "separate module" branch + an abandoned "inline it" branch
- *  captured as a branch summary. Exercises every facet the view filters on: a tool node
- *  (hidden in the default skeleton view, shown under "all"), a labelled node (the
- *  labelled-only filter + the [label] chip), a branch point, and a branch summary. The
- *  active root->leaf path ends at e-a3. Ids match the greeting/branchFrom fixtures so a
- *  jump to e-u1/e-u2 prefills the composer with that prompt. */
-export function mockTree(): TreeSnapshot {
-  return {
-    leafId: "e-a3",
-    nodes: [
-      {
-        id: "e-u1",
-        parentId: null,
-        kind: "user",
-        preview: GREETING_PROMPT,
-        ts: "2026-06-20T11:00:00.000Z",
-      },
-      {
-        id: "e-a1",
-        parentId: "e-u1",
-        kind: "assistant",
-        preview: "I'll look at how routes are currently registered.",
-        ts: "2026-06-20T11:00:30.000Z",
-      },
-      {
-        id: "e-t1",
-        parentId: "e-a1",
-        kind: "bash",
-        preview: '[bash] rg -n "app.get\\(" server/src',
-        ts: "2026-06-20T11:00:35.000Z",
-      },
-      {
-        id: "e-a2",
-        parentId: "e-t1",
-        kind: "assistant",
-        preview:
-          "Routes live in server/src/index.ts. I'll register /health next to the others and add a Bun test.",
-        ts: "2026-06-20T11:01:10.000Z",
-      },
-      {
-        id: "e-u2",
-        parentId: "e-a2",
-        kind: "user",
-        preview: "actually, put it in a separate health-router module",
-        ts: "2026-06-20T11:02:00.000Z",
-        label: "router",
-      },
-      {
-        id: "e-a3",
-        parentId: "e-u2",
-        kind: "assistant",
-        preview: "Good call — extracting a healthRouter and mounting it.",
-        ts: "2026-06-20T11:02:40.000Z",
-      },
-      {
-        id: "e-bs1",
-        parentId: "e-a2",
-        kind: "branch-summary",
-        preview:
-          "explored inlining /health in index.ts; abandoned for a module",
-        ts: "2026-06-20T11:02:05.000Z",
-      },
-    ],
-  };
 }
 
 /** Seed for a branch that rewound to before the first prompt: an empty transcript the

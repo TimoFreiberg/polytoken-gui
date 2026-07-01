@@ -22,7 +22,6 @@ import {
   type SessionListEntry,
   type SessionState,
   type TranscriptItem,
-  type TreeNodeInfo,
   type TrustRequest,
 } from "@pilot/protocol";
 import { clearToken, getToken, setToken } from "./auth.js";
@@ -281,19 +280,9 @@ class PilotStore {
   // bumps so a repeated ⌘F re-focuses + selects the existing query, mirroring native find.
   searchOpen = $state(false);
   searchFocusN = $state(0);
-  // Session-tree (/tree) view open/closed — per-client view state. The tree data itself
-  // is server-authoritative (fetched via queryTree on open, re-pushed after a branch).
-  treeOpen = $state(false);
   // The PlanView overlay — a modal rendering of the active plan document's
   // markdown. Ephemeral (not persisted); toggled by the StatusHeader button or ⌘P.
   planViewOpen = $state(false);
-  // The focused session's branch tree, or null until the first treeState arrives. Carries
-  // the session it belongs to so a tree that lands after a switch can be ignored.
-  tree = $state<{
-    sessionId: string | null;
-    nodes: TreeNodeInfo[];
-    leafId: string | null;
-  } | null>(null);
   // Theme override (system/light/dark), persisted per-device in localStorage.
   themeMode = $state<ThemeMode>(getThemeMode());
   // Hide thinking blocks toggle — when on, thinking content is replaced with a
@@ -846,13 +835,6 @@ class PilotStore {
         break;
       case "commandList":
         this.commands = [...msg.commands];
-        break;
-      case "treeState":
-        this.tree = {
-          sessionId: msg.sessionId,
-          nodes: [...msg.nodes],
-          leafId: msg.leafId,
-        };
         break;
       case "fileIndex":
         this.fileIndex = { files: [...msg.files], truncated: msg.truncated };
@@ -1445,10 +1427,6 @@ class PilotStore {
     // user types `@`. The fallback-query cache is cleared for the same reason.
     this.fileIndex = { files: [], truncated: false };
     this.files = { query: "", items: [] };
-    // Drop the previous session's branch tree so a stale one never flashes; if the tree
-    // view is open across the switch, re-query for the session we're moving to.
-    this.tree = null;
-    if (this.treeOpen) send({ type: "queryTree" });
     this.lastAttemptedSessionPath = path;
     send({ type: "openSession", path });
   }
@@ -1786,20 +1764,6 @@ class PilotStore {
   }
   closeSearch(): void {
     this.searchOpen = false;
-  }
-  /** Open the session-tree view and ask the server for the focused session's tree. We
-   *  re-query on every open so the view reflects any branching since it was last seen
-   *  (the server also re-pushes after a branch). */
-  openTree(): void {
-    this.treeOpen = true;
-    send({ type: "queryTree" });
-  }
-  closeTree(): void {
-    this.treeOpen = false;
-  }
-  toggleTree(): void {
-    if (this.treeOpen) this.closeTree();
-    else this.openTree();
   }
   togglePlanView(): void {
     this.planViewOpen = !this.planViewOpen;

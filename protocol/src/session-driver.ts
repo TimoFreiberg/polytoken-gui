@@ -112,53 +112,6 @@ export interface FileInfo {
   /** Whether the entry is a directory (the menu renders a trailing "/"). */
   readonly isDirectory: boolean;
 }
-
-/** Coarse category for a session-tree node — drives the tree view's filtering, preview
- *  styling, and the row icon/colour. A flat projection of the daemon's `SessionEntry.type` (with
- *  the message role folded in) so the client can filter without re-deriving roles. */
-export type TreeNodeKind =
-  | "user"
-  | "assistant"
-  | "tool"
-  | "bash"
-  | "branch-summary"
-  | "compaction"
-  | "model-change"
-  | "thinking-change"
-  | "label"
-  | "session-info"
-  | "custom";
-
-/** One node of a session's branch tree — a JSON-safe, DOM-free projection of the daemon's
- *  `SessionTreeNode`/`SessionEntry` (the heavy message payload reduced to a one-line
- *  `preview`, projected server-side so `protocol/` stays runtime-free). `id` is the same
- *  handle the `branch` client message takes, so selecting a node needs no extra lookup.
- *  The client rebuilds the tree from `parentId` and marks the active path from the
- *  snapshot's `leafId`. See {@link TreeSnapshot} / {@link treeState}. */
-export interface TreeNodeInfo {
-  readonly id: string;
-  /** Parent node id; null for a root (the opening message, or an alternate opening
-   *  message after a re-edit of the very first prompt). */
-  readonly parentId: string | null;
-  readonly kind: TreeNodeKind;
-  /** One-line, whitespace-normalised preview (projected server-side). Empty for an
-   *  assistant turn that produced only tool calls — the client hides those by default. */
-  readonly preview: string;
-  /** ISO timestamp of the entry — siblings render oldest-first, matching the daemon. */
-  readonly ts?: string;
-  /** A user-assigned label for this node, if any (the daemon's tree labels). */
-  readonly label?: string;
-}
-
-/** A session's whole branch tree plus its active tip — the payload of {@link treeState}.
- *  `nodes` is the full DAG (every entry, all branches including abandoned ones); the
- *  client filters/flattens it. `leafId` is the current leaf (the active root→leaf path
- *  ends there); null for an empty session. */
-export interface TreeSnapshot {
-  readonly nodes: readonly TreeNodeInfo[];
-  readonly leafId: string | null;
-}
-
 /** Pilot's view of the daemon's GLOBAL model config (not per-session): the default new
  *  sessions start from, plus the favorites subset the header picker is filtered to.
  *  `favorites` are concrete `provider:modelId` refs (resolved server-side from the daemon's

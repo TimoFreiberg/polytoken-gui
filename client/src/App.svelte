@@ -14,7 +14,6 @@
   import TrustCard from "./components/TrustCard.svelte";
   import TokenGate from "./components/TokenGate.svelte";
   import Settings from "./components/Settings.svelte";
-  import TreeView from "./components/TreeView.svelte";
   import PlanView from "./components/PlanView.svelte";
   import Tooltip from "./components/Tooltip.svelte";
   import Toast from "./components/Toast.svelte";
@@ -51,7 +50,7 @@
   // The agent-driven attention surfaces currently active, in cycle order. The ⌘\
   // hotkey advances focus through these; each cycled-away-from surface collapses to
   // a pill. Transcript is always present (the "home" surface). User-driven modals
-  // (Settings, TreeView, PlanView, ImageLightbox) are excluded — they have their
+  // (Settings, PlanView, ImageLightbox) are excluded — they have their
   // own hotkeys and are not agent-initiated.
   const activeAttentionSurfaces = $derived.by(() => {
     const surfaces: AttentionSurface[] = ["transcript"];
@@ -241,7 +240,6 @@
         // collapses to a pill. No-op when a user-driven modal owns the keyboard.
         if (
           store.settingsOpen ||
-          store.treeOpen ||
           store.planViewOpen ||
           imageViewer.index !== null
         )
@@ -295,7 +293,6 @@
 </div>
 <TrustCard />
 <Settings />
-<TreeView />
 <PlanView />
 <!-- Shared full-screen viewer for any read-only transcript image (user attachments,
      tool image output). Opened via imageViewer.open(batch, index) from Transcript /

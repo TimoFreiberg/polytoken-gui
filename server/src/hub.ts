@@ -813,60 +813,6 @@ export class SessionHub {
     }
   }
 
-  /** Fetch + send ONE client its focused session's branch tree (the daemon's /tree) for the tree
-   *  view. Per-connection (scoped to the requester's focus, like the command/file lists),
-   *  so a client opening the tree view sees ITS session, not whatever another client is on.
-   *  If the driver can't read a tree (no getTree, or it returns undefined), sends an explicit
-   *  empty treeState so the client's loading state clears instead of hanging forever. */
-  private async sendTree(conn: ClientConn): Promise<void> {
-    if (!this.driver.getTree) {
-      // Defense-in-depth: the polytoken driver doesn't implement getTree yet (it
-      // needs a GET /history projection). Without this explicit empty treeState,
-      // the client's TreeView hangs on "Loading tree…" forever (it only clears
-      // its loading state on a treeState message).
-      conn.send({
-        type: "treeState",
-        sessionId: conn.focusedId,
-        nodes: [],
-        leafId: null,
-      });
-      return;
-    }
-    try {
-      const tree = await this.driver.getTree(conn.focusedId ?? undefined);
-      if (!tree) return;
-      conn.send({
-        type: "treeState",
-        sessionId: conn.focusedId,
-        nodes: tree.nodes,
-        leafId: tree.leafId,
-      });
-    } catch (e) {
-      console.error("[hub] getTree failed", e);
-    }
-  }
-
-  /** Re-send the branch tree to every client viewing `sid` after a branch moved its leaf
-   *  (or added an abandoned-branch summary), so an open tree view refreshes. The branch
-   *  mutated the shared session, so all its viewers — not just the brancher — must update. */
-  private async refreshTreeForViewers(sid: SessionId): Promise<void> {
-    if (!this.driver.getTree) return;
-    try {
-      const tree = await this.driver.getTree(sid);
-      if (!tree) return;
-      for (const conn of this.clients.values())
-        if (conn.focusedId === sid)
-          conn.send({
-            type: "treeState",
-            sessionId: sid,
-            nodes: tree.nodes,
-            leafId: tree.leafId,
-          });
-    } catch (e) {
-      console.error("[hub] getTree failed", e);
-    }
-  }
-
   /** Build the pilot-local-settings message: the persisted settings + the live login-env
    *  capture status (so the Settings panel can show configured-vs-active and prompt for a
    *  restart when they differ), PLUS the resolved `backgroundModelWarning` (a loud red
@@ -1329,9 +1275,6 @@ export class SessionHub {
           { reseed: true },
         ).then((sid) => {
           if (sid && prefill) send({ type: "editorPrefill", text: prefill });
-          // The leaf moved (and an abandoned-branch summary may have appeared), so
-          // refresh any open tree view on every client viewing this session.
-          if (sid) void this.refreshTreeForViewers(sid);
         });
         return;
       }
@@ -1398,9 +1341,6 @@ export class SessionHub {
         return;
       case "listCommands":
         void this.sendCommandList(conn);
-        return;
-      case "queryTree":
-        void this.sendTree(conn);
         return;
       case "queryFiles":
         void this.sendFileList(conn, msg.query, msg.cwd);
