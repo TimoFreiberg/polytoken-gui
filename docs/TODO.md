@@ -409,7 +409,7 @@ New parity/UX items from the owner, grounded against current source.
       to visible notices (connection lost, reconnecting, etc.), and surface server status
       read-only in the UI. `pilot-feature-state.md` §9 already flags this 🔴.
 
-- [ ] **`eager_fallback_activated` event is swallowed — operator sees model change but
+- [x] **`eager_fallback_activated` event is swallowed — operator sees model change but
       not why.** When the daemon auto-switches to a fallback model (e.g. the primary is
       down/rate-limited), `model_switch` fires (so the picker updates), but the companion
       `eager_fallback_activated` event (`wire-types.ts:3082`) has no case in `event-map.ts`
@@ -417,13 +417,24 @@ New parity/UX items from the owner, grounded against current source.
       with no explanation. Surface a notice ("⚠ Auto-switched to fallback model: …") so
       the reason is visible. Quick fix: add a case in `event-map.ts` that emits a warning
       `hostUiRequest{kind:"notify"}`.
+      **Done 2026-07-02:** `eager_fallback_activated` is not a top-level `DaemonEvent` —
+      it's a `ToolExposureReason` carried by the `tool_exposure_changed` event. Pulled
+      `tool_exposure_changed` out of the `return EMPTY` group and added a check on
+      `ev.reason.type`: when `eager_fallback_activated`, emits a warning notify
+      ("Auto-switched to a fallback model — the primary may be down or rate-limited").
+      Other reasons (model_changed, facet_changed, etc.) stay EMPTY. Tests added for both
+      the fallback case and the non-fallback passthrough.
 
-- [ ] **`agent_block_violation` event is swallowed.** If the agent violates a block
+- [x] **`agent_block_violation` event is swallowed.** If the agent violates a block
       constraint, the operator gets no signal — the event (`event-map.ts:1209` in the
       `return EMPTY` group) is silently dropped. Should surface as a visible warning
       (notify card or transcript notice) so the operator knows a violation occurred.
       Low frequency but a safety signal worth surfacing loudly (crash-don't-corrupt
       philosophy).
+      **Done 2026-07-02:** pulled `agent_block_violation` out of the `return EMPTY` group
+      and added a case that emits a warning notify naming the blocked tool
+      ("Blocked: the agent tried to use {tool_name}, which is blocked by a constraint").
+      Test updated from `-> empty` to `-> warning notify naming the tool`.
 
 - [ ] **Notification autodrain toggle.** The daemon has `GET/POST /notification-autodrain`
       (`wire-types.ts:437`) + `notification_autodrain_switch` / `notifications_drained`

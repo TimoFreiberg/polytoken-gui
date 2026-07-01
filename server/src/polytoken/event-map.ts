@@ -958,6 +958,51 @@ export function mapDaemonEvent(
       ]);
     }
 
+    case "agent_block_violation": {
+      // The agent tried to use a tool that's blocked by a block constraint. Low
+      // frequency but a safety signal worth surfacing loudly (crash-don't-corrupt
+      // philosophy) — the operator needs to know a violation occurred.
+      const tool = ev.tool_name;
+      return events([
+        {
+          ...meta,
+          type: "hostUiRequest",
+          request: {
+            kind: "notify",
+            requestId: `block-violation-${meta.timestamp}`,
+            message: `Blocked: the agent tried to use ${tool}, which is blocked by a constraint`,
+            level: "warning",
+          },
+        },
+      ]);
+    }
+
+    case "tool_exposure_changed": {
+      // Tool exposure changed — the reason explains why. When the daemon
+      // auto-switched to a fallback model, surface it so the operator knows the
+      // model changed because the primary was down/rate-limited (model_switch
+      // already updated the picker, but not the reason). Other reasons are
+      // internal (model_changed, facet_changed, reload, compaction_reset,
+      // edit_format_relocked) and don't need a user-visible notice.
+      const reasonType = ev.reason.type;
+      if (reasonType === "eager_fallback_activated") {
+        return events([
+          {
+            ...meta,
+            type: "hostUiRequest",
+            request: {
+              kind: "notify",
+              requestId: `fallback-${meta.timestamp}`,
+              message:
+                "Auto-switched to a fallback model — the primary may be down or rate-limited",
+              level: "warning",
+            },
+          },
+        ]);
+      }
+      return EMPTY;
+    }
+
     case "session_rewound": {
       // History was truncated (spike §7: destructive rewind). Re-seed.
       return events([], [{ type: "reseed" }]);
@@ -1186,7 +1231,6 @@ export function mapDaemonEvent(
     case "hook_fired":
     case "context_loaded":
     case "tool_reveal":
-    case "tool_exposure_changed":
     case "classifier_decision":
     case "extension_registered":
     case "subagent_started":
@@ -1206,7 +1250,6 @@ export function mapDaemonEvent(
     case "job_expiring":
     case "job_cancelled":
     case "job_updated":
-    case "agent_block_violation":
     case "usage_throttle":
       return EMPTY;
 

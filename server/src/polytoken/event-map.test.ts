@@ -687,6 +687,50 @@ describe("mapDaemonEvent", () => {
     });
   });
 
+  test("tool_exposure_changed with eager_fallback -> warning notify", () => {
+    const out = fold({
+      type: "tool_exposure_changed",
+      exposed_count: 10,
+      revealed_count: 5,
+      provider_capability_mode: { type: "full_schema" },
+      reason: { type: "eager_fallback_activated" },
+    });
+    expect(out.events[0]).toMatchObject({
+      type: "hostUiRequest",
+      request: {
+        kind: "notify",
+        level: "warning",
+        message: expect.stringContaining("fallback"),
+      },
+    });
+  });
+
+  test("tool_exposure_changed with other reason -> empty", () => {
+    const out = fold({
+      type: "tool_exposure_changed",
+      exposed_count: 10,
+      revealed_count: 5,
+      provider_capability_mode: { type: "full_schema" },
+      reason: { type: "model_changed" },
+    });
+    expect(out.events).toHaveLength(0);
+  });
+
+  test("agent_block_violation -> warning notify naming the tool", () => {
+    const out = fold({
+      type: "agent_block_violation",
+      tool_name: "shell_exec",
+    });
+    expect(out.events[0]).toMatchObject({
+      type: "hostUiRequest",
+      request: {
+        kind: "notify",
+        level: "warning",
+        message: expect.stringContaining("shell_exec"),
+      },
+    });
+  });
+
   // ===== System reminders =====
 
   test("system_reminder (non-plan-review reason) -> customMessage (display:false)", () => {
@@ -1255,13 +1299,13 @@ describe("mapDaemonEvent", () => {
     ).toEqual({ events: [], effects: [] });
   });
 
-  test("tool_exposure_changed -> empty", () => {
+  test("tool_exposure_changed with model_changed reason -> empty (regression)", () => {
     expect(
       fold({
         type: "tool_exposure_changed",
         exposed_count: 5,
         provider_capability_mode: "eager",
-        reason: "initial",
+        reason: { type: "model_changed" },
         revealed_count: 3,
       }),
     ).toEqual({ events: [], effects: [] });
@@ -1497,14 +1541,25 @@ describe("mapDaemonEvent", () => {
     expect(out.effects).toEqual([{ type: "fetchState", emit: "sessionUpdated" }]);
   });
 
-  test("agent_block_violation -> empty", () => {
+  test("agent_block_violation -> warning notify naming the tool (regression)", () => {
     expect(
       fold({
         type: "agent_block_violation",
         path: "/some/path",
         tool_name: "shell_exec",
       }),
-    ).toEqual({ events: [], effects: [] });
+    ).toMatchObject({
+      events: [
+        {
+          type: "hostUiRequest",
+          request: {
+            kind: "notify",
+            level: "warning",
+            message: expect.stringContaining("shell_exec"),
+          },
+        },
+      ],
+    });
   });
 
   test("usage_throttle -> empty", () => {
