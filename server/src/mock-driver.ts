@@ -478,10 +478,10 @@ export class MockDriver implements PilotDriver {
     });
   }
 
-  clearQueue(sessionId = SESSION_REF.sessionId): {
+  async clearQueue(sessionId = SESSION_REF.sessionId): Promise<{
     steering: string[];
     followUp: string[];
-  } {
+  }> {
     const queued = this.queues.get(sessionId) ?? [];
     this.queues.set(sessionId, []);
     this.emitQueue(sessionId);

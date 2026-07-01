@@ -195,6 +195,11 @@ export async function createPolytokenDriver(
 
   const now = () => new Date().toISOString();
 
+  // Client-presence predicate, set by the hub at construction so the driver can
+  // deny-safe an interactive prompt when nobody is connected. Defaults to true
+  // (deny-safe = don't block on a prompt nobody can answer).
+  let hasClients: () => boolean = () => true;
+
   /** Per-cwd cache of parsed slash commands. The set is cwd-scoped and re-broadcast
    *  on every session switch; re-shelling-out to `polytoken print-slash-commands` on
    *  each switch would be wasteful when the set rarely changes. Cleared nowhere — a
@@ -1352,6 +1357,38 @@ export async function createPolytokenDriver(
       void ws.client.setPermissionMode(mode).catch((e) => {
         console.error("[polytoken] setPermissionMonitor failed", e);
       });
+    },
+    setClientPresence(fn: () => boolean): void {
+      hasClients = fn;
+    },
+    async clearQueue(
+      sessionId?: SessionId,
+    ): Promise<{ steering: string[]; followUp: string[] }> {
+      const ws = target(sessionId);
+      if (!ws) return { steering: [], followUp: [] };
+      // Snapshot the pending queue, then drain it by repeatedly dequeuing the
+      // newest item (the daemon has no bulk-clear endpoint). Return all texts in
+      // followUp — the daemon has no steer/followUp discriminator (pilot-side UX
+      // only), and the client joins both arrays into the composer draft.
+      try {
+        const { data } = await ws.client.turnInputSnapshot();
+        const items = data?.items ?? [];
+        for (const _ of items) {
+          await ws.client.dequeueNewestInput();
+        }
+        const texts = items.map((item) => item.content);
+        // Emit an empty queueUpdated so all clients' queue trays clear.
+        emit({
+          sessionRef: ws.ref,
+          timestamp: now(),
+          type: "queueUpdated",
+          messages: [],
+        });
+        return { steering: [], followUp: texts };
+      } catch (e) {
+        console.error("[polytoken] clearQueue failed", e);
+        return { steering: [], followUp: [] };
+      }
     },
   };
 

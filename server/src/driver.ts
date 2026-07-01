@@ -50,10 +50,10 @@ export interface PilotDriver {
   ): Promise<void>;
   abort(sessionId?: SessionId): void;
   /** Atomically clear and return the targeted session's text-only driver queues. */
-  clearQueue?(sessionId?: SessionId): {
+  clearQueue?(sessionId?: SessionId): Promise<{
     steering: string[];
     followUp: string[];
-  };
+  }>;
   respondUi(response: HostUiResponse, sessionId?: SessionId): void;
 
   /** Sessions on disk available to open (D13: the daemon's .jsonl files are authoritative).

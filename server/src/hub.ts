@@ -1173,10 +1173,15 @@ export class SessionHub {
           });
           return;
         }
-        const restored = this.driver.clearQueue(
-          msg.sessionId ?? conn.focusedId ?? undefined,
+        const clearQueue = this.driver.clearQueue.bind(this.driver);
+        void (async () => {
+          const restored = await clearQueue(
+            msg.sessionId ?? conn.focusedId ?? undefined,
+          );
+          send({ type: "queueRestored", ...restored });
+        })().catch((e) =>
+          send({ type: "error", message: e instanceof Error ? e.message : String(e) }),
         );
-        send({ type: "queueRestored", ...restored });
         return;
       }
       case "respondUi": {

@@ -80,7 +80,7 @@ class FakeDriver implements PilotDriver {
     followUp: ["Follow up"],
   };
   readonly clearQueueCalls: (string | undefined)[] = [];
-  clearQueue(sessionId?: string) {
+  async clearQueue(sessionId?: string) {
     this.clearQueueCalls.push(sessionId);
     const restored = this.queue;
     this.queue = { steering: [], followUp: [] };
@@ -320,7 +320,7 @@ describe("SessionHub", () => {
     expect(d.responded[0]).toMatchObject({ confirmed: true });
   });
 
-  test("restoreQueue clears the target once and replies only to the requester", () => {
+  test("restoreQueue clears the target once and replies only to the requester", async () => {
     const d = new FakeDriver();
     const hub = new SessionHub(d);
     const a = client();
@@ -331,6 +331,7 @@ describe("SessionHub", () => {
     b.received.length = 0;
 
     hub.handleClient(a.send, { type: "restoreQueue", sessionId: "s2" });
+    await flush();
 
     expect(d.clearQueueCalls).toEqual(["s2"]);
     expect(a.received).toContainEqual({
@@ -343,12 +344,13 @@ describe("SessionHub", () => {
     );
   });
 
-  test("restoreQueue returns an empty result without changing the editor contract", () => {
+  test("restoreQueue returns an empty result without changing the editor contract", async () => {
     const d = new FakeDriver();
     d.queue = { steering: [], followUp: [] };
     const hub = new SessionHub(d);
     const a = client();
     hub.handleClient(a.send, { type: "restoreQueue" });
+    await flush();
     expect(a.received.at(-1)).toEqual({
       type: "queueRestored",
       steering: [],

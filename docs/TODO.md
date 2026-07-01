@@ -148,11 +148,18 @@ elsewhere in this file are not duplicated here.
       `closeTree`/`toggleTree`, the `⌘⇧T` hotkey + header IconButton, the `/tree` slash-command
       interception, `e2e/tree.e2e.ts`, and `mockTree()` fixture. The inline rewind buttons +
       `⌘⇧↑` hotkey in Transcript.svelte are untouched.
-- [ ] **Implement the 4 ready polytoken driver methods.** These have daemon APIs and just
-      need wiring: `subscribeTrust`/`respondTrust` (use existing interrogative SSE +
-      `POST /interrogative/{id}/respond`), `setClientPresence` (trivial local callback —
-      the hub passes a `() => boolean` predicate so the driver can deny-safe a trust prompt
-      when nobody is connected), `clearQueue` (`DELETE /turn/input/newest`).
+- [x] **Implement the ready polytoken driver methods.** **Done 2026-07-02:** implemented
+      `setClientPresence` (module-level `hasClients` predicate with deny-safe `() => true`
+      default, updated by the hub at construction) and `clearQueue` (async: snapshots the
+      pending queue via `GET /turn/input`, drains via repeated `DELETE /turn/input/newest`,
+      returns all texts in `followUp` since the daemon has no steer/followUp discriminator,
+      emits an empty `queueUpdated` so client trays clear). The `PilotDriver.clearQueue`
+      interface was widened from sync to `Promise<{steering, followUp}>` and the hub's
+      `restoreQueue` case now awaits it via a fire-and-forget async IIFE (matching the
+      `acceptPrompt` pattern); the mock driver and hub test stub were made `async` to match.
+      `subscribeTrust`/`respondTrust` were **skipped** — the daemon's `capability`
+      interrogative is already fully wired through the `respondUi` path, and the mock's
+      separate trust channel is D12 fiction with no daemon equivalent.
 - [x] **⌘↑/⌘↓ prompt navigation should settle in ≤300ms.** The existing hotkeys that jump
       between user prompts in the transcript scroll too slowly — the target prompt should
       be visible and settled (no smooth-scroll animation still in flight) within 300ms.
