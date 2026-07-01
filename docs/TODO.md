@@ -281,6 +281,22 @@ Already addressed from the same audit (kept as record):
 
 New parity/UX items from the owner, grounded against current source.
 
+- [ ] **history-seed drops 9 of 12 history item kinds — reloaded transcripts lose
+      reminders, compaction rows, model/facet switches.** `history-seed.ts` replays only
+      `user`/`assistant`/`tool_result`; the other persisted kinds (`system_reminder`,
+      `compaction_fencepost`, `model_switch`, `facet_switch`, `context_cleared`,
+      `state_update`, `classifier_decision`, `image_reference`, `session_lifecycle`) are
+      silently skipped. Live, `system_reminder` becomes a `customMessage` (turn-boundary
+      marker + visible plan-review pills, `event-map.ts:1077`), so a reload degrades turn
+      grouping and drops the pills; compaction fenceposts (a roadmap SHOULD: "compaction
+      rows") and model/facet switches vanish too. Fix: map the missing kinds in
+      `history-seed.ts` to the same driver events the live path emits (at minimum
+      `system_reminder`→`customMessage`, `compaction_fencepost`→visible compaction row,
+      `model_switch`/`facet_switch`→`sessionUpdated` metadata or a small notice row).
+      Verified against unstable.4 openapi + vendored wire-types:1922 (kinds identical in
+      both). _Replaces upstream ask #9 (withdrawn — the daemon persists these fine; the
+      drop is ours). Fable, 2026-07-01._
+
 - [ ] **Thinking blocks: always collapsed-by-default + always expandable; re-scope
       `hideThinking` to control only superseded blocks.** Today `store.hideThinking`
       (default on) hides thinking blocks *entirely* — `Transcript.svelte:743` gates

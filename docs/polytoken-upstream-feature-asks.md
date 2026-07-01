@@ -74,3 +74,65 @@ comment: if available_skills and available_subagents exists, yeah would be nice
 |       |                                      | ask. |                |
 comment: yeah would be neat but definitely most speculative ask :D
 +-------+--------------------------------------+------------------------------------------------+----------------+
+
+---
+
+## Verification round (Fable, 2026-07-01)
+
+Every questioned item re-verified against **ground truth from the local binary**:
+`polytoken openapi` dumped fresh from **0.4.0-unstable.4** (vendored wire-types are from
+unstable.2 — diffed them: **u2→u4 changed nothing**: same 44 paths, no new DaemonEvent
+variants, `PromptRequest` still `{content, max_tool_turns}`, `/events` still declares no
+params). Plus real on-disk session dirs under `~/.local/share/polytoken/sessions` (80 dirs).
+
+**#1 `emitted_at` — CONFIRMED missing, ask stands.** In the unstable.4 spec, every history
+item kind carries `emitted_at` (`session_lifecycle`, `state_update`, `model_switch`,
+`compaction_fencepost`, `system_reminder`, `classifier_decision`, `context_cleared`,
+`image_reference`) **except exactly `user`, `assistant`, `tool_result`** (and `facet_switch`).
+Not silly — the gap is real and oddly specific to the three kinds a transcript is made of.
+
+**#3 steer/follow_up — dropped per your call.** (Your workflow: send follow-up, cancel turn
+if you wanted a steer.) Not filing.
+
+**#5 `/turn/cancel` — the spec is silent, which is the point; ask stands, reframed as
+"define/document".** The endpoint's entire documented contract is: 202 "Turn cancellation
+accepted" / 409 "No turn is in flight". Nothing about pending interrogatives either way —
+so no, we can't know from the API description, and empirically (NEXT-SESSION §E) it did NOT
+unblock an interrogative-blocked turn. The ask is precisely "please define (ideally:
+settles interrogatives deny-safe) and document it".
+
+**#8 usage — no decompilation :) It's in the published spec.** `TurnChunk` is a schema in
+the `polytoken openapi` output itself, with a `usage` variant carrying
+`input_tokens`/`output_tokens`/`cache_creation_input_tokens`/`cache_read_input_tokens` —
+re-confirmed in the fresh unstable.4 dump. Bonus on-disk evidence: the daemon writes a
+`log.jsonl.usage` sidecar per session (`{"message_count":873,"usage":{"input_tokens":10746,
+"output_tokens":32,...}}`), so per-message accounting demonstrably exists end-to-end; the
+ask is only "surface it on SSE/state". Ask stands.
+
+**#9 custom history kind — WITHDRAWN, my agents got this one wrong.** "Live custom
+messages" = pilot's `customMessage` transcript events, which come from the daemon's
+`system_reminder` SSE events (event-map.ts:1077-1094; plan-review ones render as visible
+inject pills, the rest are invisible turn-boundary markers for `groupTurns`). The claim was
+that these vanish on reload because history has no such kind — **false**: `system_reminder`
+IS a persisted history item kind, in unstable.4 AND in our own vendored wire-types (line
+1922). The real bug is pilot-side: `history-seed.ts` replays only `user`/`assistant`/
+`tool_result` and silently drops the other NINE kinds (system_reminder, compaction_fencepost,
+model_switch, facet_switch, context_cleared, ...). Filed as a pilot todo instead — it also
+explains reloaded transcripts losing turn grouping and compaction rows.
+
+**#10 session_title — ask STANDS, and your counter-observation is explained.** Surveyed all
+80 session dirs: `session_title` exists in exactly ONE file anywhere — `record.json` of the
+one currently-LIVE daemon (record.json = the pid/port liveness record; 79 dead sessions
+have none, and no title key exists in any session.json or log.jsonl — the log matches were
+false positives, quoted docs inside prompts). So `polytoken continue` can show titles for
+sessions whose daemon record still exists, but a genuinely cold session's title is gone.
+If you want to be extra sure: title a session, `/quit` its daemon, check
+`~/.local/share/polytoken/sessions/<id>/` — no title survives.
+
+**#11 available_facets — confirmed, ask stands.** `SessionStateSnapshot` in unstable.4 has
+`available_models`, `available_skills`, `available_subagents` — and no `available_facets`.
+
+**#2 (images), #4 (SSE resume), #6 (queue_if_busy), #7 (bulk drain)** — re-confirmed
+unchanged in unstable.4 (no image field, `/events` param-less, `PendingTurnInputRequest`
+still `{content}`-only, still only `DELETE /turn/input/newest`). All stand as written.
++-------+--------------------------------------+------------------------------------------------+----------------+
