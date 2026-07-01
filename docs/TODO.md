@@ -10,28 +10,10 @@ See `docs/` siblings for context: `DESIGN.md` (architecture + roadmap), `DECISIO
 ## 🔴 Next (urgent / blocking)
 
 - [ ] hotkey for hiding/showing the question widget? hotkey choice needs discussion
-- [ ] **Drop the steer/follow-up toggle + investigate steer behavior (BUG).** The
-      composer exposes a `steer` ↔ `follow-up` SegmentedControl
-      (`client/src/components/Composer.svelte:30,37–48`) whose chosen `deliverAs` is passed
-      into `store.sendPrompt` → `PilotDriver.prompt(text, deliverAs, …)`. But polytoken's
-      daemon has **no steer/follow-up distinction**: the driver receives it as `_deliverAs`
-      (underscore-prefixed, unused — `server/src/polytoken/polytoken-driver.ts:686`) and
-      ALWAYS calls `POST /prompt` (`:707`); the queue endpoint `POST /turn/input` takes only
-      `{content}` ("no steer/followUp discriminator — that distinction is pilot-side UX only",
-      `server/src/polytoken/daemon-client.ts:699–700`). Every queued message is labelled
-      `mode: "steer"` regardless of what the user picked (`event-map.ts:318`,
-      `polytoken-driver.ts:373` "daemon doesn't distinguish steer/followUp"). So the toggle is
-      cosmetic noise today — remove the SegmentedControl + `deliverAs` state from the composer
-      (keep the Alt+Enter one-shot-queue hint if it's still meaningful). BUT: the user reports
-      steer messages are currently buggy and wants investigation — likely the toggle's
-      no-op-ness is masking a real mid-turn-queueing bug (the driver routes mid-turn sends to
-      `/prompt` instead of `/turn/input`, per `polytoken-driver.ts:705–707`). Investigate the
-      actual steer path end-to-end before deleting the toggle; confirm whether mid-turn sends
-      even reach the queue or wrongly start a new turn. Also check the "press Esc after send
-      submits the next message" behavior the user mentioned. 2026-06-30.
-      investigate code and fix if the situation looks clear, otherwise explore an interactive test
 - [ ] set up a test environment for automated testing using the actual polytoken backend, both interactive UI and tmux-driven tui polytoken (to compare features) - set up a tmp dir as a test project and run the agent sessions in there, configure the dir to either use umans-flash or deepseek-v4-flash as default agent and then ensure all agent features are testable by the dev agent in that dir
 - [ ] add UI support for `goal` (polytoken shows the text "(goal)" next to the facet in the sidebar, we can find a nicer place but we should also show it, if the protocol exposes it)
+- [ ] use the updated `polytoken models` that loads dynamic models (from catalog providers) now - remove obsolete fallbacks that emulated this behavior
+- [ ] use `polytoken validate {skill,facet,subagent}` for gui config stuff
 
 ## Full automated gui <-> tui parity testing via playwright + tmux
 

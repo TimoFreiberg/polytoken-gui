@@ -5,6 +5,35 @@ and its resolution note. Latest completions first.
 
 ---
 
+- [x] **Drop the steer/follow-up toggle + investigate steer behavior (BUG).** The
+      composer exposes a `steer` ↔ `follow-up` SegmentedControl
+      (`client/src/components/Composer.svelte:30,37–48`) whose chosen `deliverAs` is passed
+      into `store.sendPrompt` → `PilotDriver.prompt(text, deliverAs, …)`. But polytoken's
+      daemon has **no steer/follow-up distinction**: the driver receives it as `_deliverAs`
+      (underscore-prefixed, unused) and ALWAYS calls `POST /prompt`; the queue endpoint
+      `POST /turn/input` takes only `{content}`. Every queued message is labelled
+      `mode: "steer"` regardless. So the toggle was cosmetic noise. BUT: the user reports
+      steer messages are currently buggy — the toggle's no-op-ness was masking a real
+      mid-turn-queueing bug (the driver routes mid-turn sends to `/prompt` instead of
+      `/turn/input`).
+      → Done 2026-07-01 (full fix — scope A, operator-confirmed): (1) **wired mid-turn
+      queueing** — `polytoken-driver.ts` `prompt` now branches on
+      `ws.lastState?.turn_in_flight`: in-flight → `queueTurnInput` (POST /turn/input,
+      queue); idle → `prompt` (POST /prompt, new turn). The bug (mid-turn sends wrongly
+      starting a new turn) is fixed. (2) **removed the cosmetic toggle** — dropped the
+      SegmentedControl + `deliverAs`/`altHeld`/`deliverModes`/`deliverDisplay` state +
+      the Alt-hold preview + the onAltSync/onWindowBlur listeners from `Composer.svelte`.
+      `submit()` now takes no mode arg; Enter always sends (the driver routes queue vs.
+      new-turn). Toolbar hint: "Enter queues a follow-up". The wire `deliverAs` field
+      stays (mock/hub/driver accept it, unused) to minimize churn — a follow-up can drop
+      it end-to-end. Deleted the 2 toggle-specific streaming tests; added a hint-visibility
+      + Enter-clears assertion to `stop-turn.e2e.ts` (cheap coverage for the composer-side
+      behavior the deleted tests covered). The "Esc after send submits the next message"
+      report was clarified as TUI-only behavior (not a pilot bug). Staleness window
+      acknowledged: `turn_in_flight` may read stale between turn-start + the next
+      session_state_changed; a misroute surfaces as a 409 (rejected promptResult), not a
+      silent second turn. Commit `05fe0960`.
+
 - [x] **Show + edit the agent's permission level in the UI.** The polytoken daemon exposes
       the runtime permission monitor — `GET/POST /permission-monitor`
       (`server/src/polytoken/wire-types.ts:389`, `:1996–2021`), with `PermissionMonitorMode`
