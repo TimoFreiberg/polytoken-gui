@@ -147,7 +147,7 @@ test("copy button fades back out once the pointer leaves the message", async ({
     .toBe("0");
 });
 
-test("user prompt footer offers a copy button next to branch; it copies the prompt", async ({
+test("user prompt footer offers a copy button next to rewind; it copies the prompt", async ({
   page,
   context,
 }) => {
@@ -155,10 +155,10 @@ test("user prompt footer offers a copy button next to branch; it copies the prom
   const user = page.locator(".row.user").first();
   await user.hover();
   const copy = user.getByRole("button", { name: "Copy message" });
-  const branch = user.getByRole("button", { name: "Branch from this prompt" });
+  const branch = user.getByRole("button", { name: "Rewind to this prompt" });
   await expect(copy).toBeVisible();
   await expect(branch).toBeVisible();
-  // Copy sits to the LEFT of branch in the footer (matches the assistant order).
+  // Copy sits to the LEFT of rewind in the footer (matches the assistant order).
   const copyBox = await copy.boundingBox();
   const branchBox = await branch.boundingBox();
   expect(copyBox).not.toBeNull();

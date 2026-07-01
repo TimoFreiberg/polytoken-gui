@@ -113,8 +113,8 @@
   }
   function branchTitle(row: TreeRow): string {
     return row.node.kind === "user"
-      ? "Branch from this prompt — edit & resend"
-      : "Branch from here — continue on a new path";
+      ? "Rewind to this prompt — edit & resend"
+      : "Rewind from here — continue on a new path";
   }
 </script>
 
@@ -253,7 +253,7 @@
                     jump(row.node.id);
                   }}
                 >
-                  {@render branchIcon()}<span>Branch here</span>
+                  {@render branchIcon()}<span>Rewind here</span>
                 </button>
               {/if}
             </span>
@@ -264,7 +264,7 @@
 
     <footer class="legend">
       <span><span class="dot active">•</span> active path</span>
-      <span>├ branch</span>
+      <span>├ rewind</span>
       <span>↑↓ move</span>
       <span>↵ jump</span>
     </footer>

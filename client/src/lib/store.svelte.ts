@@ -1457,17 +1457,18 @@ class PilotStore {
   statPath(path: string): void {
     send({ type: "statPath", path });
   }
-  /** Jump the session to a prior tree entry and branch from it (the daemon's /tree). The server
-   *  re-seeds every client's transcript to the new branch; if `entryId` was a user
-   *  prompt, this client also gets an `editorPrefill` with its text. No-op while a turn
-   *  is running (the server rejects it — a mid-turn navigate would corrupt the branch). */
+  /** Rewind the session to a prior tree entry (the daemon's /rewind — destructive:
+   *  drops the target entry and everything after). The server re-seeds every
+   *  client's transcript to the rewound point; if `entryId` was a user prompt,
+   *  this client also gets an `editorPrefill` with its text. No-op while a turn
+   *  is running (the server rejects it — a mid-turn navigate would corrupt). */
   branch(entryId: string): void {
     if (this.turnActive) return;
     send({ type: "branch", entryId });
   }
-  /** Branch from the most recent user prompt — the "edit & resend my last message"
+  /** Rewind from the most recent user prompt — the "edit & resend my last message"
    *  gesture, bound to a global hotkey. Finds the last user item carrying a branch
-   *  handle and branches from it. */
+   *  handle and rewinds to it. */
   branchLastPrompt(): void {
     const items = this.session.items;
     for (let i = items.length - 1; i >= 0; i--) {

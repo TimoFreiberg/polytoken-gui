@@ -35,6 +35,7 @@
   // reconnect + re-snapshot — the universal mobile "I think this is stale" gesture.
   const pull = createPullRefresh();
   onDestroy(() => pull.dispose());
+  onDestroy(() => disarm());
 
   // Touch devices have no hover, so the copy footer (hover-revealed on desktop) would be
   // unreachable. Pin it visible on touch-primary devices. Gate on a JS capability check
@@ -85,6 +86,40 @@
   function turnDone(turn: TurnGroup): boolean {
     return turn.id !== lastTurnId || !store.turnActive;
   }
+
+  // Click-twice confirm gate for rewind (a destructive action — the daemon's /rewind
+  // drops the target prompt + everything after, NOT a non-destructive branch). First
+  // click arms the button into a "Click again to rewind" state (destructive red + armed
+  // label); second click within ARM_TIMEOUT fires the rewind. No popup — phone-first.
+  // Shared by the user-prompt + assistant-footer rewind buttons.
+  const ARM_TIMEOUT = 3000;
+  let armedRewindId = $state<string | null>(null);
+  let armTimer: ReturnType<typeof setTimeout> | null = null;
+  function confirmRewind(entryId: string): void {
+    if (armedRewindId === entryId) {
+      // Second click within the window — fire.
+      disarm();
+      store.branch(entryId);
+    } else {
+      // First click — arm.
+      disarm();
+      armedRewindId = entryId;
+      armTimer = setTimeout(disarm, ARM_TIMEOUT);
+    }
+  }
+  function disarm(): void {
+    armedRewindId = null;
+    if (armTimer) {
+      clearTimeout(armTimer);
+      armTimer = null;
+    }
+  }
+  // Reset the armed state when the transcript's session changes (a rewind changes the
+  // items, so the armed entryId is no longer valid).
+  $effect(() => {
+    void items;
+    disarm();
+  });
 
   // Per-work-run open/close, keyed by lane id (a turn can hold several runs, split by
   // pinned answer/screenshot cards). Default: collapsed once the turn settles, expanded
@@ -678,15 +713,18 @@
               {#if item.entryId}
                 <button
                   class="branch"
+                  class:armed={armedRewindId === item.entryId}
                   type="button"
                   onclick={(e) => {
-                    if (item.entryId) store.branch(item.entryId);
+                    if (item.entryId) confirmRewind(item.entryId);
                     e.currentTarget.blur();
                   }}
-                  title={item.entryId === lastUserEntryId
-                    ? "Branch from this prompt — edit & resend (⌘⇧↑)"
-                    : "Branch from this prompt — edit & resend"}
-                  aria-label="Branch from this prompt"
+                  title={armedRewindId === item.entryId
+                    ? "Click again to rewind — this drops this prompt and everything after (destructive)"
+                    : item.entryId === lastUserEntryId
+                      ? "Rewind to this prompt — edit & resend (⌘⇧↑)"
+                      : "Rewind to this prompt — edit & resend"}
+                  aria-label="Rewind to this prompt"
                 >
                   {@render branchIcon()}
                 </button>
@@ -739,13 +777,16 @@
               {#if item.entryId && item.entryId !== leafEntryId}
                 <button
                   class="branch"
+                  class:armed={armedRewindId === item.entryId}
                   type="button"
                   onclick={(e) => {
-                    if (item.entryId) store.branch(item.entryId);
+                    if (item.entryId) confirmRewind(item.entryId);
                     e.currentTarget.blur();
                   }}
-                  title="Branch from here — continue on a new path"
-                  aria-label="Branch from here"
+                  title={armedRewindId === item.entryId
+                    ? "Click again to rewind — this drops everything after (destructive)"
+                    : "Rewind from here — continue on a new path"}
+                  aria-label="Rewind from here"
                 >
                   {@render branchIcon()}
                 </button>
@@ -1177,6 +1218,16 @@
   .branch:focus-visible {
     outline: 2px solid var(--accent);
     outline-offset: 1px;
+  }
+  /* Armed state (click-twice confirm): shift to destructive red so the operator sees
+     the button is primed and a second click will fire the irreversible rewind. */
+  .branch.armed {
+    color: var(--danger);
+    border-color: var(--danger);
+    opacity: 1;
+  }
+  .branch.armed:hover {
+    background: color-mix(in srgb, var(--danger) 12%, transparent);
   }
   /* Touch devices have no hover — keep branch + the user-prompt copy reachable (phone is
      the primary target). The assistant copy is pinned via .scroller.touch .copy above. */

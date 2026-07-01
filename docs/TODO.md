@@ -99,7 +99,7 @@ elsewhere in this file are not duplicated here.
       endpoint — build it from `GET /history`. Defense-in-depth: have `sendTree` emit an
       explicit empty/"unsupported" `treeState` (or the client time out) so it degrades
       instead of hanging.
-- [ ] **"Branch from this prompt" = irreversible history deletion, no guard.** `branchFrom` →
+- [x] **"Branch from this prompt" = irreversible history deletion, no guard.** `branchFrom` →
       `POST /rewind` (`polytoken-driver.ts:1051`: "NOT a branch — it's a destructive REWIND"),
       which drops the target prompt and everything after. The button says *Branch* and there
       is no confirmation anywhere on the path (`Transcript.svelte:698` → `store.branch`
@@ -111,6 +111,11 @@ elsewhere in this file are not duplicated here.
          "Click again to rewind" state (with a visual change — e.g. color shift to
          destructive red + the armed label); second click within a timeout window (~3s) fires
          the rewind. No confirmation dialog/popup — this is a phone-first PWA.
+      **Fixed 2026-07-01:** both parts implemented — relabeled "Branch" → "Rewind" in all
+      tooltips/aria-labels/visible text (Transcript + TreeView), added click-twice confirm
+      gate (first click arms with destructive-red styling + updated tooltip, second click
+      within 3s fires, auto-disarms on timeout). The ⌘⇧↑ hotkey bypasses the gate (deliberate
+      keyboard gesture). E2e tests updated + passing.
 - [ ] **Images are silently dropped by the live driver.** Client image pipeline is real
       (compress/paste/drag-drop/heic), but `polytoken-driver.ts:723` drops the `_images`
       param and the daemon `/prompt`/`PromptRequest` has no image channel — so attaching images
