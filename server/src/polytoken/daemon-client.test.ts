@@ -2,7 +2,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { waitForDaemonStartup } from "./daemon-client.js";
+import { DaemonClient, waitForDaemonStartup } from "./daemon-client.js";
 
 /**
  * The stale-startup.json regression: a session dir left behind by a prior daemon
@@ -107,5 +107,65 @@ describe("waitForDaemonStartup stale-startup.json guard", () => {
     await expect(
       waitForDaemonStartup(sessionsDir, sid, 300, ourPid),
     ).rejects.toThrow(/expected pid: 12345/);
+  });
+});
+
+/**
+ * `setModel` 409 handling: the daemon's POST /model returns 409 with an
+ * ErrorBody `{code, message}` for three cases — `no_change` (model already set
+ * to this value), `turn_in_flight`, and `edit_format_locked`. Only `no_change`
+ * is a benign no-op; the other two are genuine errors that must still throw.
+ *
+ * These tests also cover `post()`'s error extraction indirectly: the thrown
+ * Error message should contain the ErrorBody's `message` field, not a
+ * nonexistent `.error` field (the original bug) or raw JSON.
+ */
+describe("DaemonClient.setModel 409 handling", () => {
+  const realFetch = globalThis.fetch;
+  let client: DaemonClient;
+
+  beforeEach(() => {
+    // No real socket needed — fetch is fully mocked. The port/pid are arbitrary.
+    client = new DaemonClient("test-sid", 9999, 12345);
+  });
+
+  afterEach(() => {
+    globalThis.fetch = realFetch;
+  });
+
+  /** Mock fetch to return `status` with a JSON `body` object. */
+  const mockFetch = (status: number, body: unknown) => {
+    globalThis.fetch = (async () =>
+      new Response(JSON.stringify(body), {
+        status,
+        headers: { "content-type": "application/json" },
+      })) as unknown as typeof globalThis.fetch;
+  };
+
+  test("treats 409 no_change as success (resolves without throwing)", async () => {
+    mockFetch(409, { code: "no_change", message: "model unchanged" });
+    await expect(client.setModel("anthropic/claude-sonnet-4")).resolves.toBeUndefined();
+  });
+
+  test("throws on 409 turn_in_flight", async () => {
+    mockFetch(409, { code: "turn_in_flight", message: "A turn is currently running" });
+    await expect(client.setModel("anthropic/claude-sonnet-4")).rejects.toThrow();
+  });
+
+  test("throws on 409 edit_format_locked", async () => {
+    mockFetch(409, {
+      code: "edit_format_locked",
+      resolution: "switch_session",
+      session_format: "whole",
+      target_format: "diff",
+      message: "edit format locked",
+    });
+    await expect(client.setModel("anthropic/claude-sonnet-4")).rejects.toThrow();
+  });
+
+  test("thrown error includes the ErrorBody message (not raw JSON or a missing .error field)", async () => {
+    const msg = "A turn is currently running";
+    mockFetch(409, { code: "turn_in_flight", message: msg });
+    await expect(client.setModel("anthropic/claude-sonnet-4")).rejects.toThrow(msg);
   });
 });

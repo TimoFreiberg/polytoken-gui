@@ -42,6 +42,7 @@ export type SessionHistorySnapshot = S["SessionHistorySnapshot"];
 export type FacetRequest = S["FacetRequest"];
 export type CompactRequest = S["CompactRequest"];
 export type FileCatalogResponse = S["FileCatalogResponse"];
+export type ErrorBody = S["ErrorBody"];
 
 /** Result of spawning a daemon — parsed from `polytoken new --no-attach` stdout. */
 export interface SpawnedDaemon {
@@ -522,7 +523,9 @@ export class DaemonClient {
     return {
       status: res.status,
       data,
-      error: res.status < 400 ? null : (data as { error?: string } | null)?.error ?? text.slice(0, 200),
+      error: res.status < 400
+        ? null
+        : (data as { code?: string; message?: string } | null)?.message ?? text.slice(0, 200),
     };
   }
 
@@ -767,8 +770,11 @@ export class DaemonClient {
   /** `POST /model` — switch the session's model (+ reasoning effort). */
   async setModel(model: string, reasoningEffort?: string): Promise<void> {
     const body: ModelRequest = { model, reasoning_effort: reasoningEffort ?? null };
-    const { status, error } = await this.post("/model", body);
-    if (status !== 200) throw new Error(`POST /model failed (${status}): ${error}`);
+    const { status, data, error } = await this.post<ErrorBody>("/model", body);
+    if (status === 200) return;
+    // 409 no_change: the model is already set to the requested value — benign.
+    if (status === 409 && data?.code === "no_change") return;
+    throw new Error(`POST /model failed (${status}): ${error}`);
   }
 
   /** `POST /title` — set the operator title override (empty = clear → revert to inferred). */
