@@ -31,11 +31,18 @@ elsewhere in this file are not duplicated here.
       the `default:` arm in `buildInterrogativeMapping` (`event-map.ts:438-462`) — which emits
       a fire-and-forget `notify` and returns `pending:null`, POSTing no cancel/answer. The
       daemon's turn stays blocked, "Working…" stays lit permanently, and it survives a page
-      reload (hub-authoritative state). **Fix:** add `goal_proposal` to `InterrogativeType` +
-      a case in `event-map.ts:352`. **Minimum-viable safety even without a real card:** make
-      the `default:` arm deny-safe — register the interrogative and POST `{kind:"cancel"}`
-      (`wire-types.ts:1511-1514`) so an unknown type never leaves the daemon blocked. Then add
-      the goal *display* (open TODO in 🔴 Next above: polytoken shows "(goal)" by the facet).
+      reload (hub-authoritative state). **Fix (two parts):**
+      1. **Add `goal_proposal` to the vendored `InterrogativeType`** (`wire-types.ts:1545`) +
+         a real case in `buildInterrogativeMapping` (`event-map.ts:352`) — a proper card like
+         the other interrogative types.
+      2. **Make the `default:` arm actionable, not silent.** Instead of a fire-and-forget
+         notify that leaves the daemon wedged, show an *error card* (like the approval cards):
+         "⚠ Unknown request type: X" with a **Dismiss/Cancel** button that POSTs
+         `{kind:"cancel"}` (`wire-types.ts:1511-1514`) to unblock the daemon's turn. Loud *and*
+         actionable — the operator sees the error and can dismiss it, rather than a silent deny
+         or a permanent wedge.
+      Then add the goal *display* (open TODO in 🔴 Next above: polytoken shows "(goal)" by the
+      facet).
       **Repro:** live driver → `/goal set anything` → notify card + permanent "Working".
 - [ ] **Mock-only driver methods are dead against the live daemon.** The live
       `polytoken-driver.ts` omits 14 methods that exist in `mock-driver.ts`, so they pass e2e
@@ -61,11 +68,15 @@ elsewhere in this file are not duplicated here.
 - [ ] **"Branch from this prompt" = irreversible history deletion, no guard.** `branchFrom` →
       `POST /rewind` (`polytoken-driver.ts:1051`: "NOT a branch — it's a destructive REWIND"),
       which drops the target prompt and everything after. The button says *Branch* and there
-      is no confirmation dialog anywhere on the path (`Transcript.svelte:698` → `store.branch`
-      `store.svelte.ts:1464` → `/rewind`). **Fix:** add a destructive-confirm gate
-      (`Transcript.svelte:698` or `store.branch`) **and** relabel tooltip/aria
-      (`Transcript.svelte:702-704`, `TreeView.svelte:116`) to "Rewind — deletes everything
-      after this point."
+      is no confirmation anywhere on the path (`Transcript.svelte:698` → `store.branch`
+      `store.svelte.ts:1464` → `/rewind`). **Fix (two parts):**
+      1. **Relabel "Branch" → "Rewind"** everywhere it appears — tooltips, aria-labels, and
+         visible text (`Transcript.svelte:702-704`, `TreeView.svelte:116`). The daemon does a
+         destructive rewind, not a branch; the label should say so.
+      2. **Click-twice confirm gate (no popup).** First click arms the button into a
+         "Click again to rewind" state (with a visual change — e.g. color shift to
+         destructive red + the armed label); second click within a timeout window (~3s) fires
+         the rewind. No confirmation dialog/popup — this is a phone-first PWA.
 - [ ] **Images are silently dropped by the live driver.** Client image pipeline is real
       (compress/paste/drag-drop/heic), but `polytoken-driver.ts:723` drops the `_images`
       param and the daemon `/prompt`/`PromptRequest` has no image channel — so attaching images
@@ -85,9 +96,25 @@ elsewhere in this file are not duplicated here.
       nonexistent `error` field; must read parsed `data.code` (`ErrorBody` uses `code`/
       `message`). 409 also means `turn_in_flight`/`edit_format_locked`, so key on the **code**,
       not the status.
-- [ ] **Environment settings are dead-by-design.** Login-shell + background-model only drive
-      Settings display text; never forwarded to the out-of-process daemon (`login-env.ts:14`
-      `status` never mutated). Either wire them at daemon spawn/attach or label them clearly.
+- [ ] **Login-shell env not propagated to daemon at spawn (real bug).** The daemon is
+      spawned via `Bun.spawn` with **no `env` option** (`daemon-client.ts:188` for new,
+      `:235` for resume), so it inherits pilot's own `process.env` directly. When pilot is
+      launched by the desktop `.app` bundle, that env is the GUI launchd context — typically
+      a minimal PATH (`/usr/bin:/bin`), no nvm/brew paths, etc. — so the daemon's `shell_exec`
+      tool has a broken PATH. The `loginShell` setting in Settings was *designed* to fix this:
+      the old in-process driver ran `<shell> -l -i -c env` to capture a login env and merged it
+      into `process.env`. That reconstruction code is gone on this branch (`login-env.ts:6-8`
+      documents it as dead); only the shell-resolution + status-surfacing fns survive, and
+      `getLoginEnvStatus()` returns a static "not captured" forever (`login-env.ts:14`).
+      Meanwhile the hub still warns when the configured shell differs from the active one
+      (`hub.ts:944`) — a warning about a setting that does nothing.
+      **Fix:** at daemon spawn time (`spawnNewDaemon`/`spawnResumeDaemon` in
+      `daemon-client.ts`), if a `loginShell` is configured, run `<shell> -l -i -c 'env'`
+      (reusing `resolveLoginShell` from `login-env.ts`) to capture the login env, then pass it
+      as `env: {...process.env, ...capturedLoginEnv}` to `Bun.spawn`. Update
+      `getLoginEnvStatus` to reflect the captured state. The `backgroundModel` setting is
+      separate (which model the daemon uses for background tasks) and also not forwarded —
+      that one is closer to genuinely dead-by-design and can be labeled or wired separately.
 
 Already addressed from the same audit (kept as record):
 
