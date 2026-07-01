@@ -61,9 +61,7 @@ export async function openSettings(
   section?:
     | "appearance"
     | "notifications"
-    | "providers"
     | "models"
-    | "extensions"
     | "environment"
     | "token",
 ): Promise<void> {

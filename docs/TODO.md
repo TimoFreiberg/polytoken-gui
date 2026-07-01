@@ -103,7 +103,7 @@ elsewhere in this file are not duplicated here.
       concept). These need daemon-side endpoints or CLI subcommands to be added first.
       **Updated 2026-07-01:** broken into specific actionable todos below — remove
       unsupported config methods, remove tree view, implement the 4 ready methods.
-- [ ] **Remove unsupported config methods from mock + UI.** The mock driver implements
+- [x] **Remove unsupported config methods from mock + UI.** The mock driver implements
       9 methods that have no daemon API and never will (or not soon): `listProviders`,
       `setProviderApiKey`, `removeProviderApiKey`, `oauthLogin`, `oauthLogout`,
       `listExtensions`, `setExtensionEnabled`, `setDefaultModel`, `setDefaultThinking`,
@@ -113,7 +113,23 @@ elsewhere in this file are not duplicated here.
       sites (guard with `?.` — already done), and the corresponding UI surfaces (Settings
       Providers/Extensions tabs, OAuth dialog, model-favorites editor). When the daemon
       grows real APIs for any of these, re-add them properly.
-- [ ] **Remove tree view entirely (daemon history is linear).** The daemon has no branch
+      **Done 2026-07-01:** removed all 10 methods (the 9 above + `getModelDefaults`
+      stays as read-only since polytoken implements it). Removed: from protocol —
+      `ExtensionInfo`, `ProviderInfo`, `OAuthLoginPrompt`, `OAuthDeviceInfo`,
+      `OAuthSelectOption` types + all related wire messages (client + server). From
+      driver.ts — the 10 method declarations + `OAuthLoginIO` interface. From hub —
+      `broadcastProviderList`, `applyProviderKey`, `runOAuthLogin`, `applyModelDefaults`,
+      `sendExtensionList`, `applyExtensionEnabled` + the `oauthPending`/`oauthInFlight`/
+      `oauthSeq` state + `OAUTH_PROMPT_TIMEOUT_MS` + all dispatch cases. From mock —
+      the methods + `providers`/`defaults`/`extensions` fields + fixture imports
+      (`MOCK_PROVIDERS`/`MOCK_EXTENSIONS`/`MOCK_MODEL_DEFAULTS`). From store —
+      `providers`/`extensions`/`oauthFlow` state + all provider/OAuth/default/favorites
+      methods. From UI — the Providers tab, Extensions tab, OAuth dialog, favorites
+      editor, default-model picker (`DefaultModelPicker.svelte` deleted), and
+      default-thinking selector. The Models tab now shows only the background-model
+      spec (which stays — it's pilot-local settings, not daemon config). E2e tests
+      rewritten to remove all provider/OAuth/extension/favorites/default-model tests.
+- [ ] *(needs-discussion)* **Remove tree view entirely (daemon history is linear).** The daemon has no branch
       DAG — `POST /rewind` destructively truncates, it doesn't branch. The mock's `getTree`
       fakes a branching tree that can never exist live, so e2e tests exercise a fiction.
       Remove: `getTree` from the mock + `PilotDriver` interface, `TreeSnapshot`/`TreeNodeInfo`
@@ -291,7 +307,7 @@ New parity/UX items from the owner, grounded against current source.
       The popup replaces the need to type `/compact`; the slash command stays as a
       power-user path. Needs a tooltip (repo rule).
 
-- [ ] **Show all available facets** (`polytoken vfs ls polytoken://facets`). The session
+- [ ] *(needs-discussion)* **Show all available facets** (`polytoken vfs ls polytoken://facets`). The session
       snapshot exposes `available_skills` and `available_subagents`
       (`wire-types.ts:2635-2636`) but **no `available_facets`**. The current `FacetBadge`
       (`FacetBadge.svelte`) hardcodes execute ↔ plan (toggling via `Shift+Tab` /
@@ -430,7 +446,7 @@ the trivial ones shipped inline this same day.
 
 ### 🟡 High-leverage — plan it (the headline)
 
-- [ ] **Server-side coalescing of streamed `assistantDelta`s (N1).** The highest-leverage
+- [ ] *(needs-discussion)* **Server-side coalescing of streamed `assistantDelta`s (N1).** The highest-leverage
       fix for both CPU and network. Today every pi `text_delta` becomes its own
       `assistantDelta` WS frame (`server/src/pi/event-map.ts`) and is forwarded one-by-one
       (`server/src/hub.ts` `onEvent`). One model response = hundreds of tiny frames, each
@@ -794,7 +810,7 @@ acting. (The two contained fixes from the same review — a runtime shape guard 
 pi-history boundary, and throttling the live-tick `listSessions` disk scan — were prototyped
 separately on branch `task/glm-fix-pilot`, not included here.)_
 
-- [ ] **Decompose the hub (god object).** `server/src/hub.ts` (~1439 lines) owns folded
+- [ ] *(needs-discussion)* **Decompose the hub (god object).** `server/src/hub.ts` (~1439 lines) owns folded
       session states, the running/initializing/attention maps, titles, the clients map, the
       live ticker, desktop-update state, the OAuth pending map + single-flight flag, and the
       prompt-results ledger; `handleClient` is one giant switch, and tests reach into privates
@@ -804,7 +820,7 @@ separately on branch `task/glm-fix-pilot`, not included here.)_
       the private-method test hacks. GLM ranked this the highest-leverage maintainability change.
       _Discuss:_ worth the churn vs. living with a well-documented god object?
 
-- [ ] **Replace `structuredClone` snapshots with structural sharing.** A full `SessionState`
+- [ ] *(needs-discussion)* **Replace `structuredClone` snapshots with structural sharing.** A full `SessionState`
       deep-clone fires on every snapshot send (`server/src/hub.ts`, fired on connect / switch /
       reconnect / branch re-seed) — O(n) per snapshot for long transcripts, broadcast to every
       viewer on a branch. Suggestion: structural sharing past a transcript-length threshold, or
@@ -812,7 +828,7 @@ separately on branch `task/glm-fix-pilot`, not included here.)_
       already-planned JS-windowing work. _Discuss:_ premature until transcripts actually get
       long? (already flagged as a known future cliff, not unnoticed.)
 
-- [ ] **Fix or gate the branch-durability gap.** A no-summary branch jump only moves the
+- [ ] *(needs-discussion)* **Fix or gate the branch-durability gap.** A no-summary branch jump only moves the
       in-memory leaf; it isn't durable until the next prompt appends a child, so a cold reopen
       before prompting re-derives the pre-branch leaf — silent state loss in a shipped feature
       (`server/src/pi/pi-driver.ts`, `branchFrom`). GLM suggested forcing a persist on

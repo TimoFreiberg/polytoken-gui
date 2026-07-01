@@ -37,13 +37,6 @@ test("settings collapse headers meet the 44px touch target", async ({
   await expect(page.getByTestId("settings-panel")).toBeVisible();
   // The rail tabs reflow to a horizontal strip on the phone bottom-sheet but stay
   // comfortably tappable (coarse pointer bumps them to a full 44px).
-  for (const id of ["appearance", "providers", "models", "extensions"])
+  for (const id of ["appearance", "models", "environment", "token"])
     await expectTall(page.getByTestId(`settings-tab-${id}`));
-
-  // The Favorites disclosure header (nested under the Models tab) is the primary
-  // collapse affordance — on the phone bottom-sheet it must be comfortably tappable.
-  // (Providers and Extensions used to have their own collapse toggles, but each got its
-  // own tab in the redesign, so their lists are always shown — no toggle to tap.)
-  await page.getByTestId("settings-tab-models").click();
-  await expectTall(page.getByTestId("favorites-toggle"));
 });

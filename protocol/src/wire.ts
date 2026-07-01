@@ -7,15 +7,11 @@
 
 import type {
   CommandInfo,
-  ExtensionInfo,
   FileInfo,
   HostUiResponse,
   ImageContent,
   ModelDefaults,
   ModelOption,
-  OAuthDeviceInfo,
-  OAuthLoginPrompt,
-  ProviderInfo,
   PermissionMonitorMode,
   SessionDriverEvent,
   SessionId,
@@ -190,16 +186,6 @@ export type ServerMessage =
       nodes: readonly TreeNodeInfo[];
       leafId: string | null;
     }
-  /** The focused session's agent extensions (loaded + any pilot-disabled), for the Settings
-   *  "Extensions" view. Sent on demand when a client expands that section (it sends
-   *  {@link queryExtensions}) and re-sent after a {@link setExtensionEnabled} toggle.
-   *  `sessionId` is the session the list belongs to, so a client that switched away can
-   *  drop a late list. See {@link ExtensionInfo}. */
-  | {
-      type: "extensionList";
-      sessionId: SessionId | null;
-      extensions: readonly ExtensionInfo[];
-    }
   /** The full file index for the focused session's cwd, pushed on connect + session
    *  switch (like {@link commandList}). The client fuzzy-matches it locally so the
    *  @-mention menu is instant (no per-keystroke round-trip). Capped server-side;
@@ -220,10 +206,6 @@ export type ServerMessage =
    *  in reply to {@link statPath}. Echoes the request `path` so the client can drop a
    *  stale response. See {@link PathStat}. */
   | ({ type: "pathStat" } & PathStat)
-  /** The model providers pilot can manage credentials for (curated key-capable +
-   *  already-connected), server-authoritative like `modelList`. No secrets — see
-   *  {@link ProviderInfo}. */
-  | { type: "providerList"; providers: readonly ProviderInfo[] }
   /** the daemon's global model config: default model/thinking for new sessions + the
    *  favorites subset the header picker filters to. Distinct from a session's
    *  `config` (the CURRENT selection). See {@link ModelDefaults}. */
@@ -270,26 +252,6 @@ export type ServerMessage =
       applying: boolean;
       desktopStale?: boolean;
     }
-  /** A step in an in-progress OAuth login needs the operator's answer (open a URL +
-   *  paste the code, or pick a login method). Broadcast to every client; the first
-   *  `oauthRespond` with a matching requestId wins. See {@link OAuthLoginPrompt}. */
-  | {
-      type: "oauthPrompt";
-      requestId: string;
-      providerId: string;
-      prompt: OAuthLoginPrompt;
-    }
-  /** Progress text for an in-progress OAuth login (e.g. "Exchanging code for tokens…"). */
-  | { type: "oauthProgress"; providerId: string; message: string }
-  /** A device-code OAuth login wants the operator to open a URL and enter a code; the
-   *  flow then completes by background polling. See {@link OAuthDeviceInfo}. */
-  | ({ type: "oauthDeviceCode"; providerId: string } & OAuthDeviceInfo)
-  /** A pending OAuth prompt settled (answered elsewhere, cancelled, or timed out).
-   *  Clients dismiss the prompt for this requestId. */
-  | { type: "oauthResolved"; requestId: string }
-  /** An OAuth login finished — `ok` once credentials are stored, else `error` says why.
-   *  Clients close the flow; the provider + model lists re-broadcast alongside. */
-  | { type: "oauthResult"; providerId: string; ok: boolean; error?: string }
   /** Prefill the composer after a branch landed on a user prompt — navigateTree hands
    *  back that prompt's text for re-editing. Sent ONLY to the client that asked to
    *  branch (per-client composer state, never broadcast / folded into shared state). */
@@ -348,28 +310,6 @@ export type ClientMessage =
   /** Switch the active permission-monitor mode. Omit sessionId to target the
    *  focused session. Mirrors `setFacet`. */
   | { type: "setPermissionMonitor"; mode: PermissionMonitorMode; sessionId?: SessionId }
-  /** Save an API key for a provider (writes the daemon's auth.json — shared with terminal
-   *  agent). The server refreshes the model registry and re-broadcasts provider/model
-   *  lists; a failure (unsupported provider / empty key) comes back as `error`. */
-  | { type: "setProviderApiKey"; providerId: string; apiKey: string }
-  /** Remove a pilot-saved API key for a provider (auth_file source only). */
-  | { type: "removeProviderApiKey"; providerId: string }
-  /** Start an interactive OAuth login for a provider (the daemon's OAuth registry). The server
-   *  drives the flow — surfacing `oauthPrompt`/`oauthProgress`/`oauthDeviceCode` and
-   *  finishing with `oauthResult` — then re-broadcasts the provider + model lists. */
-  | { type: "oauthLogin"; providerId: string }
-  /** Answer the current OAuth prompt. `value` is the pasted code/URL or the selected
-   *  option id; null cancels the login. First matching answer wins (others no-op). */
-  | { type: "oauthRespond"; requestId: string; value: string | null }
-  /** Sign out of an OAuth provider (clears its stored credentials in auth.json). */
-  | { type: "oauthLogout"; providerId: string }
-  /** Set the daemon's global default model for NEW sessions (not the current one). */
-  | { type: "setDefaultModel"; provider: string; modelId: string }
-  /** Set the daemon's global default thinking level for NEW sessions. */
-  | { type: "setDefaultThinking"; level: string }
-  /** Replace the favorites subset. `refs` are `provider:modelId`; empty clears the
-   *  filter (header picker shows every model again). */
-  | { type: "setFavoriteModels"; refs: readonly string[] }
   /** Set the explicit login shell pilot captures env from at startup (null = the
    *  `$SHELL` / OS-login-shell default). Persists server-side; the env is captured
    *  once at boot, so it applies on the next server restart. The server re-broadcasts
@@ -380,8 +320,6 @@ export type ClientMessage =
    *  spec OR a `script:`-prefixed path. Persists server-side; the server resolves +
    *  re-broadcasts `pilotSettings` (carrying any validation `warning` for a bad spec). */
   | { type: "setBackgroundModel"; spec: string | null }
-  /** Ask the server to re-scan providers + defaults and re-broadcast them. */
-  | { type: "listProviders" }
   /** Switch the active session to this .jsonl path. */
   | { type: "openSession"; path: string }
   /** Reload a session from scratch (by its .jsonl `path`): dispose the warm session
@@ -446,20 +384,6 @@ export type ClientMessage =
   /** Ask the server for the focused session's branch tree (the tree view just opened).
    *  The server responds with {@link treeState}. Omit sessionId to target the focused one. */
   | { type: "queryTree"; sessionId?: SessionId }
-  /** Ask the server for the focused session's extension list (the Settings "Extensions"
-   *  section just expanded). The server responds with {@link extensionList}. Omit sessionId
-   *  to target the focused one. */
-  | { type: "queryExtensions"; sessionId?: SessionId }
-  /** Enable or disable an agent extension by its `resolvedPath` (writes a force-exclude override
-   *  to the daemon's user settings). the daemon loads extensions at session START, so this applies on the
-   *  session's NEXT start, not live — the UI labels it so. The server persists, then re-sends
-   *  {@link extensionList}. Omit sessionId to target the focused session. */
-  | {
-      type: "setExtensionEnabled";
-      resolvedPath: string;
-      enabled: boolean;
-      sessionId?: SessionId;
-    }
   /** Fallback file search for a composer @-mention query (the text after `@`). Only sent
    *  when the {@link fileIndex} was truncated and local matches are thin — the common case
    *  is served entirely client-side from the index. The server responds with {@link fileList}.

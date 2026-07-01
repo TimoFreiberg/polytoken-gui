@@ -9,7 +9,6 @@ import {
   initialSessionState,
   isDialogRequest,
   type ModelOption,
-  isPilotOwnedExtension,
   PROTOCOL_VERSION,
   type ServerMessage,
   type SessionAttention,
@@ -17,7 +16,7 @@ import {
   type SessionId,
   type SessionState,
 } from "@pilot/protocol";
-import type { OAuthLoginIO, PilotDriver } from "./driver.js";
+import type { PilotDriver } from "./driver.js";
 import { getLoginEnvStatus, resolveLoginShell } from "./shared/login-env.js";
 import { resolveBackgroundModel } from "./shared/background-model.js";
 import { readPilotSettings, writePilotSettings } from "./settings-store.js";
@@ -39,11 +38,6 @@ export function defaultOpenInFileManager(dir: string): void {
   const child = Bun.spawn(cmd, { stdout: "pipe", stderr: "pipe" });
   void child.exited.catch(() => {});
 }
-
-// How long an OAuth prompt waits for the operator before the login aborts itself. The
-// browser hop + copy/paste is slow but human-paced; a few minutes is generous without
-// leaving a zombie login (and its loopback server) pending forever if a phone is closed.
-const OAUTH_PROMPT_TIMEOUT_MS = 5 * 60 * 1000;
 
 /** What the hub hands to a notifier (e.g. the Web Push sender) for notable events. */
 export interface HubNotification {
@@ -258,13 +252,6 @@ export class SessionHub {
   // reportUpdate hands it to that one caller and clears it (the apply's restart wipes hub
   // state anyway; a failed apply un-flags via applyFailed).
   private forceRequested = false;
-  // OAuth login (Settings panel) is a GLOBAL interactive flow — it writes the daemon's shared
-  // auth.json, not a session — so it rides its own wire messages, not the session-scoped
-  // Host UI channel. While a login runs, its prompts wait here keyed by requestId; an
-  // `oauthRespond` resolves one (first-responder-wins across devices). Single-flight:
-  // one login at a time keeps the pending map unambiguous (a single user, one browser).
-  private oauthPending = new Map<string, (value: string | null) => void>();
-  private oauthSeq = 0;
   // Cached view of the available models (the `ModelOption[]` the driver returns via
   // listModels), so `pilotSettingsMsg()` can resolve the background-model spec's
   // `warning` SYNCHRONOUSLY without an async driver call on every settings broadcast.
@@ -272,7 +259,6 @@ export class SessionHub {
   // Empty until the first list arrives — the background-model warning is a validation
   // display, not load-bearing, so it arriving a tick after hello is fine.
   private availableModels: readonly ModelOption[] = [];
-  private oauthInFlight = false;
   // Prompt acceptance is idempotent per client-generated id. The promise is stored
   // before dispatch so a reconnect/retry racing the original request attaches to the
   // same result instead of invoking the driver twice. Bounded because this is only a short-term
@@ -764,53 +750,6 @@ export class SessionHub {
     }
   }
 
-  /** Fetch + send ONE client its focused session's extension list (Settings "Extensions"
-   *  view). Per-connection (scoped to the requester's focus, like the command/tree lists);
-   *  re-sent after that client toggles an extension. No-op if the driver can't list them. */
-  private async sendExtensionList(conn: ClientConn): Promise<void> {
-    if (!this.driver.listExtensions) return;
-    try {
-      const extensions = await this.driver.listExtensions(
-        conn.focusedId ?? undefined,
-      );
-      conn.send({
-        type: "extensionList",
-        sessionId: conn.focusedId,
-        extensions,
-      });
-    } catch (e) {
-      console.error("[hub] listExtensions failed", e);
-    }
-  }
-
-  /** Persist an extension enable/disable for the requester's focused session, then re-send
-   *  that client the refreshed list so the row reflects the new state (applies next start). */
-  private async applyExtensionEnabled(
-    conn: ClientConn,
-    resolvedPath: string,
-    enabled: boolean,
-  ): Promise<void> {
-    try {
-      await this.driver.setExtensionEnabled?.(
-        resolvedPath,
-        enabled,
-        conn.focusedId ?? undefined,
-      );
-    } catch (e) {
-      console.error("[hub] setExtensionEnabled failed", e);
-    }
-    void this.sendExtensionList(conn);
-    // A pilot-OWNED toggle writes pilot's `enabledExtensions` (not the daemon's force-exclude),
-    // so re-broadcast `pilotSettings` so every client's owned-row state stays in sync.
-    // Key off the basename (without .ts) the protocol list carries — the real driver's
-    // ownedExtensionBasename and the mock's name match both reduce to this.
-    const base = resolvedPath.split(/[/\\]/).pop() ?? resolvedPath;
-    const name = base.replace(/\.ts$/, "");
-    if (isPilotOwnedExtension(name)) {
-      this.broadcast(this.pilotSettingsMsg());
-    }
-  }
-
   /** Fetch + send ONE client the full @-mention file index for its focused session's cwd.
    *  Pushed on that client's connect + session switch (like {@link sendCommandList}); the
    *  client fuzzy-matches it locally so the menu is instant. `truncated` tells the client
@@ -928,18 +867,6 @@ export class SessionHub {
     }
   }
 
-  /** Fetch + broadcast the manageable providers (Settings panel). No-op if the driver
-   *  doesn't support credential management. */
-  private async broadcastProviderList(): Promise<void> {
-    if (!this.driver.listProviders) return;
-    try {
-      const providers = await this.driver.listProviders();
-      this.broadcast({ type: "providerList", providers });
-    } catch (e) {
-      console.error("[hub] listProviders failed", e);
-    }
-  }
-
   /** Build the pilot-local-settings message: the persisted settings + the live login-env
    *  capture status (so the Settings panel can show configured-vs-active and prompt for a
    *  restart when they differ), PLUS the resolved `backgroundModelWarning` (a loud red
@@ -987,111 +914,6 @@ export class SessionHub {
     } catch (e) {
       console.error("[hub] getModelDefaults failed", e);
     }
-  }
-
-  /** Save/remove a provider key, then refresh the provider + model lists (a key change
-   *  shifts model availability and which favorites resolve). Errors go to the requester
-   *  via the `error` channel — surfaced in the panel, not swallowed. */
-  private async applyProviderKey(
-    send: Send,
-    action: () => Promise<void> | undefined,
-  ): Promise<void> {
-    try {
-      await action();
-    } catch (e) {
-      send({
-        type: "error",
-        message: e instanceof Error ? e.message : String(e),
-      });
-      return;
-    }
-    await this.broadcastProviderList();
-    await this.broadcastModelList();
-    await this.broadcastModelDefaults();
-  }
-
-  /** Run an interactive OAuth login end to end: hand the driver an IO that broadcasts
-   *  each prompt + awaits the answer, report the terminal result, then refresh the
-   *  provider/model lists (a fresh sign-in shifts model availability). Single-flight —
-   *  a second login while one is pending is refused, so the pending map stays unambiguous. */
-  private async runOAuthLogin(send: Send, providerId: string): Promise<void> {
-    if (!this.driver.oauthLogin) {
-      send({ type: "error", message: "this driver can't do OAuth login" });
-      return;
-    }
-    if (this.oauthInFlight) {
-      send({
-        type: "error",
-        message:
-          "an OAuth login is already in progress — finish or cancel it first",
-      });
-      return;
-    }
-    this.oauthInFlight = true;
-    const io: OAuthLoginIO = {
-      prompt: (prompt) => {
-        const requestId = `oauth-${this.serverId}-${++this.oauthSeq}`;
-        return new Promise<string | null>((resolve) => {
-          const timer = setTimeout(() => {
-            if (this.oauthPending.delete(requestId)) {
-              this.broadcast({ type: "oauthResolved", requestId });
-              resolve(null); // timed out — the driver treats null as a cancel
-            }
-          }, OAUTH_PROMPT_TIMEOUT_MS);
-          (timer as { unref?: () => void }).unref?.();
-          this.oauthPending.set(requestId, (value) => {
-            clearTimeout(timer);
-            resolve(value);
-          });
-          this.broadcast({
-            type: "oauthPrompt",
-            requestId,
-            providerId,
-            prompt,
-          });
-        });
-      },
-      progress: (message) =>
-        this.broadcast({ type: "oauthProgress", providerId, message }),
-      deviceCode: (info) =>
-        this.broadcast({ type: "oauthDeviceCode", providerId, ...info }),
-    };
-    try {
-      await this.driver.oauthLogin(providerId, io);
-      this.broadcast({ type: "oauthResult", providerId, ok: true });
-    } catch (e) {
-      this.broadcast({
-        type: "oauthResult",
-        providerId,
-        ok: false,
-        error: e instanceof Error ? e.message : String(e),
-      });
-    } finally {
-      this.oauthInFlight = false;
-      // Resolve (null) + dismiss any prompt still pending — a thrown/aborted login
-      // shouldn't leave a dangling dialog on clients or a leaked resolver here.
-      for (const [requestId, resolve] of this.oauthPending) {
-        this.broadcast({ type: "oauthResolved", requestId });
-        resolve(null);
-      }
-      this.oauthPending.clear();
-    }
-    await this.broadcastProviderList();
-    await this.broadcastModelList();
-    await this.broadcastModelDefaults();
-  }
-
-  /** Apply a defaults/favorites mutation, then re-broadcast the defaults so every
-   *  client (and the header picker's favorites filter) updates. */
-  private async applyModelDefaults(
-    action: () => Promise<void> | undefined,
-  ): Promise<void> {
-    try {
-      await action();
-    } catch (e) {
-      console.error("[hub] model-defaults mutation failed", e);
-    }
-    await this.broadcastModelDefaults();
   }
 
   /** Archive/unarchive a session, then re-broadcast the list so every client's
@@ -1353,7 +1175,6 @@ export class SessionHub {
     void this.broadcastModelList();
     void this.sendCommandList(conn);
     void this.sendFileIndex(conn);
-    void this.broadcastProviderList();
     void this.broadcastModelDefaults();
     // A client arriving while a turn is already running starts the ticker (and one
     // leaving the last viewer stops it).
@@ -1581,12 +1402,6 @@ export class SessionHub {
       case "queryTree":
         void this.sendTree(conn);
         return;
-      case "queryExtensions":
-        void this.sendExtensionList(conn);
-        return;
-      case "setExtensionEnabled":
-        void this.applyExtensionEnabled(conn, msg.resolvedPath, msg.enabled);
-        return;
       case "queryFiles":
         void this.sendFileList(conn, msg.query, msg.cwd);
         return;
@@ -1595,53 +1410,6 @@ export class SessionHub {
         return;
       case "statPath":
         void this.sendPathStat(conn, msg.path);
-        return;
-      case "listProviders":
-        void this.broadcastProviderList();
-        void this.broadcastModelDefaults();
-        return;
-      case "setProviderApiKey":
-        void this.applyProviderKey(send, () =>
-          this.driver.setProviderApiKey?.(msg.providerId, msg.apiKey),
-        );
-        return;
-      case "removeProviderApiKey":
-        void this.applyProviderKey(send, () =>
-          this.driver.removeProviderApiKey?.(msg.providerId),
-        );
-        return;
-      case "oauthLogin":
-        void this.runOAuthLogin(send, msg.providerId);
-        return;
-      case "oauthRespond": {
-        // First-responder-wins: only the first answer for a still-pending prompt
-        // reaches the driver; a second device answering the same id no-ops.
-        const resolve = this.oauthPending.get(msg.requestId);
-        if (!resolve) return;
-        this.oauthPending.delete(msg.requestId);
-        this.broadcast({ type: "oauthResolved", requestId: msg.requestId });
-        resolve(msg.value);
-        return;
-      }
-      case "oauthLogout":
-        void this.applyProviderKey(send, () =>
-          this.driver.oauthLogout?.(msg.providerId),
-        );
-        return;
-      case "setDefaultModel":
-        void this.applyModelDefaults(() =>
-          this.driver.setDefaultModel?.(msg.provider, msg.modelId),
-        );
-        return;
-      case "setDefaultThinking":
-        void this.applyModelDefaults(() =>
-          this.driver.setDefaultThinking?.(msg.level),
-        );
-        return;
-      case "setFavoriteModels":
-        void this.applyModelDefaults(() =>
-          this.driver.setFavoriteModels?.(msg.refs),
-        );
         return;
       case "setLoginShell": {
         // Persist the override; the capture only re-runs at startup, so this applies on

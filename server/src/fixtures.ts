@@ -4,12 +4,9 @@
 
 import type {
   CommandInfo,
-  ExtensionInfo,
   FileInfo,
   ImageContent,
-  ModelDefaults,
   ModelOption,
-  ProviderInfo,
   SessionConfig,
   SessionDriverEvent,
   SessionListEntry,
@@ -168,127 +165,6 @@ export const MOCK_DEFAULT_CONFIG: SessionConfig = {
   modelId: "claude-opus-4-8",
   thinkingLevel: "medium",
   availableThinkingLevels: MOCK_THINKING_LEVELS,
-};
-
-/** Providers the mock offers in the Settings panel, covering every auth shape the panel
- *  renders: an OAuth-connected one (sign-out), an OAuth-capable but unconnected one
- *  (sign-in flow), a key-file one (replace/remove), and two unconnected key-capable
- *  ones — so the panel + e2e exercise the full matrix without real credentials. */
-export const MOCK_PROVIDERS: readonly ProviderInfo[] = [
-  {
-    id: "anthropic",
-    name: "Anthropic (Claude Pro/Max)",
-    hasAuth: true,
-    authSource: "oauth",
-    apiKeySetupSupported: false,
-    oauthSupported: true,
-  },
-  {
-    id: "openai-codex",
-    name: "OpenAI Codex",
-    hasAuth: false,
-    authSource: "none",
-    apiKeySetupSupported: false,
-    oauthSupported: true,
-  },
-  {
-    id: "openai",
-    name: "OpenAI",
-    hasAuth: true,
-    authSource: "auth_file",
-    apiKeySetupSupported: true,
-    oauthSupported: false,
-  },
-  {
-    id: "google",
-    name: "Google",
-    hasAuth: false,
-    authSource: "none",
-    apiKeySetupSupported: true,
-    oauthSupported: false,
-  },
-  {
-    id: "groq",
-    name: "Groq",
-    hasAuth: false,
-    authSource: "none",
-    apiKeySetupSupported: true,
-    oauthSupported: false,
-  },
-];
-
-/** The mock's agent extensions for the Settings "Extensions" view: a couple of healthy
- *  loaded ones, one with a load error (drives the problems styling), and one already
- *  disabled (so the re-enable path is exercisable). The mock driver toggles `enabled`
- *  in-memory; reset() restores this baseline. */
-export const MOCK_EXTENSIONS: readonly ExtensionInfo[] = [
-  {
-    resolvedPath: "/home/pi/.pi/agent/extensions/answer.ts",
-    name: "answer.ts",
-    source: "user",
-    enabled: true,
-    toolCount: 1,
-    commandCount: 0,
-  },
-  // A pilot-OWNED extension (the ported tasklist). Its `source` is "Pilot" (the D3
-  //  badge the real driver projects for additionalExtensionPaths entries) and it carries
-  //  a `description` (parsed from the file's @pilot frontmatter in the real driver). The
-  //  resolved path matches the name a pilot-owned toggle keys off, so the mock's
-  //  setExtensionEnabled routes it to pilot's `enabledExtensions` set (the [OPEN E]
-  //  toggle — the daemon's force-exclude is a no-op on owned paths). Mirrors the session-namer
-  //  row below; tool/command counts reflect what the ported extension actually
-  //  registers (tasklist_add/done/delete/list + the /tasks command).
-  {
-    resolvedPath: "tasklist",
-    name: "tasklist.ts",
-    source: "Pilot",
-    enabled: true,
-    toolCount: 4,
-    commandCount: 1,
-    description: "In-session task tracking widget — the agent maintains a focused task list with reminders.",
-  },
-  // A pilot-OWNED extension (the ported session-namer). Its `source` is "Pilot" (the
-  //  D3 badge the real driver projects for additionalExtensionPaths entries) and it
-  //  carries a `description` (parsed from the file's @pilot frontmatter in the real
-  //  driver). The resolved path matches the name a pilot-owned toggle keys off, so the
-  //  mock's setExtensionEnabled routes it to pilot's `enabledExtensions` set (the
-  //  [OPEN E] toggle — the daemon's force-exclude is a no-op on owned paths).
-  {
-    resolvedPath: "session-namer",
-    name: "session-namer.ts",
-    source: "Pilot",
-    enabled: true,
-    toolCount: 0,
-    commandCount: 0,
-    description: "Auto-names a session from its first prompt via the background model.",
-  },
-  {
-    resolvedPath: "/repo/.pi/extensions/fancy-tui.ts",
-    name: "fancy-tui.ts",
-    source: "project",
-    enabled: true,
-    toolCount: 0,
-    commandCount: 0,
-    error:
-      'capability "ui.custom" is terminal-only: not available in the pilot remote',
-  },
-  {
-    resolvedPath: "/home/pi/.pi/agent/extensions/noisy-notify.ts",
-    name: "noisy-notify.ts",
-    source: "user",
-    enabled: false,
-    toolCount: 0,
-    commandCount: 0,
-  },
-];
-
-/** The mock's global model config: defaults for new sessions + favorites subset
- *  (empty = the header picker shows every model). */
-export const MOCK_MODEL_DEFAULTS: ModelDefaults = {
-  provider: "anthropic",
-  modelId: "claude-opus-4-8",
-  thinkingLevel: "medium",
-  favorites: [],
 };
 
 /** A sample background-model spec the mock seeds on boot so the Settings "Models"

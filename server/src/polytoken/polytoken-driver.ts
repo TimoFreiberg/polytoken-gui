@@ -27,7 +27,6 @@ import { join } from "node:path";
 import type {
   CommandInfo,
   DirListing,
-  ExtensionInfo,
   FileInfo,
   HostUiResponse,
   ImageContent,
@@ -35,7 +34,6 @@ import type {
   ModelOption,
   PathStat,
   PermissionMonitorMode,
-  ProviderInfo,
   SessionDriverEvent,
   SessionId,
   SessionListEntry,
@@ -64,7 +62,7 @@ import {
   type SseEnvelope,
   type SessionStateSnapshot as DaemonStateSnapshot,
 } from "./daemon-client.js";
-import type { NewSessionOpts, OAuthLoginIO, PilotDriver, TrustEvent } from "../driver.js";
+import type { NewSessionOpts, PilotDriver, TrustEvent } from "../driver.js";
 import {
   type FoldAccumulator,
   buildPostFetchEvent,

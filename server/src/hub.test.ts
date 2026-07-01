@@ -1,20 +1,18 @@
 import { describe, expect, test } from "bun:test";
 import type {
   CommandInfo,
-  ExtensionInfo,
   FileInfo,
   HostUiResponse,
   ModelDefaults,
   ModelOption,
   PermissionMonitorMode,
-  ProviderInfo,
   ServerMessage,
   SessionDriverEvent,
   SessionListEntry,
   SessionRef,
   SessionSnapshot,
 } from "@pilot/protocol";
-import type { OAuthLoginIO, PilotDriver, TrustEvent } from "./driver.js";
+import type { PilotDriver, TrustEvent } from "./driver.js";
 import { SessionHub } from "./hub.js";
 
 const ref: SessionRef = { workspaceId: "w", sessionId: "s" };
@@ -224,54 +222,7 @@ class FakeDriver implements PilotDriver {
     this.permissionMonitorCalls.push({ mode, sessionId });
   }
 
-  // --- Global provider/model config ---
-  readonly providerKeyCalls: { providerId: string; apiKey: string }[] = [];
-  readonly providerRemoveCalls: string[] = [];
-  readonly defaultModelCalls: { provider: string; modelId: string }[] = [];
-  readonly defaultThinkingCalls: string[] = [];
-  readonly favoriteCalls: string[][] = [];
-  async listProviders(): Promise<ProviderInfo[]> {
-    return [
-      {
-        id: "openai",
-        name: "OpenAI",
-        hasAuth: false,
-        authSource: "none",
-        apiKeySetupSupported: true,
-        oauthSupported: false,
-      },
-      {
-        id: "anthropic",
-        name: "Anthropic (Claude Pro/Max)",
-        hasAuth: false,
-        authSource: "none",
-        apiKeySetupSupported: false,
-        oauthSupported: true,
-      },
-    ];
-  }
-  async setProviderApiKey(providerId: string, apiKey: string) {
-    if (!apiKey.trim()) throw new Error("API key is required");
-    this.providerKeyCalls.push({ providerId, apiKey });
-  }
-  async removeProviderApiKey(providerId: string) {
-    this.providerRemoveCalls.push(providerId);
-  }
-  // Drive the interactive OAuth flow deterministically: announce, surface one paste
-  // prompt, accept any non-null answer, abort on cancel.
-  readonly oauthLogoutCalls: string[] = [];
-  async oauthLogin(providerId: string, io: OAuthLoginIO) {
-    io.progress(`Opening ${providerId} authorization…`);
-    const answer = await io.prompt({
-      kind: "input",
-      message: "Paste the authorization code",
-      url: `https://example.com/oauth/authorize?p=${providerId}`,
-    });
-    if (answer == null) throw new Error("OAuth login cancelled");
-  }
-  async oauthLogout(providerId: string) {
-    this.oauthLogoutCalls.push(providerId);
-  }
+  // --- Global model config ---
   async getModelDefaults(): Promise<ModelDefaults> {
     return {
       provider: "anthropic",
@@ -279,36 +230,6 @@ class FakeDriver implements PilotDriver {
       thinkingLevel: "medium",
       favorites: [],
     };
-  }
-  async setDefaultModel(provider: string, modelId: string) {
-    this.defaultModelCalls.push({ provider, modelId });
-  }
-  async setDefaultThinking(level: string) {
-    this.defaultThinkingCalls.push(level);
-  }
-  async setFavoriteModels(refs: readonly string[]) {
-    this.favoriteCalls.push([...refs]);
-  }
-  // --- Extensions (Settings view) ---
-  readonly extensionToggleCalls: { resolvedPath: string; enabled: boolean }[] =
-    [];
-  private extEnabled = new Map<string, boolean>([
-    ["/ext/a.ts", true],
-    ["/ext/b.ts", false],
-  ]);
-  async listExtensions(): Promise<ExtensionInfo[]> {
-    return [...this.extEnabled].map(([resolvedPath, enabled]) => ({
-      resolvedPath,
-      name: resolvedPath.split("/").pop() ?? resolvedPath,
-      source: "user",
-      enabled,
-      toolCount: enabled ? 1 : 0,
-      commandCount: 0,
-    }));
-  }
-  async setExtensionEnabled(resolvedPath: string, enabled: boolean) {
-    this.extensionToggleCalls.push({ resolvedPath, enabled });
-    this.extEnabled.set(resolvedPath, enabled);
   }
 }
 
@@ -1304,235 +1225,6 @@ describe("SessionHub", () => {
       { provider: "anthropic", modelId: "claude-opus-4-8", sessionId: "s2" },
     ]);
     expect(d.thinkingCalls).toEqual([{ level: "high", sessionId: "s" }]);
-  });
-
-  test("a connecting client eventually receives the provider list + model defaults", async () => {
-    const hub = new SessionHub(new FakeDriver());
-    const a = client();
-    hub.addClient(a.send);
-    await flush();
-    const providers = a.received.find((m) => m.type === "providerList");
-    expect(providers?.type).toBe("providerList");
-    if (providers?.type === "providerList")
-      expect(providers.providers.some((p) => p.id === "openai")).toBe(true);
-    const defaults = a.received.find((m) => m.type === "modelDefaults");
-    expect(defaults?.type).toBe("modelDefaults");
-    if (defaults?.type === "modelDefaults")
-      expect(defaults.defaults.modelId).toBe("claude-opus-4-8");
-  });
-
-  test("setProviderApiKey routes to the driver and rebroadcasts the provider list", async () => {
-    const d = new FakeDriver();
-    const hub = new SessionHub(d);
-    const a = client();
-    hub.addClient(a.send);
-    await flush();
-    a.received.length = 0;
-
-    hub.handleClient(a.send, {
-      type: "setProviderApiKey",
-      providerId: "openai",
-      apiKey: "sk-test",
-    });
-    await flush();
-
-    expect(d.providerKeyCalls).toEqual([
-      { providerId: "openai", apiKey: "sk-test" },
-    ]);
-    // a refreshed provider + model list follows so newly-available models show up
-    expect(a.received.some((m) => m.type === "providerList")).toBe(true);
-    expect(a.received.some((m) => m.type === "modelList")).toBe(true);
-  });
-
-  test("a failing key set surfaces an error to the requester, no rebroadcast", async () => {
-    const d = new FakeDriver();
-    const hub = new SessionHub(d);
-    const a = client();
-    hub.addClient(a.send);
-    await flush();
-    a.received.length = 0;
-
-    hub.handleClient(a.send, {
-      type: "setProviderApiKey",
-      providerId: "openai",
-      apiKey: "   ",
-    });
-    await flush();
-
-    expect(d.providerKeyCalls).toHaveLength(0);
-    expect(
-      a.received.some(
-        (m) => m.type === "error" && /API key is required/.test(m.message),
-      ),
-    ).toBe(true);
-    expect(a.received.some((m) => m.type === "providerList")).toBe(false);
-  });
-
-  test("oauthLogin surfaces a prompt; answering it completes the login + rebroadcasts providers", async () => {
-    const d = new FakeDriver();
-    const hub = new SessionHub(d);
-    const a = client();
-    hub.addClient(a.send);
-    await flush();
-    a.received.length = 0;
-
-    hub.handleClient(a.send, { type: "oauthLogin", providerId: "anthropic" });
-    await flush();
-
-    const prompt = a.received.find((m) => m.type === "oauthPrompt");
-    expect(prompt?.type).toBe("oauthPrompt");
-    if (prompt?.type !== "oauthPrompt") throw new Error("no prompt broadcast");
-    expect(prompt.providerId).toBe("anthropic");
-    expect(prompt.prompt.url).toBeTruthy();
-    // progress reached clients too
-    expect(a.received.some((m) => m.type === "oauthProgress")).toBe(true);
-
-    hub.handleClient(a.send, {
-      type: "oauthRespond",
-      requestId: prompt.requestId,
-      value: "the-auth-code",
-    });
-    await flush();
-
-    // the prompt is dismissed, the login reports success, and providers refresh
-    expect(
-      a.received.some(
-        (m) => m.type === "oauthResolved" && m.requestId === prompt.requestId,
-      ),
-    ).toBe(true);
-    expect(a.received.find((m) => m.type === "oauthResult")).toMatchObject({
-      providerId: "anthropic",
-      ok: true,
-    });
-    expect(a.received.some((m) => m.type === "providerList")).toBe(true);
-  });
-
-  test("cancelling an oauth prompt (null) fails the login", async () => {
-    const d = new FakeDriver();
-    const hub = new SessionHub(d);
-    const a = client();
-    hub.addClient(a.send);
-    await flush();
-    a.received.length = 0;
-
-    hub.handleClient(a.send, { type: "oauthLogin", providerId: "anthropic" });
-    await flush();
-    const prompt = a.received.find((m) => m.type === "oauthPrompt");
-    if (prompt?.type !== "oauthPrompt") throw new Error("no prompt broadcast");
-
-    hub.handleClient(a.send, {
-      type: "oauthRespond",
-      requestId: prompt.requestId,
-      value: null,
-    });
-    await flush();
-
-    expect(a.received.find((m) => m.type === "oauthResult")).toMatchObject({
-      providerId: "anthropic",
-      ok: false,
-    });
-  });
-
-  test("oauthLogin is single-flight: a second login while one pends is refused", async () => {
-    const d = new FakeDriver();
-    const hub = new SessionHub(d);
-    const a = client();
-    hub.addClient(a.send);
-    await flush();
-    a.received.length = 0;
-
-    hub.handleClient(a.send, { type: "oauthLogin", providerId: "anthropic" });
-    await flush();
-    hub.handleClient(a.send, {
-      type: "oauthLogin",
-      providerId: "openai-codex",
-    });
-    await flush();
-
-    expect(
-      a.received.some(
-        (m) => m.type === "error" && /already in progress/.test(m.message),
-      ),
-    ).toBe(true);
-  });
-
-  test("oauthLogout routes to the driver and rebroadcasts the provider list", async () => {
-    const d = new FakeDriver();
-    const hub = new SessionHub(d);
-    const a = client();
-    hub.addClient(a.send);
-    await flush();
-    a.received.length = 0;
-
-    hub.handleClient(a.send, { type: "oauthLogout", providerId: "anthropic" });
-    await flush();
-
-    expect(d.oauthLogoutCalls).toEqual(["anthropic"]);
-    expect(a.received.some((m) => m.type === "providerList")).toBe(true);
-  });
-
-  test("default-model / thinking / favorites route to the driver and rebroadcast defaults", async () => {
-    const d = new FakeDriver();
-    const hub = new SessionHub(d);
-    const a = client();
-    hub.addClient(a.send);
-    await flush();
-
-    hub.handleClient(a.send, {
-      type: "setDefaultModel",
-      provider: "deepseek",
-      modelId: "deepseek-v4-flash",
-    });
-    hub.handleClient(a.send, { type: "setDefaultThinking", level: "high" });
-    hub.handleClient(a.send, {
-      type: "setFavoriteModels",
-      refs: ["anthropic:claude-opus-4-8"],
-    });
-    await flush();
-
-    expect(d.defaultModelCalls).toEqual([
-      { provider: "deepseek", modelId: "deepseek-v4-flash" },
-    ]);
-    expect(d.defaultThinkingCalls).toEqual(["high"]);
-    expect(d.favoriteCalls).toEqual([["anthropic:claude-opus-4-8"]]);
-    // each mutation re-broadcasts the defaults
-    expect(
-      a.received.filter((m) => m.type === "modelDefaults").length,
-    ).toBeGreaterThanOrEqual(3);
-  });
-
-  test("queryExtensions sends the list; setExtensionEnabled routes + re-sends it", async () => {
-    const d = new FakeDriver();
-    const hub = new SessionHub(d);
-    const a = client();
-    hub.addClient(a.send);
-
-    hub.handleClient(a.send, { type: "queryExtensions" });
-    await flush();
-    const list = a.received.filter((m) => m.type === "extensionList").at(-1);
-    expect(list?.type).toBe("extensionList");
-    if (list?.type === "extensionList") {
-      expect(list.extensions.map((e) => e.name)).toEqual(["a.ts", "b.ts"]);
-      expect(list.extensions.find((e) => e.name === "b.ts")?.enabled).toBe(
-        false,
-      );
-    }
-
-    hub.handleClient(a.send, {
-      type: "setExtensionEnabled",
-      resolvedPath: "/ext/b.ts",
-      enabled: true,
-    });
-    await flush();
-    // The toggle reaches the driver, then re-sends the refreshed (flipped) list.
-    expect(d.extensionToggleCalls).toEqual([
-      { resolvedPath: "/ext/b.ts", enabled: true },
-    ]);
-    const after = a.received.filter((m) => m.type === "extensionList").at(-1);
-    if (after?.type === "extensionList")
-      expect(after.extensions.find((e) => e.name === "b.ts")?.enabled).toBe(
-        true,
-      );
   });
 
   test("the live ticker refreshes the session list + focused usage mid-turn", async () => {

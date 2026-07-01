@@ -5,7 +5,6 @@
 import {
   type CommandInfo,
   type DirListing,
-  type ExtensionInfo,
   type PathStat,
   type FileInfo,
   foldEvent,
@@ -16,11 +15,6 @@ import {
   type ModelDefaults,
   type PilotSettings,
   type ModelOption,
-  type OAuthDeviceInfo,
-  type OAuthLoginPrompt,
-  PILOT_OWNED_EXTENSION_NAMES,
-  isPilotOwnedExtension,
-  type ProviderInfo,
   type PermissionMonitorMode,
   type ServerMessage,
   type SessionAttention,
@@ -157,9 +151,6 @@ class PilotStore {
   // Slash commands the focused session offers, for the composer typeahead. Server-
   // authoritative, delivered like `models`; refreshed on session switch (cwd-scoped).
   commands = $state<CommandInfo[]>([]);
-  // The focused session's agent extensions, for the Settings "Extensions" view. Fetched on
-  // demand (queryExtensions) when that section expands; re-sent after a toggle.
-  extensions = $state<ExtensionInfo[]>([]);
   // The focused session's full file index (cwd-scoped), pushed by the server on connect +
   // session switch. The composer fuzzy-matches this locally so the @-mention menu is
   // instant — no per-keystroke round-trip. `truncated` is true when the cwd overflowed the
@@ -187,9 +178,8 @@ class PilotStore {
   // Interactive project-trust card (D12). Out-of-band, not part of the folded session
   // state: trust is decided per-cwd before a session exists. Null when none pending.
   trustRequest = $state<TrustRequest | null>(null);
-  // Settings panel: the providers pilot can manage credentials for, and the agent's global
-  // model defaults + favorites. Server-authoritative, delivered like `models`.
-  providers = $state<ProviderInfo[]>([]);
+  // Settings panel: the agent's global model defaults + favorites. Server-authoritative,
+  // delivered like `models`.
   modelDefaults = $state<ModelDefaults>({ favorites: [] });
   // Pilot-local settings (Settings "Environment" section) + the live status of the
   // server's startup login-shell env capture. Server-authoritative, sent on connect and
@@ -208,20 +198,6 @@ class PilotStore {
   // a non-empty string the Settings "Models" section shows as a loud red error).
   // undefined = unset or resolved cleanly.
   backgroundModelWarning = $state<string | undefined>(undefined);
-  // OAuth sign-in flow (Settings panel). Global + interactive like `trustRequest` —
-  // not part of the folded session state. Null when no login is running. `progress`
-  // accumulates status lines; `prompt` is the step awaiting the operator (open the URL,
-  // paste the code), `device` the device-code variant; `done`/`error` end the flow. Only
-  // the client that started the login renders it (a single-user app drives from one tab).
-  oauthFlow = $state<{
-    providerId: string;
-    progress: string[];
-    prompt: (OAuthLoginPrompt & { requestId: string }) | null;
-    device: OAuthDeviceInfo | null;
-    done: boolean;
-    error: string | null;
-  } | null>(null);
-
   // per-client view state — local only (never sent upstream; see D5)
   composerDraft = $state("");
   composerImages = $state<ImageContent[]>([]);
@@ -871,9 +847,6 @@ class PilotStore {
       case "commandList":
         this.commands = [...msg.commands];
         break;
-      case "extensionList":
-        this.extensions = [...msg.extensions];
-        break;
       case "treeState":
         this.tree = {
           sessionId: msg.sessionId,
@@ -924,9 +897,6 @@ class PilotStore {
       case "promptResult":
         void this.settlePrompt(msg);
         break;
-      case "providerList":
-        this.providers = [...msg.providers];
-        break;
       case "modelDefaults":
         this.modelDefaults = msg.defaults;
         break;
@@ -953,47 +923,6 @@ class PilotStore {
           ? { sha: msg.sha ?? "", applying: msg.applying }
           : null;
         this.desktopStale = msg.desktopStale === true;
-        break;
-      case "oauthPrompt":
-        // Ignore prompts for a flow this client didn't start (or already closed).
-        if (this.oauthFlow?.providerId === msg.providerId)
-          this.oauthFlow = {
-            ...this.oauthFlow,
-            prompt: { requestId: msg.requestId, ...msg.prompt },
-            device: null,
-          };
-        break;
-      case "oauthProgress":
-        if (this.oauthFlow?.providerId === msg.providerId)
-          this.oauthFlow = {
-            ...this.oauthFlow,
-            progress: [...this.oauthFlow.progress, msg.message],
-          };
-        break;
-      case "oauthDeviceCode":
-        if (this.oauthFlow?.providerId === msg.providerId)
-          this.oauthFlow = {
-            ...this.oauthFlow,
-            device: {
-              userCode: msg.userCode,
-              verificationUri: msg.verificationUri,
-              expiresInSeconds: msg.expiresInSeconds,
-            },
-          };
-        break;
-      case "oauthResolved":
-        if (this.oauthFlow?.prompt?.requestId === msg.requestId)
-          this.oauthFlow = { ...this.oauthFlow, prompt: null };
-        break;
-      case "oauthResult":
-        if (this.oauthFlow?.providerId === msg.providerId)
-          this.oauthFlow = {
-            ...this.oauthFlow,
-            prompt: null,
-            device: null,
-            done: true,
-            error: msg.ok ? null : (msg.error ?? "OAuth login failed"),
-          };
         break;
       case "error":
         if (msg.message === "unauthorized") {
@@ -1858,42 +1787,6 @@ class PilotStore {
   closeSearch(): void {
     this.searchOpen = false;
   }
-  /** Ask the server for the focused session's agent extensions (the Settings "Extensions"
-   *  section just expanded). Re-query on each expand so it reflects any toggles since. */
-  queryExtensions(): void {
-    send({ type: "queryExtensions" });
-  }
-  /** Enable/disable an extension (applies on the session's next start). Optimistic — flip
-   *  the local row now; the server persists and re-sends the authoritative list to reconcile.
-   *  A pilot-OWNED row's toggle writes pilot's `enabledExtensions` set (not the daemon's
-   *  force-exclude, which Chunk 0 proved is a no-op on owned paths), so optimistically
-   *  mirror that too — the server re-broadcasts `pilotSettings` to reconcile. */
-  setExtensionEnabled(resolvedPath: string, enabled: boolean): void {
-    this.extensions = this.extensions.map((e) =>
-      e.resolvedPath === resolvedPath ? { ...e, enabled } : e,
-    );
-    const ownedName = this.extensions
-      .find((e) => e.resolvedPath === resolvedPath)
-      ?.name.replace(/\.ts$/, "");
-    if (ownedName && isPilotOwnedExtension(ownedName)) {
-      const cur = this.pilotSettings.enabledExtensions ?? [
-        ...PILOT_OWNED_EXTENSION_NAMES,
-      ];
-      const next = enabled
-        ? cur.includes(ownedName)
-          ? cur
-          : [...cur, ownedName]
-        : cur.filter((n) => n !== ownedName);
-      const allEnabled =
-        next.length === PILOT_OWNED_EXTENSION_NAMES.length &&
-        PILOT_OWNED_EXTENSION_NAMES.every((n) => next.includes(n));
-      this.pilotSettings = {
-        ...this.pilotSettings,
-        enabledExtensions: allEnabled ? null : next,
-      };
-    }
-    send({ type: "setExtensionEnabled", resolvedPath, enabled });
-  }
   /** Open the session-tree view and ask the server for the focused session's tree. We
    *  re-query on every open so the view reflects any branching since it was last seen
    *  (the server also re-pushes after a branch). */
@@ -2056,54 +1949,6 @@ class PilotStore {
     return this.modelDefaults.favorites.includes(`${provider}:${modelId}`);
   }
 
-  // --- Settings panel: provider credentials + global model defaults/favorites. ---
-  setProviderApiKey(providerId: string, apiKey: string): void {
-    send({ type: "setProviderApiKey", providerId, apiKey });
-  }
-  removeProviderApiKey(providerId: string): void {
-    send({ type: "removeProviderApiKey", providerId });
-  }
-  /** Start an OAuth sign-in. Opens the local flow (so this client renders the prompts
-   *  the server will broadcast back) and asks the server to drive it. */
-  oauthLogin(providerId: string): void {
-    this.oauthFlow = {
-      providerId,
-      progress: [],
-      prompt: null,
-      device: null,
-      done: false,
-      error: null,
-    };
-    send({ type: "oauthLogin", providerId });
-  }
-  /** Answer the current OAuth prompt (pasted code/URL, or a selected option id).
-   *  Optimistically clears the prompt; the server's `oauthResolved` confirms. */
-  oauthRespond(value: string): void {
-    const p = this.oauthFlow?.prompt;
-    if (!p || !this.oauthFlow) return;
-    send({ type: "oauthRespond", requestId: p.requestId, value });
-    this.oauthFlow = { ...this.oauthFlow, prompt: null };
-  }
-  /** Cancel an in-progress login: tell the server to abort the pending prompt (which
-   *  fails the login server-side), then close the local flow. */
-  oauthCancel(): void {
-    const p = this.oauthFlow?.prompt;
-    if (p) send({ type: "oauthRespond", requestId: p.requestId, value: null });
-    this.oauthFlow = null;
-  }
-  /** Dismiss a finished (done/errored) OAuth flow. */
-  closeOauth(): void {
-    this.oauthFlow = null;
-  }
-  /** Sign out of an OAuth provider (clears its stored credentials server-side). */
-  oauthLogout(providerId: string): void {
-    send({ type: "oauthLogout", providerId });
-  }
-  /** Set the global default model for new sessions (optimistic; server reconciles). */
-  setDefaultModel(provider: string, modelId: string): void {
-    this.modelDefaults = { ...this.modelDefaults, provider, modelId };
-    send({ type: "setDefaultModel", provider, modelId });
-  }
   /** Set (or clear, with null/empty) the login shell pilot captures env from at startup.
    *  Optimistic local update; the server persists + re-broadcasts. Applies on the next
    *  server restart — the Settings panel surfaces the pending-restart state. */
@@ -2122,21 +1967,6 @@ class PilotStore {
     this.pilotSettings = { ...this.pilotSettings, backgroundModel: next };
     this.backgroundModelWarning = undefined;
     send({ type: "setBackgroundModel", spec: next });
-  }
-  setDefaultThinking(level: string): void {
-    this.modelDefaults = { ...this.modelDefaults, thinkingLevel: level };
-    send({ type: "setDefaultThinking", level });
-  }
-  /** Toggle a model in the favorites subset. Optimistic; the server's `modelDefaults`
-   *  broadcast (resolved against available models) is the source of truth. */
-  toggleFavorite(provider: string, modelId: string): void {
-    const ref = `${provider}:${modelId}`;
-    const cur = this.modelDefaults.favorites;
-    const next = cur.includes(ref)
-      ? cur.filter((r) => r !== ref)
-      : [...cur, ref];
-    this.modelDefaults = { ...this.modelDefaults, favorites: next };
-    send({ type: "setFavoriteModels", refs: next });
   }
   refreshSessions(): void {
     send({ type: "listSessions" });

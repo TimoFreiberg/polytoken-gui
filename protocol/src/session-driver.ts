@@ -101,37 +101,6 @@ export interface CommandInfo {
   readonly argumentHint?: string;
 }
 
-/** One agent extension, projected JSON-safe for the Settings "Extensions" view — a DOM-free
- *  reduction of the daemon's `Extension` (the heavy `handlers`/`tools` Maps dropped to counts).
- *  LOADED (enabled) extensions come from the daemon's `resourceLoader.getExtensions()`; a DISABLED
- *  one is reconstructed from the `-<resolvedPath>` force-exclude override pilot wrote to
- *  the daemon's settings — it isn't loaded, so it carries no counts. `resolvedPath` is the stable
- *  id AND the toggle key (it's exactly what the override pattern matches). Broadcast as
- *  {@link extensionList}; see {@link setExtensionEnabled}. */
-export interface ExtensionInfo {
-  /** Absolute resolved path of the extension entry file — the stable id + toggle key. */
-  readonly resolvedPath: string;
-  /** Display name — the basename of the source path (e.g. "answer.ts"). */
-  readonly name: string;
-  /** Where it came from: "user" / "project" (the daemon's source scope), with " · package" when
-   *  it's a published package rather than a top-level local file. Display-only. */
-  readonly source: string;
-  /** Whether it's currently enabled (loaded). A disabled row is one pilot force-excluded;
-   *  toggling persists and applies on the session's NEXT start (the daemon loads at start). */
-  readonly enabled: boolean;
-  /** Tools this extension registers (loaded extensions only; 0 when disabled/errored). */
-  readonly toolCount: number;
-  /** Slash commands it registers (loaded only). */
-  readonly commandCount: number;
-  /** A short, human-readable description of what this extension does. Currently only
-   *  pilot-OWNED extensions carry one (parsed from the file's `@pilot` frontmatter, D3);
-   *  user/project/package extensions leave it undefined until the daemon grows the field.
-   *  Display-only. */
-  readonly description?: string;
-  /** A load error the daemon reported for this extension, if any — drives the problems styling. */
-  readonly error?: string;
-}
-
 /** One file in the composer's @-file mention autocomplete — a relative path from the
  *  session's cwd. The server builds a capped, .gitignore-aware index via `fd` and pushes
  *  it on session switch ({@link fileIndex}); the client fuzzy-matches it locally and
@@ -188,65 +157,6 @@ export interface TreeNodeInfo {
 export interface TreeSnapshot {
   readonly nodes: readonly TreeNodeInfo[];
   readonly leafId: string | null;
-}
-
-/** A model provider pilot can manage credentials for. No secret ever crosses the
- *  wire — only whether it's authed and where that auth comes from, so the UI can
- *  style remove-vs-readonly. Broadcast as `providerList`. */
-export interface ProviderInfo {
-  readonly id: string;
-  readonly name: string;
-  readonly hasAuth: boolean;
-  /** Where the working credential lives: "auth_file" = a key pilot saved and can
-   *  remove; "env"/"external" = configured outside pilot (env var, models.json) and
-   *  read-only here; "oauth" = an OAuth token; "none" = unauthed. */
-  readonly authSource: "none" | "oauth" | "auth_file" | "env" | "external";
-  /** Whether pilot can set a plain API key for this provider (the daemon's curated set). */
-  readonly apiKeySetupSupported: boolean;
-  /** Whether pilot can start an OAuth sign-in for this provider (it's in the daemon's OAuth
-   *  registry — Anthropic Claude Pro/Max, OpenAI Codex, GitHub Copilot). Drives the
-   *  "Sign in" button; `authSource === "oauth"` means already signed in, so offer
-   *  sign-out instead. */
-  readonly oauthSupported: boolean;
-}
-
-// --- OAuth provider login (global + interactive, like the trust channel) ---
-// Sign-in is a global action (it writes the daemon's shared auth.json, not a session), so it
-// travels its own wire messages rather than the session-scoped Host UI / event stream.
-// The flow can be remote: the daemon opens an authorize URL the operator loads on their phone,
-// then they paste the resulting code/redirect-URL back — no callback reachable over
-// Tailscale needed (the daemon's loginAnthropic races a localhost loopback against this paste).
-
-/** One option in an OAuth `select` step (e.g. browser vs device-code login method). */
-export interface OAuthSelectOption {
-  readonly id: string;
-  readonly label: string;
-}
-
-/** One interactive step in an OAuth login the operator must answer. Surfaced by the
- *  server during {@link PilotDriver.oauthLogin}; the client renders it and sends the
- *  answer back via the `oauthRespond` client message. */
-export interface OAuthLoginPrompt {
-  /** "input": free text — paste an authorization code or the full redirect URL.
-   *  "select": choose one of `options` (the answer is the chosen option's id). */
-  readonly kind: "input" | "select";
-  readonly message: string;
-  readonly placeholder?: string;
-  /** The authorize URL to open in a browser. Present on the first step of a browser
-   *  flow — open it, complete login, paste the code back. Absent on follow-up steps. */
-  readonly url?: string;
-  readonly instructions?: string;
-  /** Present for `kind: "select"`. */
-  readonly options?: readonly OAuthSelectOption[];
-}
-
-/** A device-code prompt (OpenAI Codex / GitHub Copilot device flow): show the user code
- *  + verification URL. The login completes by background polling, so there's no value to
- *  send back — it's informational. */
-export interface OAuthDeviceInfo {
-  readonly userCode: string;
-  readonly verificationUri: string;
-  readonly expiresInSeconds?: number;
 }
 
 /** Pilot's view of the daemon's GLOBAL model config (not per-session): the default new

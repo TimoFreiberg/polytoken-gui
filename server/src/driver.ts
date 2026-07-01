@@ -5,16 +5,12 @@
 import type {
   CommandInfo,
   DirListing,
-  ExtensionInfo,
   PathStat,
   FileInfo,
   HostUiResponse,
   ImageContent,
   ModelDefaults,
   ModelOption,
-  OAuthDeviceInfo,
-  OAuthLoginPrompt,
-  ProviderInfo,
   PermissionMonitorMode,
   SessionDriverEvent,
   SessionId,
@@ -30,18 +26,6 @@ import type {
 export type TrustEvent =
   | { kind: "request"; request: TrustRequest }
   | { kind: "resolved"; requestId: string };
-
-/** How the driver drives an interactive OAuth login through the hub. The hub provides
- *  this to {@link PilotDriver.oauthLogin}; the driver maps the daemon's OAuth callbacks onto it.
- *  Each `prompt` renders to clients and resolves with the operator's answer — a pasted
- *  code/URL or a selected option id — or null if they cancelled / it timed out (the
- *  driver should treat null as an aborted login). `progress`/`deviceCode` are
- *  fire-and-forget. */
-export interface OAuthLoginIO {
-  prompt(prompt: OAuthLoginPrompt): Promise<string | null>;
-  progress(message: string): void;
-  deviceCode(info: OAuthDeviceInfo): void;
-}
 
 /** Options for {@link PilotDriver.newSession}. All optional: a bare new session
  *  defaults to $HOME. The first `prompt` is delivered by the hub after
@@ -229,51 +213,8 @@ export interface PilotDriver {
     sessionId?: SessionId,
   ): void;
 
-  // --- Global model/provider config (Settings panel). All optional: the mock and
-  // polytoken driver implement them; a future bare driver may omit, and the hub guards with
-  // `?.`. These touch the daemon's GLOBAL state (auth.json + global settings), not a session.
-
-  /** Providers pilot can manage (curated key-capable + already-connected). Carries
-   *  no secrets — only auth presence/source. */
-  listProviders?(): Promise<ProviderInfo[]>;
-  /** Save an API key for a provider (writes auth.json) and refresh model availability.
-   *  Rejects on an unsupported provider or empty key — the hub relays it as an error. */
-  setProviderApiKey?(providerId: string, apiKey: string): Promise<void>;
-  /** Remove a pilot-saved API key (auth_file source only) and refresh availability. */
-  removeProviderApiKey?(providerId: string): Promise<void>;
-  /** Run an interactive OAuth sign-in for a provider in the daemon's OAuth registry (Anthropic
-   *  Claude Pro/Max, OpenAI Codex, GitHub Copilot), driving the flow's prompts through
-   *  `io`. Resolves once credentials are stored; rejects on failure/cancel. The hub
-   *  re-broadcasts the provider + model lists afterward. */
-  oauthLogin?(providerId: string, io: OAuthLoginIO): Promise<void>;
-  /** Sign out of an OAuth provider (clears its stored credentials), refreshing
-   *  availability so the now-unauthed provider's models drop out. */
-  oauthLogout?(providerId: string): Promise<void>;
-
   /** The daemon's global default model/thinking for new sessions + the favorites subset. */
   getModelDefaults?(): Promise<ModelDefaults>;
-  /** Set the global default model for NEW sessions (persists to the daemon's settings). */
-  setDefaultModel?(provider: string, modelId: string): Promise<void>;
-  /** Set the global default thinking level for NEW sessions. */
-  setDefaultThinking?(level: string): Promise<void>;
-  /** Replace the favorites subset (concrete `provider:modelId` refs). */
-  setFavoriteModels?(refs: readonly string[]): Promise<void>;
-
-  /** The targeted session's daemon extensions (loaded, projected JSON-safe via the daemon's
-   *  `resourceLoader.getExtensions()`), plus any pilot-disabled ones reconstructed from the
-   *  force-exclude overrides in the daemon's settings. Read on demand for the Settings "Extensions"
-   *  view; the hub sends it as `extensionList`. sessionId omitted -> the driver's current
-   *  session. The mock returns a fixture set. */
-  listExtensions?(sessionId?: SessionId): Promise<ExtensionInfo[]>;
-  /** Enable/disable an extension by its `resolvedPath`, persisting a force-exclude override
-   *  to the daemon's user settings. The daemon loads extensions at session START, so the change applies on
-   *  the session's NEXT start, not live (the UI labels it). The hub re-sends `extensionList`
-   *  afterward. sessionId omitted -> the driver's current session. */
-  setExtensionEnabled?(
-    resolvedPath: string,
-    enabled: boolean,
-    sessionId?: SessionId,
-  ): Promise<void>;
 
   /** Subscribe to host-level project-trust requests (D12). The driver fires the
    *  listener when opening/creating a session in an untrusted cwd needs an

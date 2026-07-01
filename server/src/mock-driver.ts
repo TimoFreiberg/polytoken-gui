@@ -6,11 +6,8 @@ import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import {
   isDialogRequest,
-  PILOT_OWNED_EXTENSION_NAMES,
-  isPilotOwnedExtension,
   type CommandInfo,
   type DirListing,
-  type ExtensionInfo,
   type PathStat,
   type FileInfo,
   type HostUiRequest,
@@ -18,7 +15,6 @@ import {
   type ModelDefaults,
   type ModelOption,
   type PermissionMonitorMode,
-  type ProviderInfo,
   type QnaAnswer,
   type QnaQuestion,
   type SessionConfig,
@@ -29,8 +25,8 @@ import {
   type SessionUsage,
   type TreeSnapshot,
 } from "@pilot/protocol";
-import type { NewSessionOpts, OAuthLoginIO, PilotDriver, TrustEvent } from "./driver.js";
-import { writePilotSettings, readPilotSettings } from "./settings-store.js";
+import type { NewSessionOpts, PilotDriver, TrustEvent } from "./driver.js";
+import { writePilotSettings } from "./settings-store.js";
 import {
   ambient,
   answerCard,
@@ -66,12 +62,9 @@ import {
   selectMany,
   staleIdle,
   MOCK_COMMANDS,
-  MOCK_EXTENSIONS,
   MOCK_FILES,
   MOCK_DEFAULT_CONFIG,
-  MOCK_MODEL_DEFAULTS,
   MOCK_MODELS,
-  MOCK_PROVIDERS,
   MOCK_BACKGROUND_MODEL,
   MOCK_USAGE,
   mockSessionSeed,
@@ -245,16 +238,6 @@ export class MockDriver implements PilotDriver {
   // reflects a switch. (Scripted replies still emit the fixture default — fine for a
   // deterministic mock; the picker is exercised on its own.)
   private config: SessionConfig = { ...MOCK_DEFAULT_CONFIG };
-  // Global config the Settings panel edits (providers + defaults/favorites). In-memory
-  // only; the hub re-reads via list* after each mutation.
-  private providers: ProviderInfo[] = MOCK_PROVIDERS.map((p) => ({ ...p }));
-  private defaults: ModelDefaults = {
-    ...MOCK_MODEL_DEFAULTS,
-    favorites: [...MOCK_MODEL_DEFAULTS.favorites],
-  };
-  // Extensions for the Settings "Extensions" view; `enabled` is toggled in-memory and
-  // restored to the fixture baseline by reset() (mirrors how providers/defaults work).
-  private extensions: ExtensionInfo[] = MOCK_EXTENSIONS.map((e) => ({ ...e }));
   // Live context-window fill, grown a step on each poll so the meter is visibly
   // non-static during a run (the hub polls getUsage ~1s while a turn streams). Reset()
   // restores the baseline. MOCK_USAGE.tokens is a concrete number (its type allows null
@@ -430,12 +413,6 @@ export class MockDriver implements PilotDriver {
     this.dirtyWorktrees = new Set<string>();
     this.reapedWorktrees = new Set<string>();
     this.config = { ...MOCK_DEFAULT_CONFIG };
-    this.providers = MOCK_PROVIDERS.map((p) => ({ ...p }));
-    this.defaults = {
-      ...MOCK_MODEL_DEFAULTS,
-      favorites: [...MOCK_MODEL_DEFAULTS.favorites],
-    };
-    this.extensions = MOCK_EXTENSIONS.map((e) => ({ ...e }));
     this.liveUsageTokens = MOCK_USAGE.tokens ?? 0;
     this.bootstrapped = opts.bootstrap !== false;
   }
@@ -809,57 +786,6 @@ export class MockDriver implements PilotDriver {
     return MOCK_COMMANDS.map((c) => ({ ...c }));
   }
 
-  async listExtensions(): Promise<ExtensionInfo[]> {
-    // Mirror the real driver's projection: a pilot-OWNED row's `enabled` reflects pilot's
-    //   `enabledExtensions` set (the [OPEN E] toggle — the daemon's force-exclude is a no-op on
-    //   owned paths). null = all owned enabled; an array = the enabled subset by name.
-    const enabledExtensions = readPilotSettings().enabledExtensions;
-    return this.extensions.map((e) => {
-      if (!isPilotOwnedExtension(e.name)) return { ...e };
-      const name = e.name.replace(/\.ts$/, "");
-      const on =
-        enabledExtensions === null || enabledExtensions.includes(name);
-      return { ...e, enabled: on };
-    });
-  }
-
-  async setExtensionEnabled(
-    resolvedPath: string,
-    enabled: boolean,
-  ): Promise<void> {
-    // Pilot-OWNED rows route to pilot's `enabledExtensions` set (mirrors the real
-    //   driver — the daemon's force-exclude override is a no-op on additionalExtensionPaths).
-    //   The mock keys off the fixture row's name (basename without .ts), like the real
-    //   driver's ownedExtensionBasename. null = all enabled; an array = the subset.
-    const owned = this.extensions.find((e) => e.resolvedPath === resolvedPath);
-    const ownedName =
-      owned && isPilotOwnedExtension(owned.name)
-        ? owned.name.replace(/\.ts$/, "")
-        : undefined;
-    if (ownedName) {
-      const cur = readPilotSettings().enabledExtensions ?? [
-        ...PILOT_OWNED_EXTENSION_NAMES,
-      ];
-      const next = enabled
-        ? cur.includes(ownedName)
-          ? cur
-          : [...cur, ownedName]
-        : cur.filter((n) => n !== ownedName);
-      const allEnabled =
-        next.length === PILOT_OWNED_EXTENSION_NAMES.length &&
-        PILOT_OWNED_EXTENSION_NAMES.every((n) => next.includes(n));
-      writePilotSettings({
-        enabledExtensions: allEnabled ? null : next,
-      });
-      return;
-    }
-    // User/project extension: flip the in-memory flag (the mock doesn't persist the daemon's
-    // settings); the re-broadcast list reflects it (the row stays visible either way).
-    this.extensions = this.extensions.map((e) =>
-      e.resolvedPath === resolvedPath ? { ...e, enabled } : e,
-    );
-  }
-
   async listFileIndex(): Promise<{ files: FileInfo[]; truncated: boolean }> {
     // The fixture set is small, so the client always has the full index — for a real session
     // the per-query fallback never fires (truncated stays false). A new-session DRAFT still
@@ -941,73 +867,16 @@ export class MockDriver implements PilotDriver {
     });
   }
 
-  async listProviders(): Promise<ProviderInfo[]> {
-    return this.providers.map((p) => ({ ...p }));
-  }
-
-  async setProviderApiKey(providerId: string, apiKey: string): Promise<void> {
-    if (!apiKey.trim()) throw new Error("API key is required");
-    const p = this.providers.find((x) => x.id === providerId);
-    if (!p) throw new Error(`unknown provider ${providerId}`);
-    if (!p.apiKeySetupSupported)
-      throw new Error(`API key setup isn't supported for ${providerId}`);
-    this.providers = this.providers.map((x) =>
-      x.id === providerId
-        ? { ...x, hasAuth: true, authSource: "auth_file" }
-        : x,
-    );
-  }
-
-  async removeProviderApiKey(providerId: string): Promise<void> {
-    this.providers = this.providers.map((x) =>
-      x.id === providerId ? { ...x, hasAuth: false, authSource: "none" } : x,
-    );
-  }
-
-  /** Simulate the remote browser OAuth flow deterministically: announce, hand back a
-   *  fake authorize URL + paste field, accept any non-empty answer, mark connected.
-   *  A cancelled prompt (null) aborts like the real flow. */
-  async oauthLogin(providerId: string, io: OAuthLoginIO): Promise<void> {
-    const p = this.providers.find((x) => x.id === providerId);
-    if (!p) throw new Error(`unknown provider ${providerId}`);
-    if (!p.oauthSupported)
-      throw new Error(`OAuth login isn't supported for ${providerId}`);
-    io.progress(`Opening ${p.name} authorization…`);
-    const answer = await io.prompt({
-      kind: "input",
-      message: "Paste the authorization code or the full redirect URL",
-      placeholder: "code, or http://localhost/callback?code=…",
-      url: `https://example.com/oauth/authorize?mock=${providerId}`,
-      instructions:
-        "(mock) Open the link, then paste anything back to complete sign-in.",
-    });
-    if (answer == null) throw new Error("OAuth login cancelled");
-    io.progress("Exchanging authorization code for tokens…");
-    this.providers = this.providers.map((x) =>
-      x.id === providerId ? { ...x, hasAuth: true, authSource: "oauth" } : x,
-    );
-  }
-
-  async oauthLogout(providerId: string): Promise<void> {
-    this.providers = this.providers.map((x) =>
-      x.id === providerId ? { ...x, hasAuth: false, authSource: "none" } : x,
-    );
-  }
-
   async getModelDefaults(): Promise<ModelDefaults> {
-    return { ...this.defaults, favorites: [...this.defaults.favorites] };
-  }
-
-  async setDefaultModel(provider: string, modelId: string): Promise<void> {
-    this.defaults = { ...this.defaults, provider, modelId };
-  }
-
-  async setDefaultThinking(level: string): Promise<void> {
-    this.defaults = { ...this.defaults, thinkingLevel: level };
-  }
-
-  async setFavoriteModels(refs: readonly string[]): Promise<void> {
-    this.defaults = { ...this.defaults, favorites: [...refs] };
+    // Resolve the catalog default from the mock's fixture config (mirrors the polytoken
+    // driver's getModelDefaults, which reads `polytoken models`). Returns the static
+    // fixture default — there's no writable global config to mutate.
+    return {
+      provider: MOCK_DEFAULT_CONFIG.provider,
+      modelId: MOCK_DEFAULT_CONFIG.modelId,
+      thinkingLevel: MOCK_DEFAULT_CONFIG.thinkingLevel,
+      favorites: [],
+    };
   }
 
   /** Broadcast the current model selection as a sessionUpdated (idle) snapshot. */
