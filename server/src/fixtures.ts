@@ -1823,6 +1823,41 @@ export function planView(): ScriptStep[] {
   ];
 }
 
+/** Drives the StatusHeader goal badge: emits a sessionUpdated snapshot carrying
+ *  `goal` (a GoalInfo with a summary + lifecycle), so the GoalBadge renders in
+ *  the subtitle. Exercises the full snapshot→foldEvent→state.goal→UI path. */
+export function goalActive(): ScriptStep[] {
+  return [
+    {
+      wait: 0,
+      event: {
+        ...base(),
+        type: "sessionUpdated",
+        snapshot: snapshot({
+          goal: { summary: "Ship the goal badge feature", lifecycle: "active" },
+          status: "idle",
+        }),
+      },
+    },
+  ];
+}
+
+/** Clears the goal badge: emits a sessionUpdated snapshot carrying `goal: null`,
+ *  so the fold clears state.goal and the GoalBadge hides. Exercises the cleared
+ *  data path (null → undefined in the fold). */
+export function goalClear(): ScriptStep[] {
+  return [
+    {
+      wait: 0,
+      event: {
+        ...base(),
+        type: "sessionUpdated",
+        snapshot: snapshot({ goal: null, status: "idle" }),
+      },
+    },
+  ];
+}
+
 /** A short markdown plan used by the planView fixture. */
 const PLAN_VIEW_TEXT = `# Plan: Wire up the plan overlay
 
@@ -2215,6 +2250,8 @@ export const SCRIPTS: Record<string, () => ScriptStep[]> = {
   timeout: timeoutConfirm,
   yesno: yesNoSelect,
   planview: planView,
+  goalactive: goalActive,
+  goalclear: goalClear,
 };
 
 // --- Session listing + switching (Increment 2) ------------------------------

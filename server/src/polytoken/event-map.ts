@@ -17,6 +17,7 @@
 
 import type { components } from "./wire-types.js";
 import type {
+  GoalInfo,
   ImageContent,
   SessionDriverEvent,
   SessionQueuedMessage,
@@ -253,6 +254,11 @@ export function snapshotFromState(
     facet: state?.active_facet ?? undefined,
     permissionMonitor: monitorMode,
     activePlan: state?.active_plan ?? undefined,
+    // Thread current_goal → goal. Three cases: a CurrentGoal object → set (the
+    // daemon carries summary + lifecycle); null (explicitly cleared) → null (the
+    // fold clears state.goal so the badge hides); undefined (field absent, older
+    // daemon) → undefined (the fold preserves a known goal).
+    goal: projectGoal(state?.current_goal),
   };
 }
 
@@ -263,6 +269,25 @@ export function usageFromState(state: DaemonState | null): SessionUsage | undefi
   const percent =
     cu.limit_tokens > 0 ? Math.round((cu.used_tokens / cu.limit_tokens) * 100) : null;
   return { tokens: cu.used_tokens, contextWindow: cu.limit_tokens, percent };
+}
+
+/** Project the daemon's current_goal onto pilot's GoalInfo for the StatusHeader
+ *  goal badge. Mirrors the null/undefined distinction the daemon makes:
+ *  - a CurrentGoal object → GoalInfo (summary + lifecycle), so the badge renders
+ *  - null (explicitly cleared) → null, so the fold clears state.goal (badge hides)
+ *  - undefined (field absent, older daemon / event omits it) → undefined, so the
+ *    fold preserves a known goal (no clobber).
+ *  The daemon's full CurrentGoal (timestamps, continuation count, file paths) is
+ *  trimmed to just what the UI needs. Shared by snapshotFromState (reads
+ *  state.current_goal) and the goal_driver_update handler (reads ev.goal). */
+function projectGoal(
+  g: components["schemas"]["CurrentGoal"] | null | undefined,
+): GoalInfo | null | undefined {
+  if (g) return { summary: g.summary, lifecycle: g.lifecycle };
+  // Distinguish null from undefined explicitly — ?? would collapse them, but
+  // the daemon's null (cleared) must reach the fold as null (→ clear), while
+  // undefined (field absent) must reach it as undefined (→ preserve).
+  return g === null ? null : undefined;
 }
 
 /** Parse accumulated tool-use input. Falls back to raw string if not valid JSON. */
@@ -1096,6 +1121,38 @@ export function mapDaemonEvent(
       );
     }
 
+    case "goal_driver_update": {
+      // Mirror permission_monitor_switch (above): the event carries the
+      // authoritative new goal, so emit a sessionUpdated from the payload
+      // immediately, then fire fetchState to sync the cached lastState. The goal
+      // field is `goal?: null | CurrentGoal` — optional on the wire. Three cases:
+      // object (set), null (cleared), undefined (not carried — preserve existing,
+      // don't emit a sessionUpdated that would blank the badge). The fetchState
+      // effect re-fetches GET /state (which carries current_goal natively) and
+      // emits another sessionUpdated — harmless (same goal value, fold is
+      // idempotent). This syncs the cached lastState so subsequent ctx.snapshot()
+      // calls are consistent (goal lives on lastState, which fetchState refreshes
+      // wholesale — unlike permissionMonitor which has a separate cache field).
+      const goal = projectGoal(ev.goal);
+      if (goal === undefined) {
+        // The event didn't carry a goal field (defensive — the schema allows it).
+        // Just fire fetchState to re-sync from the daemon's authoritative state,
+        // preserving the existing goal rather than emitting a sessionUpdated that
+        // would blank the badge.
+        return events([], [{ type: "fetchState", emit: "sessionUpdated" }]);
+      }
+      return events(
+        [
+          {
+            ...meta,
+            type: "sessionUpdated",
+            snapshot: { ...ctx.snapshot(ctx.liveStatus()), goal },
+          },
+        ],
+        [{ type: "fetchState", emit: "sessionUpdated" }],
+      );
+    }
+
     // ===== v1-ignored variants (return empty — the stream stays live) =====
     //
     // These are ambient metadata, new concepts not yet surfaced, or Chunk 3/5
@@ -1128,7 +1185,6 @@ export function mapDaemonEvent(
     case "job_expiring":
     case "job_cancelled":
     case "job_updated":
-    case "goal_driver_update":
     case "agent_block_violation":
     case "usage_throttle":
       return EMPTY;

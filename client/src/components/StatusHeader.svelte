@@ -1,6 +1,7 @@
 <script lang="ts">
   import { store } from "../lib/store.svelte.js";
   import { sessionSubtitle } from "../lib/session-subtitle.js";
+  import GoalBadge from "./GoalBadge.svelte";
   import IconButton from "./ui/IconButton.svelte";
 
   let hotkeyN = $state(0);
@@ -127,6 +128,10 @@
     </span>
     <div class="sub">
       <span class="path" title={subtitleTitle}>{subtitle}</span>
+      {#if s.goal}
+        <span class="dot-sep">·</span>
+        <GoalBadge />
+      {/if}
       {#each statuses as [key, text] (key)}
         <span class="dot-sep">·</span>
         <span class="amb">{text}</span>

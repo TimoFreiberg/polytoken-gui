@@ -261,6 +261,16 @@ export interface ModelDefaults {
   readonly favorites: readonly string[];
 }
 
+/** A projection of the daemon's CurrentGoal for display. Only the fields
+ *  the UI needs; the full daemon schema (timestamps, continuation count,
+ *  file paths) is trimmed to keep the wire lightweight. */
+export interface GoalInfo {
+  /** Short, human-readable summary of the goal. */
+  readonly summary: string;
+  /** Lifecycle state: "active" | "paused" | "blocked" | "complete" (open set). */
+  readonly lifecycle: string;
+}
+
 export interface SessionSnapshot {
   readonly ref: SessionRef;
   readonly workspace: WorkspaceRef;
@@ -285,6 +295,13 @@ export interface SessionSnapshot {
   /** The active plan document's markdown (set when the plan facet produces a
    *  plan). Undefined means no plan exists / the facet isn't "plan". */
   readonly activePlan?: string;
+  /** The active saved-session goal; undefined means the snapshot didn't carry
+   *  it (older daemon — preserve existing state); null means explicitly cleared;
+   *  a GoalInfo object means set. Same overwrite-guarded semantics as `facet`,
+   *  extended with a null/cleared state (the daemon's `current_goal` is
+   *  `null | CurrentGoal | undefined`, unlike `active_facet` which is just
+   *  present-or-absent). Drives the StatusHeader goal badge. */
+  readonly goal?: GoalInfo | null;
 }
 
 /**

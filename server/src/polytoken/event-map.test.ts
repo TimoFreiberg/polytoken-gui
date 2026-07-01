@@ -36,6 +36,22 @@ const baseState: DaemonState = {
   context_usage: { limit_tokens: 200_000, used_tokens: 50_000 },
 };
 
+/** Build a minimal valid CurrentGoal for goal_driver_update tests. Only
+ *  summary + lifecycle are projected; the rest are stubs the schema requires. */
+function makeGoal(summary: string, lifecycle: string) {
+  return {
+    activated_at: "2026-01-01T00:00:00Z",
+    continuation_count: 0,
+    created_at: "2026-01-01T00:00:00Z",
+    file: { display_path: "goal.md", path: "/goal.md" },
+    id: "g1",
+    lifecycle,
+    source: "operator",
+    summary,
+    updated_at: "2026-01-01T00:00:00Z",
+  } as components["schemas"]["CurrentGoal"];
+}
+
 const ctx: MapCtx = {
   ref,
   workspace,
@@ -1431,15 +1447,54 @@ describe("mapDaemonEvent", () => {
     });
   });
 
-  test("goal_driver_update -> empty", () => {
-    expect(
-      fold({
-        type: "goal_driver_update",
-        goal: null,
-        proposed_summary: null,
-        transition: "proposed",
-      }),
-    ).toEqual({ events: [], effects: [] });
+  test("goal_driver_update with a goal object -> sessionUpdated carries goal + fetchState effect", () => {
+    // Mirrors permission_monitor_switch: the event carries the authoritative new
+    // value, so emit a sessionUpdated from the payload immediately, then fire
+    // fetchState to sync the cached lastState.
+    const goalObj = makeGoal("Ship feature X", "active");
+    const out = fold({
+      type: "goal_driver_update",
+      goal: goalObj,
+      proposed_summary: null,
+      transition: "set",
+    });
+    expect(out.events).toHaveLength(1);
+    expect(out.events[0]).toMatchObject({
+      type: "sessionUpdated",
+      snapshot: { goal: { summary: "Ship feature X", lifecycle: "active" } },
+    });
+    expect(out.effects).toEqual([{ type: "fetchState", emit: "sessionUpdated" }]);
+  });
+
+  test("goal_driver_update with goal:null -> sessionUpdated carries goal:null (cleared)", () => {
+    // The daemon sends goal:null when a goal is cleared. The handler projects
+    // null → null so the fold clears state.goal and the badge hides.
+    const out = fold({
+      type: "goal_driver_update",
+      goal: null,
+      proposed_summary: null,
+      transition: "cleared",
+    });
+    expect(out.events).toHaveLength(1);
+    expect(out.events[0]).toMatchObject({
+      type: "sessionUpdated",
+      snapshot: { goal: null },
+    });
+    expect(out.effects).toEqual([{ type: "fetchState", emit: "sessionUpdated" }]);
+  });
+
+  test("goal_driver_update with goal omitted (undefined) -> no sessionUpdated, only fetchState", () => {
+    // The schema allows the goal field to be absent. In that case the handler
+    // must NOT emit a sessionUpdated (which would blank the badge via the fold's
+    // null-handling); it just fires fetchState to re-sync from the authoritative
+    // state, preserving the existing goal.
+    const out = fold({
+      type: "goal_driver_update",
+      proposed_summary: null,
+      transition: "proposed",
+    });
+    expect(out.events).toEqual([]);
+    expect(out.effects).toEqual([{ type: "fetchState", emit: "sessionUpdated" }]);
   });
 
   test("agent_block_violation -> empty", () => {
@@ -1803,5 +1858,51 @@ describe("snapshotFromState", () => {
     // An older/partial daemon state (or a null state) must not synthesize a plan.
     const snap = snapshotFromState(null, ref, workspace, "idle", "t");
     expect(snap.activePlan).toBeUndefined();
+  });
+
+  test("threads current_goal onto the snapshot as goal", () => {
+    // The event-map step of the goal data path: a daemon state carrying
+    // current_goal (a CurrentGoal object) produces a SessionSnapshot whose goal
+    // field is set to {summary, lifecycle}, which foldEvent then propagates to
+    // state.goal (covered in protocol/state.test.ts).
+    const snap = snapshotFromState(
+      {
+        ...baseState,
+        current_goal: makeGoal("Ship feature X", "active"),
+      },
+      ref,
+      workspace,
+      "idle",
+      "t",
+    );
+    expect(snap.goal).toEqual({
+      summary: "Ship feature X",
+      lifecycle: "active",
+    });
+  });
+
+  test("projects current_goal:null onto goal:null (cleared)", () => {
+    // The daemon sends current_goal:null when a goal is cleared. The projection
+    // must map null → null (NOT undefined) so the fold clears state.goal and the
+    // badge hides — distinct from the "field absent" case below.
+    const snap = snapshotFromState(
+      { ...baseState, current_goal: null },
+      ref,
+      workspace,
+      "idle",
+      "t",
+    );
+    expect(snap.goal).toBeNull();
+  });
+
+  test("defaults goal to undefined when current_goal is absent (older daemon)", () => {
+    // An older/partial daemon state (or a null state) that omits current_goal
+    // entirely must not synthesize a goal — undefined means "preserve" in the
+    // fold, so a known goal isn't blanked.
+    const snap = snapshotFromState(baseState, ref, workspace, "idle", "t");
+    expect(snap.goal).toBeUndefined();
+    // And a null state:
+    const nullSnap = snapshotFromState(null, ref, workspace, "idle", "t");
+    expect(nullSnap.goal).toBeUndefined();
   });
 });

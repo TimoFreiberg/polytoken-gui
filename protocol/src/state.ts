@@ -4,6 +4,7 @@
 // adopts wholesale, then resumes incremental folding.
 
 import {
+  type GoalInfo,
   type HostUiRequest,
   type ImageContent,
   isDialogRequest,
@@ -125,6 +126,10 @@ export interface SessionState {
   /** The active plan document's markdown; undefined until a snapshot carries it.
    *  Drives the PlanView overlay. Same overwrite-guarded semantics as `facet`. */
   activePlan?: string;
+  /** The active saved-session goal; undefined until a snapshot carries it, null
+   *  when explicitly cleared. Drives the StatusHeader goal badge. Same
+   *  overwrite-guarded semantics as `facet`, extended with a null/cleared state. */
+  goal?: GoalInfo | null;
   items: TranscriptItem[];
   /** Blocking dialogs awaiting a response, in arrival order. */
   pendingApprovals: HostUiRequest[];
@@ -248,6 +253,10 @@ export function foldEvent(
       // Same overwrite-guarded semantics as facet: a snapshot that carries
       // activePlan overwrites; one that omits it must not blank a known plan.
       if (s.activePlan !== undefined) state.activePlan = s.activePlan;
+      // Same overwrite-guarded semantics as facet: a snapshot that carries goal
+      // overwrites (including null = cleared); one that omits it must not blank a
+      // known goal. null → undefined (badge hides), object → set, undefined → preserved.
+      if (s.goal !== undefined) state.goal = s.goal ?? undefined;
       // Queue changes have their own authoritative `queueUpdated` event. A snapshot that
       // carries the queue replaces it (including []); an older/partial snapshot that omits
       // the field must not erase live queue state.

@@ -623,4 +623,103 @@ describe("foldEvent", () => {
     );
     expect(s.activePlan).toBe(planText);
   });
+
+  test("snapshot.goal propagates to state.goal (the badge data path)", () => {
+    // Same data path as facet: a snapshot carrying goal must land on state.goal
+    // so the StatusHeader GoalBadge renders. Without the foldEvent guard the
+    // field would ride the wire snapshot but be dropped at the fold.
+    const goal = { summary: "Ship feature X", lifecycle: "active" };
+    const s = foldAll([
+      base({
+        type: "sessionUpdated",
+        snapshot: {
+          ref,
+          workspace: { workspaceId: "w", path: "/p" },
+          title: "t",
+          status: "idle",
+          updatedAt: "t",
+          goal,
+        },
+      }),
+    ]);
+    expect(s.goal).toEqual(goal);
+  });
+
+  test("a snapshot without goal leaves an existing state.goal intact", () => {
+    // Mirrors facet's overwrite-guarded semantics: a snapshot that carries goal
+    // overwrites; one that omits it (older daemon, partial snapshot) must not
+    // blank a known goal.
+    const goal = { summary: "Ship feature X", lifecycle: "active" };
+    const s = initialSessionState();
+    foldEvent(
+      s,
+      base({
+        type: "sessionUpdated",
+        snapshot: {
+          ref,
+          workspace: { workspaceId: "w", path: "/p" },
+          title: "t",
+          status: "idle",
+          updatedAt: "t1",
+          goal,
+        },
+      }),
+    );
+    expect(s.goal).toEqual(goal);
+    // A later snapshot that omits goal must not erase the known value.
+    foldEvent(
+      s,
+      base({
+        type: "sessionUpdated",
+        snapshot: {
+          ref,
+          workspace: { workspaceId: "w", path: "/p" },
+          title: "t",
+          status: "idle",
+          updatedAt: "t2",
+        },
+      }),
+    );
+    expect(s.goal).toEqual(goal);
+  });
+
+  test("snapshot.goal = null clears state.goal (the cleared-goal data path)", () => {
+    // The daemon sends current_goal: null when a goal is cleared. The projection
+    // maps that to goal: null, and the fold must clear state.goal (→ undefined)
+    // so the GoalBadge hides. This is the null/cleared state that facet/activePlan
+    // don't have — distinct from the "omit" case above.
+    const goal = { summary: "Ship feature X", lifecycle: "active" };
+    const s = initialSessionState();
+    foldEvent(
+      s,
+      base({
+        type: "sessionUpdated",
+        snapshot: {
+          ref,
+          workspace: { workspaceId: "w", path: "/p" },
+          title: "t",
+          status: "idle",
+          updatedAt: "t1",
+          goal,
+        },
+      }),
+    );
+    expect(s.goal).toEqual(goal);
+    // A later snapshot carrying goal: null clears it.
+    foldEvent(
+      s,
+      base({
+        type: "sessionUpdated",
+        snapshot: {
+          ref,
+          workspace: { workspaceId: "w", path: "/p" },
+          title: "t",
+          status: "idle",
+          updatedAt: "t2",
+          goal: null,
+        },
+      }),
+    );
+    expect(s.goal).toBeUndefined();
+  });
 });
