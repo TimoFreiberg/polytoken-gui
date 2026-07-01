@@ -18,7 +18,9 @@
   import Tooltip from "./components/Tooltip.svelte";
   import Toast from "./components/Toast.svelte";
   import ImageLightbox from "./components/ImageLightbox.svelte";
+  import { untrack } from "svelte";
   import { imageViewer } from "./lib/image-viewer.svelte.js";
+  import { attention, type AttentionSurface } from "./lib/attention-cycle.svelte.js";
   import IconButton from "./components/ui/IconButton.svelte";
   import { notifyIfUnfocused } from "./lib/notify.js";
   import { wakeLock } from "./lib/wake-lock.js";
@@ -44,6 +46,21 @@
       window.matchMedia(PHONE_MQ).matches,
   );
   const scripts = ["reply", "markdown", "search", "thinkingtools", "skill", "confirm", "trust", "input", "qna", "answercard", "answerleadup", "ambient", "compat", "bgrun", "bgwait", "queue", "deliverqueue", "initializing", "editdiff", "images", "error", "idle", "streamhold", "staleidle", "pendinghold", "timeout", "yesno", "journalnudge", "contextfull", "longoutput", "selectmany", "planhandoff", "planhandofftimeout", "planfacet", "planview", "permission", "failnewsession", "failsession", "goal", "unknown"];
+
+  // The agent-driven attention surfaces currently active, in cycle order. The ⌘\
+  // hotkey advances focus through these; each cycled-away-from surface collapses to
+  // a pill. Transcript is always present (the "home" surface). User-driven modals
+  // (Settings, TreeView, PlanView, ImageLightbox) are excluded — they have their
+  // own hotkeys and are not agent-initiated.
+  const activeAttentionSurfaces = $derived.by(() => {
+    const surfaces: AttentionSurface[] = ["transcript"];
+    if (store.session.pendingApprovals.some((r) => r.kind === "qna"))
+      surfaces.push("qna");
+    if (store.session.pendingApprovals.some((r) => r.kind !== "qna"))
+      surfaces.push("approval");
+    if (store.trustRequest) surfaces.push("trust");
+    return surfaces;
+  });
 
   onMount(() => store.start());
 
@@ -133,6 +150,17 @@
     document.title = t ? `${t} · pilot` : "pilot";
   });
 
+  // When ⌘\ cycles to transcript (home), refocus the composer textarea.
+  // focusComposer() just bumps a counter; the composer reacts to it (idempotent).
+  // untrack: focusComposer() writes focusComposerN ($state) — without untrack,
+  // that write re-triggers this effect (Svelte 5 treats writes during an effect
+  // as potential self-dependencies), creating an infinite re-run loop that floods
+  // the microtask queue and blocks the next keydown from firing.
+  $effect(() => {
+    const f = attention.focused;
+    if (f === "transcript") untrack(() => store.focusComposer());
+  });
+
   // App-global navigation hotkeys. The ⌘/Ctrl modifier keeps them clear of typing;
   // component-local handlers own the ⇧-modified combos (⌘⇧M/E/T) and arrow nav, so we
   // take only the unshifted, alt-free set here. (⌘N is browser-reserved in a plain tab
@@ -205,6 +233,20 @@
           e.preventDefault();
           store.togglePlanView();
         }
+        break;
+      case "\\":
+        // ⌘\ / Ctrl+\ — cycle focus through active agent-driven attention surfaces
+        // (transcript → qna → approval → trust → …). Each cycled-away-from surface
+        // collapses to a pill. No-op when a user-driven modal owns the keyboard.
+        if (
+          store.settingsOpen ||
+          store.treeOpen ||
+          store.planViewOpen ||
+          imageViewer.index !== null
+        )
+          break;
+        e.preventDefault();
+        attention.cycle(activeAttentionSurfaces);
         break;
     }
   }

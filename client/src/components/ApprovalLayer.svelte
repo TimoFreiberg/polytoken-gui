@@ -1,7 +1,10 @@
 <script lang="ts">
+  import { reveal } from "../lib/transitions.js";
   import { isDialogRequest } from "@pilot/protocol";
   import { store } from "../lib/store.svelte.js";
+  import { attention } from "../lib/attention-cycle.svelte.js";
   import Button from "./ui/Button.svelte";
+  import Chevron from "./ui/Chevron.svelte";
   import Markdown from "./Markdown.svelte";
 
   // Show one dialog at a time — the oldest pending. `qna` is rendered inline in the
@@ -27,6 +30,7 @@
 
   function cancel() {
     if (!current) return;
+    attention.clear("approval");
     store.respondUi({ requestId: current.requestId, cancelled: true });
   }
   // An input/editor with unsaved edits — a stray backdrop tap shouldn't nuke typed text.
@@ -42,11 +46,20 @@
     if (isDirty) return;
     cancel();
   }
+  // Effective minimized state: the controller owns the flag, but a dirty input/editor
+  // vetoes the pill (edge case #7) — minimizing a dirty sheet would lose typed text the
+  // same way a stray backdrop tap would. The controller still advances `focused` so
+  // focus moves to the next surface; the dirty sheet just stays open behind it.
+  const minimized = $derived(attention.minimized.approval && !isDirty);
   function confirm(value: boolean) {
-    if (current) store.respondUi({ requestId: current.requestId, confirmed: value });
+    if (!current) return;
+    attention.clear("approval");
+    store.respondUi({ requestId: current.requestId, confirmed: value });
   }
   function submitValue(v: string) {
-    if (current) store.respondUi({ requestId: current.requestId, value: v });
+    if (!current) return;
+    attention.clear("approval");
+    store.respondUi({ requestId: current.requestId, value: v });
   }
 
   // --- Binary 2-option select → Yes/No card ---
@@ -139,9 +152,8 @@
   // clashing with the global ⌘↑ / composer-Esc handlers.
   let sheetEl = $state<HTMLElement | null>(null);
 
-  $effect(() => {
-    const id = current?.requestId;
-    if (!id || !sheetEl) return;
+  function focusSheet(): void {
+    if (!sheetEl) return;
     const el = sheetEl;
     // Focus the field if there is one (input/editor → soft keyboard opens + immediate
     // typing); otherwise focus the sheet itself (tabindex=-1) so a screen reader
@@ -150,6 +162,36 @@
     queueMicrotask(() => {
       (el.querySelector<HTMLElement>(".field, .editor") ?? el).focus();
     });
+  }
+
+  $effect(() => {
+    const id = current?.requestId;
+    if (!id || !sheetEl) return;
+    focusSheet(); // fires on first render of each new dialog
+  });
+  // Re-focus when cycled back to via ⌘\ (the requestId effect above won't re-fire —
+  // the request is unchanged across a minimize→restore cycle).
+  $effect(() => {
+    if (
+      attention.focused === "approval" &&
+      !attention.minimized.approval
+    ) {
+      focusSheet();
+    }
+  });
+
+  // Remote-resolution cleanup: when the underlying request changes or becomes null
+  // (resolved by another client, auto-timeout, etc.), clear the controller's approval
+  // state so the pill disappears and a fresh dialog starts un-minimized. Mirrors
+  // QnaInline's lastRequestId pattern (a plain guard, not an effect teardown —
+  // teardowns fire on every effect re-run, which would clear mid-cycle).
+  let lastApprovalId: string | undefined;
+  $effect(() => {
+    const id = current?.requestId;
+    if (id !== lastApprovalId) {
+      if (lastApprovalId !== undefined) attention.clear("approval");
+      lastApprovalId = id;
+    }
   });
 
   // The affirmative action for the current kind. Non-binary selects have no single
@@ -226,17 +268,28 @@
 </script>
 
 {#if current}
-  <div class="scrim" onclick={scrimClick} role="presentation"></div>
-  <div
-    class="sheet"
-    role="dialog"
-    aria-modal="true"
-    aria-labelledby="approval-title"
-    tabindex="-1"
-    bind:this={sheetEl}
-    onkeydown={onSheetKeydown}
-  >
-    <div class="grip"></div>
+  {#if !minimized}
+    <div class="scrim" onclick={scrimClick} role="presentation"></div>
+    <div
+      class="sheet"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="approval-title"
+      tabindex="-1"
+      bind:this={sheetEl}
+      onkeydown={onSheetKeydown}
+    >
+      <div class="grip"></div>
+      <button
+        type="button"
+        class="min"
+        onclick={() => attention.minimize("approval")}
+        aria-expanded="true"
+        aria-label="Minimize to pill"
+        title="Minimize to pill (⌘\)"
+      >
+        <Chevron open={true} size={11} />
+      </button>
 
     {#if current.kind === "confirm"}
       <h2 id="approval-title">{current.title}</h2>
@@ -352,7 +405,22 @@
     {#if store.session.pendingApprovals.length > 1}
       <div class="queued">+{store.session.pendingApprovals.length - 1} more pending</div>
     {/if}
-  </div>
+    </div>
+  {:else}
+    {#key current.requestId}
+      <div transition:reveal>
+        <button
+          type="button"
+          class="attention-pill"
+          onclick={() => attention.restore("approval")}
+          title="Approval pending — click or press ⌘\ to restore"
+        >
+          <span class="pill-count">{store.session.pendingApprovals.filter((r) => r.kind !== "qna").length}</span>
+          <span class="pill-label">approval{store.session.pendingApprovals.filter((r) => r.kind !== "qna").length > 1 ? "s" : ""} pending</span>
+        </button>
+      </div>
+    {/key}
+  {/if}
 {/if}
 
 <style>
@@ -565,5 +633,74 @@
     .sheet {
       animation: none;
     }
+  }
+  /* Minimize button in the sheet header — mirrors QnaForm's .min. */
+  .min {
+    position: absolute;
+    top: 14px;
+    right: 14px;
+    width: 26px;
+    height: 26px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: transparent;
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius-xs);
+    color: var(--text-muted);
+    font-size: 12px;
+    line-height: 1;
+    cursor: pointer;
+  }
+  .min :global(.chevron) {
+    color: inherit;
+  }
+  .min:hover {
+    color: var(--text);
+    border-color: var(--accent);
+  }
+  /* Minimized pill — reuses TaskList's .pill visual language. Positioned at the
+     bottom of the chat column where the sheet would be. */
+  .attention-pill {
+    position: absolute;
+    z-index: 41;
+    left: 50%;
+    bottom: 28px;
+    transform: translateX(-50%);
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 12.5px;
+    font-family: var(--font-sans);
+    color: var(--text-muted);
+    background: var(--surface-sunken);
+    border: 1px solid var(--border);
+    padding: 4px 10px;
+    border-radius: 999px;
+    cursor: pointer;
+    max-width: 100%;
+    transition:
+      color 0.12s,
+      border-color 0.12s,
+      background 0.12s;
+  }
+  .attention-pill:hover {
+    color: var(--text);
+    border-color: var(--border-strong);
+  }
+  .attention-pill:focus-visible {
+    outline: none;
+    border-color: var(--accent);
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 25%, transparent);
+  }
+  .pill-count {
+    font-variant-numeric: tabular-nums;
+    font-weight: 550;
+    color: var(--text);
+  }
+  .pill-label {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
 </style>
