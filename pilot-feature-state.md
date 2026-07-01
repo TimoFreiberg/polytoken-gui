@@ -1,5 +1,11 @@
 # pilot — feature-state vs polytoken (GUI⇄TUI parity)
 
+> ⚠️ **A follow-up source-verification pass corrected a few rows here.** See
+> [`NEXT-SESSION.md`](NEXT-SESSION.md) §D for the corrections (notably: `setClientPresence`
+> is unimplemented *everywhere* not mock-only; steer/follow-up both hit `/prompt` and never
+> queue; images are silently *dropped* live; Environment settings are dead-by-design; the
+> todos pill reads the ambient `tasklist` widget) and §B for exact fix sites + repro recipes.
+
 For each polytoken feature (see [`polytoken-features.md`](polytoken-features.md)): does **pilot
 support it properly** — reliably, no jank, good UX?
 
