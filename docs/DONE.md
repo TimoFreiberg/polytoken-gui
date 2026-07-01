@@ -5,6 +5,18 @@ and its resolution note. Latest completions first.
 
 ---
 
+- [x] **Set up a test environment for automated testing using the actual polytoken backend.**
+      Set up a tmp dir as a test project + run agent sessions there + configure the dir
+      to use umans-flash or deepseek-v4-flash as default agent + ensure all agent
+      features are testable by the dev agent in that dir.
+      → Done 2026-07-01 (by a concurrent agent session): landed a `parity/` harness
+      (`launch.ts`, `down.ts`, `doctor.ts`, `project.ts`, `parity.ts`, `lib.ts`) +
+      a `parity/fixtures/project/` test project (`hello.py`, `notes.md`, `README.md`)
+      + a prefilled cheap-model config (deepseek-v4-flash default) + docs
+      (`docs/PARITY-TESTING.md`, `docs/PLAN-parity-testing.md`) + a parity skill
+      (`.claude/skills/parity/`) + a feature inventory (`polytoken-features.md`,
+      `pilot-feature-state.md`). Commits `tvxtzwtx`–`kwrrvkxu`.
+
 - [x] **Drop the steer/follow-up toggle + investigate steer behavior (BUG).** The
       composer exposes a `steer` ↔ `follow-up` SegmentedControl
       (`client/src/components/Composer.svelte:30,37–48`) whose chosen `deliverAs` is passed

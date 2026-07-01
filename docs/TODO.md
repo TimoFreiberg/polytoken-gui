@@ -10,7 +10,6 @@ See `docs/` siblings for context: `DESIGN.md` (architecture + roadmap), `DECISIO
 ## 🔴 Next (urgent / blocking)
 
 - [ ] hotkey for hiding/showing the question widget? hotkey choice needs discussion
-- [ ] set up a test environment for automated testing using the actual polytoken backend, both interactive UI and tmux-driven tui polytoken (to compare features) - set up a tmp dir as a test project and run the agent sessions in there, configure the dir to either use umans-flash or deepseek-v4-flash as default agent and then ensure all agent features are testable by the dev agent in that dir
 - [ ] add UI support for `goal` (polytoken shows the text "(goal)" next to the facet in the sidebar, we can find a nicer place but we should also show it, if the protocol exposes it)
 - [ ] use the updated `polytoken models` that loads dynamic models (from catalog providers) now - remove obsolete fallbacks that emulated this behavior
 - [ ] use `polytoken validate {skill,facet,subagent}` for gui config stuff
