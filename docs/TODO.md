@@ -19,6 +19,91 @@ See `docs/` siblings for context: `DESIGN.md` (architecture + roadmap), `DECISIO
 I'd like to set up affordances/infra for an agent to drive a real pilot gui using a real polytoken backend in a test project (tmp dir with prefilled config that sets the model to a cheap fast one, try both umans-flash (free) and deepseek-v4-flash (very cheap, likely more reliable - umans-flash had some ttft spikes recently)).
 Then, enumerate all polytoken features that you get from the tui and run "manual" agent-driven test runs to explore those features and find divergences/jank/missing features
 
+## 🔴 GUI⇄TUI parity gaps (2026-06-30/07-01 audit)
+
+From the source-verified parity audit (`NEXT-SESSION.md` §B, cross-checked against current
+source). Each item has exact fix sites + repro in the audit doc. Items already tracked
+elsewhere in this file are not duplicated here.
+
+- [ ] **`goal_proposal` interrogative wedges the session (worst bug).** Daemon 0.4.x emits
+      `interrogative{type:"goal_proposal"}` (from `/goal set` or an agent `propose_goal`).
+      Pilot's vendored `InterrogativeType` (`wire-types.ts:1545`) is missing it, so it hits
+      the `default:` arm in `buildInterrogativeMapping` (`event-map.ts:438-462`) — which emits
+      a fire-and-forget `notify` and returns `pending:null`, POSTing no cancel/answer. The
+      daemon's turn stays blocked, "Working…" stays lit permanently, and it survives a page
+      reload (hub-authoritative state). **Fix:** add `goal_proposal` to `InterrogativeType` +
+      a case in `event-map.ts:352`. **Minimum-viable safety even without a real card:** make
+      the `default:` arm deny-safe — register the interrogative and POST `{kind:"cancel"}`
+      (`wire-types.ts:1511-1514`) so an unknown type never leaves the daemon blocked. Then add
+      the goal *display* (open TODO in 🔴 Next above: polytoken shows "(goal)" by the facet).
+      **Repro:** live driver → `/goal set anything` → notify card + permanent "Working".
+- [ ] **Mock-only driver methods are dead against the live daemon.** The live
+      `polytoken-driver.ts` omits 14 methods that exist in `mock-driver.ts`, so they pass e2e
+      (mock) but are dead live: `getTree` (tree view hangs), `listProviders`/
+      `setProviderApiKey`/`removeProviderApiKey` (Providers tab empty), `oauthLogin`/
+      `oauthLogout` (OAuth dead), `listExtensions`/`setExtensionEnabled` (Extensions tab
+      empty), `setDefaultModel`/`setDefaultThinking`/`setFavoriteModels` (can't write global
+      defaults), `subscribeTrust`/`respondTrust`/`setClientPresence` (trust card never fires).
+      The hub guards each with `?.`/early-return; most fail silently (tree hangs,
+      Providers/Extensions show empty), except `clearQueue` (`hub.ts:1391`) and `oauthLogin`
+      (`hub.ts:1006`) which send an error toast. `setClientPresence` is unimplemented
+      *everywhere* (dangling optional), not mock-only — the polytoken driver's own trust-prompt
+      doc needs it to deny-safe when no client is connected. **Fix:** implement the 14 methods
+      against the daemon (auth.json/global-settings for providers/OAuth/defaults, extension
+      loader for extensions, GET /history projection for tree).
+- [ ] **Session-tree view hangs on "Loading tree…" forever.** `getTree` unimplemented →
+      `hub.ts:882` (`sendTree`) early-returns with no `treeState`; the client only clears its
+      loading state on `treeState` (`TreeView.svelte:193`). Same guard disables the
+      post-branch tree refresh (`hub.ts:901`). **Note:** the daemon has no `/tree` HTTP
+      endpoint — build it from `GET /history`. Defense-in-depth: have `sendTree` emit an
+      explicit empty/"unsupported" `treeState` (or the client time out) so it degrades
+      instead of hanging.
+- [ ] **"Branch from this prompt" = irreversible history deletion, no guard.** `branchFrom` →
+      `POST /rewind` (`polytoken-driver.ts:1051`: "NOT a branch — it's a destructive REWIND"),
+      which drops the target prompt and everything after. The button says *Branch* and there
+      is no confirmation dialog anywhere on the path (`Transcript.svelte:698` → `store.branch`
+      `store.svelte.ts:1464` → `/rewind`). **Fix:** add a destructive-confirm gate
+      (`Transcript.svelte:698` or `store.branch`) **and** relabel tooltip/aria
+      (`Transcript.svelte:702-704`, `TreeView.svelte:116`) to "Rewind — deletes everything
+      after this point."
+- [ ] **Images are silently dropped by the live driver.** Client image pipeline is real
+      (compress/paste/drag-drop/heic), but `polytoken-driver.ts:723` drops the `_images`
+      param and the daemon `/prompt`/`PromptRequest` has no image channel — so attaching images
+      is a silent no-op live. **Fix:** check whether the daemon protocol supports content
+      blocks; if so, wire images through; if not, surface an "images not supported" hint
+      instead of silently dropping.
+- [ ] **Plan-review signals are swallowed.** `plan_review_required`/`plan_mode_reinforcement`/
+      `plan_verification` events (in `wire-types.ts:2590-2596`) have **no case** in
+      `event-map.ts` — they hit the `default:` arm → `console.warn` + `EMPTY`. The operator
+      gets no signal a review is required. The plan doc + `plan_handoff` approve are solid
+      (tested). **Fix:** add visible cases for the plan-review slugs; consider a dedicated
+      tool card for `write_plan`/`edit_plan` (currently generic).
+- [ ] **Spurious error on every new session.** `newSession` applies the model on create even
+      when it equals the default → `POST /model` 409 `no_change` logged as error
+      (`polytoken-driver.ts:993`). Fix in `daemon-client.ts` `setModel` (`:768-771`): treat
+      409 whose body `code === "no_change"` as success — but note `post()` (`:525`) reads a
+      nonexistent `error` field; must read parsed `data.code` (`ErrorBody` uses `code`/
+      `message`). 409 also means `turn_in_flight`/`edit_format_locked`, so key on the **code**,
+      not the status.
+- [ ] **Environment settings are dead-by-design.** Login-shell + background-model only drive
+      Settings display text; never forwarded to the out-of-process daemon (`login-env.ts:14`
+      `status` never mutated). Either wire them at daemon spawn/attach or label them clearly.
+
+Already addressed from the same audit (kept as record):
+
+- [x] **Mid-turn steer/follow-up now queues correctly.** `prompt()` calls
+      `ws.client.queueTurnInput(text)` when `turn_in_flight` is true instead of starting a
+      fresh turn (`polytoken-driver.ts:745-746`). Addressed during the parity analysis run;
+      not yet verified by a human. The `deliverAs` param is acknowledged as pilot-side UX
+      only — the daemon's queue API has no steer/follow-up discriminator.
+- [x] **Permission-monitor mode UI is code-complete.** Full round-trip wired:
+      `PermissionBadge.svelte` (mounted in the Composer toolbar between image-attach and
+      FacetBadge) → `store.setPermissionMonitor` → WS → hub → driver → `POST /permission-monitor`;
+      daemon `permission_monitor_switch` SSE → `event-map.ts:1049` emits `sessionUpdated`
+      with `snapshot.permissionMonitor` → `foldEvent` (`state.ts:246`) → badge. Initial mode
+      seeded via `GET /permission-monitor` at warm-up (`polytoken-driver.ts:434`). Code-
+      complete; not yet verified live by a human (the audit was done under `bypass_plus`).
+
 ## 🟢 Polish / fast-follow
 
 
