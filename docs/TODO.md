@@ -438,6 +438,58 @@ the trivial ones shipped inline this same day.
       strip — that's handled globally by the `strip-pi-docs` pi extension
       (`~/.pi/agent/extensions/`); this is the broader "different prompt for this session."
 
+## 📐 Architecture direction (Tauri + Rust hub)
+
+_Direction note, not a commitment. Brainstormed 2026-07-01 while waiting for
+polytoken feature-parity work to complete. Revisit when that work is done._
+
+Pilot is moving away from the Bun WS hub: agent sessions now run as standalone
+polytoken daemon processes, and mid-term UX goals (native file pickers, local
+agent spawning, SSH-to-remote-host sessions in the same window) push the desktop
+app toward being a real native application rather than a web page. A separate
+mobile variant (remote-only, no local spawning) is already anticipated.
+
+**Current working plan:**
+
+- **Rust hub as a persistent standalone daemon** — the central coordination layer.
+  Spawns/monitors local polytoken daemon processes, opens SSH connections to
+  remote hosts (russh) to spawn daemons there, and exposes a single entry point
+  that gives any client uniform access to all sessions on the host. Launches as a
+  system service (launchd/systemd), independent of any UI — so it outlives the
+  desktop window and serves both desktop and mobile uniformly.
+- **Tauri desktop app** — Svelte frontend (kept as-is) in a system webview, with
+  Rust backend via Tauri IPC for native OS affordances (file pickers, menus,
+  tray, etc.). The Tauri app is just another client of the Rust hub, one that
+  *also* gets native desktop capabilities on top.
+- **Mobile app** — separate variant, remote-only. Talks to the same Rust hub
+  over the network (Tailscale). Tech stack TBD (could be a PWA, a native
+  wrapper, or whatever fits). No local spawning, no native OS integration
+  needed — just the remote-control surface.
+- **Svelte + foldEvent reducer stay in TS** — the frontend is the only consumer
+  of folded state; no reason to reimplement in Rust. The reducer stays shared
+  between desktop and mobile frontends.
+- **polytoken daemon stays out-of-process and language-agnostic** — the Rust hub
+  is the glue (process lifecycle, SSH, socket management), not the brain.
+
+**Design guidance for the Rust hub:**
+- Keep it a **thin transport/coordination layer** — just IPC + process spawning
+  + SSH + session aggregation. Don't port orchestration logic or state machines
+  into Rust; let polytoken stay the brain and Svelte stay the UI. This matches
+  the existing "daemon is out-of-process and language-agnostic" design and keeps
+  the rewrite surface small.
+- The Rust hub replaces the current `server/` Bun bridge (hub.ts + driver seam).
+  The `PilotDriver` interface is the contract boundary.
+
+**What this does NOT mean (yet):**
+- No immediate rewrite. The Bun stack stays until polytoken feature parity work
+  is complete. This is the target architecture, not a today task.
+- No performance-driven motivation — the current stack isn't CPU-bound. The move
+  is justified by UX direction (native desktop features, process management,
+  SSH), not by runtime performance gains.
+- The mobile variant is a separate concern and doesn't constrain the desktop
+  choice. The phone-over-Tailscale property is preserved by the Rust hub being a
+  persistent networked service.
+
 ## 🧹 Code health & drift (2026-06-22 audit)
 
 _Audit lens: Svelte's ["When not to use `$effect`"](https://svelte.dev/docs/svelte/$effect#When-not-to-use-$effect)
