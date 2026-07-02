@@ -20,6 +20,29 @@ resolution is non-obvious or likely to bite again. Otherwise see `jj log`.
       untrusted dir against the real daemon; if the capability path covers it,
       *remove* the dead `TrustCard` + hub trust channel scaffolding rather than
       leaving it permanently dangling; if it doesn't, wire the trust methods.
+      **human:** nah, polytoken doesn't have this. remove the TrustCard etc
+- [ ] the following findings by a fable agent:
+      2. Dead code (delete or consciously keep)
+      PilotSettings.enabledExtensions is write-only. Defined at wire.ts:51, defaulted in settings-store.ts:15, reset in hub.reset, initialized in the client store — and never read or set by anything. It's a pi-era concept ("owned extension paths"); this branch is polytoken-only. ~25 lines plus a misleading protocol field.
+      setClientPresence/hasClients is dead by its own admission. The hub wires it (hub.ts:367), the polytoken driver stores it with an explicit "TODO: no read site yet" (polytoken-driver.ts:217). ~40 lines across the interface, hub, and driver. Trivial to re-add when a real read site exists.
+      The interactive trust pipeline can't fire in production. subscribeTrust/respondTrust are implemented only by the mock; the polytoken driver has neither (its TrustEvent import at polytoken-driver.ts:64 is a vestige). The full chain — TrustEvent + three PilotDriver methods, the hub relay, three wire messages, client-store handling, TrustCard.svelte (279 lines), the fixture, dev-bar button, and e2e coverage — is mock-only demo code, roughly 600 lines. This one's your call: if polytoken handles project trust daemon-side forever, delete it; if a polytoken trust interrogative is plausible later, keep it and note that in driver.ts. I'd lean delete — it's all in git history, and D12's rationale is preserved in the docs.
+      3. Mechanical duplication (low-risk, ~600–700 lines)
+      Polytoken driver (~150 lines). The 7-argument snapshotFromState(ws.lastState, ws.ref, workspaceFor(ws), statusFromState(ws.lastState), now(), ws.monitorMode, ws.autodrainEnabled) incantation appears 9 times — a snapshotFor(ws, status?) closure collapses each to one line. On top of that, toggleAdventurousHandoff, setNotificationAutodrain, compact, clearContext, and setMcpServer (polytoken-driver.ts:1668–1821) are the same ~25-line "call daemon → GET /state → emit sessionUpdated → log on failure" block five times; one refreshAndEmit(ws, label, action) helper makes each a 3-liner. Also: the local usageFromState wrapper just forwards to the pure import (delete it), and the queue-item→SessionQueuedMessage mapping is hand-rolled in three places (one queueMsg(item, ts) helper).
+      
+      Event map (~120 lines). Fourteen hostUiRequest{kind:"notify"} constructions of ~12 lines each (event-map.ts:896–1345). A notify(meta, idPrefix, message, level) builder — or reusing errorNotify from config-notify.ts generalized to take a level — turns each case into 2 lines. Pure and table-tested, so this is about as safe as refactors get.
+      
+      Hub handleClient (~100 lines). Seven cases repeat "if the optional driver method is missing → send X isn't supported here; else call it with msg.sessionId ?? conn.focusedId ?? undefined and .catch → send the error" (hub.ts:1522–1617). Three tiny helpers fix all of it: target(msg) (the ?? chain appears ~12×), errMsg(e) (e instanceof Error ? e.message : String(e) appears 13× in this file alone), and a callOptional(send, fn, label) dispatcher. The sessionStatus and updateStatus messages are also each built in two places — one builder each.
+      
+      Daemon client (~70 lines, includes a bug fix). post and get (daemon-client.ts:544–596) are copy-pastes differing only in method/body — merge into one request(). The four MCP methods collapse to one mcpServerAction(name, action), which also collapses the driver-side switch in setMcpServer. And — the part I'd prioritize — dequeueNewestInput (daemon-client.ts:815) and toggleAdventurousHandoff (daemon-client.ts:829) use raw fetch with no timeout, bypassing the safeFetch abort guard whose own doc comment calls the timeout load-bearing (a wedged daemon otherwise hangs the caller for minutes — and clearQueue calls dequeueNewestInput in a loop). Routing them through this.post simplifies and closes that hole.
+      
+      Trivial: parseClientMessage/parseServerMessage in wire.ts:491 are byte-identical — one generic. openSession/reloadSession in the driver share their resolve-id→cwd→warm→seed skeleton.
+      
+      4. Client: one dropdown primitive instead of four hand-rolled ones (~300–400 lines)
+      FacetBadge.svelte (267 lines) and PermissionBadge.svelte (215) are structurally identical: badge button + open/sel state + the same Escape/Arrow/Enter onKeydown + backdrop button + ~120 lines of near-identical panel CSS each; ModelPicker.svelte (506) is the bigger sibling. The repo already has the right convention for exactly this situation — Chevron and transition:reveal are mandated shared primitives — this is the same move one level up: a ui/MenuBadge.svelte owning the open/keyboard/backdrop/panel chrome, with items passed as snippets. Besides the LOC, it guarantees the pickers can't drift behaviorally (they already drift slightly: only some have the kbd-hint footer).
+      
+      Related but softer: the big components are 40–55% scoped CSS (Settings 718/1305, Transcript 649/1724, Sidebar 598/1540). Most of that is legitimately component-specific; I'd only extract the genuinely repeated menu/panel/row classes into app.css as part of the primitive above, not chase CSS dedup broadly.
+      
+    
 
 ## ⚡ Performance
 
