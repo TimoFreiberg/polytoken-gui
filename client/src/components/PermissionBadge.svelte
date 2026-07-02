@@ -4,14 +4,19 @@
   import Chevron from "./ui/Chevron.svelte";
 
   // Permission-monitor mode indicator in the composer toolbar (next to facet/
-  // model/effort). Shows the ACTUAL current mode; clicking opens a 3-item panel
-  // (Standard/Bypass/Autonomous) to switch. Non-standard modes get an accent tint
-  // to signal "you are not in the default safe mode". Mirrors ModelPicker's
-  // badge+panel-up pattern.
+  // model/effort). Shows the ACTUAL current mode; clicking opens a 4-item panel
+  // (Standard/Bypass/Bypass+/Autonomous) to switch. Non-standard modes get an
+  // accent tint to signal "you are not in the default safe mode". Mirrors
+  // ModelPicker's badge+panel-up pattern.
   const mode = $derived(store.session.permissionMonitor ?? "standard");
   const MODES: { id: PermissionMonitorMode; label: string; desc: string }[] = [
     { id: "standard", label: "Standard", desc: "Prompt for each permission" },
     { id: "bypass", label: "Bypass", desc: "Auto-approve all permissions" },
+    {
+      id: "bypass_plus",
+      label: "Bypass+",
+      desc: "Auto-approve except deny rules",
+    },
     {
       id: "autonomous",
       label: "Autonomous",
@@ -128,8 +133,8 @@
     overflow: hidden;
     text-overflow: ellipsis;
   }
-  /* Non-standard modes (bypass/autonomous) get an accent tint to signal "you are
-     not in the default safe mode". */
+  /* Non-standard modes (bypass/bypass+/autonomous) get an accent tint to signal
+     "you are not in the default safe mode". */
   .badge.nonstandard {
     color: var(--accent);
     background: var(--accent-soft);

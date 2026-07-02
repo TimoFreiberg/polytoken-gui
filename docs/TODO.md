@@ -632,7 +632,7 @@ New parity/UX items from the owner, grounded against current source.
       failure return the harvested texts anyway; after any failure re-fetch
       `turnInputSnapshot()` and emit the *real* remaining queue instead of assuming
       empty/stale.
-- [ ] **`bypass_plus` is unreachable and mislabeled in the permission badge.**
+- [x] **`bypass_plus` is unreachable and mislabeled in the permission badge.**
       `PermissionMonitorMode` has 4 modes (`protocol/src/session-driver.ts:33`) but
       `PermissionBadge.MODES` lists 3 (`PermissionBadge.svelte:12-20`); in `bypass_plus` —
       the owner's actual daily mode — the badge displays "Standard" via the `?? MODES[0]`
@@ -640,6 +640,14 @@ New parity/UX items from the owner, grounded against current source.
       return to it (`findIndex` → -1). Fix: add the 4th entry (check daemon docs for the
       bypass-vs-bypass_plus semantics for the desc) so display, picker, and cycle all
       cover it; e2e-test that the badge round-trips all 4 modes.
+      **Fixed 2026-07-02:** added `bypass_plus` as the 4th entry in `PermissionBadge.MODES`
+      (label "Bypass+", desc "Auto-approve except deny rules" — from the daemon's config
+      schema: `bypass` = allow every call without asking; `bypass_plus` = allow every call
+      *except* those your deny rules block). The `⌘⇧M` cycle in `App.svelte` now includes
+      all 4 modes (Standard → Bypass → Bypass+ → Autonomous → Standard). Stale comments
+      in `PermissionBadge.svelte`, `store.svelte.ts`, and `permission.e2e.ts` updated.
+      New e2e test verifies the picker shows all 4 options and round-trips
+      Standard → Bypass+ → Autonomous → Standard; the cycle test verifies all 4 steps.
 - [ ] **Trust-wiring skip rests on an unverified rationale.** `subscribeTrust`/
       `respondTrust` were skipped on the claim that the daemon's `capability`
       interrogative covers untrusted-dir prompts via `respondUi` and the mock's trust

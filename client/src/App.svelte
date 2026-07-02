@@ -198,7 +198,8 @@
         return;
       }
     }
-    // ⌘Shift+M — cycle permission monitor mode (Standard → Bypass → Autonomous → Standard).
+    // ⌘Shift+M — cycle permission monitor mode
+    // (Standard → Bypass → Bypass+ → Autonomous → Standard).
     // Must run before the modifier early-return below (has Shift).
     if (
       (e.metaKey || e.ctrlKey) &&
@@ -207,7 +208,12 @@
       (e.key === "M" || e.key === "m")
     ) {
       e.preventDefault();
-      const modes: PermissionMonitorMode[] = ["standard", "bypass", "autonomous"];
+      const modes: PermissionMonitorMode[] = [
+        "standard",
+        "bypass",
+        "bypass_plus",
+        "autonomous",
+      ];
       const current = store.session.permissionMonitor ?? "standard";
       const idx = modes.indexOf(current);
       const next = modes[(idx + 1) % modes.length]!;

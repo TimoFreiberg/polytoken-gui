@@ -1918,8 +1918,9 @@ class PilotStore {
     send({ type: "listFacets" });
   }
 
-  /** Switch the active permission-monitor mode (standard/bypass/autonomous).
-   *  Mid-session only — mirrors setFacet. */
+  /** Switch the active permission-monitor mode
+   *  (standard/bypass/bypass_plus/autonomous). Mid-session only — mirrors
+   *  setFacet. */
   setPermissionMonitor(mode: PermissionMonitorMode): void {
     send({ type: "setPermissionMonitor", mode });
   }
