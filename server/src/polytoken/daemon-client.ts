@@ -1023,62 +1023,164 @@ export class DaemonClient {
    * Each frame is `id: <seq>\ndata: {seq, emitted_at, session_id, event: {type, ...}}`.
    * The `type` discriminator lives at `event.type` (not the envelope root).
    *
-   * Returns an unsubscribe function that aborts the SSE fetch. The stream is
-   * push-only — an idle daemon emits nothing (spike §6), so liveness must be
-   * time-based (frame gap), not expect periodic `heartbeat` events.
+   * Returns an unsubscribe function that stops the stream + retry loop. The stream
+   * is push-only — an idle daemon emits nothing (spike §6), so liveness is
+   * time-based (frame gap), not periodic `heartbeat` events.
+   *
+   * On error or stream end, the connection retries with exponential backoff
+   * (1s → 2s → 4s → … → 30s cap). On reconnect, a synthetic `stream_discontinuity`
+   * envelope is emitted so the driver re-seeds (the event-map maps this to a reseed).
+   * A liveness watcher aborts the current fetch if no frame arrives for
+   * `LIVENESS_INTERVAL` (60s), forcing a reconnect.
+   *
+   * `Last-Event-ID` is sent on reconnect if the daemon emitted `id:` lines — daemon
+   * support is UNCONFIRMED (spike §6: not tested; upstream feature ask is still open).
+   * Sending it is best-effort; if unsupported, the `stream_discontinuity` → reseed
+   * handles recovery.
    */
   subscribe(onEvent: (envelope: SseEnvelope) => void): () => void {
     this.sseController = new AbortController();
     const { signal } = this.sseController;
 
-    // SSE parsing: accumulate a buffer, split on frame boundaries (`\n\n` or `\r\n\r\n`),
-    // extract `data:` lines. Per the SSE spec, multiple `data:` lines are concatenated
-    // with `\n`. CRLF line endings are normalized to LF first (some HTTP servers emit `\r\n`).
     const decoder = new TextDecoder();
     let buffer = "";
+    let lastEventId: string | null = null;
+    let lastFrameAt = Date.now();
+    let hadConnectedOnce = false;
+    let stopped = false;
+
+    // Per-attempt controller — the liveness watcher aborts THIS (not
+    // this.sseController) to force a retry without signaling clean shutdown.
+    let currentAttempt: AbortController | null = null;
+
+    // Liveness watcher: the daemon's SSE is push-only with no heartbeats on an
+    // idle daemon. If no frame arrives for LIVENESS_INTERVAL, abort the current
+    // fetch to trigger a reconnect. 60s balances false-positive cost (a reseed
+    // is 2 HTTP round-trips + transcript re-broadcast) against detection latency.
+    const LIVENESS_INTERVAL = 60_000;
+    const livenessTimer = setInterval(() => {
+      if (stopped) return;
+      if (Date.now() - lastFrameAt > LIVENESS_INTERVAL) {
+        console.warn("[polytoken] SSE liveness timeout — forcing reconnect");
+        currentAttempt?.abort();
+      }
+    }, LIVENESS_INTERVAL);
 
     void (async () => {
-      try {
-        const res = await fetch(`${this.baseUrl}/events`, { signal });
-        if (!res.ok || !res.body) {
-          console.error(`[polytoken] SSE connect failed: ${res.status}`);
-          return;
-        }
-        const reader = res.body.getReader();
-        for (;;) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          buffer += decoder.decode(value, { stream: true });
-          // Normalize CRLF → LF so `\n\n` splits work regardless of line ending.
-          buffer = buffer.replace(/\r\n/g, "\n");
-          // SSE frames are separated by `\n\n`. Process complete frames.
-          let boundary: number;
-          while ((boundary = buffer.indexOf("\n\n")) >= 0) {
-            const frame = buffer.slice(0, boundary);
-            buffer = buffer.slice(boundary + 2);
-            // Concatenate all `data:` lines (the spec joins them with `\n`).
-            const dataLines = frame
-              .split("\n")
-              .filter((l) => l.startsWith("data:"))
-              .map((l) => l.slice("data:".length));
-            if (dataLines.length === 0) continue;
-            const json = dataLines.join("\n").trim();
-            if (!json) continue;
-            try {
-              const envelope = JSON.parse(json) as SseEnvelope;
-              onEvent(envelope);
-            } catch (e) {
-              console.error("[polytoken] SSE frame parse error:", e);
+      let backoff = 1000;
+      const MAX_BACKOFF = 30_000;
+
+      while (!stopped && !signal.aborted) {
+        currentAttempt = new AbortController();
+        const attemptSignal = currentAttempt.signal;
+        // Bridge the outer (unsubscribe) abort to the current attempt.
+        const onOuterAbort = () => currentAttempt?.abort();
+        signal.addEventListener("abort", onOuterAbort, { once: true });
+
+        try {
+          const headers: Record<string, string> = {};
+          if (lastEventId) headers["Last-Event-ID"] = lastEventId;
+
+          const res = await fetch(`${this.baseUrl}/events`, {
+            signal: attemptSignal,
+            headers,
+          });
+          if (!res.ok || !res.body) {
+            throw new Error(`SSE connect failed: ${res.status}`);
+          }
+
+          if (hadConnectedOnce) {
+            console.log("[polytoken] SSE reconnected");
+            // Emit a synthetic stream_discontinuity so the driver re-seeds.
+            // seq: null matches the documented contract for synthesized events.
+            onEvent({
+              seq: null,
+              emitted_at: new Date().toISOString(),
+              session_id: this.sessionId,
+              event: { type: "stream_discontinuity", missed: 0 },
+            });
+          }
+          hadConnectedOnce = true;
+          backoff = 1000; // reset backoff on successful connect
+          lastFrameAt = Date.now();
+
+          const reader = res.body.getReader();
+          buffer = "";
+          // SSE parsing: accumulate a buffer, split on frame boundaries (`\n\n`
+          // or `\r\n\r\n`), extract `id:` and `data:` lines. Per the SSE spec,
+          // multiple `data:` lines are concatenated with `\n` and a single
+          // leading space after the colon is stripped. CRLF is normalized to LF.
+          for (;;) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            buffer += decoder.decode(value, { stream: true });
+            buffer = buffer.replace(/\r\n/g, "\n");
+            let boundary: number;
+            while ((boundary = buffer.indexOf("\n\n")) >= 0) {
+              const frame = buffer.slice(0, boundary);
+              buffer = buffer.slice(boundary + 2);
+              const lines = frame.split("\n");
+              let dataLines: string[] = [];
+              for (const l of lines) {
+                if (l.startsWith("id:")) {
+                  lastEventId = l.slice(3).trim();
+                } else if (l.startsWith("data:")) {
+                  // SSE spec: strip a single leading space after the colon.
+                  dataLines.push(l.slice(5).replace(/^ /, ""));
+                }
+              }
+              if (dataLines.length === 0) continue;
+              const json = dataLines.join("\n").trim();
+              if (!json) continue;
+              lastFrameAt = Date.now();
+              try {
+                const envelope = JSON.parse(json) as SseEnvelope;
+                onEvent(envelope);
+              } catch (e) {
+                console.error("[polytoken] SSE frame parse error:", e);
+              }
             }
           }
+          // Stream ended normally (daemon closed it) — reconnect with backoff.
+          console.warn("[polytoken] SSE stream ended; reconnecting…");
+        } catch (e) {
+          if (stopped) break;
+          if (e instanceof Error && e.name === "AbortError") {
+            // Could be liveness watcher abort or outer abort — check `stopped`.
+            if (stopped) break;
+            // Liveness abort: retry immediately (no backoff).
+            continue;
+          }
+          console.error(`[polytoken] SSE error: ${e}; retry in ${backoff}ms`);
+        } finally {
+          signal.removeEventListener("abort", onOuterAbort);
         }
-      } catch (e) {
-        if (signal.aborted) return; // clean unsubscribe
-        console.error("[polytoken] SSE stream error:", e);
+
+        // Abortable backoff: race the sleep against the outer abort signal
+        // so unsubscribe exits within a microtask, not up to 30s later.
+        if (!stopped && !signal.aborted) {
+          await new Promise<void>((resolve) => {
+            const onAbort = () => {
+              clearTimeout(t);
+              resolve();
+            };
+            const t = setTimeout(() => {
+              signal.removeEventListener("abort", onAbort);
+              resolve();
+            }, backoff);
+            signal.addEventListener("abort", onAbort, { once: true });
+          });
+          backoff = Math.min(backoff * 2, MAX_BACKOFF);
+        }
       }
+
+      clearInterval(livenessTimer);
     })();
 
     return () => {
+      stopped = true;
+      clearInterval(livenessTimer);
+      currentAttempt?.abort();
       this.sseController?.abort();
       this.sseController = null;
     };
