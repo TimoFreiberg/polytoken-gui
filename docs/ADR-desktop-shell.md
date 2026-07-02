@@ -15,6 +15,7 @@ below. Companion: `desktop/README.md` (the Swift shell this replaces).
    matters.
 2. **The hub stays Bun and runs as a Tauri-supervised sidecar.** No hub rewrite rides
    this migration — near-zero change to `server/`.
+  **human note:** could be done immediately after though
 3. **The Rust-hub port is deferred behind explicit go/no-go criteria** evaluated after
    protocol v2 lands. Tauri-the-shell and Rust-the-hub are independent decisions; this
    ADR commits only to the first.
@@ -119,10 +120,12 @@ GO only when **all** hold:
 2. **Hub churn has flattened** — the `PilotDriver` seam and hub.ts have stopped growing
    weekly (this week alone added MCP management, SSE reconnect, sessionReset, queue
    methods). A rewrite freezes iteration on the most active surface in the repo.
+  **human note:** eh, not too convinced, the churn is because we're currently migrating to polytoken. if we rewrite to rust at some point then we continue developing the rust version, seems like a nothingburger
 3. **A concrete Bun deficiency exists** — measured hub RSS/CPU on the Mini that matters,
    or a distribution need for one runtime-free binary, or in-process Tauri integration
    worth having. "Rust would be nicer" does not qualify (per the direction note itself:
    no performance motivation today).
+  **human note:** hm just having rusts error handling would be enough for me to say go
 4. **The port is small** — at that point the hub is: WS fan-out + journal + HTTP/SSE
    client + process spawn. The fold stays TS on clients either way.
 
