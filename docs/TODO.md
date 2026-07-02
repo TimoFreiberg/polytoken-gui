@@ -9,6 +9,10 @@ See `docs/` siblings for context: `DESIGN.md` (architecture + roadmap), `DECISIO
 
 ## 🔴 Next (urgent / blocking)
 
+- [ ] plan popup is too narrow, it should be closer to full screen (maybe a tiny bit smaller to make it a tiny bit visible that there's something behind it). also, plan popup buttons go out of the plan box, they should be bounded and their text should wrap / the buttons should scroll within the container if absolutely necessary
+- [ ] user prompts longer than like 10 lines should be shown truncated to those 10 lines by default, with an expand / collapse back to the truncated view button
+- [ ] in the new session draft view, pressing the cycle facet hotkey tries to change the facet of the last focused active session instead
+
 - [x] **`⌘\` cycle through active attention surfaces (with minimize-to-pill).** A unified
       `⌘\` hotkey that cycles keyboard focus through agent-driven attention surfaces that are
       currently active: transcript/composer → qna (inline questions) → approvals (floating
