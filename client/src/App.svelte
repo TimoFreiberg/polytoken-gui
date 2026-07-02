@@ -185,8 +185,12 @@
     }
     // ⌘⇧C / Ctrl+Shift+C — cycle facets. A modifier combo so it fires even
     // when the composer is focused (unlike Shift+Tab, which the browser
-    // consumes for reverse-focus traversal in form fields). Cycles through
-    // all available facets from the facet list, not just execute↔plan.
+    // consumes for reverse-focus traversal in form fields). Known trade-off:
+    // ⌘⇧C is the browser's Inspect Element shortcut, so like ⌘N it mostly
+    // won't reach us in a plain tab, and the installed PWA / desktop app —
+    // pilot's primary surface — deliberately gives it to the page (devtools
+    // stay reachable via menu / ⌘⌥I there). Cycles through all available
+    // facets from the facet list, not just execute↔plan.
     // Must run before the modifier early-return below (has Shift).
     if (
       (e.metaKey || e.ctrlKey) &&

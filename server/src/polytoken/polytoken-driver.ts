@@ -71,13 +71,12 @@ import {
   snapshotFromState,
   usageFromState as usageFromStatePure,
 } from "./event-map.js";
-import { buildInterrogativeResponse, type PendingInterrogative } from "./ui-bridge.js";
-import { historyToSeedEvents } from "./history-seed.js";
 import {
-  defaultModelRef,
-  modelPostKey,
-  parseModels,
-} from "./models.js";
+  buildInterrogativeResponse,
+  type PendingInterrogative,
+} from "./ui-bridge.js";
+import { historyToSeedEvents } from "./history-seed.js";
+import { defaultModelRef, modelPostKey, parseModels } from "./models.js";
 import { parseSlashCommands } from "./commands.js";
 import { parseFileCatalog } from "./file-catalog.js";
 import { parseFacetName } from "./facets.js";
@@ -285,7 +284,9 @@ export async function createPolytokenDriver(
   /** Derive pilot's SessionStatus from the cached daemon state snapshot. Uses the
    *  daemon's authoritative `turn_in_flight` flag (spike §7) rather than inferring
    *  from events — the daemon knows its own turn state. */
-  function statusFromState(state: DaemonStateSnapshot | null): "idle" | "running" {
+  function statusFromState(
+    state: DaemonStateSnapshot | null,
+  ): "idle" | "running" {
     return state?.turn_in_flight ? "running" : "idle";
   }
 
@@ -306,11 +307,7 @@ export async function createPolytokenDriver(
     const ev = envelope.event;
     const ctx = makeCtx(ws, envelope.emitted_at ?? now());
 
-    const { events: pilotEvents, effects } = mapDaemonEvent(
-      ev,
-      ws.acc,
-      ctx,
-    );
+    const { events: pilotEvents, effects } = mapDaemonEvent(ev, ws.acc, ctx);
 
     // Emit the pure events first (deterministic, no I/O).
     for (const e of pilotEvents) emit(e);
@@ -366,7 +363,10 @@ export async function createPolytokenDriver(
         // InterrogativeResponse from a later HostUiResponse. The hostUiRequest
         // card was already emitted (in the events array, before effects run);
         // this just registers the metadata for the response path.
-        ws.pendingInterrogatives.set(effect.pending.interrogativeId, effect.pending);
+        ws.pendingInterrogatives.set(
+          effect.pending.interrogativeId,
+          effect.pending,
+        );
         return;
       }
       case "fetchState": {
@@ -455,7 +455,11 @@ export async function createPolytokenDriver(
       globalConfigDir,
       loginEnv,
     });
-    const client = new DaemonClient(spawned.sessionId, spawned.port, process.pid);
+    const client = new DaemonClient(
+      spawned.sessionId,
+      spawned.port,
+      process.pid,
+    );
 
     // Wait for the daemon to be ready (health check), then claim the lease.
     // The daemon may take a moment to bind its port after `new --no-attach` returns.
@@ -537,7 +541,9 @@ export async function createPolytokenDriver(
         reason: "ended",
       });
       await disposeSession(victim).catch(() => {});
-      console.log(`[polytoken] evicted LRU warm session ${id}; ${warm.size} warm`);
+      console.log(
+        `[polytoken] evicted LRU warm session ${id}; ${warm.size} warm`,
+      );
     }
     if (warmCap > 0 && warm.size > warmCap) {
       console.warn(
@@ -610,7 +616,10 @@ export async function createPolytokenDriver(
       const result = mapDaemonEvent(ev, ws.acc, ctx);
       for (const effect of result.effects) {
         if (effect.type === "registerInterrogative") {
-          ws.pendingInterrogatives.set(effect.pending.interrogativeId, effect.pending);
+          ws.pendingInterrogatives.set(
+            effect.pending.interrogativeId,
+            effect.pending,
+          );
         }
       }
       events.push(...result.events);
@@ -713,30 +722,36 @@ export async function createPolytokenDriver(
   // (never the active one). Frees the daemon process + port without losing the
   // session — it's still on disk; reopening re-spawns. Owns its lifecycle (the
   // harness turn-hygiene lesson: a long-lived timer is a child — cleared on shutdown).
-  const reaper = idleReapMs > 0
-    ? setInterval(() => {
-        const cutoff = Date.now() - idleReapMs;
-        for (const [id, ws] of [...warm]) {
-          if (id === activeSessionId) continue; // never reap the active session
-          if (ws.lastFocusedAt > cutoff) continue;
-          // Never reap a session mid-turn — background turns keep running (D-A),
-          // and killing the daemon aborts them. The daemon's turn_in_flight is the
-          // authoritative signal (spike §7). A backgrounded running turn is the
-          // headline feature of the warm pool; reaping it would defeat it.
-          if (ws.lastState?.turn_in_flight) continue;
-          // Idle too long — reap. Emit sessionClosed first (mirrors LRU eviction)
-          // so the hub clears the running indicator on an evicted mid-run session.
-          emit({
-            sessionRef: ws.ref,
-            timestamp: now(),
-            type: "sessionClosed",
-            reason: "ended",
-          });
-          void disposeSession(ws).catch(() => {});
-          console.log(`[polytoken] reaped idle warm session ${id}; ${warm.size} warm`);
-        }
-      }, Math.min(idleReapMs, 60_000))
-    : null;
+  const reaper =
+    idleReapMs > 0
+      ? setInterval(
+          () => {
+            const cutoff = Date.now() - idleReapMs;
+            for (const [id, ws] of [...warm]) {
+              if (id === activeSessionId) continue; // never reap the active session
+              if (ws.lastFocusedAt > cutoff) continue;
+              // Never reap a session mid-turn — background turns keep running (D-A),
+              // and killing the daemon aborts them. The daemon's turn_in_flight is the
+              // authoritative signal (spike §7). A backgrounded running turn is the
+              // headline feature of the warm pool; reaping it would defeat it.
+              if (ws.lastState?.turn_in_flight) continue;
+              // Idle too long — reap. Emit sessionClosed first (mirrors LRU eviction)
+              // so the hub clears the running indicator on an evicted mid-run session.
+              emit({
+                sessionRef: ws.ref,
+                timestamp: now(),
+                type: "sessionClosed",
+                reason: "ended",
+              });
+              void disposeSession(ws).catch(() => {});
+              console.log(
+                `[polytoken] reaped idle warm session ${id}; ${warm.size} warm`,
+              );
+            }
+          },
+          Math.min(idleReapMs, 60_000),
+        )
+      : null;
   reaper?.unref?.();
 
   // --- Helpers for sessions + worktree resolution (used by the methods below) ---
@@ -755,7 +770,8 @@ export async function createPolytokenDriver(
    *  indicator, exactly like the original driver's worktreeFieldFor. */
   function worktreeFieldFor(
     cwd: string,
-  ): { path: string; base: string; name: string; reaped?: boolean } | undefined {
+  ):
+    { path: string; base: string; name: string; reaped?: boolean } | undefined {
     const meta = worktreeStore.get(cwd);
     if (!meta) return undefined;
     return {
@@ -792,7 +808,8 @@ export async function createPolytokenDriver(
     force: boolean,
   ): Promise<{ removed: boolean; reason?: string }> {
     const meta = worktreeStore.live(cwd);
-    if (!meta) return { removed: false, reason: "no pilot worktree at this path" };
+    if (!meta)
+      return { removed: false, reason: "no pilot worktree at this path" };
     const res = await removeWorktree(meta, force);
     if (res.removed) worktreeStore.markReaped(cwd);
     return res;
@@ -909,7 +926,10 @@ export async function createPolytokenDriver(
         // fire-and-forget cards have no daemon response path.
         return;
       }
-      const interrogativeResponse = buildInterrogativeResponse(pending, response);
+      const interrogativeResponse = buildInterrogativeResponse(
+        pending,
+        response,
+      );
       if (!interrogativeResponse) {
         // The response shape didn't match the pending type (a misroute, or a
         // malformed/out-of-range value). Dismiss the card so the UI isn't
@@ -1039,7 +1059,9 @@ export async function createPolytokenDriver(
       const sessionId = sessionIdFromPath(path);
       const existing = sessionId ? warm.get(sessionId) : undefined;
       if (existing) {
-        console.log(`[polytoken] refocus warm session ${existing.ref.sessionId}`);
+        console.log(
+          `[polytoken] refocus warm session ${existing.ref.sessionId}`,
+        );
         focus(existing.ref.sessionId);
         return seedFor(existing);
       }
@@ -1068,7 +1090,9 @@ export async function createPolytokenDriver(
         // sessionOpened resets the running indicator when the hub folds it instead.
         // (Mirrors the original driver's reloadSession — see its comment in the deleted driver.)
         await disposeSession(existing).catch(() => {});
-        console.log(`[polytoken] reload: disposed warm session ${sessionId}; re-spawning`);
+        console.log(
+          `[polytoken] reload: disposed warm session ${sessionId}; re-spawning`,
+        );
       }
       if (!sessionId) {
         throw new Error(`could not resolve session id from path: ${path}`);
@@ -1368,10 +1392,14 @@ export async function createPolytokenDriver(
           "ls",
           "polytoken://facets",
         ]);
+        // Keep only `.md` entries: `vfs ls` is expected to emit bare facet file
+        // names, but trusting that shape verbatim would send any stray line
+        // (header, directory, non-facet file) into a `vfs cat` subprocess and
+        // surface it as a junk facet name.
         const files = stdout
           .split("\n")
           .map((l) => l.trim())
-          .filter((l) => l.length > 0);
+          .filter((l) => l.endsWith(".md"));
         if (files.length === 0) return ["execute", "plan"];
 
         // For each facet file, read its content via `vfs cat` and extract the
@@ -1483,42 +1511,45 @@ export async function createPolytokenDriver(
       if (!ws) return;
       // POST /model with reasoning_effort (the "thinking" lever). We need the current
       // model from state — setModel requires both model + reasoning_effort.
-      void ws.client.state().then(({ data }) => {
-        if (!data?.active_model) {
-          // No active model — can't set thinking without it. Surface the error
-          // so the operator knows the level change was a no-op.
+      void ws.client
+        .state()
+        .then(({ data }) => {
+          if (!data?.active_model) {
+            // No active model — can't set thinking without it. Surface the error
+            // so the operator knows the level change was a no-op.
+            emit(
+              errorNotify(
+                ws.ref,
+                now(),
+                "setThinking",
+                "Can't set thinking level: no active model",
+              ),
+            );
+            return;
+          }
+          ws.lastState = data;
+          withErrorNotify(
+            ws.client.setModel(data.active_model, level),
+            emit,
+            ws.ref,
+            now,
+            "setThinking",
+            "Failed to set thinking level",
+          );
+        })
+        .catch((e: unknown) => {
+          // state() GET failed (network/daemon). Surface it — the old code had no
+          // catch here at all, so a network error was silently swallowed.
+          const detail = e instanceof Error ? e.message : String(e);
           emit(
             errorNotify(
               ws.ref,
               now(),
               "setThinking",
-              "Can't set thinking level: no active model",
+              `Failed to set thinking level: ${detail}`,
             ),
           );
-          return;
-        }
-        ws.lastState = data;
-        withErrorNotify(
-          ws.client.setModel(data.active_model, level),
-          emit,
-          ws.ref,
-          now,
-          "setThinking",
-          "Failed to set thinking level",
-        );
-      }).catch((e: unknown) => {
-        // state() GET failed (network/daemon). Surface it — the old code had no
-        // catch here at all, so a network error was silently swallowed.
-        const detail = e instanceof Error ? e.message : String(e);
-        emit(
-          errorNotify(
-            ws.ref,
-            now(),
-            "setThinking",
-            `Failed to set thinking level: ${detail}`,
-          ),
-        );
-      });
+        });
     },
 
     setFacet(facet: string, sessionId?: SessionId): void {
@@ -1533,7 +1564,10 @@ export async function createPolytokenDriver(
         "Failed to set facet",
       );
     },
-    setPermissionMonitor(mode: PermissionMonitorMode, sessionId?: SessionId): void {
+    setPermissionMonitor(
+      mode: PermissionMonitorMode,
+      sessionId?: SessionId,
+    ): void {
       const ws = target(sessionId);
       if (!ws) return;
       // Optimistically set the cached mode so the badge updates immediately; the
@@ -1584,7 +1618,10 @@ export async function createPolytokenDriver(
         console.error("[polytoken] toggleAdventurousHandoff failed", e);
       }
     },
-    async setNotificationAutodrain(enabled: boolean, sessionId?: SessionId): Promise<void> {
+    async setNotificationAutodrain(
+      enabled: boolean,
+      sessionId?: SessionId,
+    ): Promise<void> {
       const ws = target(sessionId);
       if (!ws) return;
       try {

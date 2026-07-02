@@ -32,7 +32,10 @@
 export function parseFacetName(content: string): string | undefined {
   // Frontmatter is a leading `---` ... `---` block at the start of the file.
   // `---` must be at the very start (line 1, no leading blank lines), matching the
-  // daemon's facet files. We extract the block, then find the `name:` field inside it.
+  // daemon's facet files. The first subsequent line starting with `---` closes the
+  // block (standard frontmatter semantics — an unterminated block "closed" by a
+  // body horizontal rule is indistinguishable from a real close). We extract the
+  // block, then find the `name:` field inside it.
   const fmMatch = content.match(/^---\r?\n([\s\S]*?)\r?\n---/);
   if (!fmMatch?.[1]) return undefined;
 

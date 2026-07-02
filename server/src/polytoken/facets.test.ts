@@ -42,30 +42,46 @@ test("parseFacetName > strips surrounding single quotes", () => {
 });
 
 test("parseFacetName > returns undefined for no frontmatter", () => {
-  const content = "Just some markdown content with no frontmatter.\n\n# Heading\n";
+  const content =
+    "Just some markdown content with no frontmatter.\n\n# Heading\n";
   expect(parseFacetName(content)).toBeUndefined();
 });
 
 test("parseFacetName > returns undefined for frontmatter without a name field", () => {
-  const content = "---\ntitle: Something Else\npolytoken:\n  model: foo\n---\nbody\n";
+  const content =
+    "---\ntitle: Something Else\npolytoken:\n  model: foo\n---\nbody\n";
   expect(parseFacetName(content)).toBeUndefined();
 });
 
 test("parseFacetName > finds name when other fields precede it", () => {
-  const content = "---\ntitle: A Title\ndescription: A facet\nname: review\n---\nbody\n";
+  const content =
+    "---\ntitle: A Title\ndescription: A facet\nname: review\n---\nbody\n";
   expect(parseFacetName(content)).toBe("review");
 });
 
 test("parseFacetName > does not match indented name: inside a nested block", () => {
   // The `name:` under `polytoken:` is indented — a nested key, not the top-level
   // facet name. The top-level `name:` field is what we want.
-  const content = "---\nname: execute\npolytoken:\n  name: inner_thing\n---\nbody\n";
+  const content =
+    "---\nname: execute\npolytoken:\n  name: inner_thing\n---\nbody\n";
   expect(parseFacetName(content)).toBe("execute");
 });
 
 test("parseFacetName > handles CRLF line endings", () => {
   const content = "---\r\nname: plan\r\n---\r\nbody\r\n";
   expect(parseFacetName(content)).toBe("plan");
+});
+
+test("parseFacetName > returns undefined for unterminated frontmatter", () => {
+  // Malformed: the opening --- is never closed. The parser must not treat the
+  // rest of the file as frontmatter — the caller falls back to the file stem.
+  const content = "---\nname: plan\nno closing delimiter, body runs on\n";
+  expect(parseFacetName(content)).toBeUndefined();
+});
+
+test("parseFacetName > closing --- must start its own line", () => {
+  const content = "---\nname: plan\ntrailing text --- not a delimiter\n";
+  expect(parseFacetName(content)).toBeUndefined();
 });
 
 test("parseFacetName > returns undefined for empty string", () => {
