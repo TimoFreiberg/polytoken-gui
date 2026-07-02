@@ -217,6 +217,25 @@
     return Number.isNaN(d.getTime()) ? iso : d.toLocaleString();
   }
 
+  // Long user prompts (a pasted brief, a log dump) render clamped to ~10 lines
+  // with an explicit expand/collapse toggle, so one prompt can't swallow the
+  // transcript. Expansion is per-item view state (resets on reload, like scroll).
+  // The length gate is a cheap text heuristic (newline count, plus a char floor
+  // for single-paragraph walls) rather than DOM measurement — deterministic and
+  // no per-bubble observer; the CSS line-clamp handles soft-wrap visually.
+  const PROMPT_CLAMP_LINES = 10;
+  let expandedPrompts = $state<ReadonlySet<string>>(new Set());
+  function isLongPrompt(text: string): boolean {
+    return (
+      text.split("\n").length > PROMPT_CLAMP_LINES || text.length > 1200
+    );
+  }
+  function togglePromptExpanded(id: string): void {
+    const next = new Set(expandedPrompts);
+    if (!next.delete(id)) next.add(id);
+    expandedPrompts = next;
+  }
+
   // Per-item "Copied" feedback, keyed by item id. Cleared after a short delay.
   let copiedId = $state<string | null>(null);
   let copyTimer: ReturnType<typeof setTimeout> | undefined;
@@ -725,7 +744,31 @@
             </div>
           {/if}
           {#if item.text}
-            <div class="bubble">{item.text}</div>
+            {@const longPrompt = isLongPrompt(item.text)}
+            {@const promptExpanded = expandedPrompts.has(item.id)}
+            <div class="bubble">
+              <!-- Clamp lives on an unpadded inner element: overflow clips at the
+                   padding box, so clamping the bubble itself would bleed a sliver
+                   of the 11th line into its bottom padding. -->
+              <div class="btext" class:clamped={longPrompt && !promptExpanded}>
+                {item.text}
+              </div>
+            </div>
+            {#if longPrompt}
+              <button
+                class="prompt-expand"
+                type="button"
+                data-testid="prompt-expand"
+                aria-expanded={promptExpanded}
+                title={promptExpanded
+                  ? "Collapse back to the preview"
+                  : "Show the full prompt"}
+                onclick={() => togglePromptExpanded(item.id)}
+              >
+                <Chevron open={promptExpanded} variant="disclosure" size={10} />
+                {promptExpanded ? "Show less" : "Show full prompt"}
+              </button>
+            {/if}
           {/if}
           {#if item.delivery}
             <div class="delivery {item.delivery}" role={item.delivery === "rejected" ? "alert" : "status"}>
@@ -1236,6 +1279,36 @@
     max-width: 86%;
     white-space: pre-wrap;
     word-break: break-word;
+  }
+  /* Long-prompt preview: clamp to ~10 rendered lines (line-clamp also counts
+     soft-wrapped lines, which the newline heuristic can't see). */
+  .user .btext.clamped {
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 10;
+    line-clamp: 10;
+    overflow: hidden;
+  }
+  .prompt-expand {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    margin-top: 4px;
+    padding: 2px 8px;
+    background: transparent;
+    border: none;
+    border-radius: 999px;
+    font-size: 12px;
+    color: var(--text-muted);
+    cursor: pointer;
+  }
+  .prompt-expand:hover {
+    color: var(--text);
+    background: var(--surface-sunken);
+  }
+  /* The chevron inherits a faint currentColor; brighten with the label on hover. */
+  .prompt-expand:hover :global(.chevron) {
+    opacity: 1;
   }
   /* Brief accent flash on a prompt row the user jumped to via ⌘↑/⌘↓, confirming the
      landing target after an instant (non-animated) scroll. The flash is on the row, not

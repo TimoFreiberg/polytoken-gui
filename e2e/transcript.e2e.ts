@@ -184,3 +184,40 @@ test("scrolling up does not move the viewport (no content-visibility lazy realiz
   });
   expect(hTop).toBe(hBottom);
 });
+
+test("a long user prompt renders clamped with an expand/collapse toggle", async ({
+  page,
+}) => {
+  // 14 lines — over the ~10-line clamp threshold. Sent through the composer so
+  // the optimistic row AND the mock's echoed userMessage both exercise the clamp.
+  const longPrompt = Array.from({ length: 14 }, (_, i) => `line ${i + 1}`).join(
+    "\n",
+  );
+  const box = page.locator(".composer-wrap textarea");
+  await box.fill(longPrompt);
+  await box.press("Enter");
+
+  const bubble = page.locator(".row.user .btext", { hasText: "line 14" });
+  await expect(bubble).toHaveClass(/clamped/);
+
+  // Expand: the clamp lifts and the toggle flips to collapse.
+  const toggle = page.getByTestId("prompt-expand");
+  await expect(toggle).toHaveText(/Show full prompt/);
+  await toggle.click();
+  await expect(bubble).not.toHaveClass(/clamped/);
+  await expect(toggle).toHaveText(/Show less/);
+
+  // Collapse back to the preview.
+  await toggle.click();
+  await expect(bubble).toHaveClass(/clamped/);
+});
+
+test("a short user prompt has no expand toggle", async ({ page }) => {
+  const box = page.locator(".composer-wrap textarea");
+  await box.fill("just a short question");
+  await box.press("Enter");
+  await expect(
+    page.locator(".row.user .bubble", { hasText: "just a short question" }),
+  ).toBeVisible();
+  await expect(page.getByTestId("prompt-expand")).toHaveCount(0);
+});

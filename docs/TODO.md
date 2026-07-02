@@ -19,7 +19,14 @@ See `docs/` siblings for context: `DESIGN.md` (architecture + roadmap), `DECISIO
       instead of overflowing. `PlanView` (⌘P) widened the same way
       (viewport minus 48px, content-sized when short). Screenshot-verified
       desktop + mobile; plan-handoff/plan-view e2e green.
-- [ ] user prompts longer than like 10 lines should be shown truncated to those 10 lines by default, with an expand / collapse back to the truncated view button
+- [x] user prompts longer than like 10 lines should be shown truncated to those 10 lines by default, with an expand / collapse back to the truncated view button
+      **Fixed 2026-07-02:** user bubbles clamp to 10 rendered lines
+      (CSS `line-clamp` on an unpadded inner element, so soft-wrapped lines count
+      and nothing bleeds into the padding) when the text passes a cheap heuristic
+      (>10 newlines or >1200 chars). A "Show full prompt" / "Show less" chevron
+      toggle sits under the bubble; expansion is per-item view state. E2e:
+      clamp + toggle round-trip and short-prompt-has-no-toggle in
+      `transcript.e2e.ts`. Screenshot-verified.
 - [x] in the new session draft view, pressing the cycle facet hotkey tries to change the facet of the last focused active session instead
       **Fixed 2026-07-02:** the draft now carries its own `facet` pick (mirroring the
       draft's model/thinking pattern end to end): `setFacet`/`composerFacet` branch on
