@@ -26,7 +26,7 @@ export function errorNotify(
     timestamp,
     request: {
       kind: "notify",
-      requestId: `${operation}-failed-${timestamp}`,
+      requestId: `${operation}-failed-${timestamp.replace(/[:.]/g, "-")}`,
       message,
       level: "error",
     },
@@ -59,14 +59,13 @@ export function withErrorNotify(
 ): void {
   void promise.catch((e: unknown) => {
     const detail = e instanceof Error ? e.message : String(e);
-    emit(
-      errorNotify(
-        ref,
-        now(),
-        operation,
-        `${message}: ${detail}`,
-      ),
-    );
-    rollback?.();
+    const msg = `${message}: ${detail}`;
+    console.error(`[polytoken] ${operation} failed`, e);
+    emit(errorNotify(ref, now(), operation, msg));
+    try {
+      rollback?.();
+    } catch (rollbackErr) {
+      console.error(`[polytoken] ${operation} rollback failed`, rollbackErr);
+    }
   });
 }

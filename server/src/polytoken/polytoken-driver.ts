@@ -1459,7 +1459,7 @@ export async function createPolytokenDriver(
               ws.ref,
               now(),
               "setThinking",
-              "Failed to set thinking level: no active model",
+              "Can't set thinking level: no active model",
             ),
           );
           return;
@@ -1517,7 +1517,10 @@ export async function createPolytokenDriver(
         "setPermissionMonitor",
         "Failed to set permission monitor mode",
         () => {
-          ws.monitorMode = prevMode;
+          // Only restore if the cache still holds our optimistic value — an
+          // intervening permission_monitor_switch event may have updated it
+          // authoritatively, and we must not clobber that.
+          if (ws.monitorMode === mode) ws.monitorMode = prevMode;
         },
       );
     },
