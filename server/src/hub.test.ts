@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { foldAll, PROTOCOL_VERSION } from "@pilot/protocol";
 import type {
   CommandInfo,
   FileInfo,
@@ -11,6 +12,7 @@ import type {
   SessionListEntry,
   SessionRef,
   SessionSnapshot,
+  SessionState,
 } from "@pilot/protocol";
 import type { PilotDriver, TrustEvent } from "./driver.js";
 import { SessionHub } from "./hub.js";
@@ -35,6 +37,10 @@ const snap = (sessionId: string): SessionSnapshot => ({
   updatedAt: "t",
 });
 const flush = () => new Promise((r) => setTimeout(r, 0));
+/** Fold a seed message into the state a client adopts (protocol v2 ships events,
+ *  not folded state). Null for anything that isn't a seed. */
+const seedState = (m: ServerMessage | undefined): SessionState | null =>
+  m?.type === "seed" ? foldAll([...m.events]) : null;
 
 /** A driver we can emit into by hand, for deterministic hub tests. */
 class FakeDriver implements PilotDriver {
@@ -242,12 +248,12 @@ function client() {
 }
 
 describe("SessionHub", () => {
-  test("a new client gets hello then a snapshot", () => {
+  test("a new client gets hello then a seed", () => {
     const hub = new SessionHub(new FakeDriver());
     const a = client();
     hub.addClient(a.send);
     expect(a.received[0]?.type).toBe("hello");
-    expect(a.received[1]?.type).toBe("snapshot");
+    expect(a.received[1]?.type).toBe("seed");
   });
 
   test("hello exposes the stable server identity supplied by startup", () => {
@@ -261,7 +267,7 @@ describe("SessionHub", () => {
     hub.addClient(a.send);
     expect(a.received[0]).toEqual({
       type: "hello",
-      protocolVersion: 1,
+      protocolVersion: PROTOCOL_VERSION,
       serverId: "stable-server-id",
       dataDir: "",
     });
@@ -279,19 +285,17 @@ describe("SessionHub", () => {
     expect(b.received.at(-1)).toMatchObject({ type: "event" });
   });
 
-  test("snapshot-on-connect reflects prior events without re-sending them", () => {
+  test("seed-on-connect reflects prior events without re-sending them live", () => {
     const d = new FakeDriver();
     const hub = new SessionHub(d);
     d.emit(ev({ type: "userMessage", id: "u1", text: "earlier" }));
     const late = client();
     hub.addClient(late.send);
-    const snap = late.received.find((m) => m.type === "snapshot");
-    expect(snap?.type).toBe("snapshot");
-    if (snap?.type === "snapshot") {
-      expect(
-        snap.state.items.some((i) => i.kind === "user" && i.text === "earlier"),
-      ).toBe(true);
-    }
+    const st = seedState(late.received.find((m) => m.type === "seed"));
+    expect(st).not.toBeNull();
+    expect(
+      st?.items.some((i) => i.kind === "user" && i.text === "earlier"),
+    ).toBe(true);
     // the late client must NOT have received the prior event as a live event
     expect(late.received.some((m) => m.type === "event")).toBe(false);
   });
@@ -515,17 +519,11 @@ describe("SessionHub", () => {
     hub.handleClient(a.send, { type: "openSession", path: "/s2.jsonl" });
     await flush();
 
-    const lastSnap = a.received.filter((m) => m.type === "snapshot").at(-1);
-    expect(lastSnap?.type).toBe("snapshot");
-    if (lastSnap?.type === "snapshot") {
-      // old session's transcript is gone, the new seed is in
-      expect(
-        lastSnap.state.items.some((i) => i.text === "old session msg"),
-      ).toBe(false);
-      expect(lastSnap.state.items.some((i) => i.text === "new session")).toBe(
-        true,
-      );
-    }
+    const st = seedState(a.received.filter((m) => m.type === "seed").at(-1));
+    expect(st).not.toBeNull();
+    // old session's transcript is gone, the new seed is in
+    expect(st?.items.some((i) => i.text === "old session msg")).toBe(false);
+    expect(st?.items.some((i) => i.text === "new session")).toBe(true);
     // the session list now reports the switched-to session as active
     const lastList = a.received.filter((m) => m.type === "sessionList").at(-1);
     if (lastList?.type === "sessionList")
@@ -550,16 +548,10 @@ describe("SessionHub", () => {
     // so a second client looking at the broken session also recovers. The wedged
     // transcript is replaced wholesale by the fresh seed.
     for (const c of [a, b]) {
-      const lastSnap = c.received.filter((m) => m.type === "snapshot").at(-1);
-      expect(lastSnap?.type).toBe("snapshot");
-      if (lastSnap?.type === "snapshot") {
-        expect(lastSnap.state.items.some((i) => i.text === "wedged msg")).toBe(
-          false,
-        );
-        expect(
-          lastSnap.state.items.some((i) => i.text === "reloaded session"),
-        ).toBe(true);
-      }
+      const st = seedState(c.received.filter((m) => m.type === "seed").at(-1));
+      expect(st).not.toBeNull();
+      expect(st?.items.some((i) => i.text === "wedged msg")).toBe(false);
+      expect(st?.items.some((i) => i.text === "reloaded session")).toBe(true);
     }
   });
 
@@ -676,14 +668,9 @@ describe("SessionHub", () => {
     // and never saw an "a" focus snapshot flash by.
     releases[1]!([ev({ type: "sessionOpened", snapshot: snap("b") })]);
     await flush();
-    const snaps = a.received.filter((m) => m.type === "snapshot");
-    const last = snaps.at(-1);
-    expect(last?.type === "snapshot" && last.state.ref?.sessionId).toBe("b");
-    expect(
-      snaps.some(
-        (m) => m.type === "snapshot" && m.state.ref?.sessionId === "a",
-      ),
-    ).toBe(false);
+    const seeds = a.received.filter((m) => m.type === "seed");
+    expect(seedState(seeds.at(-1))?.ref?.sessionId).toBe("b");
+    expect(seeds.some((m) => seedState(m)?.ref?.sessionId === "a")).toBe(false);
   });
 
   test("a superseded switch's failure is suppressed, not surfaced to the client", async () => {
@@ -729,11 +716,9 @@ describe("SessionHub", () => {
     await flush();
 
     // The client landed on B and never saw A's stale failure.
-    const last = a.received.filter((m) => m.type === "snapshot").at(-1);
-    expect(last?.type === "snapshot" && last.state.ref?.sessionId).toBe("b");
-    expect(
-      a.received.some((m) => m.type === "error"),
-    ).toBe(false);
+    const last = a.received.filter((m) => m.type === "seed").at(-1);
+    expect(seedState(last)?.ref?.sessionId).toBe("b");
+    expect(a.received.some((m) => m.type === "error")).toBe(false);
   });
 
   test("a switch failure surfaces a friendly, kinded error (not the raw throw)", async () => {
@@ -814,10 +799,10 @@ describe("SessionHub", () => {
     await flush();
 
     // a's view + list highlight move to s2; b stays on s.
-    const aSnap = a.received.filter((m) => m.type === "snapshot").at(-1);
-    const bSnap = b.received.filter((m) => m.type === "snapshot").at(-1);
-    expect(aSnap?.type === "snapshot" && aSnap.state.ref?.sessionId).toBe("s2");
-    expect(bSnap?.type === "snapshot" && bSnap.state.ref?.sessionId).toBe("s");
+    const aSeed = a.received.filter((m) => m.type === "seed").at(-1);
+    const bSeed = b.received.filter((m) => m.type === "seed").at(-1);
+    expect(seedState(aSeed)?.ref?.sessionId).toBe("s2");
+    expect(seedState(bSeed)?.ref?.sessionId).toBe("s");
     const aList = a.received.filter((m) => m.type === "sessionList").at(-1);
     const bList = b.received.filter((m) => m.type === "sessionList").at(-1);
     expect(aList?.type === "sessionList" && aList.activeSessionId).toBe("s2");
@@ -1161,23 +1146,16 @@ describe("SessionHub", () => {
 
     // The session must NOT be in the running set.
     const st = a.received.filter((m) => m.type === "sessionStatus").at(-1);
-    if (st?.type === "sessionStatus")
-      expect(st.runningIds).not.toContain("s3");
+    if (st?.type === "sessionStatus") expect(st.runningIds).not.toContain("s3");
 
-    // And the folded snapshot the client adopts must report idle status with the
+    // And the folded seed the client adopts must report idle status with the
     // streaming bubble closed (no streaming assistant).
-    const snapMsg = a.received.find(
-      (m) => m.type === "snapshot",
-    ) as { type: "snapshot"; state: { status: string; items: unknown[] } } | undefined;
-    expect(snapMsg?.type).toBe("snapshot");
-    if (snapMsg?.type === "snapshot") {
-      expect(snapMsg.state.status).toBe("idle");
-      const last = snapMsg.state.items[snapMsg.state.items.length - 1] as
-        | { kind: string; streaming?: boolean }
-        | undefined;
-      expect(last?.kind).toBe("assistant");
-      expect(last?.streaming).toBe(false);
-    }
+    const folded = seedState(a.received.find((m) => m.type === "seed"));
+    expect(folded).not.toBeNull();
+    expect(folded?.status).toBe("idle");
+    const last = folded?.items[folded.items.length - 1];
+    expect(last?.kind).toBe("assistant");
+    expect(last?.kind === "assistant" && last.streaming).toBe(false);
   });
 
   test("a fresh client is told what's already running on connect", () => {

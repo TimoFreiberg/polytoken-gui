@@ -117,7 +117,7 @@ class ScriptedDriver implements PilotDriver {
 }
 
 /** A captured client that folds exactly what the wire delivers, like the real one:
- *  adopt snapshots wholesale, fold events incrementally. */
+ *  fold seeds from zero and adopt the result, fold events incrementally. */
 function connectClient(hub: SessionHub) {
   const received: ServerMessage[] = [];
   let state: SessionState | null = null;
@@ -128,10 +128,10 @@ function connectClient(hub: SessionHub) {
       const m = received[idx];
       idx += 1;
       if (!m) continue;
-      if (m.type === "snapshot") state = m.state;
+      if (m.type === "seed") state = foldAll([...m.events]);
       else if (m.type === "event" && state) foldEvent(state, m.event);
     }
-    if (!state) throw new Error("client never received a snapshot");
+    if (!state) throw new Error("client never received a seed");
     return state;
   };
   drain();
@@ -254,15 +254,14 @@ describe("switch + reload journal lifecycle", () => {
     await flush();
     const opened = hub.seedOf("s2");
     expect(opened).not.toBeNull();
-    const snapMsg = [...captured]
+    const seedMsg = [...captured]
       .reverse()
       .find(
-        (m): m is Extract<ServerMessage, { type: "snapshot" }> =>
-          m.type === "snapshot",
+        (m): m is Extract<ServerMessage, { type: "seed" }> => m.type === "seed",
       );
-    expect(snapMsg?.state.title).toBe("opened");
-    if (opened && snapMsg)
-      expect(foldAll(opened.events)).toEqual(snapMsg.state);
+    const adopted = seedMsg ? foldAll([...seedMsg.events]) : null;
+    expect(adopted?.title).toBe("opened");
+    if (opened && adopted) expect(foldAll(opened.events)).toEqual(adopted);
 
     hub.handleClient(send, { type: "reloadSession", path: "/s2.jsonl" });
     await flush();

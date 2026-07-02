@@ -17,9 +17,7 @@ import type {
   SessionId,
   SessionListEntry,
 } from "./session-driver.js";
-import type { SessionState } from "./state.js";
-
-export const PROTOCOL_VERSION = 1;
+export const PROTOCOL_VERSION = 2;
 
 /** Pilot-local settings (distinct from the daemon's global/session config). Persisted
  *  server-side in `pilot-settings.json`, broadcast to every client, edited from the
@@ -139,8 +137,21 @@ export type ServerMessage =
       serverId: string;
       dataDir: string;
     }
-  /** Full authoritative state — sent on (re)connect so clients catch up. */
-  | { type: "snapshot"; state: SessionState }
+  /** Seed-on-connect (protocol v2): the focused session's full transcript as
+   *  EVENTS, which the client folds from a fresh `initialSessionState()` — the
+   *  replacement for v1's folded-state `snapshot`, so no server-side fold is
+   *  client-visible. `epoch` names this transcript build (bumped on reset /
+   *  reload / re-attach; a resume across a bump is impossible); `seq` is the
+   *  stamp of the last event folded into the seed — the client's resume
+   *  watermark. `sessionId` is null for the empty landing (nothing focused;
+   *  `events` is then empty and the client just resets). */
+  | {
+      type: "seed";
+      sessionId: SessionId | null;
+      epoch: number;
+      seq: number;
+      events: readonly SessionDriverEvent[];
+    }
   /** One incremental driver event to fold. */
   | { type: "event"; event: SessionDriverEvent }
   /** The sessions available to open + which one is active (server-authoritative).
@@ -301,14 +312,22 @@ export type ClientMessage =
   | { type: "setFacet"; facet: string; sessionId?: SessionId }
   /** Switch the active permission-monitor mode. Omit sessionId to target the
    *  focused session. Mirrors `setFacet`. */
-  | { type: "setPermissionMonitor"; mode: PermissionMonitorMode; sessionId?: SessionId }
+  | {
+      type: "setPermissionMonitor";
+      mode: PermissionMonitorMode;
+      sessionId?: SessionId;
+    }
   /** Toggle the adventurous auto-handoff flag (lets plan mode autonomously start
    *  implementing). The daemon's POST /adventurous-handoff toggles; the updated
    *  state arrives via the next snapshot's `adventurousHandoff`. */
   | { type: "toggleAdventurousHandoff"; sessionId?: SessionId }
   /** Set the notification auto-drain flag (autodrain non-blocking notifications).
    *  The updated state arrives via the next snapshot's `notificationAutodrain`. */
-  | { type: "setNotificationAutodrain"; enabled: boolean; sessionId?: SessionId }
+  | {
+      type: "setNotificationAutodrain";
+      enabled: boolean;
+      sessionId?: SessionId;
+    }
   /** Trigger context compaction (the daemon's POST /compact). Compaction runs
    *  asynchronously; the daemon emits compaction_started/complete/cancelled/failed
    *  events (already mapped to notify + fetchState). Omit sessionId to target

@@ -7,6 +7,7 @@ import {
   type DirListing,
   type PathStat,
   type FileInfo,
+  foldAll,
   foldEvent,
   type HostUiResponse,
   type ImageContent,
@@ -769,23 +770,29 @@ class PilotStore {
           this.reconnectFocusId = this.session.ref?.sessionId ?? null;
         this.booted = true;
         break;
-      case "snapshot":
-        this.session = msg.state;
+      case "seed": {
+        // Protocol v2: the server ships EVENTS, not folded state — fold them
+        // from zero off to the side, then swap the built state in (so a slow
+        // fold can never render half-applied). Same reducer as the server's
+        // internal fold and the incremental `event` path below.
+        const built = foldAll([...msg.events]);
+        this.session = built;
         this.ready = true;
-        // A snapshot for the session we're creating may already carry its first prompt
+        // A seed for the session we're creating may already carry its first prompt
         // (or none yet — the userMessage event folds in next). Either way, hand off.
         this.maybeFinishCreating();
-        if (this.bootRestoreInFlight && msg.state.ref)
+        if (this.bootRestoreInFlight && built.ref)
           this.bootRestoreInFlight = false;
-        // A snapshot lands after a successful switch — clear the retry capture
+        // A seed lands after a successful switch — clear the retry capture
         // (no need to retry an openSession that landed) + any stale switch error.
         this.lastAttemptedSessionPath = null;
         this.lastError = null;
         this.maybeOpenBootDraft();
         // Dev-only: time how long this full transcript render takes. The signal for
         // "is it time to build JS windowing?" (see docs/DESIGN.md).
-        this.logRenderTiming(msg.state.items.length);
+        this.logRenderTiming(built.items.length);
         break;
+      }
       case "event": {
         const ev = msg.event;
         // A blocking dialog this client was showing but didn't answer just vanished —

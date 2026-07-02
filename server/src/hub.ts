@@ -5,6 +5,7 @@
 import { homedir } from "node:os";
 import {
   type ClientMessage,
+  foldAll,
   foldEvent,
   initialSessionState,
   isDialogRequest,
@@ -403,10 +404,23 @@ export class SessionHub {
       if (conn.focusedId === sid) conn.send({ type: "event", event: ev });
   }
 
-  /** A JSON-safe snapshot of one session's folded state (or the empty landing). */
-  private snapshotOf(sid: SessionId | null): SessionState {
-    const st = sid ? this.sessionStates.get(sid) : undefined;
-    return structuredClone(st ?? initialSessionState());
+  /** The seed message for one session (or the empty landing when sid is null):
+   *  what a (re)connecting or switching client folds from zero. A missing
+   *  journal for a real sid is a lifecycle bug — surfaced loudly, degraded to
+   *  an empty seed rather than a silently stale transcript. */
+  private seedMsg(sid: SessionId | null): ServerMessage {
+    const seed = this.seedOf(sid);
+    if (sid && !seed)
+      console.error(
+        `[hub] no journal for session ${sid} — sending an empty seed`,
+      );
+    return {
+      type: "seed",
+      sessionId: sid,
+      epoch: seed?.epoch ?? 0,
+      seq: seed?.seq ?? 0,
+      events: seed?.events ?? [],
+    };
   }
 
   /** Whether any connected client is currently focused on a session. */
@@ -1144,10 +1158,9 @@ export class SessionHub {
       // only the requester moved its focus.
       if (opts.reseed)
         for (const viewer of this.clients.values()) {
-          if (viewer.focusedId === sid)
-            viewer.send({ type: "snapshot", state: this.snapshotOf(sid) });
+          if (viewer.focusedId === sid) viewer.send(this.seedMsg(sid));
         }
-      else conn.send({ type: "snapshot", state: this.snapshotOf(sid) });
+      else conn.send(this.seedMsg(sid));
       await this.broadcastSessionList();
       await this.sendCommandList(conn);
       void this.sendFacetList(conn);
@@ -1185,7 +1198,7 @@ export class SessionHub {
       serverId: this.serverId,
       dataDir: this.dataDir ?? "",
     });
-    send({ type: "snapshot", state: this.snapshotOf(conn.focusedId) });
+    send(this.seedMsg(conn.focusedId));
     // Tell the fresh client what's already running / warming up (in-memory, synchronous).
     send({
       type: "sessionStatus",
@@ -1667,7 +1680,7 @@ export class SessionHub {
       conn.switchInFlight = false;
       conn.pendingSwitch?.resolve(null);
       conn.pendingSwitch = null;
-      conn.send({ type: "snapshot", state: this.snapshotOf(conn.focusedId) });
+      conn.send(this.seedMsg(conn.focusedId));
     }
     this.broadcastSessionStatus();
     void this.broadcastSessionList();
@@ -1678,11 +1691,12 @@ export class SessionHub {
     }
   }
 
-  /** A JSON-safe deep copy of the landing session's folded state (foldEvent mutates in
-   *  place). Per-client focus means there's no single global view; this reports the
-   *  landing default — what a fresh client sees, and what /debug/state surfaces. */
+  /** The landing session's state, re-derived by folding its journal on demand.
+   *  Per-client focus means there's no single global view; this reports the
+   *  landing default — what a fresh client sees, and what /debug/state surfaces.
+   *  Fold-on-read: dev-only cost, zero steady-state fold work for serving. */
   snapshot(): SessionState {
-    return this.snapshotOf(this.defaultFocusId);
+    return foldAll(this.seedOf(this.defaultFocusId)?.events ?? []);
   }
 
   clientCount(): number {
