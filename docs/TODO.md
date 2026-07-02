@@ -619,6 +619,39 @@ New parity/UX items from the owner, grounded against current source.
 - [ ] Medium-tier: optimistic userMessage before the POST leaves ghost rows on failure; renaming a cold session hijacks activeSessionId (and spawns a daemon); the idle reaper can kill a session another client is viewing; phone-wake half-open sockets show a green "live" LED over a dead link; ⌘F can't search collapsed "Worked for Ns" bodies (DOM-only search); PROTOCOL_VERSION is sent but never checked (stale cached PWA misfolds silently); /debug/reset is exposed in prod behind only the app token and wipes real settings; reloaded transcripts show "56y ago" (synthetic epoch timestamps — a daemon gap, see ask #1); and the e2e suite asserts mock behaviors the live driver never produces.
       **Partial fix 2026-07-02:** PROTOCOL_VERSION is now checked on `hello` — the client sets `protocolMismatch` and shows a full-screen "Update required" error directing a hard-refresh, instead of silently folding events from an incompatible server. The other 8 issues remain open.
 
+### Hand-backs from the 2026-07-02 overnight-batch review (verified against source 2026-07-02)
+
+- [ ] **clearQueue loses queued text on partial drain failure.** `clearQueue`
+      (`polytoken-driver.ts:1607-1635`) snapshots the queue, then drains via repeated
+      `dequeueNewestInput()` inside one try/catch. If a dequeue fails partway, the catch
+      returns `{steering: [], followUp: []}` — the texts of items *already deleted from the
+      daemon* are silently dropped instead of restored to the composer — and no
+      `queueUpdated` is emitted, so trays keep showing the stale pre-drain queue over a
+      partially-drained daemon. Fix: harvest each text as its dequeue succeeds; on partial
+      failure return the harvested texts anyway; after any failure re-fetch
+      `turnInputSnapshot()` and emit the *real* remaining queue instead of assuming
+      empty/stale.
+- [ ] **`bypass_plus` is unreachable and mislabeled in the permission badge.**
+      `PermissionMonitorMode` has 4 modes (`protocol/src/session-driver.ts:33`) but
+      `PermissionBadge.MODES` lists 3 (`PermissionBadge.svelte:12-20`); in `bypass_plus` —
+      the owner's actual daily mode — the badge displays "Standard" via the `?? MODES[0]`
+      fallback (line 21), and neither the picker nor the `⌘⇧M` cycle can select it or
+      return to it (`findIndex` → -1). Fix: add the 4th entry (check daemon docs for the
+      bypass-vs-bypass_plus semantics for the desc) so display, picker, and cycle all
+      cover it; e2e-test that the badge round-trips all 4 modes.
+- [ ] **Trust-wiring skip rests on an unverified rationale.** `subscribeTrust`/
+      `respondTrust` were skipped on the claim that the daemon's `capability`
+      interrogative covers untrusted-dir prompts via `respondUi` and the mock's trust
+      channel is D12 fiction (see "Implement the ready polytoken driver methods" above).
+      Nobody has run a live untrusted-dir test to confirm. Settle it: open a session in an
+      untrusted dir against the real daemon; if the capability path covers it, *remove*
+      the dead `TrustCard` + hub trust channel scaffolding rather than leaving it
+      permanently dangling; if it doesn't, wire the trust methods after all.
+- [ ] **Minor: `hasClients` comment mislabels fail-open as deny-safe.** The default
+      `() => true` (`polytoken-driver.ts:208`) means "assume someone can answer" — that is
+      fail-open; the comment calls it "deny-safe = don't block". Reword when the first
+      read site lands (the inline TODO already tracks that no read site exists).
+
 
 
 ## ⚡ Performance & network efficiency (2026-06-26 audit)
