@@ -730,6 +730,16 @@ titles below match its `findings[]` entries. Ranked by felt-quality-per-effort.
    `hostUiRequest{kind:'notify', level:'error'}` per catch; restore `prev` monitor mode on
    failure; notify the silent `!data?.active_model` early-return. Test: fetch-mock unit
    tests per setter. Effort: hours. Risk: low.
+   **Fixed 2026-07-02:** extracted `errorNotify` + `withErrorNotify` into a new
+   `config-notify.ts` module (the same error-notify pattern `respondUi` uses inline).
+   All 5 setters + `abort` now emit a visible `hostUiRequest{kind:"notify", level:"error"}`
+   on failure instead of `.catch(console.error)` only. `abort` now has a catch at all.
+   `setPermissionMonitor` saves `prevMode` before the optimistic update and restores it
+   via `withErrorNotify`'s rollback callback on failure. `setThinking`'s silent
+   `!data?.active_model` early-return now emits a notify, and its outer `.state()` promise
+   now has a `.catch` (previously had no catch at all). 7 unit tests in
+   `config-notify.test.ts` cover success (no emit), rejection with Error/non-Error,
+   rollback on failure, and no rollback on success.
 6. **WS connect watchdog.** A blackholed handshake leaves the socket CONNECTING for
    minutes with *no retry timer armed* — "Reconnecting…" lies (`ws.svelte.ts:51-60, 72-77,
    110-114`). Fix: 8s watchdog after `new WebSocket(url)`: if still CONNECTING → detach

@@ -80,6 +80,7 @@ import {
 } from "./models.js";
 import { parseSlashCommands } from "./commands.js";
 import { parseFileCatalog } from "./file-catalog.js";
+import { errorNotify, withErrorNotify } from "./config-notify.js";
 import { listFilesWithFd, FILE_INDEX_CAP } from "../file-search.js";
 import {
   defaultSessionsDir,
@@ -860,7 +861,17 @@ export async function createPolytokenDriver(
     abort(sessionId?: SessionId): void {
       const ws = target(sessionId);
       if (!ws) return;
-      void ws.client.cancelTurn();
+      // cancelTurn can fail (network/daemon gone). Surface the error so the
+      // operator knows the abort didn't reach the daemon — a stuck "Working…"
+      // with no signal is worse than an error notify they can act on.
+      withErrorNotify(
+        ws.client.cancelTurn(),
+        emit,
+        ws.ref,
+        now,
+        "abort",
+        "Failed to abort turn",
+      );
     },
 
     respondUi(response: HostUiResponse, sessionId?: SessionId): void {
@@ -1424,9 +1435,14 @@ export async function createPolytokenDriver(
       // (the original driver uses it for modelRegistry.find) but unused here. Preserve the
       // current reasoning_effort (setModel requires both fields).
       const effort = ws.lastState?.active_reasoning_effort ?? undefined;
-      void ws.client.setModel(modelPostKey(modelId), effort).catch((e) => {
-        console.error("[polytoken] setModel failed", e);
-      });
+      withErrorNotify(
+        ws.client.setModel(modelPostKey(modelId), effort),
+        emit,
+        ws.ref,
+        now,
+        "setModel",
+        "Failed to set model",
+      );
     },
 
     setThinking(level: string, sessionId?: SessionId): void {
@@ -1435,30 +1451,75 @@ export async function createPolytokenDriver(
       // POST /model with reasoning_effort (the "thinking" lever). We need the current
       // model from state — setModel requires both model + reasoning_effort.
       void ws.client.state().then(({ data }) => {
-        if (!data?.active_model) return;
+        if (!data?.active_model) {
+          // No active model — can't set thinking without it. Surface the error
+          // so the operator knows the level change was a no-op.
+          emit(
+            errorNotify(
+              ws.ref,
+              now(),
+              "setThinking",
+              "Failed to set thinking level: no active model",
+            ),
+          );
+          return;
+        }
         ws.lastState = data;
-        void ws.client.setModel(data.active_model, level).catch((e) => {
-          console.error("[polytoken] setThinking failed", e);
-        });
+        withErrorNotify(
+          ws.client.setModel(data.active_model, level),
+          emit,
+          ws.ref,
+          now,
+          "setThinking",
+          "Failed to set thinking level",
+        );
+      }).catch((e: unknown) => {
+        // state() GET failed (network/daemon). Surface it — the old code had no
+        // catch here at all, so a network error was silently swallowed.
+        const detail = e instanceof Error ? e.message : String(e);
+        emit(
+          errorNotify(
+            ws.ref,
+            now(),
+            "setThinking",
+            `Failed to set thinking level: ${detail}`,
+          ),
+        );
       });
     },
 
     setFacet(facet: string, sessionId?: SessionId): void {
       const ws = target(sessionId);
       if (!ws) return;
-      void ws.client.setFacet(facet).catch((e) => {
-        console.error("[polytoken] setFacet failed", e);
-      });
+      withErrorNotify(
+        ws.client.setFacet(facet),
+        emit,
+        ws.ref,
+        now,
+        "setFacet",
+        "Failed to set facet",
+      );
     },
     setPermissionMonitor(mode: PermissionMonitorMode, sessionId?: SessionId): void {
       const ws = target(sessionId);
       if (!ws) return;
       // Optimistically set the cached mode so the badge updates immediately; the
       // permission_monitor_switch event will confirm (or correct) it authoritatively.
+      // On failure, restore the previous mode so the badge doesn't claim a safer
+      // mode than the daemon is actually in.
+      const prevMode = ws.monitorMode;
       ws.monitorMode = mode;
-      void ws.client.setPermissionMode(mode).catch((e) => {
-        console.error("[polytoken] setPermissionMonitor failed", e);
-      });
+      withErrorNotify(
+        ws.client.setPermissionMode(mode),
+        emit,
+        ws.ref,
+        now,
+        "setPermissionMonitor",
+        "Failed to set permission monitor mode",
+        () => {
+          ws.monitorMode = prevMode;
+        },
+      );
     },
     async toggleAdventurousHandoff(sessionId?: SessionId): Promise<void> {
       const ws = target(sessionId);
