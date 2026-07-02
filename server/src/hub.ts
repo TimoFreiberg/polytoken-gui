@@ -17,6 +17,14 @@ import {
   type SessionState,
 } from "@pilot/protocol";
 import type { PilotDriver } from "./driver.js";
+import {
+  appendEvent,
+  buildSeed,
+  bumpEpoch,
+  createJournal,
+  metaSeedEvents,
+  type SessionJournal,
+} from "./journal.js";
 import { getLoginEnvStatus, resolveLoginShell } from "./shared/login-env.js";
 import { resolveBackgroundModel } from "./shared/background-model.js";
 import { readPilotSettings, writePilotSettings } from "./settings-store.js";
@@ -138,7 +146,11 @@ function classifySwitchError(raw: unknown): {
     };
   }
   // Connection refused / timed out reaching the daemon (port not bound, wedged).
-  if (/lease claim failed \(0\)|request timed out|fetch failed|ECONNREFUSED/.test(text)) {
+  if (
+    /lease claim failed \(0\)|request timed out|fetch failed|ECONNREFUSED/.test(
+      text,
+    )
+  ) {
     return {
       message:
         "Couldn't reach the session daemon. Try again — if it persists, the daemon may be wedged.",
@@ -191,6 +203,17 @@ export class SessionHub {
   // entry. Background sessions nobody opened are tracked only via running/attention
   // below — their transcript stays private to the driver until someone focuses them.
   private sessionStates = new Map<SessionId, SessionState>();
+  // The per-session event journal (protocol v2): the seed source + resume ring.
+  // Lifecycle mirrors `sessionStates` 1:1 — created wherever a state is seeded,
+  // deleted wherever the state is dropped. Until the wire flips to seeds, the
+  // journal runs dark alongside the legacy fold (the property tests assert
+  // foldAll(seed) ≡ the folded state at every step).
+  private journals = new Map<SessionId, SessionJournal>();
+  // Epoch source for journals. ms-seeded + monotonically bumped so an epoch is
+  // unique per hub process: journals are in-memory, so a client resume token
+  // minted against a previous process must never falsely match a fresh journal
+  // (a restart must read as an epoch bump everywhere).
+  private epochCounter = Date.now();
   // The landing session a freshly-connecting client with no focus of its own adopts:
   // the mock's bootstrap greeting, or null for the daemon's empty startup landing. Established
   // from the driver's defaultSeed() on construction + reset.
@@ -324,7 +347,60 @@ export class SessionHub {
       this.trackAttention(e.sessionRef.sessionId, e);
     }
     this.sessionStates.set(sid, st);
+    this.journals.set(sid, createJournal(this.nextEpoch(), seed));
     this.defaultFocusId = sid;
+  }
+
+  /** Epochs are unique per hub process and never reused (see `epochCounter`). */
+  private nextEpoch(): number {
+    return ++this.epochCounter;
+  }
+
+  /** The seed source for one session (protocol v2): the journal's events, delta-
+   *  coalesced, plus the {epoch, seq} watermark of the last event folded into it.
+   *  Wire-visible once connect/switch flip to seeds; until then the fold-
+   *  equivalence tests assert the invariant through it. Null when the session
+   *  isn't seeded (nobody viewed it — background transcripts stay private). */
+  seedOf(
+    sid: SessionId | null,
+  ): { epoch: number; seq: number; events: SessionDriverEvent[] } | null {
+    const j = sid ? this.journals.get(sid) : undefined;
+    return j ? buildSeed(j) : null;
+  }
+
+  /** The single append path: every event that reaches a viewed session's folded
+   *  state ALSO enters its journal here — `onEvent` and the usage ticker's
+   *  synthetic `usageUpdated` both come through, so seeds/resumes can never
+   *  diverge from what clients folded. Folds into the legacy state, stamps the
+   *  journal, routes to viewers. Background sessions (no state) are untouched. */
+  private ingest(ev: SessionDriverEvent): void {
+    const sid = ev.sessionRef.sessionId;
+    const st = this.sessionStates.get(sid);
+    if (!st) return;
+    foldEvent(st, ev);
+    const j = this.journals.get(sid);
+    if (!j) {
+      // Lifecycle invariant broken (journal must exist iff state exists). Keep
+      // serving viewers, but say so loudly — a stale seed beats a silent one.
+      console.error(
+        `[hub] no journal for viewed session ${sid} — seeds will be stale`,
+      );
+    } else if (ev.type === "sessionReset") {
+      // Transcript identity changed: restart the journal under a new epoch. The
+      // synthetic meta prefix reproduces everything the fold carries across a
+      // reset (ref/title/config/queued/approvals/ambient — items clear), so a
+      // seed built between the reset and the driver's fresh re-emit is still
+      // authoritative, and repeated /clears can't grow the journal unboundedly.
+      bumpEpoch(
+        j,
+        this.nextEpoch(),
+        metaSeedEvents(st, ev.sessionRef, ev.timestamp),
+      );
+    } else {
+      appendEvent(j, ev);
+    }
+    for (const conn of this.clients.values())
+      if (conn.focusedId === sid) conn.send({ type: "event", event: ev });
   }
 
   /** A JSON-safe snapshot of one session's folded state (or the empty landing). */
@@ -362,15 +438,11 @@ export class SessionHub {
       ev.type === "sessionClosed"
     )
       this.sessionListDirty = true;
-    // Fold + route only for a session someone is viewing (or the landing default).
-    // Background sessions nobody opened are tracked above, but their transcript stays
-    // private — folded only once a client focuses them (switchTo seeds it then).
-    const st = this.sessionStates.get(sid);
-    if (st) {
-      foldEvent(st, ev);
-      for (const conn of this.clients.values())
-        if (conn.focusedId === sid) conn.send({ type: "event", event: ev });
-    }
+    // Fold + journal + route only for a session someone is viewing (or the landing
+    // default). Background sessions nobody opened are tracked above, but their
+    // transcript stays private — folded only once a client focuses them (switchTo
+    // seeds it then).
+    this.ingest(ev);
     // A closed/evicted session drops its folded transcript once nobody is viewing it
     // (a current viewer keeps its last transcript rather than blanking mid-look). The
     // landing default is kept so a fresh connection still has something to adopt.
@@ -378,8 +450,10 @@ export class SessionHub {
       ev.type === "sessionClosed" &&
       sid !== this.defaultFocusId &&
       !this.hasViewer(sid)
-    )
+    ) {
       this.sessionStates.delete(sid);
+      this.journals.delete(sid);
+    }
     this.maybeNotify(ev);
   }
 
@@ -613,9 +687,9 @@ export class SessionHub {
         timestamp: new Date().toISOString(),
         usage,
       };
-      foldEvent(st, ev);
-      for (const conn of this.clients.values())
-        if (conn.focusedId === sid) conn.send({ type: "event", event: ev });
+      // Through the single append path: the synthetic usage event must join the
+      // journal too, or resume replays would diverge from what viewers folded.
+      this.ingest(ev);
     }
   }
 
@@ -1054,6 +1128,10 @@ export class SessionHub {
       // seed's committed-history view would drop) — reuse it rather than clobber.
       if (opts.reseed || !this.sessionStates.has(sid)) {
         this.sessionStates.set(sid, built);
+        // Fresh transcript identity: a first attach starts a journal, a reseed
+        // (reload/branch) restarts it — either way the swap's raw seed events
+        // are the new compacted prefix and any resume token goes stale.
+        this.journals.set(sid, createJournal(this.nextEpoch(), seed));
         if (metaChanged) this.broadcastSessionStatus();
       }
       // A newer switch queued up while this one was warming (the boot-restore-vs-click
@@ -1197,7 +1275,10 @@ export class SessionHub {
           );
           send({ type: "queueRestored", ...restored });
         })().catch((e) =>
-          send({ type: "error", message: e instanceof Error ? e.message : String(e) }),
+          send({
+            type: "error",
+            message: e instanceof Error ? e.message : String(e),
+          }),
         );
         return;
       }
@@ -1240,27 +1321,43 @@ export class SessionHub {
         return;
       case "toggleAdventurousHandoff": {
         if (!this.driver.toggleAdventurousHandoff) {
-          send({ type: "error", message: "adventurous handoff isn't supported here" });
+          send({
+            type: "error",
+            message: "adventurous handoff isn't supported here",
+          });
           return;
         }
-        void this.driver.toggleAdventurousHandoff(
-          msg.sessionId ?? conn.focusedId ?? undefined,
-        ).catch((e) =>
-          send({ type: "error", message: e instanceof Error ? e.message : String(e) }),
-        );
+        void this.driver
+          .toggleAdventurousHandoff(
+            msg.sessionId ?? conn.focusedId ?? undefined,
+          )
+          .catch((e) =>
+            send({
+              type: "error",
+              message: e instanceof Error ? e.message : String(e),
+            }),
+          );
         return;
       }
       case "setNotificationAutodrain": {
         if (!this.driver.setNotificationAutodrain) {
-          send({ type: "error", message: "notification autodrain isn't supported here" });
+          send({
+            type: "error",
+            message: "notification autodrain isn't supported here",
+          });
           return;
         }
-        void this.driver.setNotificationAutodrain(
-          msg.enabled,
-          msg.sessionId ?? conn.focusedId ?? undefined,
-        ).catch((e) =>
-          send({ type: "error", message: e instanceof Error ? e.message : String(e) }),
-        );
+        void this.driver
+          .setNotificationAutodrain(
+            msg.enabled,
+            msg.sessionId ?? conn.focusedId ?? undefined,
+          )
+          .catch((e) =>
+            send({
+              type: "error",
+              message: e instanceof Error ? e.message : String(e),
+            }),
+          );
         return;
       }
       case "compact": {
@@ -1268,37 +1365,54 @@ export class SessionHub {
           send({ type: "error", message: "compaction isn't supported here" });
           return;
         }
-        void this.driver.compact(
-          msg.sessionId ?? conn.focusedId ?? undefined,
-        ).catch((e) =>
-          send({ type: "error", message: e instanceof Error ? e.message : String(e) }),
-        );
+        void this.driver
+          .compact(msg.sessionId ?? conn.focusedId ?? undefined)
+          .catch((e) =>
+            send({
+              type: "error",
+              message: e instanceof Error ? e.message : String(e),
+            }),
+          );
         return;
       }
       case "clearContext": {
         if (!this.driver.clearContext) {
-          send({ type: "error", message: "clearing context isn't supported here" });
+          send({
+            type: "error",
+            message: "clearing context isn't supported here",
+          });
           return;
         }
-        void this.driver.clearContext(
-          msg.sessionId ?? conn.focusedId ?? undefined,
-        ).catch((e) =>
-          send({ type: "error", message: e instanceof Error ? e.message : String(e) }),
-        );
+        void this.driver
+          .clearContext(msg.sessionId ?? conn.focusedId ?? undefined)
+          .catch((e) =>
+            send({
+              type: "error",
+              message: e instanceof Error ? e.message : String(e),
+            }),
+          );
         return;
       }
       case "setMcpServer": {
         if (!this.driver.setMcpServer) {
-          send({ type: "error", message: "MCP server management isn't supported here" });
+          send({
+            type: "error",
+            message: "MCP server management isn't supported here",
+          });
           return;
         }
-        void this.driver.setMcpServer(
-          msg.serverName,
-          msg.action,
-          msg.sessionId ?? conn.focusedId ?? undefined,
-        ).catch((e) =>
-          send({ type: "error", message: e instanceof Error ? e.message : String(e) }),
-        );
+        void this.driver
+          .setMcpServer(
+            msg.serverName,
+            msg.action,
+            msg.sessionId ?? conn.focusedId ?? undefined,
+          )
+          .catch((e) =>
+            send({
+              type: "error",
+              message: e instanceof Error ? e.message : String(e),
+            }),
+          );
         return;
       }
       case "openSession":
@@ -1527,6 +1641,7 @@ export class SessionHub {
    *  exposes the production empty landing. */
   reset(opts: { bootstrap?: boolean } = {}): void {
     this.sessionStates.clear();
+    this.journals.clear();
     this.defaultFocusId = null;
     this.running.clear();
     this.initializing.clear();

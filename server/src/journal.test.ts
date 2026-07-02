@@ -1,0 +1,261 @@
+import { describe, expect, test } from "bun:test";
+import {
+  foldAll,
+  foldEvent,
+  type HostUiRequest,
+  initialSessionState,
+  type SessionDriverEvent,
+  type SessionRef,
+  type SessionSnapshot,
+} from "@pilot/protocol";
+import {
+  appendEvent,
+  buildSeed,
+  bumpEpoch,
+  coalesceEvents,
+  createJournal,
+  metaSeedEvents,
+  TAIL_MAX_BYTES,
+  TAIL_MAX_FRAMES,
+} from "./journal.js";
+
+const ref: SessionRef = { workspaceId: "w", sessionId: "s" };
+const ev = (e: Partial<SessionDriverEvent>): SessionDriverEvent =>
+  ({ sessionRef: ref, timestamp: "t", ...e }) as SessionDriverEvent;
+const snap = (extra: Partial<SessionSnapshot> = {}): SessionSnapshot =>
+  ({
+    ref,
+    workspace: { workspaceId: "w", path: "/w" },
+    title: "demo",
+    status: "idle",
+    updatedAt: "t",
+    ...extra,
+  }) as SessionSnapshot;
+const delta = (
+  text: string,
+  channel?: "text" | "thinking",
+  timestamp = "t",
+): SessionDriverEvent =>
+  ev({ type: "assistantDelta", text, channel, timestamp });
+const usage = (tokens: number): SessionDriverEvent =>
+  ev({
+    type: "usageUpdated",
+    usage: { tokens, contextWindow: 200_000, percent: tokens / 2000 },
+  });
+const user = (id: string, text: string): SessionDriverEvent =>
+  ev({ type: "userMessage", id, text });
+
+/** The invariant everything here defends: coalescing/ring-eviction/meta prefixes
+ *  must never change what a from-zero fold produces. */
+function expectFoldEquivalent(
+  a: readonly SessionDriverEvent[],
+  b: readonly SessionDriverEvent[],
+): void {
+  expect(foldAll([...a])).toEqual(foldAll([...b]));
+}
+
+describe("coalesceEvents", () => {
+  test("merges adjacent same-channel deltas, keeping the first's timestamp", () => {
+    const events = [delta("Hel", "text", "t1"), delta("lo", "text", "t2")];
+    const out = coalesceEvents(events);
+    expect(out).toHaveLength(1);
+    expect(out[0]).toMatchObject({ text: "Hello", timestamp: "t1" });
+    expectFoldEquivalent(out, events);
+  });
+
+  test("keeps cross-channel adjacency separate", () => {
+    const events = [delta("think", "thinking"), delta("answer", "text")];
+    const out = coalesceEvents(events);
+    expect(out).toHaveLength(2);
+    expectFoldEquivalent(out, events);
+  });
+
+  test("treats an omitted channel as text", () => {
+    const events = [delta("a", undefined), delta("b", "text")];
+    const out = coalesceEvents(events);
+    expect(out).toHaveLength(1);
+    expectFoldEquivalent(out, events);
+  });
+
+  test("does not merge across an interrupting event", () => {
+    const events = [
+      delta("a"),
+      ev({ type: "toolStarted", toolName: "shell", callId: "c1" }),
+      delta("b"),
+    ];
+    const out = coalesceEvents(events);
+    expect(out).toHaveLength(3);
+    expectFoldEquivalent(out, events);
+  });
+
+  test("keeps only the last of an adjacent usageUpdated run", () => {
+    const events = [usage(100), usage(200), usage(300)];
+    const out = coalesceEvents(events);
+    expect(out).toHaveLength(1);
+    expect(out[0]).toMatchObject({ usage: { tokens: 300 } });
+    expectFoldEquivalent(out, events);
+  });
+
+  test("never mutates its inputs", () => {
+    const first = delta("Hel");
+    const frozen = JSON.stringify(first);
+    coalesceEvents([first, delta("lo")]);
+    expect(JSON.stringify(first)).toBe(frozen);
+  });
+});
+
+describe("journal ring", () => {
+  test("stamps monotonically and evicts by frame count into compacted", () => {
+    const seed = [ev({ type: "sessionOpened", snapshot: snap() })];
+    const j = createJournal(7, seed);
+    const appended: SessionDriverEvent[] = [];
+    const extra = 50;
+    for (let i = 1; i <= TAIL_MAX_FRAMES + extra; i++) {
+      const e = user(`u${i}`, `msg ${i}`);
+      appended.push(e);
+      expect(appendEvent(j, e)).toBe(i);
+    }
+    expect(j.seq).toBe(TAIL_MAX_FRAMES + extra);
+    expect(j.tail).toHaveLength(TAIL_MAX_FRAMES);
+    expect(j.tail[0]?.seq).toBe(extra + 1);
+    const built = buildSeed(j);
+    expect(built.epoch).toBe(7);
+    expect(built.seq).toBe(TAIL_MAX_FRAMES + extra);
+    expectFoldEquivalent(built.events, [...seed, ...appended]);
+  });
+
+  test("evicts by byte budget, and a single over-budget event passes through", () => {
+    const j = createJournal(1, []);
+    const big = delta("x".repeat(TAIL_MAX_BYTES));
+    appendEvent(j, big);
+    expect(j.tail).toHaveLength(0);
+    expect(j.tailBytes).toBe(0);
+    expectFoldEquivalent(buildSeed(j).events, [big]);
+
+    const chunk = "y".repeat(64 * 1024);
+    const events: SessionDriverEvent[] = [];
+    for (let i = 0; i < 8; i++) {
+      // Interleave users so the deltas can't all coalesce into one frame.
+      events.push(user(`u${i}`, "-"), delta(chunk));
+      appendEvent(j, user(`u${i}`, "-"));
+      appendEvent(j, delta(chunk));
+    }
+    expect(j.tailBytes).toBeLessThanOrEqual(TAIL_MAX_BYTES);
+    expectFoldEquivalent(buildSeed(j).events, [big, ...events]);
+  });
+
+  test("bumpEpoch restarts seq/tail under the new epoch and seed", () => {
+    const j = createJournal(3, [
+      ev({ type: "sessionOpened", snapshot: snap() }),
+    ]);
+    appendEvent(j, user("u1", "hi"));
+    const fresh = [
+      ev({ type: "sessionOpened", snapshot: snap({ title: "reborn" }) }),
+    ];
+    bumpEpoch(j, 4, fresh);
+    expect(j.epoch).toBe(4);
+    expect(j.seq).toBe(0);
+    expect(j.tail).toHaveLength(0);
+    expect(j.tailBytes).toBe(0);
+    expectFoldEquivalent(buildSeed(j).events, fresh);
+    expect(appendEvent(j, user("u2", "again"))).toBe(1);
+  });
+});
+
+describe("metaSeedEvents", () => {
+  test("reproduces every non-item field the fold carries across a reset", () => {
+    const confirm = {
+      kind: "confirm",
+      requestId: "req-1",
+      title: "Proceed?",
+    } as unknown as HostUiRequest;
+    const rich: SessionDriverEvent[] = [
+      ev({
+        type: "sessionOpened",
+        snapshot: snap({
+          status: "running",
+          config: { provider: "anthropic", modelId: "m1" },
+          usage: { tokens: 42, contextWindow: 1000, percent: 4.2 },
+          facet: "plan",
+          permissionMonitor: "bypass",
+          adventurousHandoff: true,
+          notificationAutodrain: false,
+          activePlan: "# plan",
+          goal: { summary: "ship it", lifecycle: "active" },
+          flags: [{ path: "/w/a.ts", mode: "included" }],
+          todos: [
+            {
+              id: 1,
+              title: "do",
+              description: "do it",
+              status: "pending",
+              dependencies: [],
+            },
+          ],
+          mcpServers: [
+            { serverName: "srv", status: "connected", toolCount: 3 },
+          ],
+          queuedMessages: [
+            {
+              id: "q1",
+              mode: "steer",
+              text: "queued",
+              createdAt: "t",
+              updatedAt: "t",
+            },
+          ],
+        }),
+      }),
+      user("u1", "hello"),
+      delta("streamed answer"),
+      ev({
+        type: "hostUiRequest",
+        request: {
+          kind: "status",
+          requestId: "st1",
+          key: "spinner",
+          text: "Working…",
+        } as HostUiRequest,
+      }),
+      ev({
+        type: "hostUiRequest",
+        request: {
+          kind: "widget",
+          requestId: "w1",
+          key: "tasks",
+          lines: ["a", "b"],
+          placement: "belowComposer",
+        } as HostUiRequest,
+      }),
+      ev({
+        type: "hostUiRequest",
+        request: {
+          kind: "title",
+          requestId: "ti1",
+          title: "Ambient title",
+        } as HostUiRequest,
+      }),
+      ev({ type: "hostUiRequest", request: confirm }),
+    ];
+    const state = foldAll(rich);
+    expect(state.items.length).toBeGreaterThan(0);
+    expect(state.pendingApprovals).toHaveLength(1);
+
+    // The moment metaSeedEvents runs in the hub: right after the reset folded.
+    foldEvent(state, ev({ type: "sessionReset", timestamp: "rt" }));
+    expect(state.items).toEqual([]);
+
+    const rebuilt = foldAll(metaSeedEvents(state, ref, "rt"));
+    expect(rebuilt).toEqual(state);
+  });
+
+  test("handles the empty landing state", () => {
+    const state = initialSessionState();
+    const rebuilt = foldAll(metaSeedEvents(state, ref, "t0"));
+    // ref is established by the prefix (the legacy edge where a reset precedes
+    // any snapshot is unreachable through real drivers — seeds open first).
+    expect(rebuilt).toEqual({ ...state, ref, status: "idle" });
+    expect(rebuilt.items).toEqual([]);
+    expect(rebuilt.pendingApprovals).toEqual([]);
+  });
+});
