@@ -1,5 +1,5 @@
 // The pilot WebSocket envelope. Wraps the vendored session-driver event stream
-// with connection bootstrap (snapshot-on-connect) and client commands.
+// with connection bootstrap (seed-on-connect + tail resume) and client commands.
 //
 // Events carry their own `sessionRef`. Client commands optionally carry a
 // `sessionId` to target a specific session (D8 multi-session); omit it and the
@@ -159,8 +159,8 @@ export type ServerMessage =
    *  fresh seed rather than fold a diverged stream). */
   | { type: "event"; event: SessionDriverEvent; epoch: number; seq: number }
   /** The sessions available to open + which one is active (server-authoritative).
-   *  Kept separate from `snapshot` because it's cross-session meta-state, not the
-   *  folded transcript of the active session. */
+   *  Kept separate from the per-session `seed`/`event` stream because it's
+   *  cross-session meta-state, not the folded transcript of the active session. */
   | {
       type: "sessionList";
       sessions: readonly SessionListEntry[];

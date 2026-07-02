@@ -227,10 +227,14 @@ export class SessionHub {
   // onEvent but have no state/journal to fold into — and the in-flight seed may
   // predate them. Events buffered here are the signal to re-run the swap once
   // (see switchTo); they are never folded directly (no watermark exists to
-  // dedupe them against the seed). Bounded per session + TTL'd.
+  // dedupe them against the seed). The swap's TARGET is unknowable until its
+  // seed folds, so this over-captures: any stateless session's events buffer
+  // while any swap is in flight. Consumption filters per-event timestamps
+  // against the consuming swap's start, so pre-swap chatter (guaranteed to be
+  // in that swap's fetch) never counts as raced. Bounded per session + TTL'd.
   private swapBuffer = new Map<
     SessionId,
-    { at: number; events: SessionDriverEvent[] }
+    { at: number; ev: SessionDriverEvent }[]
   >();
   private swapsInFlight = 0;
   private static readonly SWAP_BUFFER_CAP = 256;
@@ -386,23 +390,30 @@ export class SessionHub {
    *  background chatter during long swaps can't accumulate. */
   private bufferSwapEvent(sid: SessionId, ev: SessionDriverEvent): void {
     const now = Date.now();
-    for (const [k, v] of this.swapBuffer)
-      if (now - v.at > SessionHub.SWAP_BUFFER_TTL_MS) this.swapBuffer.delete(k);
-    let entry = this.swapBuffer.get(sid);
-    if (!entry) {
-      entry = { at: now, events: [] };
-      this.swapBuffer.set(sid, entry);
+    for (const [k, v] of this.swapBuffer) {
+      const kept = v.filter((f) => now - f.at <= SessionHub.SWAP_BUFFER_TTL_MS);
+      if (kept.length === 0) this.swapBuffer.delete(k);
+      else if (kept.length !== v.length) this.swapBuffer.set(k, kept);
     }
-    if (entry.events.length < SessionHub.SWAP_BUFFER_CAP) entry.events.push(ev);
+    const list = this.swapBuffer.get(sid) ?? [];
+    if (!this.swapBuffer.has(sid)) this.swapBuffer.set(sid, list);
+    if (list.length < SessionHub.SWAP_BUFFER_CAP) list.push({ at: now, ev });
   }
 
-  /** Consume (and clear) the attach-window buffer for one session. */
-  private takeSwapBuffer(sid: SessionId): SessionDriverEvent[] {
-    const entry = this.swapBuffer.get(sid);
+  /** Consume (and clear) the attach-window buffer for one session, keeping only
+   *  frames stamped at/after `since` (the consuming swap's start): anything
+   *  buffered before the swap began was accepted by the daemon before the
+   *  fetch, so it's guaranteed to be in that swap's seed — not raced. */
+  private takeSwapBuffer(sid: SessionId, since = 0): SessionDriverEvent[] {
+    const list = this.swapBuffer.get(sid);
     this.swapBuffer.delete(sid);
-    if (!entry || Date.now() - entry.at > SessionHub.SWAP_BUFFER_TTL_MS)
-      return [];
-    return entry.events;
+    if (!list) return [];
+    const now = Date.now();
+    return list
+      .filter(
+        (f) => now - f.at <= SessionHub.SWAP_BUFFER_TTL_MS && f.at >= since,
+      )
+      .map((f) => f.ev);
   }
 
   /** Fold a swap's seed into a fresh state to learn the authoritative session
@@ -430,9 +441,10 @@ export class SessionHub {
 
   /** The seed source for one session (protocol v2): the journal's events, delta-
    *  coalesced, plus the {epoch, seq} watermark of the last event folded into it.
-   *  Wire-visible once connect/switch flip to seeds; until then the fold-
-   *  equivalence tests assert the invariant through it. Null when the session
-   *  isn't seeded (nobody viewed it — background transcripts stay private). */
+   *  Wire-visible on connect/switch (the `seed` message); the fold-equivalence
+   *  tests also assert the journal↔state invariant through it. Null when the
+   *  session isn't seeded (nobody viewed it — background transcripts stay
+   *  private). */
   seedOf(
     sid: SessionId | null,
   ): { epoch: number; seq: number; events: SessionDriverEvent[] } | null {
@@ -452,16 +464,16 @@ export class SessionHub {
     foldEvent(st, ev);
     const j = this.journals.get(sid);
     if (!j) {
-      // Lifecycle invariant broken (journal must exist iff state exists). Keep
-      // serving viewers, but say so loudly — a stale seed beats a silent one.
-      // The zero stamps make every receiving client drop the frame and request
-      // a fresh seed, which is the honest degraded behavior here.
+      // Lifecycle invariant broken (journal must exist iff state exists).
+      // Don't route: an unstamped frame would just be discarded by every
+      // client's epoch gate — silently, since an epoch mismatch deliberately
+      // does NOT trigger requestSeed (it normally means a superseding seed is
+      // already in flight). Routing would be wire noise that *looks* like
+      // serving. Viewers stay stale until their next seed; this log is the
+      // honest signal that a dead-by-construction corner was reached.
       console.error(
-        `[hub] no journal for viewed session ${sid} — seeds will be stale`,
+        `[hub] no journal for viewed session ${sid} — viewers stale until reseeded`,
       );
-      for (const conn of this.clients.values())
-        if (conn.focusedId === sid)
-          conn.send({ type: "event", event: ev, epoch: 0, seq: 0 });
       return;
     }
     if (ev.type === "sessionReset") {
@@ -1194,6 +1206,10 @@ export class SessionHub {
     conn.switchInFlight = true;
     try {
       let seed: SessionDriverEvent[];
+      // Buffer frames stamped before this moment are guaranteed to be inside
+      // the swap's fetch (the daemon accepted them first) — takeSwapBuffer
+      // filters on this so only genuinely raced events trigger a rebuild.
+      const swapStart = Date.now();
       this.swapsInFlight++;
       try {
         seed = await swap();
@@ -1227,13 +1243,20 @@ export class SessionHub {
       // one-fetch-wide and needs a daemon-side SSE-id watermark to close —
       // tracked in PLAN-protocol-v2.) Only for idempotent swaps; a raced
       // non-retryable swap (newSession) logs loud instead of guessing.
-      const raced = this.takeSwapBuffer(sid);
+      const raced = this.takeSwapBuffer(sid, swapStart);
       if (raced.length > 0 && opts.retryOnRacedEvents) {
         this.swapsInFlight++;
         try {
           seed = await swap();
           this.takeSwapBuffer(sid); // consumed — included in the rebuilt seed
-          folded = this.foldSwapSeed(seed);
+          const refolded = this.foldSwapSeed(seed);
+          // foldSwapSeed mutates running/attention as it folds, so the refold
+          // reports changes RELATIVE to the first fold — accumulate, or a
+          // status change applied by fold #1 would skip its broadcast below.
+          folded = {
+            ...refolded,
+            metaChanged: folded.metaChanged || refolded.metaChanged,
+          };
           sid = folded.sid ?? sid;
         } catch (e) {
           // Keep the first seed — a slightly-stale transcript beats a failed

@@ -1,7 +1,8 @@
 // The folded, render-ready view of a session. The server holds the authoritative
 // copy; clients fold the same event stream into an identical local copy. On
-// (re)connect the server ships a full SessionState snapshot which the client
-// adopts wholesale, then resumes incremental folding.
+// (re)connect the server ships the transcript as seed EVENTS which the client
+// folds from initialSessionState() (protocol v2), then resumes incremental
+// folding — no folded state ever crosses the wire.
 
 import {
   type FlaggedFile,
@@ -99,11 +100,7 @@ export interface InjectItem {
   ts?: string;
 }
 export type TranscriptItem =
-  | UserItem
-  | AssistantItem
-  | ToolItem
-  | NoticeItem
-  | InjectItem;
+  UserItem | AssistantItem | ToolItem | NoticeItem | InjectItem;
 
 export interface AmbientWidget {
   key: string;

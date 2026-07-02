@@ -1,15 +1,33 @@
 import { expect, test } from "@playwright/test";
 import { drive, gotoFresh } from "./helpers.js";
 
-test.beforeEach(async ({ page }) => {
-  await gotoFresh(page);
-});
-
 // Protocol v2 resume: a reconnect mid-stream must not duplicate transcript
-// content. The reconnect hello carries the fold watermark; the server replays
-// only the frames missed while disconnected (or re-seeds if it can't), so the
-// user message and the streamed reply each appear exactly once either way.
-test("a mid-stream reconnect shows no duplicated bubbles", async ({ page }) => {
+// content — AND must actually resume. The reconnect hello carries the fold
+// watermark {epoch, seq}; the server tail-replays only the missed frames. The
+// recorded wire frames prove resume engaged: after the reconnect's hello there
+// are live events but NO seed (a silent regression to full re-seeding — the
+// exact cost resume exists to kill — fails the frame assertion below).
+test("a mid-stream reconnect resumes (no re-seed) without duplicated bubbles", async ({
+  page,
+}) => {
+  // Record server→client frame types on every socket. Must be installed BEFORE
+  // navigation: routeWebSocket patches the page's WebSocket at document init,
+  // so a mid-life install would silently miss the reconnect's socket.
+  const frameTypes: string[] = [];
+  await page.routeWebSocket(/./, (ws) => {
+    const server = ws.connectToServer();
+    server.onMessage((message) => {
+      try {
+        frameTypes.push(JSON.parse(String(message)).type as string);
+      } catch {
+        frameTypes.push("?");
+      }
+      ws.send(message as string);
+    });
+    ws.onMessage((message) => server.send(message as string));
+  });
+  await gotoFresh(page);
+
   await drive(page, "reply");
   // The turn is visibly under way…
   await expect(
@@ -41,4 +59,11 @@ test("a mid-stream reconnect shows no duplicated bubbles", async ({ page }) => {
   await expect(
     page.getByText("Show me the streamed reply script."),
   ).toHaveCount(1);
+
+  // Resume engaged: a second hello was recorded (the reconnect), and nothing
+  // after it is a seed — the transcript survived on the client and only the
+  // gap was tail-replayed.
+  const lastHello = frameTypes.lastIndexOf("hello");
+  expect(lastHello).toBeGreaterThan(frameTypes.indexOf("hello"));
+  expect(frameTypes.slice(lastHello)).not.toContain("seed");
 });

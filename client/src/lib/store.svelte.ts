@@ -794,9 +794,11 @@ class PilotStore {
         this.dataDir = msg.dataDir ?? "";
         persistLastServerId(msg.serverId);
         void this.hydrateOutbox(msg.serverId);
-        // A hello after the first is a reconnect: the hub will re-snapshot us onto the
-        // landing, so remember the session we're viewing (captured now, before the
-        // bootstrap snapshot overwrites `session`) to re-assert once the list arrives.
+        // A hello after the first is a reconnect. If the resume token we sent
+        // is accepted, the hub keeps us on our session (no seed arrives); the
+        // fallback is a re-seed onto the landing — so remember the session
+        // we're viewing (captured now, before that fallback seed overwrites
+        // `session`) to re-assert once the list arrives.
         if (this.booted && !this.draft)
           this.reconnectFocusId = this.session.ref?.sessionId ?? null;
         this.booted = true;
