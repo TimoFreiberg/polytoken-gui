@@ -1,6 +1,5 @@
 // readPilotSettings/writePilotSettings persist pilot's own knobs (loginShell,
-// backgroundModel, enabledExtensions) as a small JSON file under config.dataDir.
-// Untested — the valuable logic is the defaults-layering (persisted values over
+// backgroundModel) as a small JSON file under config.dataDir. Untested — the
 // DEFAULTS, so a new field added later picks up its default for old files) and the
 // corrupt-file fallback (loud-warn + defaults, never brick startup). config.dataDir
 // is the singleton mutate-and-restore seam (same as config.token in config.test.ts).
@@ -31,7 +30,6 @@ describe("readPilotSettings / writePilotSettings", () => {
     expect(readPilotSettings()).toEqual({
       loginShell: null,
       backgroundModel: null,
-      enabledExtensions: null,
     });
   });
 
@@ -40,7 +38,6 @@ describe("readPilotSettings / writePilotSettings", () => {
     expect(result).toEqual({
       loginShell: "/bin/zsh",
       backgroundModel: null,
-      enabledExtensions: null,
     });
     expect(readPilotSettings()).toEqual(result);
   });
@@ -53,22 +50,20 @@ describe("readPilotSettings / writePilotSettings", () => {
     expect(readPilotSettings()).toEqual({
       loginShell: "/bin/zsh", // survived the second write
       backgroundModel: "anthropic/claude-3-5-haiku",
-      enabledExtensions: null,
     });
   });
 
   test("a partial persisted file layers over defaults (new fields default in old files)", () => {
-    // Simulate an old settings file written before `enabledExtensions` existed: it has
-    // loginShell + backgroundModel but no enabledExtensions. Read must fill the missing
-    // field with its default (null), not leave it undefined.
+    // Simulate an old settings file written before `backgroundModel` existed: it has
+    // loginShell but no backgroundModel. Read must fill the missing field with its
+    // default (null), not leave it undefined.
     writeFileSync(
       join(dir, "pilot-settings.json"),
-      JSON.stringify({ loginShell: "/bin/bash", backgroundModel: "x" }),
+      JSON.stringify({ loginShell: "/bin/bash" }),
     );
     expect(readPilotSettings()).toEqual({
       loginShell: "/bin/bash",
-      backgroundModel: "x",
-      enabledExtensions: null, // defaulted, not undefined
+      backgroundModel: null, // defaulted, not undefined
     });
   });
 
@@ -78,7 +73,6 @@ describe("readPilotSettings / writePilotSettings", () => {
     expect(readPilotSettings()).toEqual({
       loginShell: null,
       backgroundModel: null,
-      enabledExtensions: null,
     });
   });
 

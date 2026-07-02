@@ -5,11 +5,10 @@
 import { describe, expect, test } from "bun:test";
 import { planCycle } from "./attention-cycle-core.js";
 
-const ALL: ["transcript", "qna", "approval", "trust"] = [
+const ALL: ["transcript", "qna", "approval"] = [
   "transcript",
   "qna",
   "approval",
-  "trust",
 ];
 
 describe("planCycle", () => {
@@ -26,11 +25,8 @@ describe("planCycle", () => {
     expect(r?.focused).toBe("approval");
     expect(r?.minimize).toEqual(["qna"]);
     r = planCycle("approval", [...ALL]);
-    expect(r?.focused).toBe("trust");
-    expect(r?.minimize).toEqual(["approval"]);
-    r = planCycle("trust", [...ALL]);
     expect(r?.focused).toBe("transcript");
-    expect(r?.minimize).toEqual(["trust"]);
+    expect(r?.minimize).toEqual(["approval"]);
   });
 
   test("wraps transcript → qna and minimizes nothing when leaving transcript", () => {
@@ -51,11 +47,12 @@ describe("planCycle", () => {
   });
 
   test("focused surface no longer active restarts from transcript", () => {
-    // Focused on "trust" but trust just resolved (no longer active). Should
-    // restart from transcript's position — i.e. land on transcript (home), since
-    // the stale focused surface is gone. Trust is NOT minimized (it's already gone).
-    const active = ["transcript", "approval"] as const;
-    const r = planCycle("trust", [...active]);
+    // Focused on "approval" but the approval just resolved (no longer active).
+    // Should restart from transcript's position — i.e. land on transcript (home),
+    // since the stale focused surface is gone. Approval is NOT minimized (it's
+    // already gone).
+    const active = ["transcript", "qna"] as const;
+    const r = planCycle("approval", [...active]);
     expect(r?.focused).toBe("transcript");
     expect(r?.minimize).toEqual([]);
   });

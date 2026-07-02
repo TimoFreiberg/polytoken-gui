@@ -13,7 +13,7 @@ resolution is non-obvious or likely to bite again. Otherwise see `jj log`.
       "56y ago" (synthetic epoch timestamps — daemon gap, see
       `polytoken-upstream-feature-asks.md` #1); e2e suite asserts mock behaviors
       the live driver never produces.
-- [ ] **Trust-wiring skip rests on an unverified rationale.** `subscribeTrust`/
+- [x] **Trust-wiring skip rests on an unverified rationale.** `subscribeTrust`/
       `respondTrust` were skipped on the claim that the daemon's `capability`
       interrogative covers untrusted-dir prompts via `respondUi`. Nobody has run
       a live untrusted-dir test to confirm. Settle it: open a session in an
@@ -21,11 +21,21 @@ resolution is non-obvious or likely to bite again. Otherwise see `jj log`.
       *remove* the dead `TrustCard` + hub trust channel scaffolding rather than
       leaving it permanently dangling; if it doesn't, wire the trust methods.
       **human:** nah, polytoken doesn't have this. remove the TrustCard etc
+      **done:** removed — polytoken handles trust daemon-side; the mock-only
+      pipeline (TrustCard, wire messages, driver methods, fixtures, e2e) is
+      deleted.
 - [ ] the following findings by a fable agent:
-      2. Dead code (delete or consciously keep)
-      PilotSettings.enabledExtensions is write-only. Defined at wire.ts:51, defaulted in settings-store.ts:15, reset in hub.reset, initialized in the client store — and never read or set by anything. It's a pi-era concept ("owned extension paths"); this branch is polytoken-only. ~25 lines plus a misleading protocol field.
-      setClientPresence/hasClients is dead by its own admission. The hub wires it (hub.ts:367), the polytoken driver stores it with an explicit "TODO: no read site yet" (polytoken-driver.ts:217). ~40 lines across the interface, hub, and driver. Trivial to re-add when a real read site exists.
-      The interactive trust pipeline can't fire in production. subscribeTrust/respondTrust are implemented only by the mock; the polytoken driver has neither (its TrustEvent import at polytoken-driver.ts:64 is a vestige). The full chain — TrustEvent + three PilotDriver methods, the hub relay, three wire messages, client-store handling, TrustCard.svelte (279 lines), the fixture, dev-bar button, and e2e coverage — is mock-only demo code, roughly 600 lines. This one's your call: if polytoken handles project trust daemon-side forever, delete it; if a polytoken trust interrogative is plausible later, keep it and note that in driver.ts. I'd lean delete — it's all in git history, and D12's rationale is preserved in the docs.
+      2. Dead code (delete or consciously keep) — ~~[x] done~~
+      ~~PilotSettings.enabledExtensions is write-only.~~ Removed — was a pi-era
+      concept with no read site on this polytoken-only branch.
+      ~~setClientPresence/hasClients is dead by its own admission.~~ Removed —
+      the hub wiring, driver closure, and interface method are gone; trivial to
+      re-add when a real read site exists.
+      ~~The interactive trust pipeline can't fire in production.~~ Removed —
+      subscribeTrust/respondTrust were mock-only; the full chain (TrustEvent,
+      three PilotDriver methods, hub relay, three wire messages, client-store
+      handling, TrustCard.svelte, fixture, dev-bar button, e2e) is deleted.
+      polytoken handles project trust daemon-side; D12 updated.
       3. Mechanical duplication (low-risk, ~600–700 lines)
       Polytoken driver (~150 lines). The 7-argument snapshotFromState(ws.lastState, ws.ref, workspaceFor(ws), statusFromState(ws.lastState), now(), ws.monitorMode, ws.autodrainEnabled) incantation appears 9 times — a snapshotFor(ws, status?) closure collapses each to one line. On top of that, toggleAdventurousHandoff, setNotificationAutodrain, compact, clearContext, and setMcpServer (polytoken-driver.ts:1668–1821) are the same ~25-line "call daemon → GET /state → emit sessionUpdated → log on failure" block five times; one refreshAndEmit(ws, label, action) helper makes each a 3-liner. Also: the local usageFromState wrapper just forwards to the pure import (delete it), and the queue-item→SessionQueuedMessage mapping is hand-rolled in three places (one queueMsg(item, ts) helper).
       
@@ -68,7 +78,16 @@ resolution is non-obvious or likely to bite again. Otherwise see `jj log`.
       `{childList:true, subtree:true}` and runs `scan()` on every mutation batch
       while streaming. Fix: only re-scan when an added node is/contains a `<pre>`.
 
-## 🏗️ Architecture
+## If fable doesn't do it first
+
+- [ ] 1. Architecture: the hub double-bookkeeps every session (biggest conceptual win)
+      The comment at hub.ts:222 says the journal "runs dark alongside the legacy fold" until the wire flips to seeds — but the wire flipped: seeds and resumes are already journal-built. So today ingest (hub.ts:473) does dual writes — folds every event into sessionStates and appends it to journals — and there's a "journal must exist iff state exists" lifecycle invariant with its own error-recovery path for when the two maps drift.
+      
+      The folded copy is only read in four rare places: the first-responder-wins check in respondUi (hub.ts:1491), the running-check in branch (hub.ts:1650), refreshUsage's ref lookup, and existence checks in switchTo. All of those can fold the journal on demand (foldAll(buildSeed(j).events) — exactly what snapshot() already does for /debug/state), or read the journal's first event for the ref. The property tests in hub-journal.test.ts already machine-check that the two representations are equivalent, which is precisely what de-risks deleting one.
+      
+      Payoff: the hot streaming path becomes append-only, the dual-write invariant and its error path disappear, and a whole class of drift bugs becomes unrepresentable. Cost: respondUi/branch pay an O(transcript) fold on a user click — negligible. This is medium-effort, medium-risk; everything else below is safer.
+      
+    ## 🏗️ Architecture
 
 - **ADR-desktop-shell.md** — Tauri v2 desktop shell proposal (proposed, awaiting
   owner sign-off). The "📐 Architecture direction" note that lived here

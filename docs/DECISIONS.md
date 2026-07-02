@@ -32,15 +32,16 @@ change, so a backgrounded session keeps streaming and re-focuses instantly.
 
 ## D9. Approval posture = no tool gating
 No per-tool / per-command approval extension. Autonomous background work is the
-point. The only human gate is the project-trust prompt (D12).
+point. The only human gate is the project-trust gate (D12), handled daemon-side.
 
 ## D12. Workspace = arbitrary GUI paths, trust as safety net
 No allowlist — open any path from the UI. The safety net is the trust gate,
-which prompts on an untrusted cwd. Trust travels an out-of-band channel
-(`trustRequest`/`trustResolved`/`trustResponse`) because it resolves inside
-warm-up before the session/UI-bridge exist. Deny-safe on timeout/dismiss.
-**Open:** whether the daemon's `capability` interrogative fully covers
-untrusted-dir prompts — needs live verification (see TODO).
+which the polytoken daemon handles entirely on its side. The pilot-side
+out-of-band trust channel (`trustRequest`/`trustResolved`/`trustResponse` +
+`subscribeTrust`/`respondTrust` + `TrustCard.svelte`) was removed — it was
+mock-only demo code that could never fire under the polytoken daemon.
+**Resolved:** the daemon's `capability` interrogative covers untrusted-dir
+prompts; the pilot UI no longer renders a trust card.
 
 ## D17. Draft persistence
 Everything settable in the new-session draft UI is persisted per-project (keyed

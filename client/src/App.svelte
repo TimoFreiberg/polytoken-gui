@@ -11,7 +11,6 @@
   import Composer from "./components/Composer.svelte";
   import QnaInline from "./components/QnaInline.svelte";
   import ApprovalLayer from "./components/ApprovalLayer.svelte";
-  import TrustCard from "./components/TrustCard.svelte";
   import TokenGate from "./components/TokenGate.svelte";
   import Settings from "./components/Settings.svelte";
   import PlanView from "./components/PlanView.svelte";
@@ -46,7 +45,7 @@
       typeof window !== "undefined" &&
       window.matchMedia(PHONE_MQ).matches,
   );
-  const scripts = ["reply", "reset", "markdown", "search", "thinkingtools", "skill", "confirm", "trust", "input", "qna", "answercard", "answerleadup", "ambient", "compat", "bgrun", "bgwait", "queue", "deliverqueue", "initializing", "editdiff", "images", "error", "idle", "streamhold", "staleidle", "pendinghold", "timeout", "yesno", "journalnudge", "contextfull", "longoutput", "selectmany", "planhandoff", "planhandofftimeout", "planfacet", "planview", "goalactive", "goalclear", "context", "permission", "failnewsession", "failsession", "goal", "unknown"];
+  const scripts = ["reply", "reset", "markdown", "search", "thinkingtools", "skill", "confirm", "input", "qna", "answercard", "answerleadup", "ambient", "compat", "bgrun", "bgwait", "queue", "deliverqueue", "initializing", "editdiff", "images", "error", "idle", "streamhold", "staleidle", "pendinghold", "timeout", "yesno", "journalnudge", "contextfull", "longoutput", "selectmany", "planhandoff", "planhandofftimeout", "planfacet", "planview", "goalactive", "goalclear", "context", "permission", "failnewsession", "failsession", "goal", "unknown"];
 
   // The agent-driven attention surfaces currently active, in cycle order. The ⌘\
   // hotkey advances focus through these; each cycled-away-from surface collapses to
@@ -59,7 +58,6 @@
       surfaces.push("qna");
     if (store.session.pendingApprovals.some((r) => r.kind !== "qna"))
       surfaces.push("approval");
-    if (store.trustRequest) surfaces.push("trust");
     return surfaces;
   });
 
@@ -270,7 +268,7 @@
         break;
       case "\\":
         // ⌘\ / Ctrl+\ — cycle focus through active agent-driven attention surfaces
-        // (transcript → qna → approval → trust → …). Each cycled-away-from surface
+        // (transcript → qna → approval → …). Each cycled-away-from surface
         // collapses to a pill. No-op when a user-driven modal owns the keyboard.
         if (
           store.settingsOpen ||
@@ -331,7 +329,6 @@
   </div>
   <RightSidebar />
 </div>
-<TrustCard />
 <Settings />
 <PlanView />
 <!-- Shared full-screen viewer for any read-only transcript image (user attachments,

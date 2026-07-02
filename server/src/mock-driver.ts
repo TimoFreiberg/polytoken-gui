@@ -25,7 +25,7 @@ import {
   type SessionQueuedMessage,
   type SessionUsage,
 } from "@pilot/protocol";
-import type { NewSessionOpts, PilotDriver, TrustEvent } from "./driver.js";
+import type { NewSessionOpts, PilotDriver } from "./driver.js";
 import { writePilotSettings } from "./settings-store.js";
 import {
   ambient,
@@ -68,7 +68,6 @@ import {
   MOCK_MCP_SERVERS,
   MOCK_USAGE,
   mockSessionSeed,
-  mockTrustRequest,
   NEW_SESSION_ENTRY,
   newSessionReply,
   newSessionSeed,
@@ -186,8 +185,6 @@ const MOCK_DIR_TREE: ReadonlyMap<string, readonly string[]> = (() => {
 
 export class MockDriver implements PilotDriver {
   private listeners = new Set<(ev: SessionDriverEvent) => void>();
-  private trustListeners = new Set<(ev: TrustEvent) => void>();
-  private pendingTrust = new Set<string>();
   // One-shot: when set, the next newSession() rejects then clears (armed via
   // runScript("failnewsession")). Simulates a transient creation failure for e2e.
   private failNextNewSession = false;
@@ -260,11 +257,6 @@ export class MockDriver implements PilotDriver {
     return () => this.listeners.delete(listener);
   }
 
-  subscribeTrust(listener: (ev: TrustEvent) => void): () => void {
-    this.trustListeners.add(listener);
-    return () => this.trustListeners.delete(listener);
-  }
-
   private emit(ev: SessionDriverEvent): void {
     for (const l of this.listeners) {
       try {
@@ -285,38 +277,6 @@ export class MockDriver implements PilotDriver {
       timestamp: String(Date.now()),
       type: "queueUpdated",
       messages: this.queues.get(sessionId) ?? [],
-    });
-  }
-
-  private emitTrust(ev: TrustEvent): void {
-    for (const l of this.trustListeners) {
-      try {
-        l(ev);
-      } catch (e) {
-        console.error("[mock] trust listener error", e);
-      }
-    }
-  }
-
-  respondTrust(requestId: string, choice: number | null): void {
-    if (!this.pendingTrust.has(requestId)) return; // first-responder-wins / unknown
-    this.pendingTrust.delete(requestId);
-    this.emitTrust({ kind: "resolved", requestId });
-    // Echo the outcome as a notice, mirroring respondUi's confirmation UX.
-    const message =
-      choice === null
-        ? "Trust prompt dismissed — folder left untrusted."
-        : `Trust decision recorded (option ${choice + 1}).`;
-    this.emit({
-      sessionRef: SESSION_REF,
-      timestamp: String(Date.now()),
-      type: "hostUiRequest",
-      request: {
-        kind: "notify",
-        requestId: `trust-done-${requestId}`,
-        message,
-        level: "info",
-      },
     });
   }
 
@@ -1007,7 +967,6 @@ export class MockDriver implements PilotDriver {
     for (const entry of this.scheduled) clearTimeout(entry.timer);
     this.scheduled = [];
     this.pendingDialogs.clear();
-    this.pendingTrust.clear();
     this.openTools.clear();
   }
 
@@ -1020,13 +979,6 @@ export class MockDriver implements PilotDriver {
     if (name === "failsession") {
       // Arm a one-shot openSession() 409 lease-conflict (consumed by the next switch).
       this.failNextSession = true;
-      return;
-    }
-    if (name === "trust") {
-      // The trust card rides the out-of-band trust channel, not the event stream.
-      const req = mockTrustRequest();
-      this.pendingTrust.add(req.requestId);
-      this.emitTrust({ kind: "request", request: req });
       return;
     }
     if (name === "queue") {

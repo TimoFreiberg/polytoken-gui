@@ -41,14 +41,6 @@ export interface PilotSettings {
    *  resolves + validates this on read (see `resolveBackgroundModel`) and surfaces a
    *  loud `warning` to the Settings UI when the spec is bad — never silent. */
   backgroundModel: string | null;
-  /** Pilot's own enabled/disabled set for the OWNED extension paths (the
-   *  `additionalExtensionPaths` entries — session-namer, answer, tasklist).
-   *  the daemon's `-<path>` force-exclude override is a NO-OP on those,
-   *  so pilot maintains its own set and omits disabled owned paths from the array in
-   *  `warmUp`. `null` = all owned enabled (the default); an array = the enabled subset
-   *  by basename (e.g. `["session-namer"]`) — the operator thinks in names, not paths.
-   *  User/project extensions keep the daemon's force-exclude toggle unchanged. */
-  enabledExtensions: string[] | null;
 }
 
 /** Runtime status of pilot's startup login-shell env capture, so the Settings panel
@@ -61,28 +53,6 @@ export interface LoginEnvStatus {
   ok: boolean;
   /** Human-readable outcome (var count, skip reason, or failure), for the panel. */
   detail?: string;
-}
-
-/** One choice on the project-trust card (D12). The label is display-only; the index
- *  into a request's `options` is what the client sends back. `trusted` lets the card
- *  style allow-vs-deny without parsing the label. */
-export interface TrustRequestOption {
-  readonly label: string;
-  readonly trusted: boolean;
-}
-
-/**
- * An interactive project-trust decision (D12). Travels OUT OF BAND — not as a
- * `SessionDriverEvent` — because trust resolves inside the driver's session warm-up,
- * before that session (and its UI bridge) exists and while the hub is mid-swap
- * (`switching`), so it can't ride the per-session event/fold path. It's a per-cwd
- * question by nature: "may the agent load this folder's .pi resources?".
- */
-export interface TrustRequest {
-  readonly requestId: string;
-  readonly cwd: string;
-  readonly title: string;
-  readonly options: readonly TrustRequestOption[];
 }
 
 /** A directory's browsable contents for the new-session project picker. The server
@@ -239,12 +209,6 @@ export type ServerMessage =
       pendingRestart: boolean;
       backgroundModelWarning?: string;
     }
-  /** Surface an interactive project-trust card (D12). Broadcast to every client; the
-   *  first answer wins. Carried as its own message — see {@link TrustRequest}. */
-  | ({ type: "trustRequest" } & TrustRequest)
-  /** A pending trust card was settled (answered, or denied on timeout/disconnect).
-   *  Clients dismiss the card for this requestId. */
-  | { type: "trustResolved"; requestId: string }
   /** Desktop auto-update status (driven by scripts/desktop/update-watcher.ts via the
    *  /update/state endpoint). `available` true means a new origin/main was staged but
    *  deferred because a client is connected — clients show the sidebar update card.
@@ -461,9 +425,6 @@ export type ClientMessage =
    *  dir picker's inline validation hint (debounced). The server responds with
    *  {@link pathStat}. */
   | { type: "statPath"; path: string }
-  /** Answer a project-trust card (D12). `choice` indexes the request's `options`;
-   *  null denies (cancel / dismiss). */
-  | { type: "trustResponse"; requestId: string; choice: number | null }
   /** Apply the staged desktop update now (the sidebar card's button). The server marks
    *  it applying and the update-watcher picks it up on its next poll — pull, rebuild,
    *  restart. No-op if nothing is staged. */

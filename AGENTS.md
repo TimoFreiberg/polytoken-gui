@@ -95,7 +95,7 @@ This is set up so you can verify autonomously — use it.
   agent.) `scripts/dev.ts` gates Vite on the server's `/health`, so the page is
   connected on first load — no "Offline" warmup window to wait through.
 - **Drive any UI state deterministically:** open `/?dev` to get a dev bar with
-  buttons (`reply`, `confirm`, `trust`, `input`, `ambient`) that push the mock to
+  buttons (`reply`, `confirm`, `input`, `ambient`) that push the mock to
   that state. Or send a `{type:"mock", script}` WS message.
 - **Inspect server state directly:** `GET /debug/state` returns the full
   authoritative `SessionState` as JSON. `curl localhost:8787/debug/state | …`.

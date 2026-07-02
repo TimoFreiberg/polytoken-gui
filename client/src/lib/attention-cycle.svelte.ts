@@ -1,15 +1,15 @@
 // The shared controller for the ⌘\ attention-surface cycle (mirrors the
-// image-viewer.svelte.ts singleton pattern). Three surface components live in
-// different parts of the tree (QnaInline + ApprovalLayer in the chat column,
-// TrustCard at the app root), so a shared singleton they each read is cleaner
-// than prop-drilling minimize/focus state.
+// image-viewer.svelte.ts singleton pattern). Surface components live in
+// different parts of the tree (QnaInline + ApprovalLayer in the chat column),
+// so a shared singleton they each read is cleaner than prop-drilling
+// minimize/focus state.
 //
-// The cycle's four agent-driven surfaces, in order:
-//   transcript → qna → approval → trust → transcript
+// The cycle's three agent-driven surfaces, in order:
+//   transcript → qna → approval → transcript
 
 import { planCycle } from "./attention-cycle-core.js";
 
-export type AttentionSurface = "transcript" | "qna" | "approval" | "trust";
+export type AttentionSurface = "transcript" | "qna" | "approval";
 
 // Svelte 5 class with $state fields — the documented pattern for reactive
 // singletons (mirrors image-viewer.svelte.ts). $effect reads of .focused and
@@ -20,7 +20,6 @@ class AttentionController {
     transcript: false,
     qna: false,
     approval: false,
-    trust: false,
   });
 
   cycle(activeSurfaces: AttentionSurface[]): void {

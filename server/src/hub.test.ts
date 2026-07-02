@@ -14,7 +14,7 @@ import type {
   SessionSnapshot,
   SessionState,
 } from "@pilot/protocol";
-import type { PilotDriver, TrustEvent } from "./driver.js";
+import type { PilotDriver } from "./driver.js";
 import { SessionHub } from "./hub.js";
 
 const ref: SessionRef = { workspaceId: "w", sessionId: "s" };
@@ -45,9 +45,7 @@ const seedState = (m: ServerMessage | undefined): SessionState | null =>
 /** A driver we can emit into by hand, for deterministic hub tests. */
 class FakeDriver implements PilotDriver {
   private listener?: (e: SessionDriverEvent) => void;
-  private trustListener?: (e: TrustEvent) => void;
   readonly responded: HostUiResponse[] = [];
-  readonly trustResponded: { requestId: string; choice: number | null }[] = [];
   /** Captured viewed-session predicate (the hub wires it at construction). */
   isViewed?: (sessionId: string) => boolean;
   setSessionViewers(fn: (sessionId: string) => boolean): void {
@@ -59,22 +57,6 @@ class FakeDriver implements PilotDriver {
   }
   emit(e: SessionDriverEvent) {
     this.listener?.(e);
-  }
-  subscribeTrust(l: (e: TrustEvent) => void) {
-    this.trustListener = l;
-    return () => {};
-  }
-  trustEmit(e: TrustEvent) {
-    this.trustListener?.(e);
-  }
-  respondTrust(requestId: string, choice: number | null) {
-    this.trustResponded.push({ requestId, choice });
-    // Mirror the real driver: settling fires a `resolved` event back through the channel.
-    this.trustEmit({ kind: "resolved", requestId });
-  }
-  clientPresence?: () => boolean;
-  setClientPresence(fn: () => boolean) {
-    this.clientPresence = fn;
   }
   prompt(
     _text?: string,
@@ -594,68 +576,9 @@ describe("SessionHub", () => {
     if (err?.type === "error") expect(err.message).toMatch(/reload/i);
   });
 
-  test("trust requests relay to clients and responses route back to the driver", () => {
-    const d = new FakeDriver();
-    const hub = new SessionHub(d);
-    const a = client();
-    const b = client();
-    hub.addClient(a.send);
-    hub.addClient(b.send);
-
-    const request = {
-      requestId: "t1",
-      cwd: "/some/repo",
-      title: "Trust this project folder?",
-      options: [
-        { label: "Trust this folder", trusted: true },
-        { label: "Don't trust", trusted: false },
-      ],
-    };
-    d.trustEmit({ kind: "request", request });
-
-    // Both clients see the card (out-of-band — not folded into session state).
-    for (const c of [a, b]) {
-      const card = c.received.find((m) => m.type === "trustRequest");
-      expect(card).toMatchObject({ requestId: "t1", cwd: "/some/repo" });
-    }
-
-    hub.handleClient(a.send, {
-      type: "trustResponse",
-      requestId: "t1",
-      choice: 0,
-    });
-    expect(d.trustResponded).toEqual([{ requestId: "t1", choice: 0 }]);
-    // The driver's `resolved` echo dismisses the card on every client.
-    for (const c of [a, b])
-      expect(c.received.some((m) => m.type === "trustResolved")).toBe(true);
-  });
-
-  test("client-presence predicate tracks live connections (trust deny-safe signal)", () => {
-    const d = new FakeDriver();
-    const hub = new SessionHub(d);
-    // The hub wires a real presence predicate at construction. The trust subscription
-    // can't serve this role (it never unsubscribes), which is exactly the dead-guard bug
-    // this closes: the driver must be able to deny-safe a trust card when nobody's around.
-    expect(d.clientPresence).toBeDefined();
-    expect(d.clientPresence!()).toBe(false); // no clients yet
-
-    const a = client();
-    const unsubA = hub.addClient(a.send);
-    expect(d.clientPresence!()).toBe(true);
-
-    const b = client();
-    const unsubB = hub.addClient(b.send);
-    expect(d.clientPresence!()).toBe(true);
-
-    unsubA();
-    expect(d.clientPresence!()).toBe(true); // b still connected
-    unsubB();
-    expect(d.clientPresence!()).toBe(false); // everyone gone → deny-safe
-  });
-
   test("a switch arriving mid-swap is coalesced, not rejected (boot-restore-vs-click)", async () => {
-    // A swap that doesn't resolve until released models the session warming on a fresh start (or a
-    // trust card awaiting input). Each openSession call gets its OWN release, so we can
+    // A swap that doesn't resolve until released models the session warming on a fresh start
+    // (model load / history replay). Each openSession call gets its OWN release, so we can
     // tell the queued second swap actually ran after the first finished.
     const releases: ((v: SessionDriverEvent[]) => void)[] = [];
     const d = new FakeDriver();
@@ -674,7 +597,7 @@ describe("SessionHub", () => {
     await flush();
     expect(releases.length).toBe(1);
 
-    // No misleading "already in progress / answer the trust prompt" error — the click is
+    // No misleading "already in progress" error — the click is
     // honored, not dropped.
     expect(
       a.received.some(

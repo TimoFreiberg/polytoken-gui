@@ -65,7 +65,7 @@ test("clicking a pill restores its surface", async ({ page }) => {
 });
 
 test("⌘\\ is a no-op when no agent-driven surfaces are active", async ({ page }) => {
-  // Clean transcript — no pending approvals/qna/trust. ⌘\ should do nothing.
+  // Clean transcript — no pending approvals/qna. ⌘\ should do nothing.
   await expect(page.locator(".attention-pill")).toHaveCount(0);
   await page.keyboard.press("Control+\\");
   await expect(page.locator(".attention-pill")).toHaveCount(0);
@@ -88,42 +88,10 @@ test("⌘\\ does not fire when a user-driven modal (Settings) is open", async ({
   await expect(page.locator(".attention-pill")).toHaveCount(0);
 });
 
-test("trust is in the cycle: minimize to pill and restore", async ({ page }) => {
-  await drive(page, "trust");
-  await expect(page.getByRole("dialog")).toBeVisible();
-
-  // Press 1: home → trust (no pill, trust is the target).
-  await page.keyboard.press("Control+\\");
-  await expect(page.locator(".attention-pill")).toHaveCount(0);
-
-  // Press 2: trust → transcript. Trust minimizes to a pill.
-  await page.keyboard.press("Control+\\");
-  const pill = page.locator(".attention-pill").first();
-  await expect(pill).toBeVisible();
-  await expect(page.getByRole("dialog")).toBeHidden();
-
-  // Press 3: transcript → trust. Trust restores.
-  await page.keyboard.press("Control+\\");
-  await expect(page.getByRole("dialog")).toBeVisible();
-  await expect(pill).toBeHidden();
-});
-
 test("approval pill has a title attribute naming the action + hotkey", async ({
   page,
 }) => {
   await drive(page, "confirm");
-  await expect(page.getByRole("dialog")).toBeVisible();
-  await page.keyboard.press("Control+\\");
-  await page.keyboard.press("Control+\\");
-  const pill = page.locator(".attention-pill").first();
-  await expect(pill).toBeVisible();
-  await expect(pill).toHaveAttribute("title", /restore/);
-});
-
-test("trust pill has a title attribute naming the action + hotkey", async ({
-  page,
-}) => {
-  await drive(page, "trust");
   await expect(page.getByRole("dialog")).toBeVisible();
   await page.keyboard.press("Control+\\");
   await page.keyboard.press("Control+\\");

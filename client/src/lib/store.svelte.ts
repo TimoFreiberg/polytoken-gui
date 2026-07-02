@@ -24,7 +24,6 @@ import {
   type SessionListEntry,
   type SessionState,
   type TranscriptItem,
-  type TrustRequest,
   PROTOCOL_VERSION,
 } from "@pilot/protocol";
 import { clearToken, getToken, setToken } from "./auth.js";
@@ -194,9 +193,6 @@ class PilotStore {
   // Inline path validation hint for the dir picker — the most recent stat result for a
   // typed path. Null when no stat is in flight or the path has been cleared.
   pathStat = $state<PathStat | null>(null);
-  // Interactive project-trust card (D12). Out-of-band, not part of the folded session
-  // state: trust is decided per-cwd before a session exists. Null when none pending.
-  trustRequest = $state<TrustRequest | null>(null);
   // Settings panel: the agent's global model defaults + favorites. Server-authoritative,
   // delivered like `models`.
   modelDefaults = $state<ModelDefaults>({ favorites: [] });
@@ -207,7 +203,6 @@ class PilotStore {
   pilotSettings = $state<PilotSettings>({
     loginShell: null,
     backgroundModel: null,
-    enabledExtensions: null,
   });
   loginEnv = $state<LoginEnvStatus>({ activeShell: null, ok: false });
   // Server-computed: the configured login shell differs from the one captured at boot,
@@ -995,18 +990,6 @@ class PilotStore {
         this.loginShellPendingRestart = msg.pendingRestart;
         this.backgroundModelWarning = msg.backgroundModelWarning;
         break;
-      case "trustRequest":
-        this.trustRequest = {
-          requestId: msg.requestId,
-          cwd: msg.cwd,
-          title: msg.title,
-          options: msg.options,
-        };
-        break;
-      case "trustResolved":
-        if (this.trustRequest?.requestId === msg.requestId)
-          this.trustRequest = null;
-        break;
       case "updateStatus":
         this.appUpdate = msg.available
           ? { sha: msg.sha ?? "", applying: msg.applying }
@@ -1450,14 +1433,6 @@ class PilotStore {
     // "resolved on another device" event (see the "event" case).
     this.locallyResolved.add(response.requestId);
     send({ type: "respondUi", response });
-  }
-  /** Answer the project-trust card. `choice` indexes the options; null denies. Clears
-   *  optimistically; the server's `trustResolved` confirms (and dismisses other tabs). */
-  respondTrust(choice: number | null): void {
-    const req = this.trustRequest;
-    if (!req) return;
-    send({ type: "trustResponse", requestId: req.requestId, choice });
-    this.trustRequest = null;
   }
   mock(script: string): void {
     send({ type: "mock", script });

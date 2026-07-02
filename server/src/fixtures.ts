@@ -15,7 +15,6 @@ import type {
   SessionRef,
   SessionSnapshot,
   SessionUsage,
-  TrustRequest,
 } from "@pilot/protocol";
 import {
   PERMISSION_APPROVAL_CHOICES,
@@ -827,25 +826,6 @@ export function unknownInterrogative(): ScriptStep[] {
       },
     },
   ];
-}
-
-// The interactive project-trust card (D12). NOT a ScriptStep — it rides the driver's
-// out-of-band trust channel, not the session event stream — so the mock emits it
-// directly via emitTrust rather than through play(). Mirrors the five options the daemon's CLI
-// selector offers for an untrusted cwd with gated .pi resources.
-export function mockTrustRequest(): TrustRequest {
-  return {
-    requestId: "req-trust-1",
-    cwd: "/Users/timo/src/untrusted-repo",
-    title: "Trust this project folder?",
-    options: [
-      { label: "Trust this folder", trusted: true },
-      { label: "Trust parent folder", trusted: true },
-      { label: "Trust for this session only", trusted: true },
-      { label: "Don't trust", trusted: false },
-      { label: "Don't trust (this session)", trusted: false },
-    ],
-  };
 }
 
 export function inputDialog(): ScriptStep[] {
@@ -1774,7 +1754,7 @@ const PLAN_VIEW_TEXT = `# Plan: Wire up the plan overlay
 `;
 
 /** A newly-created session that is still WARMING UP: it surfaces in the `initializing`
- *  phase (model load / history replay / trust resolution), dwells there long enough to
+ *  phase (model load / history replay), dwells there long enough to
  *  screenshot the distinct spinner, then transitions to idle once "ready". Drives the
  *  sidebar row + header "spinning up" indicator deterministically (dev bar `initializing`,
  *  e2e). The dwell is a script `wait`, so the rendered state is stable on capture. */

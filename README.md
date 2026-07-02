@@ -10,7 +10,7 @@ The name: you **pilot** pi remotely (pi + lot).
 
 Early. M0–M3 built and screenshot-verified against a deterministic mock of pi:
 streaming transcript, tool cards, prompt/steer/stop, mobile approval cards (incl.
-the project-trust gate) + generic fallback, ambient status/widgets, a reconnecting
+generic fallback), ambient status/widgets, a reconnecting
 PWA. Real pi wiring (M5) and remote deploy (M7) are next. See `docs/`.
 
 ## Quick start (dev)

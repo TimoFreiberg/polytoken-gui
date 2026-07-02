@@ -54,7 +54,7 @@ import {
   type SseEnvelope,
   type SessionStateSnapshot as DaemonStateSnapshot,
 } from "./daemon-client.js";
-import type { NewSessionOpts, PilotDriver, TrustEvent } from "../driver.js";
+import type { NewSessionOpts, PilotDriver } from "../driver.js";
 import {
   type FoldAccumulator,
   buildPostFetchEvent,
@@ -200,16 +200,6 @@ export async function createPolytokenDriver(
   let activeSessionId: string | null = null;
 
   const now = () => new Date().toISOString();
-
-  // Client-presence predicate, set by the hub at construction so the driver can
-  // auto-deny an interactive prompt when nobody is connected. The `() => true`
-  // default is FAIL-OPEN — "assume someone can answer" — chosen so a prompt is
-  // never auto-denied just because the hub hasn't registered the real predicate
-  // yet. A deny-safe default would be `() => false`.
-  //
-  // TODO: no read site yet — a future trust/prompt auto-deny path should consult
-  // hasClients() before issuing a prompt that nobody can answer.
-  let hasClients: () => boolean = () => true;
 
   // Viewed-session predicate, set by the hub at construction (per-client focus is
   // hub state the driver can't see). Consulted by the idle reaper so a session an
@@ -1809,9 +1799,6 @@ export async function createPolytokenDriver(
       } catch (e) {
         console.error(`[polytoken] setMcpServer ${action} failed`, e);
       }
-    },
-    setClientPresence(fn: () => boolean): void {
-      hasClients = fn;
     },
     setSessionViewers(fn: (sessionId: string) => boolean): void {
       isViewed = fn;

@@ -182,12 +182,12 @@ interface ClientConn {
   // The session this connection is viewing (null = the empty landing). Points into
   // `sessionStates`; null until the client adopts the default or opens a session.
   focusedId: SessionId | null;
-  // Single-flight per connection: a swap can block (warming the session, or a trust card awaiting
-  // input), so only one runs at a time on THIS connection (others are free). A second
-  // request arriving meanwhile isn't rejected — it's coalesced into `pendingSwitch` and
-  // run when the current one finishes (see switchTo). This kills the boot-restore-vs-click
-  // race: a click during the fresh-start restore warm used to draw a misleading "answer
-  // the trust prompt first" error and drop the click; now the click just wins.
+  // Single-flight per connection: a swap can block (warming the session — model load,
+  // history replay), so only one runs at a time on THIS connection (others are free). A
+  // second request arriving meanwhile isn't rejected — it's coalesced into `pendingSwitch`
+  // and run when the current one finishes (see switchTo). This kills the boot-restore-vs-click
+  // race: a click during the fresh-start restore warm used to draw a misleading "answer the
+  // first swap first" error and drop the click; now the click just wins.
   switchInFlight: boolean;
   // The latest switch queued behind an in-flight one (depth 1 — a newer request supersedes
   // an older queued one, so the operator's last gesture wins). `resolve` settles the
@@ -256,7 +256,7 @@ export class SessionHub {
   // when the set changes. In-memory only: a session on disk is never "running".
   private running = new Set<SessionId>();
   // Sessions surfaced as `initializing` — created/opened but not yet streaming (warming
-  // up: model load, history replay, trust). Tracked + broadcast alongside `running` so a
+  // up: model load, history replay). Tracked + broadcast alongside `running` so a
   // background/just-created row shows a distinct "spinning up" indicator. A session is
   // never both running and initializing; entering either clears the other here.
   private initializing = new Set<SessionId>();
@@ -351,20 +351,6 @@ export class SessionHub {
     private buildSha = "",
   ) {
     driver.subscribe((ev) => this.onEvent(ev));
-    // Project-trust cards travel their own channel (D12): they're decided before a
-    // session exists and while `switching` suppresses session events, so they can't go
-    // through onEvent. Relay request → broadcast card, resolved → dismiss it.
-    driver.subscribeTrust?.((ev) => {
-      if (ev.kind === "request")
-        this.broadcast({ type: "trustRequest", ...ev.request });
-      else this.broadcast({ type: "trustResolved", requestId: ev.requestId });
-    });
-    // Let the driver learn whether anyone is connected to answer an interactive prompt.
-    // The trust subscription above persists for the hub's life (it's the relay channel),
-    // so it can't double as a presence signal — this live predicate can. The driver
-    // deny-safes a project-trust card immediately when this reads false rather than
-    // hanging the swap for the prompt's full timeout.
-    driver.setClientPresence?.(() => this.clients.size > 0);
     // Per-client focus lives here, not in the driver — hand it a live predicate
     // so the idle reaper never disposes a session someone is currently reading.
     driver.setSessionViewers?.((sessionId) => {
@@ -1199,7 +1185,7 @@ export class SessionHub {
    * seeds the target; we fold that seed into the target's shared state (unless it's
    * already live — see below), point this connection at it, and re-seed it. Other
    * clients are untouched: focus is per-connection. Single-flight per connection (a swap
-   * can block for seconds warming the session, or minutes on a trust card): a second request
+   * can block for seconds warming the session, or minutes on a long warm-up): a second request
    * arriving mid-swap is coalesced (queued, latest wins) and run when this one finishes,
    * not rejected — so an operator clicking a session during the fresh-start boot-restore
    * warm lands on it instead of getting a spurious error. The session LIST re-broadcasts
@@ -1777,10 +1763,6 @@ export class SessionHub {
         this.broadcast(this.pilotSettingsMsg());
         return;
       }
-      case "trustResponse":
-        // The driver dedups (first answer settles it); a stale/duplicate id no-ops.
-        this.driver.respondTrust?.(msg.requestId, msg.choice);
-        return;
       case "applyUpdate":
         // User clicked "update now". Flag it (the watcher reads it back on its next
         // /update/state poll and applies) and reflect "applying" in the card. No-op if
@@ -1869,7 +1851,6 @@ export class SessionHub {
     writePilotSettings({
       loginShell: null,
       backgroundModel: null,
-      enabledExtensions: null,
     });
     this.driver.reset?.(opts);
     this.seedDefault();

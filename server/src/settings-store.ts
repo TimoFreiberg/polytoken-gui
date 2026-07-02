@@ -12,7 +12,6 @@ import { config } from "./config.js";
 const DEFAULTS: PilotSettings = {
   loginShell: null,
   backgroundModel: null,
-  enabledExtensions: null,
 };
 
 function settingsPath(): string {
