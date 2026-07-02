@@ -449,24 +449,24 @@ export type ClientMessage =
   | { type: "openDataDir" }
   | { type: "ping" };
 
-export function parseClientMessage(raw: string): ClientMessage | null {
+/** Parse a raw WS frame into a typed message, or null on bad JSON / missing `type`.
+ *  The two wire envelopes (client + server) are structurally identical, so one
+ *  generic parser backs both public functions. */
+function parseMessage<T extends { type: string }>(raw: string): T | null {
   try {
     const v = JSON.parse(raw);
     if (v && typeof v === "object" && typeof v.type === "string")
-      return v as ClientMessage;
+      return v as T;
   } catch {
     /* drop */
   }
   return null;
 }
 
+export function parseClientMessage(raw: string): ClientMessage | null {
+  return parseMessage<ClientMessage>(raw);
+}
+
 export function parseServerMessage(raw: string): ServerMessage | null {
-  try {
-    const v = JSON.parse(raw);
-    if (v && typeof v === "object" && typeof v.type === "string")
-      return v as ServerMessage;
-  } catch {
-    /* drop */
-  }
-  return null;
+  return parseMessage<ServerMessage>(raw);
 }

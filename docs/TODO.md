@@ -45,7 +45,7 @@ resolution is non-obvious or likely to bite again. Otherwise see `jj log`.
       
       Daemon client (~70 lines). ~~Raw-fetch timeout bug fixed: dequeueNewestInput and toggleAdventurousHandoff now route through safeFetch (the abort guard).~~ Remaining: post and get (daemon-client.ts:544–596) are copy-pastes differing only in method/body — merge into one request(). The four MCP methods collapse to one mcpServerAction(name, action), which also collapses the driver-side switch in setMcpServer.
       
-      Trivial: parseClientMessage/parseServerMessage in wire.ts:491 are byte-identical — one generic. openSession/reloadSession in the driver share their resolve-id→cwd→warm→seed skeleton.
+      Trivial: ~~parseClientMessage/parseServerMessage in wire.ts are byte-identical — merged into one generic parseMessage.~~ openSession/reloadSession in the driver share their resolve-id→cwd→warm→seed skeleton.
       
       4. Client: one dropdown primitive instead of four hand-rolled ones (~300–400 lines)
       FacetBadge.svelte (267 lines) and PermissionBadge.svelte (215) are structurally identical: badge button + open/sel state + the same Escape/Arrow/Enter onKeydown + backdrop button + ~120 lines of near-identical panel CSS each; ModelPicker.svelte (506) is the bigger sibling. The repo already has the right convention for exactly this situation — Chevron and transition:reveal are mandated shared primitives — this is the same move one level up: a ui/MenuBadge.svelte owning the open/keyboard/backdrop/panel chrome, with items passed as snippets. Besides the LOC, it guarantees the pickers can't drift behaviorally (they already drift slightly: only some have the kbd-hint footer).
