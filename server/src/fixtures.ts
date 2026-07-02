@@ -104,9 +104,7 @@ export const MOCK_FILES: readonly FileInfo[] = [
   { path: "docs/DESIGN.md", isDirectory: false },
   { path: "docs/DECISIONS.md", isDirectory: false },
   { path: "docs/TODO.md", isDirectory: false },
-  { path: "docs/DONE.md", isDirectory: false },
-  { path: "docs/OPEN-QUESTIONS.md", isDirectory: false },
-  { path: "docs/design-system-pass.md", isDirectory: false },
+  { path: "docs/ADR-desktop-shell.md", isDirectory: false },
   { path: "server", isDirectory: true },
   { path: "server/src/index.ts", isDirectory: false },
   { path: "server/src/hub.ts", isDirectory: false },
@@ -939,7 +937,7 @@ export function ambient(): ScriptStep[] {
           requestId: "w1",
           key: "tasklist",
           // Matches the tasklist extension's real wire format so the client's
-          // collapsed-pill rendering is exercised by the dev bar + e2e. [OPEN B]: the
+          // collapsed-pill rendering is exercised by the dev bar + e2e. the
           // item lines carry just the description (the #id is internal-only).
           lines: [
             "Open Tasks (3):",

@@ -1,5 +1,5 @@
 // Unit tests for parseFileCatalog — pure, no daemon. Fixtures use the GET /files
-// shape documented in the OpenAPI FileCatalogResponse (spike §8).
+// shape documented in the OpenAPI FileCatalogResponse  .
 
 import { test, expect } from "bun:test";
 import { parseFileCatalog } from "./file-catalog.js";

@@ -1,7 +1,7 @@
 // Parsing `polytoken print-slash-commands --format json` into pilot's
 // `CommandInfo[]`.
 //
-// The JSON shape (observed, polytoken 0.3.3):
+// The JSON shape (observed):
 //
 //   { "categories": [{ "id": "immediate", "title": "Immediate commands" }, ...],
 //     "commands": [
@@ -10,15 +10,14 @@
 //       ...
 //     ] }
 //
-// polytoken's commands are all daemon BUILTINS (no daemon extensions load under this
-// driver — D-C). pilot's `CommandInfo.source` union gains `"builtin"` for them; the
-// client renders `source` as a string badge, so a new value needs no client change.
-// Sending `/name args` as a normal prompt routes through polytoken's prompt path,
-// which runs the builtin — exactly how the daemon's extension commands work.
+// polytoken's commands are all daemon builtins. pilot's `CommandInfo.source` union
+// gains `"builtin"` for them; the client renders `source` as a string badge, so a new
+// value needs no client change. Sending `/name args` as a normal prompt routes through
+// polytoken's prompt path, which runs the builtin — exactly how the daemon's extension
+// commands work.
 //
-// The original pi driver (deleted) deliberately OMITS TUI builtins (/model, /settings) because pilot
-// has native UI for those. Under polytoken the same applies to /model + /models
-// (pilot's ModelPicker drives POST /model). The rest (/compact, /rewind, /facet,
+// TUI builtins like /model + /models are deliberately omitted because pilot has native
+// UI for those (ModelPicker drives POST /model). The rest (/compact, /rewind, /facet,
 // /permissions, /title, /clear, …) have no first-class pilot affordance OR are
 // useful as quick-access text shortcuts, so they surface in the slash menu.
 

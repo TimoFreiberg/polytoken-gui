@@ -6,7 +6,7 @@
 // replayed history, so the client renders the full conversation on focus/reload
 // (the hub resets + folds these, never via `subscribe`).
 //
-// polytoken's history is a linear event log (no branch DAG — spike §7), and
+// polytoken's history is a linear event log (no branch DAG), and
 // `KnownSessionHistoryItem` is a tagged union on `type`. The renderable kinds for
 // a transcript are: `user` (content + prompt_id), `assistant` (blocks[] +
 // prompt_id), and `tool_result` (call_id + content + is_error + prompt_id).

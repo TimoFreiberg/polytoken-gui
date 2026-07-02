@@ -3,12 +3,10 @@
 Pilot is a personal, single-user remote-control web UI for a coding agent. The agent
 runs as an out-of-process daemon; pilot drives it from a browser/phone over Tailscale.
 The UI mirrors the Claude app. See `docs/DESIGN.md` for architecture + the feature
-roadmap, `docs/DECISIONS.md` for settled calls, `docs/OPEN-QUESTIONS.md` for what's
-awaiting the owner's input.
+roadmap, `docs/DECISIONS.md` for settled calls, `docs/TODO.md` for the backlog.
 
-> **This branch is polytoken-only.** The former in-process pi SDK driver has been
-> removed; the live driver is the **polytoken** daemon, with a **mock** driver for
-> dev/e2e. pi-coupled decisions in the historical docs are retained as record.
+> **This branch is polytoken-only.** The live driver is the **polytoken** daemon,
+> with a **mock** driver for dev/e2e. `PILOT_DRIVER=pi` is a hard error.
 
 ## Facts that save you a wrong turn
 

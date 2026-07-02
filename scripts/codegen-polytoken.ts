@@ -6,12 +6,10 @@
 //
 // Run: `bun run scripts/codegen-polytoken.ts`
 //
-// Why a codegen script (not hand-written types)? polytoken is v0.3.3 / daemon API
-// 0.1.0 — early, and the contract WILL drift. Codegen from the binary's own schema
-// means a `bun run codegen-polytoken.ts && bunx tsc` after a polytoken bump catches
-// every breaking shape change at compile time, instead of at runtime against a live
-// daemon. The [VERIFY] spike (docs/polytoken-spike.md) confirmed these schemas match
-// a running daemon exactly.
+// Why a codegen script (not hand-written types)? polytoken is early, and the
+// contract WILL drift. Codegen from the binary's own schema means a `bun run
+// codegen-polytoken.ts && bunx tsc` after a polytoken bump catches every breaking
+// shape change at compile time, instead of at runtime against a live daemon.
 //
 // The binary path is resolved the same way pilot resolves it at runtime: $PATH, or
 // PILOT_POLYTOKEN_BIN. The script fails loud (exit 1) if the binary is missing —

@@ -8,7 +8,7 @@ import { drive, gotoFresh, waitForSettledWorkBlocks } from "./helpers.js";
 // asks via the answer tool, then keeps working, so a settled turn has the card pinned
 // between a pre-answer and a post-answer work run.
 //
-// Chunk 4 note: this spec mocks the WIRE, not the answer extension. The `answercard`
+// This spec mocks the WIRE, not the answer extension. The `answercard`
 // fixture (server/src/fixtures.ts) drives a canned `answer` toolSpan whose output is the
 // extension's `formatQnA` text — the client-side QnaResult parses that wire text into the
 // card. This spec stays the card-rendering guard.

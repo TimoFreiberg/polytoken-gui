@@ -1,7 +1,7 @@
 // parity/lib.ts — shared core for the GUI ⇄ TUI parity harness.
 //
-// See docs/PARITY-TESTING.md for the architecture and docs/PLAN-parity-testing.md for
-// the design + the adversarial-review trail. The load-bearing facts this module encodes:
+// See .claude/skills/parity/SKILL.md for the runbook. The load-bearing facts this
+// module encodes:
 //
 //  - polytoken writes THREE XDG roots: sessions+logs+tui_state under $XDG_DATA_HOME,
 //    config+auth under $XDG_CONFIG_HOME, provider-catalog cache under $XDG_CACHE_HOME.

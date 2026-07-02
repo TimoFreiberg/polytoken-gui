@@ -1,7 +1,7 @@
 // Parsing the daemon's `GET /files` response into pilot's `FileInfo[]`.
 //
 // GET /files returns `{files: string[]}` — project-relative paths, alphabetical,
-// with a trailing `/` on directories (spike §8 / the OpenAPI FileCatalogResponse).
+// with a trailing `/` on directories (/ the OpenAPI FileCatalogResponse).
 // This is the daemon-native @-mention index that replaces pilot's `fd`-based index
 // under the polytoken driver. The daemon is ignore-aware (.gitignore,
 // .claudeignore, .polytokenignore) and excludes dotfiles + the project private

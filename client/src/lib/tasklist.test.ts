@@ -3,7 +3,7 @@ import { parseTasklist } from "./tasklist.js";
 
 describe("parseTasklist", () => {
   test("parses the extension's real format (header + ○ items, no #id)", () => {
-    // [OPEN B]: the widget item lines are `  ○ description` — the `#id` is internal-only.
+    // the widget item lines are `  ○ description` — the `#id` is internal-only.
     const lines = [
       "Open Tasks (3):",
       "  ○ first item",
@@ -41,7 +41,7 @@ describe("parseTasklist", () => {
   test("ignores a stray id-looking token as part of the description", () => {
     // A legacy line still carrying `#v23gry: …` (an old extension / a different host)
     // no longer splits id from description — the whole tail is the description now. This
-    // documents the [OPEN B] parser simplification: there is no id to capture.
+    // documents the parser simplification: there is no id to capture.
     const parsed = parseTasklist(["  ○ #v23gry: fix foo"]);
     expect(parsed).toEqual([{ description: "#v23gry: fix foo" }]);
   });

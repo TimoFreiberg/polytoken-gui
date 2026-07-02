@@ -859,7 +859,7 @@ describe("mapDaemonEvent", () => {
     });
   });
 
-  // ===== Host UI + permissions (Chunk 3) =====
+  // ===== Host UI + permissions =====
 
   test("permission_monitor_switch -> sessionUpdated carries the new mode + setMonitorMode effect", () => {
     const out = fold({
@@ -1717,7 +1717,7 @@ describe("resetAccumulator", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Integration: full streaming pipeline (the spike §4 observed trace).
+// Integration: full streaming pipeline an observed trace.
 // ---------------------------------------------------------------------------
 
 describe("streaming pipeline integration", () => {

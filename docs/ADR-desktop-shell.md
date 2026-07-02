@@ -3,8 +3,7 @@
 Status: **proposed, awaiting owner sign-off** (2026-07-02, from the design-dossier track).
 Supersedes the shell part of the "📐 Architecture direction" note in `docs/TODO.md`
 (2026-07-01) — the Rust-hub end-state there stays a valid *target*, gated by the criteria
-below. Companions: `PLAN-protocol-v2.md` (the precondition for any Rust hub),
-`desktop/README.md` (the Swift shell this replaces).
+below. Companion: `desktop/README.md` (the Swift shell this replaces).
 
 ## Decision
 
@@ -114,7 +113,7 @@ shell/hub split is drawn correctly. File under protocol-v2-adjacent future work.
 GO only when **all** hold:
 
 1. **Protocol v2 landed** — the hub is a journaling router with no server-side fold
-   (`PLAN-protocol-v2.md` commit 2+). Porting before this means reimplementing
+   (the protocol v2 work shipped 2026-07-02). Porting before this means reimplementing
    `foldEvent` in Rust (reviving the dual-fold drift the shared reducer exists to
    prevent) or embedding JS. Hard blocker.
 2. **Hub churn has flattened** — the `PilotDriver` seam and hub.ts have stopped growing

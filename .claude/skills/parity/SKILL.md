@@ -20,7 +20,8 @@ Everything lives under one isolation root (`$PILOT_PARITY_ROOT`, default
 registry (`XDG_DATA_HOME`), an isolated cache, and a dedicated `tmux -L` server. It
 **cannot** touch prod pilot/daemon state. Tear down with one command.
 
-One entry point: `bun parity/parity.ts <cmd>`. See `docs/PARITY-TESTING.md` for the why.
+One entry point: `bun parity/parity.ts <cmd>`. See `.claude/skills/parity/SKILL.md`
+for the full runbook.
 
 ## The model constraint that shapes everything (read this)
 

@@ -1,23 +1,16 @@
 // The PolytokenDriver: a PilotDriver backed by an out-of-process polytoken daemon.
 //
 // polytoken is a daemon-first coding agent with a versioned OpenAPI 3.1 HTTP surface
-// + an SSE event stream; the TUI is just one client of it. So this driver is mostly an
+// + an SSE event stream; the TUI is just one client of it. This driver is mostly an
 // HTTP+SSE client that maps polytoken's event vocabulary onto pilot's SessionDriverEvent.
 //
-// Chunk 1–3 scope: spawn a daemon, claim the lease (+ heartbeat), subscribe to /events,
-// `prompt`, `abort`, the full 57-variant event-fold (event-map.ts), and the host-UI
-// bridge (ui-bridge.ts). This driver is the I/O glue — it feeds SSE envelopes to the
-// pure mapper and EXECUTES the returned effect descriptors (fetchState, reseed,
-// refetchQueue).
+// This driver is the I/O glue — it feeds SSE envelopes to the pure mapper
+// (event-map.ts) and executes the returned effect descriptors (fetchState, reseed,
+// refetchQueue). It also owns session lifecycle: spawning daemons, claiming leases,
+// warm-pool management (LRU eviction + idle reaper), worktree integration, and
+// branchFrom → POST /rewind (destructive; the history is linear, no branch DAG).
 //
-// Chunk 4 (this revision): SESSIONS & LIFECYCLE — list cold sessions from the on-disk
-// registry (sessions-registry.ts), open/reload by spawning `--resume --session-id` +
-// seeding from GET /history (history-seed.ts), rename via POST /title, the warm POOL
-// with LRU eviction + idle reaper (mirroring the original pi driver (deleted)), worktree integration, the
-// new-session project picker (fs-helpers.ts), and branchFrom → POST /rewind
-// (destructive; the history is linear, no branch DAG — spike §7).
-//
-// Process model (spike §1): one daemon = one session = one port. This driver keeps a
+// Process model: one daemon = one session = one port. The driver keeps a
 // Map<SessionId, WarmSession>; the cap + idle reaper bound the pool so N background
 // sessions stay warm but idle ones eventually retire. Cold (not-spawned) sessions are
 // listed straight from disk — no daemon needed until opened.
@@ -95,7 +88,7 @@ interface PolytokenDriverOptions {
   bin?: string;
   /** Max warm daemons before LRU eviction. Defaults to 8 — the warm pool keeps
    *  several sessions hot for instant switching (polytoken's out-of-process model
-   *  makes this its natural advantage, D-A); idle ones are reaped on a timer. */
+   *  makes this its natural advantage); idle ones are reaped on a timer. */
   warmCap?: number;
   /** The on-disk sessions registry dir (where `session.json` files live). Defaults
    *  to polytoken's own default (`$XDG_DATA_HOME/polytoken/sessions` or
@@ -299,7 +292,7 @@ export async function createPolytokenDriver(
   }
 
   /** Derive pilot's SessionStatus from the cached daemon state snapshot. Uses the
-   *  daemon's authoritative `turn_in_flight` flag (spike §7) rather than inferring
+   *  daemon's authoritative `turn_in_flight` flag   rather than inferring
    *  from events — the daemon knows its own turn state. */
   function statusFromState(
     state: DaemonStateSnapshot | null,
@@ -315,8 +308,8 @@ export async function createPolytokenDriver(
    *
    * Effects:
    * - fetchState: GET /state → update ws.lastState → emit buildPostFetchEvent.
-   *   Usage is on GET /state, not on the event (spike §4 correction).
-   * - reseed: GET /history + GET /state → full re-broadcast (Chunk 4; for now
+   *   Usage is on GET /state, not on the event .
+   * - reseed: GET /history + GET /state → full re-broadcast (for now
    *   just refresh the state and emit sessionUpdated).
    * - refetchQueue: GET /turn/input → emit queueUpdated with the full queue.
    */
@@ -436,7 +429,7 @@ export async function createPolytokenDriver(
             type: "queueUpdated",
             messages: data.items.map((item) => ({
               id: item.id,
-              mode: "steer" as const, // daemon doesn't distinguish steer/followUp (spike §3)
+              mode: "steer" as const, // daemon doesn't distinguish steer/followUp 
               text: item.content,
               createdAt: now(),
               updatedAt: now(),
@@ -726,7 +719,6 @@ export async function createPolytokenDriver(
     // and the daemon will reject any late POST. Leaving them would leak the map.
     ws.pendingInterrogatives.clear();
     await ws.client.close();
-    // Remove from the pool (by sessionId).
     for (const [id, entry] of warm) {
       if (entry === ws) {
         warm.delete(id);
@@ -747,9 +739,9 @@ export async function createPolytokenDriver(
             for (const [id, ws] of [...warm]) {
               if (id === activeSessionId) continue; // never reap the active session
               if (ws.lastFocusedAt > cutoff) continue;
-              // Never reap a session mid-turn — background turns keep running (D-A),
+              // Never reap a session mid-turn — background turns keep running,
               // and killing the daemon aborts them. The daemon's turn_in_flight is the
-              // authoritative signal (spike §7). A backgrounded running turn is the
+              // authoritative signal  . A backgrounded running turn is the
               // headline feature of the warm pool; reaping it would defeat it.
               if (ws.lastState?.turn_in_flight) continue;
               // Never reap a session a connected client is viewing — reading a
@@ -1131,8 +1123,8 @@ export async function createPolytokenDriver(
     async newSession(opts: NewSessionOpts = {}): Promise<SessionDriverEvent[]> {
       // Create a fresh session. The cwd is the project dir (the daemon's
       // --working-dir); `worktree` isolates it in a fresh jj/git worktree first.
-      // `model`/`thinking` apply after warm-up via POST /model (Chunk 5 wires the
-      // real call; for now they're noted but the daemon's default applies).
+      // `model`/`thinking` apply after warm-up via POST /model (the daemon's
+      // default applies until then).
       let cwd = opts.cwd?.trim() || join(homedir(), "projects");
       cwd = resolveGuiPath(cwd);
       // Validate the cwd exists + is a dir, loudly — don't let the daemon spawn
@@ -1146,8 +1138,7 @@ export async function createPolytokenDriver(
         cwd = meta.path;
       }
       const ws = await warmSession(cwd);
-      // Apply the draft's model/thinking if given (Chunk 5 wires listModels; the
-      // setModel call works now but needs a valid provider/modelId string).
+      // Apply the draft's model/thinking if given (needs a valid provider/modelId string).
       if (opts.model) {
         try {
           // opts.model.modelId is the FULL registry name (provider/id) — POST it
@@ -1229,7 +1220,7 @@ export async function createPolytokenDriver(
       cancelled: boolean;
       aborted?: boolean;
     }> {
-      // polytoken's history is LINEAR (no branch DAG — spike §7, D-B), so this is
+      // polytoken's history is LINEAR (no branch DAG), so this is
       // NOT a branch — it's a destructive REWIND. POST /rewind drops the target
       // prompt + everything after it (irreversible), and the prompt text returns to
       // the input for re-editing. pilot's UX must warn "deletes everything after
@@ -1873,7 +1864,7 @@ export async function createPolytokenDriver(
           type: "queueUpdated",
           messages: remaining.map((item) => ({
             id: item.id,
-            mode: "steer" as const, // daemon doesn't distinguish steer/followUp (spike §3)
+            mode: "steer" as const, // daemon doesn't distinguish steer/followUp 
             text: item.content,
             createdAt: now(),
             updatedAt: now(),

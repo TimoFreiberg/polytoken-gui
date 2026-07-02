@@ -1,11 +1,11 @@
 // The low-level HTTP + SSE + process-lifecycle client for a single polytoken daemon.
 //
-// One daemon process = one session = one port (confirmed in docs/polytoken-spike.md §1).
-// This module owns the lifecycle of ONE such daemon: spawn it, claim the TUI attachment
-// lease (+ heartbeat), subscribe to the `/events` SSE stream, and POST to its endpoints.
-// The PolytokenDriver composes one of these per warm session.
+// One daemon process = one session = one port. This module owns the lifecycle of
+// ONE such daemon: spawn it, claim the TUI attachment lease (+ heartbeat), subscribe
+// to the `/events` SSE stream, and POST to its endpoints. The PolytokenDriver
+// composes one of these per warm session.
 //
-// Design notes (from the spike):
+// Design notes:
 // - The lease is pid-bound and EXCLUSIVE (a second claim → 409). Pilot is the sole
 //   attacher; the local TUI detaches while pilot drives.
 // - SSE is push-only with no periodic heartbeats on an idle daemon — liveness must be
@@ -840,7 +840,7 @@ export class DaemonClient {
   /**
    * `POST /turn/cancel` — abort the active turn. The spec documents 409 when no turn
    * is in flight, but the live daemon was observed returning 202 with prompt_id:null
-   * in that case instead (spike §3). Treat both as no-op.
+   * in that case instead . Treat both as no-op.
    */
   async cancelTurn(): Promise<void> {
     const { status, error } = await this.post("/turn/cancel");
@@ -880,7 +880,7 @@ export class DaemonClient {
    *  trailing `/`). `include_ignored` disables .gitignore/.claudeignore/.polytokenignore
    *  (dotfiles + the project private dir stay excluded). Returns `[]` when the project
    *  root is unavailable. The daemon owns this index natively — pilot doesn't run its
-   *  own `fd` for the index under this driver (spike §8). */
+   *  own `fd` for the index under this driver  . */
   files(opts?: { includeIgnored?: boolean }): Promise<{
     status: number;
     data: FileCatalogResponse | null;
@@ -1092,7 +1092,7 @@ export class DaemonClient {
    * The `type` discriminator lives at `event.type` (not the envelope root).
    *
    * Returns an unsubscribe function that stops the stream + retry loop. The stream
-   * is push-only — an idle daemon emits nothing (spike §6), so liveness is
+   * is push-only — an idle daemon emits nothing , so liveness is
    * time-based (frame gap), not periodic `heartbeat` events.
    *
    * On error or stream end, the connection retries with exponential backoff
@@ -1102,7 +1102,7 @@ export class DaemonClient {
    * `LIVENESS_INTERVAL` (60s), forcing a reconnect.
    *
    * `Last-Event-ID` is sent on reconnect if the daemon emitted `id:` lines — daemon
-   * support is UNCONFIRMED (spike §6: not tested; upstream feature ask is still open).
+   * support is UNCONFIRMED  (untested; upstream feature ask still open).
    * Sending it is best-effort; if unsupported, the `stream_discontinuity` → reseed
    * handles recovery.
    */

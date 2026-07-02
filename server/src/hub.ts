@@ -1264,8 +1264,8 @@ export class SessionHub {
       // was being fetched, so the seed may predate them. Re-run the swap once —
       // the second fetch is strictly after the daemon accepted those events, so
       // its seed contains them. (Residual: an event racing the SECOND fetch is
-      // one-fetch-wide and needs a daemon-side SSE-id watermark to close —
-      // tracked in PLAN-protocol-v2.) Only for idempotent swaps; a raced
+      // one-fetch-wide and needs a daemon-side SSE-id watermark to close.)
+      // Only for idempotent swaps; a raced
       // non-retryable swap (newSession) logs loud instead of guessing.
       const raced = this.takeSwapBuffer(sid, swapStart);
       if (raced.length > 0 && opts.retryOnRacedEvents) {

@@ -99,7 +99,7 @@ Force a redeploy of current `origin/main`: `~/pilot-live/scripts/auto-deploy.sh 
 - The smoke test runs the **mock** driver, so a real-driver-only failure slips past it;
   the post-flip `/health` gate + auto-rollback is the backstop.
 
-## Security notes (see also docs/OPEN-QUESTIONS.md)
+## Security notes
 
 - Tailscale is the network boundary (only your tailnet devices reach the box); the
   token is defense-in-depth on top of that.

@@ -8,7 +8,7 @@
 //   bun parity/parity.ts oracle <daemon|tui|gui> [id]
 //   bun parity/parity.ts assert <session-id> <needle>
 //
-// See docs/PARITY-TESTING.md and .claude/skills/parity/SKILL.md.
+// See .claude/skills/parity/SKILL.md for the runbook.
 
 import { down } from "./down.ts";
 import { preflight } from "./doctor.ts";

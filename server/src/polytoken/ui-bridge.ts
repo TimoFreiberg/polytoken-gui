@@ -8,9 +8,9 @@
 // forward mapping captured. Like event-map.ts, this is a PURE function — the
 // driver does the POST, this builds the body.
 //
-// Shapes grounded in docs/polytoken-spike.md §5 (confirmed against a running
-// daemon + the binary's own schemas). The spike corrected the plan's assumed
-// permission model (3 modes not 4; 7 approval choices not 5).
+// Shapes grounded in the binary's own self-describing schemas (`polytoken openapi` /
+// `polytoken event-schema`). The permission model has 3 modes (not 4) and 7 approval
+// choices (not 5).
 
 import type { components } from "./wire-types.js";
 import type { HostUiResponse, QnaAnswer } from "@pilot/protocol";

@@ -97,7 +97,7 @@ if you wanted a steer.) Not filing.
 **#5 `/turn/cancel` — the spec is silent, which is the point; ask stands, reframed as
 "define/document".** The endpoint's entire documented contract is: 202 "Turn cancellation
 accepted" / 409 "No turn is in flight". Nothing about pending interrogatives either way —
-so no, we can't know from the API description, and empirically (NEXT-SESSION §E) it did NOT
+so no, we can't know from the API description, and empirically it did NOT
 unblock an interrogative-blocked turn. The ask is precisely "please define (ideally:
 settles interrogatives deny-safe) and document it".
 

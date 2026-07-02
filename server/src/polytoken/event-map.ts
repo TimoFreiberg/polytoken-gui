@@ -1,19 +1,15 @@
 // Pure mapping from polytoken's DaemonEvent SSE stream to pilot's SessionDriverEvent
-// stream. This is the testable heart of the polytoken driver — given a daemon event,
+// This is the testable heart of the polytoken driver — given a daemon event,
 // an accumulator, and a little context, it returns zero or more pilot events to fold +
 // broadcast, plus zero or more side-effect descriptors for the driver to execute.
 //
-// Mirrors the original pi driver's (deleted) event-map in discipline (pure, table-driven-tested), but
-// polytoken's stream is LOWER LEVEL than the original driver's: it's Anthropic Messages-API-shaped
-// (message_start → content_block_start → content_block_delta → content_block_stop →
-// message_complete), so this mapper carries a small ACCUMULATOR that tracks the
-// current block kind and accrues tool-use input. The original driver's stream was already semantic
-// (text_delta, tool_execution_start, agent_end), so its mapper was near-stateless.
+// polytoken's stream is Anthropic Messages-API-shaped (message_start →
+// content_block_start → content_block_delta → content_block_stop → message_complete),
+// so this mapper carries a small ACCUMULATOR that tracks the current block kind and
+// accrues tool-use input.
 //
-// Shapes grounded in docs/polytoken-spike.md (confirmed against a running daemon,
-// polytoken 0.3.3) and the binary's own self-describing schemas (polytoken openapi /
-// polytoken event-schema). The spike corrected several plan assumptions; those
-// corrections are baked in here.
+// Shapes grounded in the binary's own self-describing schemas (`polytoken openapi` /
+// `polytoken event-schema`).
 
 import type { components } from "./wire-types.js";
 import type {
@@ -48,8 +44,8 @@ type ProviderError = components["schemas"]["ProviderError"];
 //
 // polytoken streams content blocks incrementally: content_block_start sets the
 // kind, content_block_delta(s) feed text or accrue tool-use input, content_block_stop
-// closes the window. tool_call (authoritative, per spike §4) emits toolStarted.
-// message_complete is the turn boundary (like the original driver's agent_end).
+// closes the window. tool_call is authoritative — it carries the complete parsed
+// input, so we emit toolStarted immediately. message_complete is the turn boundary.
 //
 // The accumulator also tracks turn-level error state: model_error sets it,
 // message_start (a retry/new message) clears it, message_complete consumes it to
@@ -126,7 +122,7 @@ export interface MapCtx {
 // Effects — side-effect descriptors the mapper returns alongside events.
 //
 // The mapper is pure (no I/O). Some mappings need a state fetch (usage is on
-// GET /state, not on the event — spike §4 correction) or a queue refresh. These
+// GET /state, not on the event or a queue refresh. These
 // are returned as effect descriptors; the driver executes them after emitting the
 // pure events. For fetchState effects, the driver calls buildPostFetchEvent()
 // (also pure, tested) to produce the follow-up event from the refreshed cache.
@@ -145,9 +141,9 @@ export type DaemonEffect =
       emit: "runCompleted" | "sessionUpdated";
       promptId?: string;
     }
-  /** GET /history + GET /state → full re-seed (spike §6: stream_discontinuity drops
-   *  events; spike §7: session_rewound truncates history). Chunk 2 emits a
-   *  sessionUpdated from the refreshed state; the full re-broadcast is Chunk 4. */
+  /** GET /history + GET /state → full re-seed (stream_discontinuity drops
+   *  events; session_rewound truncates history). Emits a sessionUpdated
+   *  from the refreshed state, then the full re-broadcast. */
   | { type: "reseed" }
   /** GET /turn/input → queueUpdated with the refreshed queue. The queue events
    *  (queued/dequeued/discarded) don't carry the FULL queue, only one item +
@@ -386,7 +382,7 @@ function extractToolResult(
 }
 
 /** Build a stable SessionQueuedMessage from a pending_turn_input_drained event's
- *  content. The daemon doesn't distinguish steer from followUp (spike §3); pilot's
+ *  content. The daemon doesn't distinguish steer from followUp ; pilot's
  *  mode is UX-only, so we default to "steer" (the mid-turn case). */
 function drainedQueueMessage(
   text: string,
@@ -701,8 +697,8 @@ export function buildPostFetchEvent(
 //
 // Subagent routing: every event variant (except subsession_*, mcp_server_*,
 // subagent_*, notification_autodrain_switch) carries an optional subagent_handle.
-// When non-null, the frame belongs to a NESTED subagent turn (spike §4) — not the
-// top-level transcript. Chunk 2 routes these to empty (the subagent view is later);
+// When non-null, the frame belongs to a NESTED subagent turn  — not the
+// top-level transcript. These route to empty (the subagent view is later);
 // they must NOT pollute the top-level transcript.
 // ---------------------------------------------------------------------------
 
@@ -746,7 +742,7 @@ export function mapDaemonEvent(
           },
         ]);
       }
-      // Usage is on GET /state, not on the event (spike §4 correction). Defer to
+      // Usage is on GET /state, not on the event . Defer to
       // the driver's fetchState effect, which refreshes the cache and then calls
       // buildPostFetchEvent("runCompleted", ctx, promptId) to produce the
       // runCompleted event. The prompt_id is the daemon's per-turn id — the same
@@ -827,7 +823,7 @@ export function mapDaemonEvent(
     // ===== Tool plumbing =====
 
     case "tool_call": {
-      // tool_call is authoritative (spike §4): input is the complete parsed input.
+      // tool_call is authoritative : input is the complete parsed input.
       // Prefer the event's input; fall back to the accumulated buffer.
       const input =
         ev.input !== undefined ? ev.input : parseToolInput(acc.toolInputBuffer);
@@ -926,7 +922,7 @@ export function mapDaemonEvent(
     }
 
     case "stream_discontinuity": {
-      // Events were dropped (spike §6) — re-seed from GET /history + GET /state.
+      // Events were dropped  — re-seed from GET /history + GET /state.
       return events([], [{ type: "reseed" }]);
     }
 
@@ -1020,7 +1016,7 @@ export function mapDaemonEvent(
     }
 
     case "session_rewound": {
-      // History was truncated (spike §7: destructive rewind). Re-seed.
+      // History was truncated destructive. Re-seed.
       return events([], [{ type: "reseed" }]);
     }
 
@@ -1030,8 +1026,8 @@ export function mapDaemonEvent(
     }
 
     case "facet_switch": {
-      // Facet changed (mid-conversation persona switch). Chunk 5 surfaces the facet
-      // indicator (name + accent color); for now, re-read state for the snapshot.
+      // Facet changed (mid-conversation persona switch). Re-read state for the
+      // snapshot (the facet indicator comes from the snapshot's facet field).
       return events([], [{ type: "fetchState", emit: "sessionUpdated" }]);
     }
 
@@ -1154,13 +1150,13 @@ export function mapDaemonEvent(
       ]);
     }
 
-    // ===== Host UI + permissions (Chunk 3) =====
+    // ===== Host UI + permissions =====
     //
     // interrogative / ask_user_question / permission_monitor_switch are the
     // daemon's host-UI surface. The first two emit a pilot hostUiRequest card
     // (the turn is paused until the operator answers) and a registerInterrogative
     // effect so the driver can build the reverse response. The third is an
-    // ambient mode-change notify (the mode SWITCHER itself is a Chunk 5 concern;
+    // ambient mode-change notify (the mode SWITCHER UI itself is a later concern;
     // the approval CARDS surface via interrogative{type:"permission"}).
 
     case "interrogative": {
@@ -1237,7 +1233,7 @@ export function mapDaemonEvent(
 
     // ===== v1-ignored variants (return empty — the stream stays live) =====
     //
-    // These are ambient metadata, new concepts not yet surfaced, or Chunk 3/5
+    // These are ambient metadata, new concepts not yet surfaced, or host-UI
     // concerns. Each is tested to assert it returns empty (the table-driven test
     // matrix writes itself from the 57-variant enumeration).
 
