@@ -35,7 +35,13 @@ See `docs/` siblings for context: `DESIGN.md` (architecture + roadmap), `DECISIO
       after warm-up; mock: seeds `snapshot.facet`). FacetBadge + ⌘⇧C now read/write
       the draft's facet while drafting. E2e: hotkey-in-draft + submit-carries-facet
       in `drafts.e2e.ts`.
-- [ ] adventurous-handoff is per-session, the toggle should be in the per-session config (near the prompt text box) - maybe in the facet menu? it's kiiinda a modifier of plan mode (in spirit - it is an independent toggle right now aiui)
+- [x] adventurous-handoff is per-session, the toggle should be in the per-session config (near the prompt text box) - maybe in the facet menu? it's kiiinda a modifier of plan mode (in spirit - it is an independent toggle right now aiui)
+      **Fixed 2026-07-02:** moved the toggle from Settings→Appearance into the
+      FacetBadge picker panel (a switch row between the facet options and the
+      reload button, with an On/Off pill) — per-session config next to the
+      composer, grouped with the facets it modifies. Hidden while drafting a new
+      session (no live daemon session to toggle yet). E2e rewritten to drive it
+      from the facet menu + a hides-while-drafting spec.
 
 - [x] **`⌘\` cycle through active attention surfaces (with minimize-to-pill).** A unified
       `⌘\` hotkey that cycles keyboard focus through agent-driven attention surfaces that are

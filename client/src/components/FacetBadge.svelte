@@ -18,6 +18,10 @@
   let sel = $state(0);
 
   const facets = $derived(store.facets);
+  // Adventurous handoff lives in this menu because it's a plan-mode modifier
+  // in spirit: it lets plan mode hand off to implementation autonomously. It's
+  // a live per-session daemon flag, so it hides while drafting (no session yet).
+  const handoff = $derived(store.session.adventurousHandoff ?? false);
 
   function toggle() {
     if (open) {
@@ -88,6 +92,21 @@
             <span class="item-label">{opt.charAt(0).toUpperCase() + opt.slice(1)}</span>
           </button>
         {/each}
+        {#if !store.draft}
+          <button
+            class="handoff"
+            role="switch"
+            aria-checked={handoff}
+            data-testid="adventurous-handoff"
+            title={handoff
+              ? "Disable adventurous handoff — plan mode waits for your approval"
+              : "Enable adventurous handoff — plan mode may start implementing autonomously"}
+            onclick={() => store.toggleAdventurousHandoff()}
+          >
+            <span class="item-label">Adventurous handoff</span>
+            <span class="pill" class:on={handoff}>{handoff ? "On" : "Off"}</span>
+          </button>
+        {/if}
         <button
           class="reload"
           title="Reload the facet list from disk"
@@ -181,6 +200,36 @@
   }
   .item.active .item-label {
     font-weight: 600;
+  }
+  .handoff {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    width: 100%;
+    text-align: left;
+    background: transparent;
+    border: none;
+    border-top: 1px solid var(--border);
+    padding: 7px 8px;
+    margin-top: 2px;
+    cursor: pointer;
+    color: var(--text);
+  }
+  .handoff:hover {
+    background: var(--surface-sunken);
+  }
+  .handoff .pill {
+    font-size: 11px;
+    color: var(--text-muted);
+    border: 1px solid var(--border-strong);
+    border-radius: 999px;
+    padding: 1px 8px;
+  }
+  .handoff .pill.on {
+    color: var(--accent);
+    background: var(--accent-soft);
+    border-color: color-mix(in srgb, var(--accent) 40%, transparent);
   }
   .reload {
     display: block;

@@ -286,23 +286,6 @@
             {store.hideThinking ? "On" : "Off"}
           </button>
         </div>
-        <div class="row">
-          <div class="rinfo">
-            <div class="rlabel">Adventurous handoff</div>
-            <div class="rdesc">Let plan mode autonomously start implementing the plan when it completes — essential for hands-off work.</div>
-          </div>
-          <button
-            class="seg-btn"
-            class:active={store.session.adventurousHandoff ?? false}
-            role="switch"
-            aria-checked={store.session.adventurousHandoff ?? false}
-            data-testid="adventurous-handoff"
-            title={(store.session.adventurousHandoff ?? false) ? "Disable adventurous handoff" : "Enable adventurous handoff (auto-start implementing plans)"}
-            onclick={() => store.toggleAdventurousHandoff()}
-          >
-            {(store.session.adventurousHandoff ?? false) ? "On" : "Off"}
-          </button>
-        </div>
       </section>
       {/if}
 
