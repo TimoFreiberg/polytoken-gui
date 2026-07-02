@@ -30,6 +30,7 @@ import type {
   SessionDriverEvent,
   SessionId,
   SessionListEntry,
+  SessionQueuedMessage,
   SessionUsage,
   WorkspaceRef,
 } from "@pilot/protocol";
@@ -469,13 +470,7 @@ export async function createPolytokenDriver(
             sessionRef: ws.ref,
             timestamp: now(),
             type: "queueUpdated",
-            messages: data.items.map((item) => ({
-              id: item.id,
-              mode: "steer" as const, // daemon doesn't distinguish steer/followUp 
-              text: item.content,
-              createdAt: now(),
-              updatedAt: now(),
-            })),
+            messages: data.items.map((item) => queueMsg(item, now())),
           });
         });
         break;
@@ -806,12 +801,23 @@ export async function createPolytokenDriver(
 
   // --- Helpers for sessions + worktree resolution (used by the methods below) ---
 
-  /** Extract pilot's SessionUsage from a daemon state snapshot's context_usage.
-   *  Re-exported from event-map's pure helper so the driver + tests share one path. */
-  function usageFromState(
-    state: DaemonStateSnapshot | null,
-  ): SessionUsage | undefined {
-    return usageFromStatePure(state);
+  /** Map a pending queue item to a pilot SessionQueuedMessage. The daemon
+   *  carries no timestamp on queued items (only id + content) and no
+   *  steer/followUp discriminator — pilot's `mode` is UX-only, so it defaults
+   *  to "steer" (the mid-turn case). `ts` is caller-supplied (fetch-time, not
+   *  queue-time); both createdAt/updatedAt share it, matching the prior inline
+   *  behavior. */
+  function queueMsg(
+    item: { id: string; content: string },
+    ts: string,
+  ): SessionQueuedMessage {
+    return {
+      id: item.id,
+      mode: "steer", // daemon doesn't distinguish steer/followUp
+      text: item.content,
+      createdAt: ts,
+      updatedAt: ts,
+    };
   }
 
   /** The worktree field for a session's cwd, or undefined. Resolved from the
@@ -1092,7 +1098,7 @@ export async function createPolytokenDriver(
           archived: archiveStore.has(sessionPath),
           worktree: worktreeFieldFor(ws.cwd),
         });
-        const u = usageFromState(ws.lastState);
+        const u = usageFromStatePure(ws.lastState);
         if (u) warmUsage.set(ws.ref.sessionId, u);
       }
       const merged = mergeSessionLists(onDisk, warmEntries);
@@ -1330,7 +1336,7 @@ export async function createPolytokenDriver(
             ws.usagePoll = null;
           });
       }
-      return usageFromState(ws.lastState);
+      return usageFromStatePure(ws.lastState);
     },
 
     async setArchived(
@@ -1815,13 +1821,7 @@ export async function createPolytokenDriver(
           sessionRef: ws.ref,
           timestamp: now(),
           type: "queueUpdated",
-          messages: remaining.map((item) => ({
-            id: item.id,
-            mode: "steer" as const, // daemon doesn't distinguish steer/followUp 
-            text: item.content,
-            createdAt: now(),
-            updatedAt: now(),
-          })),
+          messages: remaining.map((item) => queueMsg(item, now())),
         });
         const remainingIds = new Set(remaining.map((item) => item.id));
         const drained = items
