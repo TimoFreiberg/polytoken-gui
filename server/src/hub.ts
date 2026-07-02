@@ -194,9 +194,19 @@ interface ClientConn {
   pendingSwitch: PendingSwitch | null;
 }
 
+/** switchTo options. `retryOnRacedEvents` opts a swap into the attach-window
+ *  fix: if live events for the target arrived while its seed was being fetched
+ *  (so the seed may predate them), the swap is re-run once. Only safe for
+ *  idempotent swaps (openSession / reloadSession) — NEVER newSession, where a
+ *  re-run would create a second session. */
+interface SwitchOpts {
+  reseed?: boolean;
+  retryOnRacedEvents?: boolean;
+}
+
 interface PendingSwitch {
   swap: () => Promise<SessionDriverEvent[]>;
-  opts: { reseed?: boolean };
+  opts: SwitchOpts;
   resolve: (sid: SessionId | null) => void;
 }
 
@@ -212,6 +222,19 @@ export class SessionHub {
   // journal runs dark alongside the legacy fold (the property tests assert
   // foldAll(seed) ≡ the folded state at every step).
   private journals = new Map<SessionId, SessionJournal>();
+  // The switchTo attach window: while a swap is off fetching a cold session's
+  // seed (driver GET /state + /history), that session's live SSE events reach
+  // onEvent but have no state/journal to fold into — and the in-flight seed may
+  // predate them. Events buffered here are the signal to re-run the swap once
+  // (see switchTo); they are never folded directly (no watermark exists to
+  // dedupe them against the seed). Bounded per session + TTL'd.
+  private swapBuffer = new Map<
+    SessionId,
+    { at: number; events: SessionDriverEvent[] }
+  >();
+  private swapsInFlight = 0;
+  private static readonly SWAP_BUFFER_CAP = 256;
+  private static readonly SWAP_BUFFER_TTL_MS = 5000;
   // Epoch source for journals. ms-seeded + monotonically bumped so an epoch is
   // unique per hub process: journals are in-memory, so a client resume token
   // minted against a previous process must never falsely match a fresh journal
@@ -359,6 +382,52 @@ export class SessionHub {
     return ++this.epochCounter;
   }
 
+  /** Buffer one attach-window event (see `swapBuffer`). Prunes stale entries so
+   *  background chatter during long swaps can't accumulate. */
+  private bufferSwapEvent(sid: SessionId, ev: SessionDriverEvent): void {
+    const now = Date.now();
+    for (const [k, v] of this.swapBuffer)
+      if (now - v.at > SessionHub.SWAP_BUFFER_TTL_MS) this.swapBuffer.delete(k);
+    let entry = this.swapBuffer.get(sid);
+    if (!entry) {
+      entry = { at: now, events: [] };
+      this.swapBuffer.set(sid, entry);
+    }
+    if (entry.events.length < SessionHub.SWAP_BUFFER_CAP) entry.events.push(ev);
+  }
+
+  /** Consume (and clear) the attach-window buffer for one session. */
+  private takeSwapBuffer(sid: SessionId): SessionDriverEvent[] {
+    const entry = this.swapBuffer.get(sid);
+    this.swapBuffer.delete(sid);
+    if (!entry || Date.now() - entry.at > SessionHub.SWAP_BUFFER_TTL_MS)
+      return [];
+    return entry.events;
+  }
+
+  /** Fold a swap's seed into a fresh state to learn the authoritative session
+   *  id (the seed's sessionOpened snapshot ref — what focus + the list
+   *  highlight key off), accumulating running/attention changes on the way. */
+  private foldSwapSeed(seed: SessionDriverEvent[]): {
+    built: SessionState;
+    metaChanged: boolean;
+    sid: SessionId | null;
+  } {
+    const built = initialSessionState();
+    let metaChanged = false;
+    for (const e of seed) {
+      foldEvent(built, e);
+      metaChanged = this.trackRunning(e.sessionRef.sessionId, e) || metaChanged;
+      metaChanged =
+        this.trackAttention(e.sessionRef.sessionId, e) || metaChanged;
+    }
+    return {
+      built,
+      metaChanged,
+      sid: built.ref?.sessionId ?? seed[0]?.sessionRef.sessionId ?? null,
+    };
+  }
+
   /** The seed source for one session (protocol v2): the journal's events, delta-
    *  coalesced, plus the {epoch, seq} watermark of the last event folded into it.
    *  Wire-visible once connect/switch flip to seeds; until then the fold-
@@ -469,6 +538,11 @@ export class SessionHub {
       ev.type === "sessionClosed"
     )
       this.sessionListDirty = true;
+    // Attach-window race (protocol v2): while a swap is off fetching a cold
+    // session's seed, that session's live events have no state to fold into and
+    // the in-flight seed may predate them — buffer them as the rebuild signal.
+    if (this.swapsInFlight > 0 && !this.sessionStates.has(sid))
+      this.bufferSwapEvent(sid, ev);
     // Fold + journal + route only for a session someone is viewing (or the landing
     // default). Background sessions nobody opened are tracked above, but their
     // transcript stays private — folded only once a client focuses them (switchTo
@@ -1105,7 +1179,7 @@ export class SessionHub {
   private async switchTo(
     conn: ClientConn,
     swap: () => Promise<SessionDriverEvent[]>,
-    opts: { reseed?: boolean } = {},
+    opts: SwitchOpts = {},
   ): Promise<SessionId | null> {
     if (conn.switchInFlight) {
       // A swap is mid-flight on this connection. Queue this one (depth 1, latest wins)
@@ -1120,6 +1194,7 @@ export class SessionHub {
     conn.switchInFlight = true;
     try {
       let seed: SessionDriverEvent[];
+      this.swapsInFlight++;
       try {
         seed = await swap();
       } catch (e) {
@@ -1132,19 +1207,11 @@ export class SessionHub {
           conn.send({ type: "error", message, kind });
         }
         return null;
+      } finally {
+        this.swapsInFlight--;
       }
-      // Fold into a fresh state to learn the authoritative session id — the seed's
-      // sessionOpened snapshot ref, which is what the focus + list highlight key off.
-      const built = initialSessionState();
-      let metaChanged = false;
-      for (const e of seed) {
-        foldEvent(built, e);
-        metaChanged =
-          this.trackRunning(e.sessionRef.sessionId, e) || metaChanged;
-        metaChanged =
-          this.trackAttention(e.sessionRef.sessionId, e) || metaChanged;
-      }
-      const sid = built.ref?.sessionId ?? seed[0]?.sessionRef.sessionId ?? null;
+      let folded = this.foldSwapSeed(seed);
+      let sid = folded.sid;
       if (!sid) {
         if (!conn.pendingSwitch)
           conn.send({
@@ -1153,6 +1220,37 @@ export class SessionHub {
           });
         return null;
       }
+      // Attach-window race: live events for the target arrived while the seed
+      // was being fetched, so the seed may predate them. Re-run the swap once —
+      // the second fetch is strictly after the daemon accepted those events, so
+      // its seed contains them. (Residual: an event racing the SECOND fetch is
+      // one-fetch-wide and needs a daemon-side SSE-id watermark to close —
+      // tracked in PLAN-protocol-v2.) Only for idempotent swaps; a raced
+      // non-retryable swap (newSession) logs loud instead of guessing.
+      const raced = this.takeSwapBuffer(sid);
+      if (raced.length > 0 && opts.retryOnRacedEvents) {
+        this.swapsInFlight++;
+        try {
+          seed = await swap();
+          this.takeSwapBuffer(sid); // consumed — included in the rebuilt seed
+          folded = this.foldSwapSeed(seed);
+          sid = folded.sid ?? sid;
+        } catch (e) {
+          // Keep the first seed — a slightly-stale transcript beats a failed
+          // switch; the next live event will fold on top of it anyway.
+          console.error(
+            `[hub] attach-window seed rebuild failed for ${sid}`,
+            e,
+          );
+        } finally {
+          this.swapsInFlight--;
+        }
+      } else if (raced.length > 0) {
+        console.error(
+          `[hub] ${raced.length} event(s) raced a non-retryable swap for ${sid} — dropped (seed presumed current)`,
+        );
+      }
+      const { built, metaChanged } = folded;
       // (Re)build the shared state from this authoritative seed when the session isn't
       // already live, or always on a branch reseed. If another client is already viewing
       // it, its shared state is current (and may hold an in-flight streaming bubble the
@@ -1470,7 +1568,9 @@ export class SessionHub {
         return;
       }
       case "openSession":
-        void this.switchTo(conn, () => this.driver.openSession(msg.path));
+        void this.switchTo(conn, () => this.driver.openSession(msg.path), {
+          retryOnRacedEvents: true,
+        });
         return;
       case "reloadSession": {
         if (!this.driver.reloadSession) {
@@ -1486,6 +1586,7 @@ export class SessionHub {
         // second client looking at the broken session also recovers.
         void this.switchTo(conn, () => this.driver.reloadSession!(msg.path), {
           reseed: true,
+          retryOnRacedEvents: true,
         });
         return;
       }

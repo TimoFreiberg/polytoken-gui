@@ -389,6 +389,110 @@ describe("tail resume (hello.resume)", () => {
   });
 });
 
+describe("switchTo attach-window buffering", () => {
+  const racedEvent: SessionDriverEvent = {
+    type: "userMessage",
+    sessionRef: { workspaceId: "w", sessionId: "s2" },
+    timestamp: "t",
+    id: "u-raced",
+    text: "raced in during the swap",
+  };
+
+  test("events racing a cold open trigger exactly one seed rebuild", async () => {
+    const driver = new ScriptedDriver();
+    const hub = new SessionHub(driver, undefined, 60_000, "test-server");
+    const captured: ServerMessage[] = [];
+    const send = (m: ServerMessage) => captured.push(m);
+    hub.addClient(send);
+
+    // Gate openSession so the test controls when each fetch resolves. The
+    // second call's seed includes the raced message — exactly what the daemon's
+    // /history returns once the fetch happens after the event landed.
+    let calls = 0;
+    const gates: ((seed: SessionDriverEvent[]) => void)[] = [];
+    driver.openSession = () => {
+      calls += 1;
+      return new Promise<SessionDriverEvent[]>((resolve) => {
+        gates.push(resolve);
+      });
+    };
+
+    hub.handleClient(send, { type: "openSession", path: "/s2.jsonl" });
+    await flush();
+    expect(gates.length).toBe(1);
+
+    // The target streams while its seed fetch is in flight.
+    driver.emit(racedEvent);
+
+    // First fetch resolves WITHOUT the raced event (it predates it).
+    gates[0]?.(s2Seed("opened"));
+    await flush();
+    expect(calls).toBe(2);
+    gates[1]?.([...s2Seed("opened"), racedEvent]);
+    await flush();
+
+    const seed = hub.seedOf("s2");
+    expect(seed).not.toBeNull();
+    const st = foldAll([...(seed?.events ?? [])]);
+    expect(
+      st.items.some(
+        (i) => i.kind === "user" && i.text === "raced in during the swap",
+      ),
+    ).toBe(true);
+    // The client adopted the rebuilt seed, not the stale first one.
+    const lastSeed = [...captured]
+      .reverse()
+      .find(
+        (m): m is Extract<ServerMessage, { type: "seed" }> => m.type === "seed",
+      );
+    expect(lastSeed?.sessionId).toBe("s2");
+    expect(foldAll([...(lastSeed?.events ?? [])])).toEqual(st);
+  });
+
+  test("a clean cold open fetches exactly once", async () => {
+    const driver = new ScriptedDriver();
+    const hub = new SessionHub(driver, undefined, 60_000, "test-server");
+    const captured: ServerMessage[] = [];
+    const send = (m: ServerMessage) => captured.push(m);
+    hub.addClient(send);
+    let calls = 0;
+    const original = driver.openSession.bind(driver);
+    driver.openSession = (path: string) => {
+      calls += 1;
+      return original(path);
+    };
+    hub.handleClient(send, { type: "openSession", path: "/s2.jsonl" });
+    await flush();
+    expect(calls).toBe(1);
+  });
+
+  test("raced events never re-run a non-retryable swap (newSession)", async () => {
+    const driver = new ScriptedDriver();
+    const hub = new SessionHub(driver, undefined, 60_000, "test-server");
+    const captured: ServerMessage[] = [];
+    const send = (m: ServerMessage) => captured.push(m);
+    hub.addClient(send);
+
+    let calls = 0;
+    const gates: ((seed: SessionDriverEvent[]) => void)[] = [];
+    driver.newSession = () => {
+      calls += 1;
+      return new Promise<SessionDriverEvent[]>((resolve) => {
+        gates.push(resolve);
+      });
+    };
+
+    hub.handleClient(send, { type: "newSession" });
+    await flush();
+    driver.emit(racedEvent); // races the creation swap for the same sid
+    gates[0]?.(s2Seed("created"));
+    await flush(10);
+    // A re-run would create a SECOND session — assert it never happens.
+    expect(calls).toBe(1);
+    expect(hub.seedOf("s2")).not.toBeNull();
+  });
+});
+
 describe("switch + reload journal lifecycle", () => {
   test("first attach starts a journal; a reload reseeds it under a new epoch", async () => {
     const driver = new ScriptedDriver();
