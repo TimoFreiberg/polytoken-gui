@@ -56,8 +56,10 @@
     left: 50%;
     bottom: 0;
     transform: translateX(-50%);
-    width: min(620px, 100%);
-    max-height: 88dvh;
+    /* A plan is a full document — take nearly the whole viewport, leaving a
+       sliver of scrim so it still reads as an overlay. */
+    width: 100%;
+    max-height: calc(100dvh - 20px);
     display: flex;
     flex-direction: column;
     background: var(--bg-elevated);
@@ -72,6 +74,8 @@
       top: 50%;
       bottom: auto;
       transform: translate(-50%, -50%);
+      width: calc(100vw - 48px);
+      max-height: calc(100dvh - 48px);
       border-radius: 18px;
       border-bottom: 1px solid var(--border);
     }

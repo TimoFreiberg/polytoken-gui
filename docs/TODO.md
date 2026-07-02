@@ -9,7 +9,16 @@ See `docs/` siblings for context: `DESIGN.md` (architecture + roadmap), `DECISIO
 
 ## 🔴 Next (urgent / blocking)
 
-- [ ] plan popup is too narrow, it should be closer to full screen (maybe a tiny bit smaller to make it a tiny bit visible that there's something behind it). also, plan popup buttons go out of the plan box, they should be bounded and their text should wrap / the buttons should scroll within the container if absolutely necessary
+- [x] plan popup is too narrow, it should be closer to full screen (maybe a tiny bit smaller to make it a tiny bit visible that there's something behind it). also, plan popup buttons go out of the plan box, they should be bounded and their text should wrap / the buttons should scroll within the container if absolutely necessary
+      **Fixed 2026-07-02:** both plan surfaces widened. The plan-handoff sheet
+      (`ApprovalLayer` `.sheet.plan`) now takes the chat pane minus a 24px sliver
+      (desktop) / near-full height (mobile), as a flex column — the markdown body
+      gets the flexible height and scrolls, header + actions stay pinned. Action
+      labels (daemon-provided, arbitrary length) wrap inside their buttons
+      (overriding the Button primitive's `nowrap`) and the 3-action row wraps
+      instead of overflowing. `PlanView` (⌘P) widened the same way
+      (viewport minus 48px, content-sized when short). Screenshot-verified
+      desktop + mobile; plan-handoff/plan-view e2e green.
 - [ ] user prompts longer than like 10 lines should be shown truncated to those 10 lines by default, with an expand / collapse back to the truncated view button
 - [x] in the new session draft view, pressing the cycle facet hotkey tries to change the facet of the last focused active session instead
       **Fixed 2026-07-02:** the draft now carries its own `facet` pick (mirroring the

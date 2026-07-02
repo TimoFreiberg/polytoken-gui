@@ -272,6 +272,7 @@
     <div class="scrim" onclick={scrimClick} role="presentation"></div>
     <div
       class="sheet"
+      class:plan={current.kind === "plan"}
       role="dialog"
       aria-modal="true"
       aria-labelledby="approval-title"
@@ -453,6 +454,22 @@
       border-bottom: 1px solid var(--border);
     }
   }
+  /* Plan handoff: a plan is a full document, not a one-line question — take
+     nearly the whole chat pane (a sliver of scrim stays visible so it still
+     reads as an overlay). Flex column so the markdown body gets the height
+     and scrolls while the header + actions stay pinned. */
+  .sheet.plan {
+    display: flex;
+    flex-direction: column;
+    max-height: calc(100% - 20px);
+  }
+  @media (min-width: 600px) {
+    .sheet.plan {
+      width: calc(100% - 48px);
+      bottom: 24px;
+      max-height: calc(100% - 48px);
+    }
+  }
   .grip {
     width: 36px;
     height: 4px;
@@ -475,6 +492,14 @@
     display: flex;
     gap: 10px;
     margin-top: 14px;
+    flex-shrink: 0;
+  }
+  /* Action labels come from the daemon (arbitrary length) — wrap inside the
+     button instead of overflowing the sheet (the Button primitive defaults to
+     nowrap for compact chrome). */
+  .actions :global(.btn) {
+    white-space: normal;
+    min-width: 0;
   }
   .actions.two {
     flex-direction: row;
@@ -488,6 +513,7 @@
   @media (min-width: 600px) {
     .actions.three {
       flex-direction: row;
+      flex-wrap: wrap;
     }
   }
   .plan-path {
@@ -503,6 +529,13 @@
     /* Subtle scroll affordance without a heavy scrollbar on touch. */
     overscroll-behavior: contain;
     -webkit-overflow-scrolling: touch;
+  }
+  /* In the near-full plan sheet the body takes the flexible height instead of a
+     fixed viewport fraction (min-height lets it actually shrink in the flexbox). */
+  .sheet.plan .plan-body {
+    max-height: none;
+    flex: 1;
+    min-height: 0;
   }
   .tool-name {
     color: var(--text-muted);
