@@ -345,6 +345,10 @@ export class SessionHub {
     // GUI windows on the host. Injected rather than env-gated inside the hub so unit
     // tests can assert the call without touching process state.
     private openInFileManager: (dir: string) => void = defaultOpenInFileManager,
+    // Full sha of the SERVED client bundle (dist/.pilot-built-sha), read once at
+    // startup. Carried in `hello` so a stale running client can detect a server
+    // update. Empty when no build marker exists (dev / marker missing).
+    private buildSha = "",
   ) {
     driver.subscribe((ev) => this.onEvent(ev));
     // Project-trust cards travel their own channel (D12): they're decided before a
@@ -1352,6 +1356,7 @@ export class SessionHub {
       protocolVersion: PROTOCOL_VERSION,
       serverId: this.serverId,
       dataDir: this.dataDir ?? "",
+      buildSha: this.buildSha,
     });
     if (resumeTail) {
       for (const f of resumeTail.j.tail)

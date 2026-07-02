@@ -145,6 +145,16 @@ mock?.bootstrap();
 // Explorer window on the host every time a test clicks it. Inject a no-op opener
 // here — the real driver path keeps the live spawn (defaultOpenInFileManager).
 const openInFileManager = mock ? () => {} : undefined; // falls back to the hub's real default
+// The served bundle's commit sha (stamped by the client build into
+// dist/.pilot-built-sha). Read once at startup and carried in `hello` so a
+// stale running client can detect that the server updated underneath it.
+// Missing marker (dev, no build yet) → "" → clients skip the comparison.
+const servedBuildSha = await Bun.file(
+  join(config.clientDist, ".pilot-built-sha"),
+)
+  .text()
+  .then((s) => s.trim())
+  .catch(() => "");
 const hub = new SessionHub(
   driver,
   (n) => {
@@ -154,6 +164,7 @@ const hub = new SessionHub(
   serverId,
   config.dataDir,
   openInFileManager,
+  servedBuildSha,
 );
 
 const rawSend = (ws: ServerWebSocket<WsData>, msg: ServerMessage) => {

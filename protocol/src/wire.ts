@@ -136,6 +136,12 @@ export type ServerMessage =
       protocolVersion: number;
       serverId: string;
       dataDir: string;
+      /** Full commit sha of the client bundle the server is SERVING (from
+       *  dist/.pilot-built-sha). A running client compares it against its own
+       *  baked sha to detect that the server updated underneath it — the SW is
+       *  byte-identical across builds, so `updatefound` alone never fires.
+       *  Empty/absent when no build marker exists (dev). */
+      buildSha?: string;
     }
   /** Seed-on-connect (protocol v2): the focused session's full transcript as
    *  EVENTS, which the client folds from a fresh `initialSessionState()` — the

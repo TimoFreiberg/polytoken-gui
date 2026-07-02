@@ -270,6 +270,25 @@ describe("SessionHub", () => {
       protocolVersion: PROTOCOL_VERSION,
       serverId: "stable-server-id",
       dataDir: "",
+      buildSha: "",
+    });
+  });
+
+  test("hello carries the served bundle's build sha when startup provides one", () => {
+    const hub = new SessionHub(
+      new FakeDriver(),
+      undefined,
+      1000,
+      "stable-server-id",
+      undefined,
+      undefined,
+      "abc123def456",
+    );
+    const a = client();
+    hub.addClient(a.send);
+    expect(a.received[0]).toMatchObject({
+      type: "hello",
+      buildSha: "abc123def456",
     });
   });
 

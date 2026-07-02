@@ -853,13 +853,20 @@ titles below match its `findings[]` entries. Ranked by felt-quality-per-effort.
    `sw.js:55-67`); unify notification tags (`pilot-${phase}-${sid}`) between hub and
    App.svelte so devices aren't double-buzzed. Needs a live push test. Effort: day.
    Risk: medium (double-notification edge cases; verify on real iOS).
-8. **App updates never reach clients.** The only reload path is a new SW install, but
+8. **[x] App updates never reach clients.** The only reload path is a new SW install, but
    sw.js is byte-identical across builds — `updatefound` never fires; after desktop
    auto-update every device keeps the old bundle (`sw.ts:12-23`, `store.svelte.ts:1742-1748`).
    Fix: server sends build sha in `hello` (plumb like `serverId`; extend `wire.ts:136-141`),
    client compares against `__BUILD_FULL_HASH__` (vite define) → existing
    markUpdateReady toast. Effort: hours. Risk: low. (Pairs with #3's `no-cache` on
    index.html.)
+   **Fixed 2026-07-02:** implemented as specced — `index.ts` reads
+   `dist/.pilot-built-sha` once at startup → `hello.buildSha`; the client bakes
+   `__BUILD_FULL_HASH__` (same sha by construction, verified byte-identical in a
+   prod build) and compares on every hello → existing refresh toast. PROD-gated
+   (a Vite dev serve can disagree with a stale dist marker harmlessly) and
+   raised once per served sha so a dismissed toast doesn't nag on reconnects.
+   Hub unit tests cover both the empty default and the pass-through.
 9. ⚠️ **Morning pickup can't see finished-overnight runs.** `unread` is in-memory only;
    'done ✓' requires observing the running→idle transition live, so iOS PWA eviction
    erases it (`store.svelte.ts:135-139, 817-830, 1501-1502`). Fix: persist

@@ -79,6 +79,10 @@ export default defineConfig({
   define: {
     __BUILD_HASH__: JSON.stringify(BUILD.hash),
     __BUILD_DATE__: JSON.stringify(BUILD.date),
+    // Full sha, compared against hello.buildSha (the sha of the bundle the
+    // server is SERVING) to detect that the server updated underneath a
+    // long-lived tab/PWA. Matches the .pilot-built-sha marker by construction.
+    __BUILD_FULL_HASH__: JSON.stringify(BUILD.fullHash),
   },
   server: {
     port: 5173,

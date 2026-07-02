@@ -28,6 +28,7 @@ import {
   PROTOCOL_VERSION,
 } from "@pilot/protocol";
 import { clearToken, getToken, setToken } from "./auth.js";
+import { buildFullHash } from "./build-info.js";
 import { notifyNativeUpdateStarting } from "./native-bridge.js";
 import { filterSessions } from "./session-filter.js";
 import { dedupeConsecutive } from "./prompt-history.js";
@@ -126,6 +127,9 @@ class PilotStore {
   // re-assert it. (A new-session draft survives a reconnect on its own — it's client state
   // rendered ahead of the seed — so it's deliberately not captured.)
   private booted = false;
+  // The served-bundle sha we already raised the refresh toast for, so a
+  // dismissed toast isn't re-raised by every reconnect's hello.
+  private staleBuildNotified: string | null = null;
   private reconnectFocusId: string | null = null;
   // Fold watermark of the adopted transcript build (protocol v2): which session
   // the last seed named, its epoch, and the seq of the last event folded. This
@@ -800,6 +804,22 @@ class PilotStore {
         this.dataDir = msg.dataDir ?? "";
         persistLastServerId(msg.serverId);
         void this.hydrateOutbox(msg.serverId);
+        // The server names the bundle it is SERVING; if it differs from the one
+        // we're RUNNING, the server updated underneath this tab/PWA (sw.js is
+        // byte-identical across builds, so `updatefound` never fires for app
+        // code). Raise the existing refresh toast — once per served sha, so a
+        // dismissed toast doesn't nag again on every reconnect. PROD-gated: a
+        // dev serve (Vite) can disagree with a stale dist marker harmlessly.
+        if (
+          import.meta.env.PROD &&
+          msg.buildSha &&
+          buildFullHash &&
+          msg.buildSha !== buildFullHash &&
+          msg.buildSha !== this.staleBuildNotified
+        ) {
+          this.staleBuildNotified = msg.buildSha;
+          this.markUpdateReady();
+        }
         // A hello after the first is a reconnect. If the resume token we sent
         // is accepted, the hub keeps us on our session (no seed arrives); the
         // fallback is a re-seed onto the landing — so remember the session
