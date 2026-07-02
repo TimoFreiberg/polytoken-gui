@@ -180,6 +180,26 @@ function events(events: SessionDriverEvent[], effects: DaemonEffect[] = []): Fol
   return { events, effects };
 }
 
+/** Build a `hostUiRequest{kind:"notify"}` SessionDriverEvent. Pure — no I/O.
+ *  Encapsulates the shared notify structure (spread `meta`, type, request
+ *  envelope) so each call site only specifies its requestId, message, and
+ *  level. `meta` is the same `{ sessionRef, timestamp }` the mapper spreads
+ *  into every event; `requestId` is the FULL id string (call sites keep their
+ *  own prefix + timestamp/id source, e.g. `compact-${meta.timestamp}` or
+ *  `notif-${ev.notification.id}`) so no per-site detail is lost. */
+function notify(
+  meta: { sessionRef: SessionRef; timestamp: string },
+  requestId: string,
+  message: string,
+  level: "info" | "warning" | "error",
+): SessionDriverEvent {
+  return {
+    ...meta,
+    type: "hostUiRequest",
+    request: { kind: "notify", requestId, message, level },
+  };
+}
+
 /** System-reminder reason types that surface as visible inject pills instead of
  *  silent turn-boundary markers. Maps the daemon's `SystemReminderReason.type`
  *  to a human-readable pill label. */
@@ -892,32 +912,19 @@ export function mapDaemonEvent(
       const message = providerErrorMessage(ev.error);
       acc.turnError = { message };
       return events([
-        {
-          ...meta,
-          type: "hostUiRequest",
-          request: {
-            kind: "notify",
-            requestId: `model-error-${meta.timestamp}`,
-            message,
-            level: "warning",
-          },
-        },
+        notify(meta, `model-error-${meta.timestamp}`, message, "warning"),
       ]);
     }
 
     case "retry_wait": {
       // The daemon is waiting before retrying (like the original driver's auto_retry_start).
       return events([
-        {
-          ...meta,
-          type: "hostUiRequest",
-          request: {
-            kind: "notify",
-            requestId: `retry-${meta.timestamp}`,
-            message: `Retrying (attempt ${ev.attempt}/${ev.max_retries}): ${ev.error_summary}`,
-            level: "warning",
-          },
-        },
+        notify(
+          meta,
+          `retry-${meta.timestamp}`,
+          `Retrying (attempt ${ev.attempt}/${ev.max_retries}): ${ev.error_summary}`,
+          "warning",
+        ),
       ]);
     }
 
@@ -976,16 +983,12 @@ export function mapDaemonEvent(
       // philosophy) — the operator needs to know a violation occurred.
       const tool = ev.tool_name;
       return events([
-        {
-          ...meta,
-          type: "hostUiRequest",
-          request: {
-            kind: "notify",
-            requestId: `block-violation-${meta.timestamp}`,
-            message: `Blocked: the agent tried to use ${tool}, which is blocked by a constraint`,
-            level: "warning",
-          },
-        },
+        notify(
+          meta,
+          `block-violation-${meta.timestamp}`,
+          `Blocked: the agent tried to use ${tool}, which is blocked by a constraint`,
+          "warning",
+        ),
       ]);
     }
 
@@ -999,17 +1002,12 @@ export function mapDaemonEvent(
       const reasonType = ev.reason.type;
       if (reasonType === "eager_fallback_activated") {
         return events([
-          {
-            ...meta,
-            type: "hostUiRequest",
-            request: {
-              kind: "notify",
-              requestId: `fallback-${meta.timestamp}`,
-              message:
-                "Auto-switched to a fallback model — the primary may be down or rate-limited",
-              level: "warning",
-            },
-          },
+          notify(
+            meta,
+            `fallback-${meta.timestamp}`,
+            "Auto-switched to a fallback model — the primary may be down or rate-limited",
+            "warning",
+          ),
         ]);
       }
       return EMPTY;
@@ -1035,16 +1033,7 @@ export function mapDaemonEvent(
 
     case "compaction_started": {
       return events([
-        {
-          ...meta,
-          type: "hostUiRequest",
-          request: {
-            kind: "notify",
-            requestId: `compact-${meta.timestamp}`,
-            message: "Compacting context…",
-            level: "info",
-          },
-        },
+        notify(meta, `compact-${meta.timestamp}`, "Compacting context…", "info"),
       ]);
     }
 
@@ -1052,16 +1041,7 @@ export function mapDaemonEvent(
       // Usage changed after compaction — re-read state for the context meter.
       return events(
         [
-          {
-            ...meta,
-            type: "hostUiRequest",
-            request: {
-              kind: "notify",
-              requestId: `compact-done-${meta.timestamp}`,
-              message: "Context compacted",
-              level: "info",
-            },
-          },
+          notify(meta, `compact-done-${meta.timestamp}`, "Context compacted", "info"),
         ],
         [{ type: "fetchState", emit: "sessionUpdated" }],
       );
@@ -1069,46 +1049,19 @@ export function mapDaemonEvent(
 
     case "compaction_cancelled": {
       return events([
-        {
-          ...meta,
-          type: "hostUiRequest",
-          request: {
-            kind: "notify",
-            requestId: `compact-cancelled-${meta.timestamp}`,
-            message: "Compaction cancelled",
-            level: "warning",
-          },
-        },
+        notify(meta, `compact-cancelled-${meta.timestamp}`, "Compaction cancelled", "warning"),
       ]);
     }
 
     case "compaction_failed": {
       return events([
-        {
-          ...meta,
-          type: "hostUiRequest",
-          request: {
-            kind: "notify",
-            requestId: `compact-failed-${meta.timestamp}`,
-            message: "Compaction failed",
-            level: "error",
-          },
-        },
+        notify(meta, `compact-failed-${meta.timestamp}`, "Compaction failed", "error"),
       ]);
     }
 
     case "subagent_compaction_notice": {
       return events([
-        {
-          ...meta,
-          type: "hostUiRequest",
-          request: {
-            kind: "notify",
-            requestId: `subagent-compact-${meta.timestamp}`,
-            message: ev.summary,
-            level: "info",
-          },
-        },
+        notify(meta, `subagent-compact-${meta.timestamp}`, ev.summary, "info"),
       ]);
     }
 
@@ -1116,16 +1069,7 @@ export function mapDaemonEvent(
 
     case "notification_queued": {
       return events([
-        {
-          ...meta,
-          type: "hostUiRequest",
-          request: {
-            kind: "notify",
-            requestId: `notif-${ev.notification.id}`,
-            message: ev.notification.summary,
-            level: "info",
-          },
-        },
+        notify(meta, `notif-${ev.notification.id}`, ev.notification.summary, "info"),
       ]);
     }
 
@@ -1282,61 +1226,40 @@ export function mapDaemonEvent(
 
     case "mcp_server_connected": {
       return events([
-        {
-          ...meta,
-          type: "hostUiRequest",
-          request: {
-            kind: "notify",
-            requestId: `mcp-conn-${meta.timestamp}`,
-            message: `MCP server ${ev.server_name} connected`,
-            level: "info",
-          },
-        },
+        notify(meta, `mcp-conn-${meta.timestamp}`, `MCP server ${ev.server_name} connected`, "info"),
       ]);
     }
 
     case "mcp_server_disconnected": {
       return events([
-        {
-          ...meta,
-          type: "hostUiRequest",
-          request: {
-            kind: "notify",
-            requestId: `mcp-disc-${meta.timestamp}`,
-            message: `MCP server ${ev.server_name} disconnected (${ev.reason})`,
-            level: "warning",
-          },
-        },
+        notify(
+          meta,
+          `mcp-disc-${meta.timestamp}`,
+          `MCP server ${ev.server_name} disconnected (${ev.reason})`,
+          "warning",
+        ),
       ]);
     }
 
     case "mcp_server_reconnecting": {
       return events([
-        {
-          ...meta,
-          type: "hostUiRequest",
-          request: {
-            kind: "notify",
-            requestId: `mcp-reconn-${meta.timestamp}`,
-            message: `MCP server ${ev.server_name} reconnecting (attempt ${ev.attempt})…`,
-            level: "info",
-          },
-        },
+        notify(
+          meta,
+          `mcp-reconn-${meta.timestamp}`,
+          `MCP server ${ev.server_name} reconnecting (attempt ${ev.attempt})…`,
+          "info",
+        ),
       ]);
     }
 
     case "mcp_server_disabled": {
       return events([
-        {
-          ...meta,
-          type: "hostUiRequest",
-          request: {
-            kind: "notify",
-            requestId: `mcp-disabled-${meta.timestamp}`,
-            message: `MCP server ${ev.server_name} disabled (${ev.reason})`,
-            level: "warning",
-          },
-        },
+        notify(
+          meta,
+          `mcp-disabled-${meta.timestamp}`,
+          `MCP server ${ev.server_name} disabled (${ev.reason})`,
+          "warning",
+        ),
       ]);
     }
 
