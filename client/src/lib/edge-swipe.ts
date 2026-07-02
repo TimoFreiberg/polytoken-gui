@@ -61,11 +61,14 @@ export class EdgeSwipeTracker {
     return this.engaged && this.snap.distance > 0;
   }
 
-  /** Begin tracking, but only engage if the touch started inside the left edge strip. */
-  start(clientX: number): void {
+  /** Begin tracking, but only engage if the touch started inside the left edge
+   *  strip. Returns engagement so the action can attach its non-passive
+   *  touchmove listener only for touches that could become a swipe. */
+  start(clientX: number): boolean {
     this.engaged = clientX <= this.edge;
     this.startX = clientX;
     this.snap = IDLE;
+    return this.engaged;
   }
 
   /** Feed a move; returns the new snapshot. A drag that reverses back out of the screen
@@ -116,14 +119,32 @@ export interface EdgeSwipeActionParams {
   options?: EdgeSwipeOptions;
 }
 
-/** Svelte action: wire a surface's touch events to an `EdgeSwipeTracker`. */
+/** Svelte action: wire a surface's touch events to an `EdgeSwipeTracker`.
+ *
+ * The non-passive touchmove listener (needed so `preventDefault` is honored
+ * while driving the swipe) is attached ONLY while a touch that began in the
+ * edge strip is in flight. A permanent non-passive touchmove would force every
+ * scroll flick on this surface to wait for the main thread before the
+ * compositor may move — exactly the jank a busy streaming turn produces. */
 export function edgeSwipe(node: HTMLElement, params: EdgeSwipeActionParams) {
   let p = params;
   const tracker = new EdgeSwipeTracker(p.options);
+  let moveBound = false;
+
+  function bindMove(): void {
+    if (moveBound) return;
+    node.addEventListener("touchmove", onTouchMove, { passive: false });
+    moveBound = true;
+  }
+  function unbindMove(): void {
+    if (!moveBound) return;
+    node.removeEventListener("touchmove", onTouchMove);
+    moveBound = false;
+  }
 
   function onTouchStart(e: TouchEvent): void {
     if (!p.enabled || e.touches.length !== 1) return;
-    tracker.start(e.touches[0]!.clientX);
+    if (tracker.start(e.touches[0]!.clientX)) bindMove();
   }
 
   function onTouchMove(e: TouchEvent): void {
@@ -136,6 +157,7 @@ export function edgeSwipe(node: HTMLElement, params: EdgeSwipeActionParams) {
   }
 
   function onTouchEnd(): void {
+    unbindMove();
     if (!p.enabled) return;
     const { triggered } = tracker.end();
     p.onChange(tracker.snapshot);
@@ -143,6 +165,7 @@ export function edgeSwipe(node: HTMLElement, params: EdgeSwipeActionParams) {
   }
 
   function onTouchCancel(): void {
+    unbindMove();
     if (!p.enabled) return;
     tracker.cancel();
     p.onChange(tracker.snapshot);
@@ -150,8 +173,6 @@ export function edgeSwipe(node: HTMLElement, params: EdgeSwipeActionParams) {
   }
 
   node.addEventListener("touchstart", onTouchStart, { passive: true });
-  // Non-passive so `preventDefault` is honored while we're driving the swipe.
-  node.addEventListener("touchmove", onTouchMove, { passive: false });
   node.addEventListener("touchend", onTouchEnd, { passive: true });
   node.addEventListener("touchcancel", onTouchCancel, { passive: true });
 
@@ -161,7 +182,7 @@ export function edgeSwipe(node: HTMLElement, params: EdgeSwipeActionParams) {
     },
     destroy(): void {
       node.removeEventListener("touchstart", onTouchStart);
-      node.removeEventListener("touchmove", onTouchMove);
+      unbindMove();
       node.removeEventListener("touchend", onTouchEnd);
       node.removeEventListener("touchcancel", onTouchCancel);
     },

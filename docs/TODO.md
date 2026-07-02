@@ -782,7 +782,7 @@ titles below match its `findings[]` entries. Ranked by felt-quality-per-effort.
    was already handled by protocol v2's explicit `backpressureLimit: 4MB`.
    On-wire ratio not re-measured (needs a frame sniffer); streaming/reconnect e2e
    green over real browser sockets.
-2. **Make touch scrolling compositor-threaded again.** `edge-swipe.ts:154` and
+2. **[x] Make touch scrolling compositor-threaded again.** `edge-swipe.ts:154` and
    `pull-to-refresh.ts:134` register permanent `{passive:false}` touchmove listeners on
    `.app`, the transcript scroller, and the sidebar — every phone scroll flick waits on the
    busy main thread (C1 parse) before moving. Fix: register touchstart passive; add the
@@ -790,6 +790,12 @@ titles below match its `findings[]` entries. Ranked by felt-quality-per-effort.
    remove on touchend/cancel/destroy — symmetric in both files. Test: existing tracker unit
    tests + DevTools "Scrolling: threaded" check. Effort: hours. Risk: low (mechanical
    listener-lifetime refactor).
+   **Fixed 2026-07-02:** both trackers' `start()` now return engagement, and both
+   actions bind the non-passive touchmove only on an engaged touchstart,
+   unbinding on touchend/touchcancel/destroy (symmetric). Mid-gesture semantics
+   unchanged (engagement was start-only in both trackers before). Tracker unit
+   tests + both mobile e2e suites green; DevTools "Scrolling: threaded" check
+   not run (needs a manual device pass).
 3. **Asset delivery: cache headers + gzip + SW cache** (merges two findings). `static.ts:7-18`
    serves bare `Bun.file` — no Cache-Control/ETag, no gzip, and the SPA fallback serves
    index.html for missing hashed assets (stale-deploy white-screen). Every launch re-downloads

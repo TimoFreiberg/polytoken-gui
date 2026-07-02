@@ -55,11 +55,14 @@ export class PullTracker {
     return this.engaged && this.snap.distance > 0;
   }
 
-  /** Begin tracking, but only engage if the container is scrolled to the very top. */
-  start(clientY: number, scrollTop: number): void {
+  /** Begin tracking, but only engage if the container is scrolled to the very
+   *  top. Returns engagement so the action can attach its non-passive touchmove
+   *  listener only for touches that could become a pull. */
+  start(clientY: number, scrollTop: number): boolean {
     this.engaged = scrollTop <= 0;
     this.startY = clientY;
     this.snap = IDLE;
+    return this.engaged;
   }
 
   /** Feed a move; returns the new snapshot. A pull that loses the top edge (content
@@ -103,14 +106,32 @@ export interface PullActionParams {
   options?: PullOptions;
 }
 
-/** Svelte action: wire a scroll container's touch events to a `PullTracker`. */
+/** Svelte action: wire a scroll container's touch events to a `PullTracker`.
+ *
+ * The non-passive touchmove listener (needed so `preventDefault` is honored
+ * while driving the pull) is attached ONLY while a touch that began at the very
+ * top of the scroller is in flight. A permanent non-passive touchmove would
+ * force every scroll flick to wait for the main thread before the compositor
+ * may move — the transcript is the busiest surface in the app. */
 export function pullToRefresh(node: HTMLElement, params: PullActionParams) {
   let p = params;
   const tracker = new PullTracker(p.options);
+  let moveBound = false;
+
+  function bindMove(): void {
+    if (moveBound) return;
+    node.addEventListener("touchmove", onTouchMove, { passive: false });
+    moveBound = true;
+  }
+  function unbindMove(): void {
+    if (!moveBound) return;
+    node.removeEventListener("touchmove", onTouchMove);
+    moveBound = false;
+  }
 
   function onTouchStart(e: TouchEvent): void {
     if (!p.enabled || e.touches.length !== 1) return;
-    tracker.start(e.touches[0]!.clientY, node.scrollTop);
+    if (tracker.start(e.touches[0]!.clientY, node.scrollTop)) bindMove();
   }
 
   function onTouchMove(e: TouchEvent): void {
@@ -123,6 +144,7 @@ export function pullToRefresh(node: HTMLElement, params: PullActionParams) {
   }
 
   function onTouchEnd(): void {
+    unbindMove();
     if (!p.enabled) return;
     const { triggered } = tracker.end();
     p.onChange(tracker.snapshot);
@@ -130,8 +152,6 @@ export function pullToRefresh(node: HTMLElement, params: PullActionParams) {
   }
 
   node.addEventListener("touchstart", onTouchStart, { passive: true });
-  // Non-passive so `preventDefault` is honored while we're driving the pull.
-  node.addEventListener("touchmove", onTouchMove, { passive: false });
   node.addEventListener("touchend", onTouchEnd, { passive: true });
   node.addEventListener("touchcancel", onTouchEnd, { passive: true });
 
@@ -141,7 +161,7 @@ export function pullToRefresh(node: HTMLElement, params: PullActionParams) {
     },
     destroy(): void {
       node.removeEventListener("touchstart", onTouchStart);
-      node.removeEventListener("touchmove", onTouchMove);
+      unbindMove();
       node.removeEventListener("touchend", onTouchEnd);
       node.removeEventListener("touchcancel", onTouchEnd);
     },
