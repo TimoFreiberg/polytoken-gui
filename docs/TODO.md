@@ -412,7 +412,7 @@ New parity/UX items from the owner, grounded against current source.
       message → hub calls `driver.listFacets()` (no cache — always re-shells-out) →
       `facetList` event refreshes the picker. E2e test verifies the button works.
 
-- [ ] **Ctrl+R prompt-history popup** (polytoken TUI parity — nice-to-have polish,
+- [x] **Ctrl+R prompt-history popup** (polytoken TUI parity — nice-to-have polish,
       bottom of parity work). The polytoken TUI offers a ctrl+r popup showing a few
       previous prompts above the text field; pressing enter fills the field with the
       selected text. Add the same: a ctrl+r handler in the composer that opens a small
@@ -421,6 +421,13 @@ New parity/UX items from the owner, grounded against current source.
       to the selected prompt's position in the chat history (scroll the transcript to
       it + highlight). Both the popup-fill and the jump-to-history are polish; this is
       the lowest-priority item in the parity list — do it last.
+      **Done 2026-07-02:** Ctrl+R opens a `PromptHistoryMenu` popup above the textarea
+      showing recent prompts (from `store.currentPromptHistory`, newest first). Arrow
+      keys navigate, Enter fills the composer, Escape closes. Repeated Ctrl+R cycles to
+      the next entry (like the TUI). The popup mirrors `SlashMenu`'s pattern
+      (presentational component, Composer owns the state machine). E2e tests verify
+      the popup opens, fills on Enter, and closes on Escape. The jump-to-history
+      stretch goal is deferred (would scroll the transcript to the selected prompt).
 
 - [ ] **Full-featured config editor** (very late / stretch). `polytoken schemas
       [app-config, agents-frontmatter, facet-frontmatter, subagent-frontmatter,

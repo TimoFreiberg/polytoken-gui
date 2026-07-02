@@ -26,6 +26,7 @@
   import Chevron from "./ui/Chevron.svelte";
   import TaskList from "./TaskList.svelte";
   import QueueTray from "./QueueTray.svelte";
+  import PromptHistoryMenu from "./PromptHistoryMenu.svelte";
   import { parseTasklist } from "../lib/tasklist.js";
 
   let ta = $state<HTMLTextAreaElement>();
@@ -136,6 +137,34 @@
   $effect(() => {
     if (slashSel >= slashItems.length) slashSel = 0;
   });
+
+  // --- Ctrl+R prompt-history popup. Shows recent prompts above the textarea;
+  //   arrow-key navigate, Enter fills the composer. Mirrors the polytoken TUI.
+  let historyOpen = $state(false);
+  let historySel = $state(0);
+  let historyItems: string[] = [];
+  function openHistory() {
+    historyItems = [...store.currentPromptHistory].reverse(); // newest first
+    if (historyItems.length === 0) return;
+    historySel = 0;
+    historyOpen = true;
+  }
+  function closeHistory() {
+    historyOpen = false;
+  }
+  function acceptHistory(text: string) {
+    store.composerDraft = text;
+    closeHistory();
+    queueMicrotask(() => {
+      autosize();
+      if (ta) {
+        const end = store.composerDraft.length;
+        ta.selectionStart = ta.selectionEnd = end;
+        cursorPos = end;
+        ta.focus();
+      }
+    });
+  }
 
   // --- Cursor tracking (textarea). Needed so @-mentions work inline, not just at
   // the end of the draft. Updated on every input/click/keyboard event.
@@ -520,6 +549,41 @@
         return;
       }
     }
+    // Ctrl+R: prompt-history popup (polytoken TUI parity). Opens a popup of recent
+    // prompts above the textarea; arrow-key navigate, Enter fills the composer.
+    if ((e.ctrlKey || e.metaKey) && e.key === "r" && !e.altKey && !e.shiftKey) {
+      e.preventDefault();
+      if (historyOpen) {
+        // Cycle to the next entry (newest-first, so next = older)
+        historySel = (historySel + 1) % historyItems.length;
+      } else {
+        openHistory();
+      }
+      return;
+    }
+    // Arrow-key navigation + Enter/Esc while the history popup is open.
+    if (historyOpen) {
+      if (e.key === "ArrowDown") {
+        e.preventDefault();
+        historySel = Math.min(historySel + 1, historyItems.length - 1);
+        return;
+      }
+      if (e.key === "ArrowUp") {
+        e.preventDefault();
+        historySel = Math.max(historySel - 1, 0);
+        return;
+      }
+      if (e.key === "Enter" && !e.shiftKey) {
+        e.preventDefault();
+        acceptHistory(historyItems[historySel] ?? "");
+        return;
+      }
+      if (e.key === "Escape") {
+        e.preventDefault();
+        closeHistory();
+        return;
+      }
+    }
     if (slashOpen) {
       const n = slashItems.length;
       if (e.key === "ArrowDown" || (e.ctrlKey && e.key === "n")) {
@@ -816,6 +880,14 @@
           selected={slashSel}
           onpick={acceptSlash}
           onhover={(i) => (slashSel = i)}
+        />
+      {/if}
+      {#if historyOpen}
+        <PromptHistoryMenu
+          items={historyItems}
+          selected={historySel}
+          onpick={acceptHistory}
+          onhover={(i) => (historySel = i)}
         />
       {/if}
       {#if fileOpen}
