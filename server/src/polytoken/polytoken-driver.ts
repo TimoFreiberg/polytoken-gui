@@ -564,7 +564,35 @@ export async function createPolytokenDriver(
       });
     }
     const historyEvents = await reseedFromHistory(ws, false);
-    return [...events, ...historyEvents];
+    // Recover pending interrogatives: the daemon exposes them on GET /state so a
+    // reconnecting client can re-render blocked approvals. Without this, an approval
+    // pending across a server restart or re-warm = permanently wedged "Working…" with
+    // no card. Pass each through mapDaemonEvent to produce the hostUiRequest card +
+    // registerInterrogative effect, then execute the effects (registering them in the
+    // pending map so respondUi can build the reverse response).
+    const pendingEvents = recoverPendingInterrogatives(ws);
+    return [...events, ...historyEvents, ...pendingEvents];
+  }
+
+  /** Map the daemon's pending_interrogatives (from GET /state) through the event-map
+   *  so they re-render as hostUiRequest cards on warm-up/reconnect. Also executes the
+   *  registerInterrogative effects so respondUi can build the reverse response. */
+  function recoverPendingInterrogatives(ws: WarmSession): SessionDriverEvent[] {
+    const pending = ws.lastState?.pending_interrogatives;
+    if (!pending || pending.length === 0) return [];
+    const ts = now();
+    const ctx = makeCtx(ws, ts);
+    const events: SessionDriverEvent[] = [];
+    for (const ev of pending) {
+      const result = mapDaemonEvent(ev, ws.acc, ctx);
+      for (const effect of result.effects) {
+        if (effect.type === "registerInterrogative") {
+          ws.pendingInterrogatives.set(effect.pending.interrogativeId, effect.pending);
+        }
+      }
+      events.push(...result.events);
+    }
+    return events;
   }
 
   /** Fetch GET /history + GET /state, fold the history into transcript events, and
