@@ -301,6 +301,18 @@ const server = Bun.serve<WsData>({
     // trims. Off by default in Bun; cost is per-connection deflate memory + CPU
     // on the Mac Mini — negligible for a single-user app.
     perMessageDeflate: true,
+    // Explicit backpressure ceiling per socket (Bun default: 16MB). Past this,
+    // Bun's send() returns 0 (dropped) and sendOrClose closes the connection
+    // (1011) — the client reconnects and its hello.resume tail-replays exactly
+    // the missed frames, so a stuck phone socket costs one cheap re-handshake,
+    // never a silently desynced transcript. 4MB comfortably holds a large seed
+    // + a stream burst over LTE while still bounding a truly wedged connection.
+    // (Protocol v2 deliberately keeps close-on-drop over an in-band re-seed:
+    // the recovery seed is the biggest message we send — pushing it into a
+    // socket that just proved backpressured is the one way to make it worse.
+    // closeOnBackpressureLimit stays false: sendOrClose owns the close, with a
+    // log line and a deliberate close code.)
+    backpressureLimit: 4 * 1024 * 1024,
     open() {
       // Attach happens on the client's hello — never here. The client always
       // sends one immediately on open (ws.svelte.ts onopen), and the hello may
