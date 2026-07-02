@@ -1,6 +1,11 @@
 import { describe, expect, mock, test } from "bun:test";
 import type { ServerMessage } from "@pilot/protocol";
-import { sendJson, sendOrClose, type SendableSocket } from "./ws-send.js";
+import {
+  COMPRESS_MIN_BYTES,
+  sendJson,
+  sendOrClose,
+  type SendableSocket,
+} from "./ws-send.js";
 
 /** Minimal mock implementing the SendableSocket interface. */
 function mockSocket(
@@ -81,6 +86,25 @@ describe("sendOrClose", () => {
     expect(dropped).toBe(false);
     expect(sendSpy).not.toHaveBeenCalled();
     expect(closeSpy).not.toHaveBeenCalled();
+  });
+
+  // perMessageDeflate only negotiates the extension — Bun compresses a frame
+  // only when the per-send flag asks. These pin the flag so a refactor can't
+  // silently regress to 0 compressed frames again.
+  test("small frames are sent uncompressed (flag false)", () => {
+    const { ws, sendSpy } = mockSocket({ sendResult: 42 });
+
+    sendOrClose(ws, "tiny");
+
+    expect(sendSpy.mock.calls[0]![1]).toBe(false);
+  });
+
+  test("frames over COMPRESS_MIN_BYTES are sent with the compress flag", () => {
+    const { ws, sendSpy } = mockSocket({ sendResult: 42 });
+
+    sendOrClose(ws, "x".repeat(COMPRESS_MIN_BYTES + 1));
+
+    expect(sendSpy.mock.calls[0]![1]).toBe(true);
   });
 });
 

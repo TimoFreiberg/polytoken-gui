@@ -295,11 +295,11 @@ const server = Bun.serve<WsData>({
 
   websocket: {
     // permessage-deflate: assistant markdown, fenced code, and full reconnect
-    // snapshots are highly compressible. On Tailscale-over-spotty-wifi the
-    // per-frame overhead of hundreds of tiny streamed-token frames (and the
-    // periodic full-snapshot resend on reconnect) is exactly the cost this
-    // trims. Off by default in Bun; cost is per-connection deflate memory + CPU
-    // on the Mac Mini — negligible for a single-user app.
+    // seeds are highly compressible (measured 4-40x). NOTE: this option only
+    // NEGOTIATES the extension — Bun compresses a frame only when the per-send
+    // compress flag asks for it, which sendOrClose (ws-send.ts) does for frames
+    // over COMPRESS_MIN_BYTES. Cost is per-connection deflate memory + CPU on
+    // the Mac Mini — negligible for a single-user app.
     perMessageDeflate: true,
     // Explicit backpressure ceiling per socket (Bun default: 16MB). Past this,
     // Bun's send() returns 0 (dropped) and sendOrClose closes the connection

@@ -756,12 +756,20 @@ titles below match its `findings[]` entries. Ranked by felt-quality-per-effort.
 
 ### Top 10 (ranked)
 
-1. **Turn on WS compression for real — one line.** `perMessageDeflate: true` is negotiated
+1. **[x] Turn on WS compression for real — one line.** `perMessageDeflate: true` is negotiated
    but Bun only compresses when the per-send flag is passed; measured 0/501 frames
    compressed, 1,277KB shipped byte-identical (`index.ts:285-292`, rawSend `index.ts:154-155`).
    Fix: `const s = JSON.stringify(msg); ws.send(s, s.length > 512)`; fix the stale comment;
    consider explicit `maxBackpressure`. Measured 4x on synthetic, snapshots gzip 7-40x.
    Effort: hours. Risk: minimal (browsers all negotiate deflate; Bun falls back per-client).
+   **Fixed 2026-07-02:** `sendOrClose` (ws-send.ts — the single chokepoint every
+   server send goes through) now passes `data.length > COMPRESS_MIN_BYTES` (512)
+   as Bun's per-send compress flag; stale `perMessageDeflate` comment rewritten to
+   name the per-send requirement. Two unit tests pin the flag (small→false,
+   large→true) so a refactor can't regress to 0-compressed again. `maxBackpressure`
+   was already handled by protocol v2's explicit `backpressureLimit: 4MB`.
+   On-wire ratio not re-measured (needs a frame sniffer); streaming/reconnect e2e
+   green over real browser sockets.
 2. **Make touch scrolling compositor-threaded again.** `edge-swipe.ts:154` and
    `pull-to-refresh.ts:134` register permanent `{passive:false}` touchmove listeners on
    `.app`, the transcript scroller, and the sidebar — every phone scroll flick waits on the
