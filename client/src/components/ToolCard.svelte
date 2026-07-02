@@ -449,9 +449,9 @@
 
 <style>
   .tool {
-    border: 1px solid var(--border);
+    border: none;
     border-radius: var(--radius-sm);
-    background: var(--surface);
+    background: none;
     overflow: hidden;
   }
   /* Flat variant (merged-run children): no box of its own — just a row whose only chrome
@@ -565,7 +565,7 @@
     letter-spacing: -0.01em;
   }
   .body {
-    border-top: 1px solid var(--border);
+    border-top: none;
     padding: 10px 12px;
     display: flex;
     flex-direction: column;
@@ -630,7 +630,7 @@
     flex-wrap: wrap;
     gap: 8px;
     padding: 10px 12px;
-    border-top: 1px solid var(--border);
+    border-top: none;
   }
   /* The image is wrapped in a button so it's keyboard-reachable and opens the
      full-screen viewer; the button carries no chrome — the border lives on the img. */

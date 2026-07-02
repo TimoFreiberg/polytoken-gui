@@ -1217,6 +1217,16 @@
     max-width: var(--maxw);
     margin-inline: auto;
   }
+  /* The thinking block must fill its row like .md-host does, not shrink-wrap. Without
+     this, `margin-inline: auto` on the flex item above prevents cross-axis stretch and the
+     block collapses to its content width — a narrow centered box floating away from the
+     prose left edge. */
+  .row.assistant > :global(.think) {
+    width: 100%;
+    min-width: 0;
+    max-width: none;
+    margin-inline: 0;
+  }
   /* The markdown body fills the wide row so its fenced code / tables can break out; the
      leaf `.node-content > *` rules below re-cap prose at the measure. `<Markdown>` wraps
      markstream in a `.md-host` div (it hosts the copy-code action), so THAT wrapper — the
@@ -1709,6 +1719,6 @@
     border-left: 1px solid var(--border);
     display: flex;
     flex-direction: column;
-    gap: 18px;
+    gap: 8px;
   }
 </style>
