@@ -1188,6 +1188,15 @@
     max-width: none;
     margin-inline: 0;
   }
+  /* The thinking block also fills the row (so its left border aligns with the prose
+     edge) instead of shrink-wrapping + centering under the catch-all auto-margin rule
+     above. */
+  .row.assistant > :global(.think) {
+    width: 100%;
+    min-width: 0;
+    max-width: none;
+    margin-inline: 0;
+  }
   .row.assistant :global(.node-slot),
   .row.assistant :global(.node-content) {
     width: auto;

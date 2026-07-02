@@ -163,10 +163,11 @@
   });
 
   // App-global navigation hotkeys. The ⌘/Ctrl modifier keeps them clear of typing;
-  // component-local handlers own the ⇧-modified combos (⌘⇧M/E/T) and arrow nav, so we
-  // take only the unshifted, alt-free set here. (⌘N is browser-reserved in a plain tab
-  // but free in the installed PWA / desktop app, pilot's primary surface; ⌘[ / ⌘] cancel
-  // the browser's history nav, which is unused since the app routes views client-side.)
+  // component-local handlers own the ⇧-modified combos (⌘⇧M/E/J) and arrow nav, so we
+  // take only the unshifted, alt-free set here — plus ⌘⇧P (permission monitor cycle),
+  // which is app-global. (⌘N is browser-reserved in a plain tab but free in the
+  // installed PWA / desktop app, pilot's primary surface; ⌘[ / ⌘] cancel the browser's
+  // history nav, which is unused since the app routes views client-side.)
   function onGlobalKeydown(e: KeyboardEvent) {
     if (store.unauthorized) return;
     // Ctrl+Tab / Ctrl+Shift+Tab — cycle forward/back through sessions in sidebar order.
@@ -198,14 +199,14 @@
         return;
       }
     }
-    // ⌘Shift+M — cycle permission monitor mode
+    // ⌘Shift+P — cycle permission monitor mode
     // (Standard → Bypass → Bypass+ → Autonomous → Standard).
     // Must run before the modifier early-return below (has Shift).
     if (
       (e.metaKey || e.ctrlKey) &&
       e.shiftKey &&
       !e.altKey &&
-      (e.key === "M" || e.key === "m")
+      (e.key === "P" || e.key === "p")
     ) {
       e.preventDefault();
       const modes: PermissionMonitorMode[] = [
