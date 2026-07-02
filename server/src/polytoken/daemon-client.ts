@@ -871,6 +871,25 @@ export class DaemonClient {
     return data;
   }
 
+  /** `GET /notification-autodrain` — the autodrain flag (+ config default).
+   *  Used once at warm-up to seed the cached state (it isn't on GET /state). */
+  async getNotificationAutodrain(): Promise<{ enabled: boolean; config_default: boolean }> {
+    const { status, data, error } = await this.get<{
+      enabled: boolean;
+      config_default: boolean;
+    }>("/notification-autodrain");
+    if (status !== 200 || !data)
+      throw new Error(`GET /notification-autodrain failed (${status}): ${error}`);
+    return data;
+  }
+
+  /** `POST /notification-autodrain` — set the autodrain flag. */
+  async setNotificationAutodrain(enabled: boolean): Promise<void> {
+    const { status, error } = await this.post("/notification-autodrain", { enabled });
+    if (status !== 200)
+      throw new Error(`POST /notification-autodrain failed (${status}): ${error}`);
+  }
+
   /** `POST /clear` — reset context (also resets the shell env). */
   async clear(): Promise<void> {
     const { status, error } = await this.post("/clear");

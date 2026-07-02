@@ -845,10 +845,10 @@ describe("mapDaemonEvent", () => {
     expect(fold({ type: "heartbeat", timestamp: "t" })).toEqual({ events: [], effects: [] });
   });
 
-  test("notification_autodrain_switch -> empty", () => {
-    expect(fold({ type: "notification_autodrain_switch", enabled: true })).toEqual({
-      events: [],
-      effects: [],
+  test("notification_autodrain_switch -> sessionUpdated + setAutodrainEnabled (regression)", () => {
+    expect(fold({ type: "notification_autodrain_switch", enabled: true })).toMatchObject({
+      events: [{ type: "sessionUpdated", snapshot: { notificationAutodrain: true } }],
+      effects: [{ type: "setAutodrainEnabled", enabled: true }],
     });
   });
 
@@ -873,6 +873,19 @@ describe("mapDaemonEvent", () => {
       snapshot: { permissionMonitor: "bypass" },
     });
     expect(out.effects).toEqual([{ type: "setMonitorMode", mode: "bypass" }]);
+  });
+
+  test("notification_autodrain_switch -> sessionUpdated + setAutodrainEnabled effect", () => {
+    const out = fold({
+      type: "notification_autodrain_switch",
+      enabled: true,
+    });
+    expect(out.events).toHaveLength(1);
+    expect(out.events[0]).toMatchObject({
+      type: "sessionUpdated",
+      snapshot: { notificationAutodrain: true },
+    });
+    expect(out.effects).toEqual([{ type: "setAutodrainEnabled", enabled: true }]);
   });
 
   test("interrogative (confirmation) -> confirm card + registerInterrogative", () => {

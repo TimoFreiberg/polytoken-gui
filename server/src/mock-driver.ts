@@ -873,6 +873,17 @@ export class MockDriver implements PilotDriver {
     });
   }
 
+  private autodrainEnabled = false;
+  async setNotificationAutodrain(enabled: boolean): Promise<void> {
+    this.autodrainEnabled = enabled;
+    this.emit({
+      sessionRef: SESSION_REF,
+      timestamp: String(Date.now()),
+      type: "sessionUpdated",
+      snapshot: snapshot({ notificationAutodrain: enabled }),
+    });
+  }
+
   async getModelDefaults(): Promise<ModelDefaults> {
     // Resolve the catalog default from the mock's fixture config (mirrors the polytoken
     // driver's getModelDefaults, which reads `polytoken models`). Returns the static

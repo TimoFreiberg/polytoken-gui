@@ -1901,6 +1901,11 @@ class PilotStore {
     send({ type: "toggleAdventurousHandoff" });
   }
 
+  /** Set the notification auto-drain flag (autodrain non-blocking notifications). */
+  setNotificationAutodrain(enabled: boolean): void {
+    send({ type: "setNotificationAutodrain", enabled });
+  }
+
   /** Models shown in the header picker: filtered to favorites when any are set, but the
    *  currently-active model is ALWAYS included — a running non-favorite model stays
    *  visible/selectable (option a). Empty favorites = show every available model. */

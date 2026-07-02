@@ -446,12 +446,21 @@ New parity/UX items from the owner, grounded against current source.
       ("Blocked: the agent tried to use {tool_name}, which is blocked by a constraint").
       Test updated from `-> empty` to `-> warning notify naming the tool`.
 
-- [ ] **Notification autodrain toggle.** The daemon has `GET/POST /notification-autodrain`
+- [x] **Notification autodrain toggle.** The daemon has `GET/POST /notification-autodrain`
       (`wire-types.ts:437`) + `notification_autodrain_switch` / `notifications_drained`
       events, all currently swallowed (`event-map.ts:1184–1185` → `EMPTY`). The TUI surfaces
       this as a toggle (autodrain non-blocking notifications). Minor but a real feature
       the daemon exposes that pilot doesn't surface — add a Settings toggle and wire the
       events to update the cached state (mirror `permission_monitor_switch`'s pattern).
+      **Done 2026-07-02:** full stack wired — `getNotificationAutodrain` +
+      `setNotificationAutodrain` daemon-client methods, `autodrainEnabled` cache field on
+      `WarmSession` (seeded at warm-up like `monitorMode`), `notification_autodrain_switch`
+      event pulled from the EMPTY group (now emits sessionUpdated + `setAutodrainEnabled`
+      effect, mirroring `permission_monitor_switch`), `notificationAutodrain` on
+      `SessionSnapshot` + `SessionState` (overwrite-guarded fold), `setNotificationAutodrain`
+      wire message + hub handler + driver methods (polytoken + mock), Settings toggle in
+      the Notifications section, and e2e test. `notifications_drained` stays EMPTY
+      (informational — no UI action needed).
 
 - [x] **Adventurous handoff.** `GET/POST /adventurous-handoff` exists
       (`wire-types.ts:7`), `adventurous_handoff_active` is on the snapshot

@@ -209,6 +209,10 @@ export interface PilotDriver {
    *  implementing). Emits a sessionUpdated snapshot with the new state. */
   toggleAdventurousHandoff?(sessionId?: SessionId): Promise<void>;
 
+  /** Set the notification auto-drain flag. Emits a sessionUpdated snapshot with
+   *  the new state. */
+  setNotificationAutodrain?(enabled: boolean, sessionId?: SessionId): Promise<void>;
+
   /** The daemon's global default model/thinking for new sessions + the favorites subset. */
   getModelDefaults?(): Promise<ModelDefaults>;
 

@@ -217,6 +217,7 @@ export function snapshot(over: Partial<SessionSnapshot> = {}): SessionSnapshot {
     // "standard" here so the composer-toolbar badge is non-empty on load.
     permissionMonitor: "standard",
     adventurousHandoff: false,
+    notificationAutodrain: false,
     ...over,
   };
 }

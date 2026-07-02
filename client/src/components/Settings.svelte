@@ -335,6 +335,23 @@
           backgrounded tab uses Web Notifications; a closed phone uses Web Push (iOS
           requires Add-to-Home-Screen first).
         </p>
+        <div class="row">
+          <div class="rinfo">
+            <div class="rlabel">Auto-drain notifications</div>
+            <div class="rdesc">Automatically dismiss non-blocking notifications so they don't pile up.</div>
+          </div>
+          <button
+            class="seg-btn"
+            class:active={store.session.notificationAutodrain ?? false}
+            role="switch"
+            aria-checked={store.session.notificationAutodrain ?? false}
+            data-testid="notification-autodrain"
+            title={(store.session.notificationAutodrain ?? false) ? "Disable auto-drain" : "Enable auto-drain (auto-dismiss non-blocking notifications)"}
+            onclick={() => store.setNotificationAutodrain(!(store.session.notificationAutodrain ?? false))}
+          >
+            {(store.session.notificationAutodrain ?? false) ? "On" : "Off"}
+          </button>
+        </div>
       </section>
       {/if}
 

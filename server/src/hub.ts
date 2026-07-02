@@ -1233,6 +1233,19 @@ export class SessionHub {
         );
         return;
       }
+      case "setNotificationAutodrain": {
+        if (!this.driver.setNotificationAutodrain) {
+          send({ type: "error", message: "notification autodrain isn't supported here" });
+          return;
+        }
+        void this.driver.setNotificationAutodrain(
+          msg.enabled,
+          msg.sessionId ?? conn.focusedId ?? undefined,
+        ).catch((e) =>
+          send({ type: "error", message: e instanceof Error ? e.message : String(e) }),
+        );
+        return;
+      }
       case "openSession":
         void this.switchTo(conn, () => this.driver.openSession(msg.path));
         return;

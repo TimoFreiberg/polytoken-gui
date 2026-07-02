@@ -182,6 +182,9 @@ export interface SessionSnapshot {
    *  flag AND the active facet exposes handoff_plan). Undefined means the daemon
    *  didn't carry it (older daemon — preserve existing state). */
   readonly adventurousHandoff?: boolean;
+  /** Whether notification auto-drain is enabled. Undefined means the daemon
+   *  didn't carry it (older daemon — preserve existing state). */
+  readonly notificationAutodrain?: boolean;
   /** The active plan document's markdown (set when the plan facet produces a
    *  plan). Undefined means no plan exists / the facet isn't "plan". */
   readonly activePlan?: string;

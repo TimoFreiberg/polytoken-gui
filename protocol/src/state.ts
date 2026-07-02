@@ -128,6 +128,9 @@ export interface SessionState {
   /** Whether adventurous auto-handoff is active (computed by the daemon). Same
    *  overwrite-guarded semantics as `facet`. Drives the Settings toggle. */
   adventurousHandoff?: boolean;
+  /** Whether notification auto-drain is enabled. Same overwrite-guarded
+   *  semantics as `facet`. Drives the Settings toggle. */
+  notificationAutodrain?: boolean;
   /** The active plan document's markdown; undefined until a snapshot carries it.
    *  Drives the PlanView overlay. Same overwrite-guarded semantics as `facet`. */
   activePlan?: string;
@@ -269,6 +272,9 @@ export function foldEvent(
       // adventurousHandoff overwrites; one that omits it must not blank a known value.
       if (s.adventurousHandoff !== undefined)
         state.adventurousHandoff = s.adventurousHandoff;
+      // Same overwrite-guarded semantics for notificationAutodrain.
+      if (s.notificationAutodrain !== undefined)
+        state.notificationAutodrain = s.notificationAutodrain;
       // Same overwrite-guarded semantics as facet: a snapshot that carries
       // activePlan overwrites; one that omits it must not blank a known plan.
       if (s.activePlan !== undefined) state.activePlan = s.activePlan;

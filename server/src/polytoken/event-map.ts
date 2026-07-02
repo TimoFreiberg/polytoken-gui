@@ -159,6 +159,10 @@ export type DaemonEffect =
    *  sessionUpdated snapshot that carries the new mode directly (the snapshot is
    *  built from the event payload, not the still-stale cache). */
   | { type: "setMonitorMode"; mode: PermissionMonitorMode }
+  /** Update the cached notification-autodrain flag so subsequent ctx.snapshot()
+   *  calls reflect it. Emitted alongside a sessionUpdated snapshot carrying the
+   *  new value from the event payload. */
+  | { type: "setAutodrainEnabled"; enabled: boolean }
   /** Register a pending interrogative in the driver's pending map (so respondUi
    *  can build the reverse InterrogativeResponse from a later HostUiResponse) AND
    *  emit the matching pilot hostUiRequest card. The effect carries the
@@ -230,6 +234,7 @@ export function snapshotFromState(
   status: SessionStatus,
   now: string,
   monitorMode?: PermissionMonitorMode,
+  autodrainEnabled?: boolean,
 ): SessionSnapshot {
   const title = state?.session_title ?? ref.sessionId;
   // active_model is stored as the FULL `provider/id` registry name
@@ -256,6 +261,7 @@ export function snapshotFromState(
     facet: state?.active_facet ?? undefined,
     permissionMonitor: monitorMode,
     adventurousHandoff: state?.adventurous_handoff_active ?? undefined,
+    notificationAutodrain: autodrainEnabled,
     activePlan: state?.active_plan ?? undefined,
     // Thread current_goal → goal. Three cases: a CurrentGoal object → set (the
     // daemon carries summary + lifecycle); null (explicitly cleared) → null (the
@@ -1226,8 +1232,25 @@ export function mapDaemonEvent(
     // concerns. Each is tested to assert it returns empty (the table-driven test
     // matrix writes itself from the 57-variant enumeration).
 
+    case "notification_autodrain_switch": {
+      // The autodrain flag changed — daemon-side or echoing a user-initiated
+      // POST. Update the cached flag + emit a sessionUpdated snapshot.
+      return events(
+        [
+          {
+            ...meta,
+            type: "sessionUpdated",
+            snapshot: {
+              ...ctx.snapshot(ctx.liveStatus()),
+              notificationAutodrain: ev.enabled,
+            },
+          },
+        ],
+        [{ type: "setAutodrainEnabled", enabled: ev.enabled }],
+      );
+    }
+
     case "heartbeat":
-    case "notification_autodrain_switch":
     case "notifications_drained":
     case "hook_fired":
     case "context_loaded":

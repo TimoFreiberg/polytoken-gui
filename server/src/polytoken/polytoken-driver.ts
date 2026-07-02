@@ -133,6 +133,10 @@ interface WarmSession {
    *  GET /state) + kept in sync by the permission_monitor_switch event. Lets
    *  ctx.snapshot() be synchronous like lastState. */
   monitorMode: PermissionMonitorMode | undefined;
+  /** Cached notification-autodrain flag. Seeded once at warm-up via
+   *  GET /notification-autodrain (it isn't in GET /state) + kept in sync by
+   *  the notification_autodrain_switch event. */
+  autodrainEnabled: boolean | undefined;
   /** Pending host-UI interrogatives awaiting an operator response, keyed by the
    *  daemon's interrogative id. Populated by registerInterrogative effects;
    *  drained by respondUi. Lets the reverse builder (ui-bridge.ts) recover the
@@ -332,6 +336,7 @@ export async function createPolytokenDriver(
           status,
           ts,
           ws.monitorMode,
+          ws.autodrainEnabled,
         ),
       liveStatus: () => statusFromState(ws.lastState),
     };
@@ -349,6 +354,7 @@ export async function createPolytokenDriver(
       | { type: "reseed" }
       | { type: "refetchQueue" }
       | { type: "setMonitorMode"; mode: PermissionMonitorMode }
+      | { type: "setAutodrainEnabled"; enabled: boolean }
       | { type: "registerInterrogative"; pending: PendingInterrogative },
     ctx: ReturnType<typeof makeCtx>,
   ): void {
@@ -417,6 +423,10 @@ export async function createPolytokenDriver(
         ws.monitorMode = effect.mode;
         return;
       }
+      case "setAutodrainEnabled": {
+        ws.autodrainEnabled = effect.enabled;
+        return;
+      }
     }
   }
 
@@ -459,6 +469,15 @@ export async function createPolytokenDriver(
       console.error("[polytoken] getPermissionMonitor seed failed", e);
     }
 
+    // Seed the notification-autodrain flag once (it isn't in GET /state).
+    let seedAutodrain: boolean | undefined;
+    try {
+      const resp = await client.getNotificationAutodrain();
+      seedAutodrain = resp.enabled;
+    } catch (e) {
+      console.error("[polytoken] getNotificationAutodrain seed failed", e);
+    }
+
     const ref = {
       workspaceId: cwd,
       sessionId: spawned.sessionId,
@@ -471,6 +490,7 @@ export async function createPolytokenDriver(
       acc: createAccumulator(),
       lastState: initialState ?? null,
       monitorMode: seedMode,
+      autodrainEnabled: seedAutodrain,
       pendingInterrogatives: new Map(),
       lastFocusedAt: Date.now(),
       lastSeed: [],
@@ -539,6 +559,7 @@ export async function createPolytokenDriver(
           statusFromState(ws.lastState),
           now(),
           ws.monitorMode,
+          ws.autodrainEnabled,
         ),
       });
     }
@@ -589,6 +610,7 @@ export async function createPolytokenDriver(
           statusFromState(ws.lastState),
           ts,
           ws.monitorMode,
+          ws.autodrainEnabled,
         ),
       });
     }
@@ -1185,6 +1207,7 @@ export async function createPolytokenDriver(
             statusFromState(ws.lastState),
             now(),
             ws.monitorMode,
+            ws.autodrainEnabled,
           ),
         },
         ...ws.lastSeed,
@@ -1381,10 +1404,35 @@ export async function createPolytokenDriver(
             statusFromState(ws.lastState),
             now(),
             ws.monitorMode,
+            ws.autodrainEnabled,
           ),
         });
       } catch (e) {
         console.error("[polytoken] toggleAdventurousHandoff failed", e);
+      }
+    },
+    async setNotificationAutodrain(enabled: boolean, sessionId?: SessionId): Promise<void> {
+      const ws = target(sessionId);
+      if (!ws) return;
+      try {
+        await ws.client.setNotificationAutodrain(enabled);
+        ws.autodrainEnabled = enabled;
+        emit({
+          sessionRef: ws.ref,
+          timestamp: now(),
+          type: "sessionUpdated",
+          snapshot: snapshotFromState(
+            ws.lastState,
+            ws.ref,
+            workspaceFor(ws),
+            statusFromState(ws.lastState),
+            now(),
+            ws.monitorMode,
+            ws.autodrainEnabled,
+          ),
+        });
+      } catch (e) {
+        console.error("[polytoken] setNotificationAutodrain failed", e);
       }
     },
     setClientPresence(fn: () => boolean): void {
