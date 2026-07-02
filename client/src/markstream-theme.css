@@ -233,7 +233,9 @@
    prefers-reduced-motion disables the fade (no opacity start → content is just there). */
 .markstream-svelte.markdown-renderer :where(.fade-node, .typewriter-node) {
   animation: pilot-stream-fade 160ms cubic-bezier(0.33, 0, 0.67, 1) both;
-  will-change: opacity;
+  /* No will-change here: it forced a compositor layer PER PARAGRAPH for the
+     whole streaming turn (layer explosion); browsers self-promote for a
+     one-shot 160ms animation just fine. */
 }
 @keyframes pilot-stream-fade {
   from {

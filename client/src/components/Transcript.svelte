@@ -237,19 +237,17 @@
   }
 
   // Per-item "Copied" feedback, keyed by item id. Cleared after a short delay.
+  // Copies via store.copyToClipboard so a rejection (permissions / insecure
+  // context) surfaces as a visible error instead of a silent no-op.
   let copiedId = $state<string | null>(null);
   let copyTimer: ReturnType<typeof setTimeout> | undefined;
   async function copyText(id: string, text: string) {
-    try {
-      await navigator.clipboard.writeText(text);
-      copiedId = id;
-      clearTimeout(copyTimer);
-      copyTimer = setTimeout(() => {
-        copiedId = null;
-      }, 1500);
-    } catch {
-      // Clipboard can reject (permissions / insecure context); leave UI as-is.
-    }
+    if (!(await store.copyToClipboard(text))) return;
+    copiedId = id;
+    clearTimeout(copyTimer);
+    copyTimer = setTimeout(() => {
+      copiedId = null;
+    }, 1500);
   }
 
   // A scalar that grows whenever the transcript gains content: item count plus the

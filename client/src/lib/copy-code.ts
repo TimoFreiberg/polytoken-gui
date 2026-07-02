@@ -9,6 +9,8 @@
 // content on long lines. Wrapping the `<pre>` in a non-scrolling relative box lets the
 // button stay pinned to the visible top-right corner.
 
+import { store } from "./store.svelte.js";
+
 const COPY_ICON = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>`;
 const CHECK_ICON = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg>`;
 
@@ -26,12 +28,9 @@ function makeButton(pre: HTMLPreElement): HTMLButtonElement {
     e.stopPropagation();
     // The `<code>` child carries the source text; fall back to the `<pre>` itself.
     const text = (pre.querySelector("code") ?? pre).textContent ?? "";
-    try {
-      await navigator.clipboard.writeText(text);
-    } catch {
-      // Clipboard can reject (permissions / insecure context) — leave the UI as-is.
-      return;
-    }
+    // store.copyToClipboard surfaces a rejection (permissions / insecure
+    // context) as a visible error instead of a silent no-op.
+    if (!(await store.copyToClipboard(text))) return;
     btn.classList.add("copied");
     btn.innerHTML = CHECK_ICON;
     btn.title = "Copied";

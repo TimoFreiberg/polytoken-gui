@@ -4,6 +4,7 @@
   import type { ToolItem } from "@pilot/protocol";
   import Chevron from "./ui/Chevron.svelte";
   import { imageViewer } from "../lib/image-viewer.svelte.js";
+  import { store } from "../lib/store.svelte.js";
 
   // `flat` drops the card chrome (border/background/rounded box) so the call renders as a
   // bare row. Currently unused (the merge layer that passed flat=true was removed), but
@@ -20,15 +21,13 @@
   let copied = $state(false);
   let copyTimer: ReturnType<typeof setTimeout> | undefined;
 
+  // Copies via store.copyToClipboard so a rejection (permissions / insecure
+  // context) surfaces as a visible error instead of a silent no-op.
   async function copyOut(text: string) {
-    try {
-      await navigator.clipboard.writeText(text);
-      copied = true;
-      clearTimeout(copyTimer);
-      copyTimer = setTimeout(() => (copied = false), 1500);
-    } catch {
-      // Clipboard can reject (permissions / insecure context); leave the UI as-is.
-    }
+    if (!(await store.copyToClipboard(text))) return;
+    copied = true;
+    clearTimeout(copyTimer);
+    copyTimer = setTimeout(() => (copied = false), 1500);
   }
 
   // Measure overflow while collapsed (scrollHeight exceeds the capped clientHeight). Keep

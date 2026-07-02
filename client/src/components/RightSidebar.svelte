@@ -41,7 +41,7 @@
   <div class="top">
     <span class="title">Context</span>
     <IconButton
-      title="Close context panel (⌘J)"
+      title="Close context panel (⌘⇧J)"
       aria-label="Close context panel"
       onclick={() => store.closeRightSidebar()}>›</IconButton
     >

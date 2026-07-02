@@ -885,19 +885,30 @@ titles below match its `findings[]` entries. Ranked by felt-quality-per-effort.
 
 ### Quick wins (hours-sized, low-risk checklist)
 
-- [ ] Delete `will-change: opacity` (`markstream-theme.css:236`) — layer-per-paragraph
+- [x] Delete `will-change: opacity` (`markstream-theme.css:236`) — layer-per-paragraph
       explosion during streaming; browsers self-promote for one-shot animations.
-- [ ] ⚠️ Call `disableD2()` once at startup — every finalized markdown block currently fires
+      **Done 2026-07-02** (comment left in place explaining why it must not return).
+- [~] ⚠️ Call `disableD2()` once at startup — every finalized markdown block currently fires
       an unhandled rejection (missing optional `@terrastruct/d2`) that also aborts footnote/
       tooltip enhancement. Also fix upstream in markstream: check for d2 blocks *before*
       `getD2()`, catch enhancement rejections.
+      **Pilot side done 2026-07-02:** `disableD2()` called once in `main.ts` —
+      verified live (markdown-heavy mock script: 0 page errors, previously one
+      rejection on first render). The upstream markstream fix (probe-before-getD2,
+      catch enhancement rejections) remains open.
 - [ ] `snapshotOf` (`hub.ts:331-334`): return state directly / stringify once at send;
       clone only in test capture. (Measured: micro — do NOT build server delta-coalescing.)
 - [ ] Fix the two committed perf scripts (broken under Bun isolated node_modules) so the
       C1 measurements stay reproducible.
-- [ ] Right-sidebar tooltip advertises ⌘J but the hotkey is ⌘⇧J.
-- [ ] Surface clipboard-copy failures (three silent sites; the store's own copy path
+- [x] Right-sidebar tooltip advertises ⌘J but the hotkey is ⌘⇧J.
+      **Done 2026-07-02** (close-button tooltip now says ⌘⇧J, matching the
+      StatusHeader binding + toggle tooltip).
+- [x] Surface clipboard-copy failures (three silent sites; the store's own copy path
       already does it right).
+      **Done 2026-07-02:** Transcript `copyText`, ToolCard `copyOut`, and the
+      code-block copy button all route through `store.copyToClipboard`, which
+      sets `lastError` ("needs a secure context") on rejection — no more silent
+      no-op copies.
 - [ ] Move the per-send `POST /push/subscribe` round-trip off the prompt-send hot path
       (subscribe once per session/page instead).
 
