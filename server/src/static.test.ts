@@ -5,8 +5,8 @@
 // config.clientDist is the singleton mutate-and-restore seam (same as config.token in
 // config.test.ts); we point it at a tmpdir with a fake index.html + asset.
 
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { afterAll, afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { config } from "./config.js";
@@ -70,5 +70,90 @@ describe("serveStatic", () => {
     const res = await serveStatic("/");
     expect(res).not.toBeNull();
     expect(await res!.text()).toBe("<!doctype html>spa");
+  });
+});
+
+/** The delivery policy: hashed /assets/* are immutable (+404 when missing —
+ *  never the SPA fallback, which would cache index.html as JavaScript after a
+ *  deploy swap), revalidating files answer 304 via ETag, and compressible
+ *  bodies gzip when the client accepts it. Uses one shared dist dir + unique
+ *  filenames (NOT per-test dirs): the module's etag/gzip caches are keyed by
+ *  dist-relative path and live for the process, matching prod's immutable-dist
+ *  assumption. */
+describe("serveStatic delivery policy", () => {
+  let dist: string;
+  const origClientDist = config.clientDist;
+  const BIG_JS = `// padding\n${"x".repeat(4000)}\n`;
+
+  beforeEach(() => {
+    if (dist) return; // one shared dist for the describe (see doc comment)
+    dist = mkdtempSync(join(tmpdir(), "pilot-static-policy-"));
+    writeFileSync(join(dist, "index.html"), `<html>${"p".repeat(3000)}</html>`);
+    mkdirSync(join(dist, "assets"));
+    writeFileSync(join(dist, "assets", "app-abc123.js"), BIG_JS);
+    writeFileSync(join(dist, "assets", "tiny-def456.js"), "//t\n");
+  });
+  beforeEach(() => {
+    config.clientDist = dist;
+  });
+  afterEach(() => {
+    config.clientDist = origClientDist;
+  });
+  afterAll(() => {
+    rmSync(dist, { recursive: true, force: true });
+  });
+
+  const req = (headers: Record<string, string> = {}) =>
+    new Request("http://pilot.test/", { headers });
+
+  test("hashed assets get an immutable year-long cache", async () => {
+    const res = await serveStatic("/assets/app-abc123.js", req());
+    expect(res?.status).toBe(200);
+    expect(res?.headers.get("cache-control")).toBe(
+      "public, max-age=31536000, immutable",
+    );
+  });
+
+  test("a MISSING hashed asset is a 404, never the SPA fallback", async () => {
+    const res = await serveStatic("/assets/gone-999.js", req());
+    expect(res?.status).toBe(404);
+  });
+
+  test("index.html revalidates: no-cache + ETag, then 304 on match", async () => {
+    const first = await serveStatic("/", req());
+    expect(first?.status).toBe(200);
+    expect(first?.headers.get("cache-control")).toBe("no-cache");
+    const tag = first?.headers.get("etag");
+    expect(tag).toBeTruthy();
+
+    const second = await serveStatic("/", req({ "if-none-match": tag! }));
+    expect(second?.status).toBe(304);
+    expect(await second?.text()).toBe("");
+  });
+
+  test("compressible bodies gzip when the client accepts it", async () => {
+    const res = await serveStatic(
+      "/assets/app-abc123.js",
+      req({ "accept-encoding": "gzip, deflate, br" }),
+    );
+    expect(res?.headers.get("content-encoding")).toBe("gzip");
+    expect(res?.headers.get("vary")).toBe("accept-encoding");
+    const body = new Uint8Array(await res!.arrayBuffer());
+    expect(new TextDecoder().decode(Bun.gunzipSync(body))).toBe(BIG_JS);
+  });
+
+  test("tiny files skip gzip (not worth the frame overhead)", async () => {
+    const res = await serveStatic(
+      "/assets/tiny-def456.js",
+      req({ "accept-encoding": "gzip" }),
+    );
+    expect(res?.status).toBe(200);
+    expect(res?.headers.get("content-encoding")).toBeNull();
+  });
+
+  test("no accept-encoding → identity body", async () => {
+    const res = await serveStatic("/assets/app-abc123.js", req());
+    expect(res?.headers.get("content-encoding")).toBeNull();
+    expect(await res?.text()).toBe(BIG_JS);
   });
 });

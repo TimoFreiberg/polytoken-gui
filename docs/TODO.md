@@ -799,7 +799,7 @@ titles below match its `findings[]` entries. Ranked by felt-quality-per-effort.
    unchanged (engagement was start-only in both trackers before). Tracker unit
    tests + both mobile e2e suites green; DevTools "Scrolling: threaded" check
    not run (needs a manual device pass).
-3. **Asset delivery: cache headers + gzip + SW cache** (merges two findings). `static.ts:7-18`
+3. **[~] Asset delivery: cache headers + gzip + SW cache** (merges two findings). `static.ts:7-18`
    serves bare `Bun.file` — no Cache-Control/ETag, no gzip, and the SPA fallback serves
    index.html for missing hashed assets (stale-deploy white-screen). Every launch re-downloads
    ~860KB raw over Tailscale. Fix: (a) `/assets/*` → `max-age=31536000, immutable`;
@@ -808,6 +808,13 @@ titles below match its `findings[]` entries. Ranked by felt-quality-per-effort.
    navigations (~30 lines, cap the cache); (d) 404 for missing `/assets/*` instead of SPA
    fallback. Test: e2e asserting header presence; manual offline open. Effort: day. Risk:
    low-medium (SW caching bugs are annoying — keep sw.js `no-cache` so it's always refetchable).
+   **(a)(b)(d) done 2026-07-02:** `static.ts` rewritten — immutable year-long cache for
+   `/assets/*`, `no-cache` + ETag/304 for index.html/sw.js/manifest, per-process
+   in-memory gzip cache for compressible types (>1KB), 404 for missing hashed assets.
+   7 new unit tests + verified on the wire against the built dist: main bundle
+   783KB→248KB gzipped, 304 on revalidate, repeat launches pay 0 bytes for assets.
+   **(c) SW asset caching deliberately deferred** — riskiest part (SW cache bugs wedge
+   clients), wants its own change with an offline-open test plan.
 4. **[x] Warm-cap eviction kills running background turns.** `evictionPlan` is recency-only;
    eviction disposes victims mid-turn and the synthetic `sessionClosed` clears the running
    indicator + attention record, so the killed turn *looks finished*

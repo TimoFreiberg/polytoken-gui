@@ -304,7 +304,7 @@ const server = Bun.serve<WsData>({
     }
 
     // Serve the built client in prod; in dev Vite serves it and proxies here.
-    const asset = await serveStatic(url.pathname);
+    const asset = await serveStatic(url.pathname, req);
     if (asset) return asset;
     return new Response("pilot server — no client build (run `bun run dev`)", {
       status: 200,
