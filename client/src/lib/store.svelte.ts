@@ -23,6 +23,7 @@ import {
   type SessionState,
   type TranscriptItem,
   type TrustRequest,
+  PROTOCOL_VERSION,
 } from "@pilot/protocol";
 import { clearToken, getToken, setToken } from "./auth.js";
 import { notifyNativeUpdateStarting } from "./native-bridge.js";
@@ -267,6 +268,10 @@ class PilotStore {
   // Last server-side error worth showing the user (e.g. a session switch to a bad
   // path failed). Transient — cleared on the next successful switch or by the UI.
   lastError = $state<string | null>(null);
+  // Protocol version mismatch — set when the server's protocolVersion doesn't
+  // match the client's. A hard error: the client must not fold events from an
+  // incompatible server. The UI shows a full-screen error directing a hard refresh.
+  protocolMismatch = $state<string | null>(null);
   // Transient snackbars (archive undo, "resolved on another device", …). Client-only,
   // never sent upstream; each carries an optional one-shot action and auto-dismisses.
   toasts = $state<Toast[]>([]);
@@ -743,6 +748,16 @@ class PilotStore {
   private onServer(msg: ServerMessage): void {
     switch (msg.type) {
       case "hello":
+        // Guard against a stale cached PWA (old protocol) silently misfolding
+        // events from a newer server. A mismatch is a hard error — the client
+        // must not process further messages. The UI shows a full-screen error.
+        if (msg.protocolVersion !== PROTOCOL_VERSION) {
+          this.protocolMismatch = `Server protocol version ${msg.protocolVersion} doesn't match client ${PROTOCOL_VERSION}. Hard-refresh the page (⌘⇧R) to update.`;
+          console.error(
+            `[pilot] protocol version mismatch: server=${msg.protocolVersion} client=${PROTOCOL_VERSION}`,
+          );
+          return;
+        }
         this.serverId = msg.serverId;
         this.dataDir = msg.dataDir ?? "";
         persistLastServerId(msg.serverId);

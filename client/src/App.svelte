@@ -271,6 +271,12 @@
 <svelte:window onkeydown={(e) => { onZoomKey(e); onGlobalKeydown(e); }} />
 {#if store.unauthorized}
   <TokenGate />
+{:else if store.protocolMismatch}
+  <div class="fatal">
+    <h1>Update required</h1>
+    <p>{store.protocolMismatch}</p>
+    <button onclick={() => location.reload()}>Reload</button>
+  </div>
 {:else}
 <div class="shell">
   <Sidebar edge={edge} />
@@ -348,6 +354,44 @@
 <Tooltip />
 
 <style>
+  .fatal {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 16px;
+    height: 100dvh;
+    padding: 40px;
+    text-align: center;
+    font-family: var(--font-sans);
+    color: var(--text);
+    background: var(--bg);
+  }
+  .fatal h1 {
+    font-size: 20px;
+    font-weight: 600;
+    margin: 0;
+  }
+  .fatal p {
+    font-size: 14px;
+    line-height: 1.5;
+    color: var(--text-muted);
+    max-width: 360px;
+    margin: 0;
+  }
+  .fatal button {
+    font: inherit;
+    font-size: 14px;
+    padding: 8px 20px;
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--accent);
+    background: var(--accent);
+    color: var(--bg);
+    cursor: pointer;
+  }
+  .fatal button:hover {
+    background: var(--accent-hover);
+  }
   .shell {
     display: flex;
     flex-direction: row;
