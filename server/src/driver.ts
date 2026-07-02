@@ -158,6 +158,9 @@ export interface PilotDriver {
    *  + skills, the daemon's `get_commands` set). Per-session because the set is cwd-scoped;
    *  sessionId omitted -> the driver's current session. The mock returns a fixture set. */
   listCommands(sessionId?: SessionId): Promise<CommandInfo[]>;
+  /** Available facet names for the focused session's cwd (from `polytoken vfs ls
+   *  polytoken://facets`). Always includes at least ["execute", "plan"]. */
+  listFacets(sessionId?: SessionId): Promise<string[]>;
   /** The full file index for a session's cwd — pushed on connect + switch so the client
    *  can fuzzy-match @-mentions locally (no per-keystroke round-trip). The real driver
    *  runs one .gitignore-aware `fd` capped at a few thousand entries; `truncated` is true

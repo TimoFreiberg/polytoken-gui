@@ -1285,6 +1285,33 @@ export async function createPolytokenDriver(
       }
     },
 
+    async listFacets(_sessionId?: SessionId): Promise<string[]> {
+      // `polytoken vfs ls polytoken://facets` lists the available facet names (one
+      // per line). Not cached — called only on connect/switch/reload (not per
+      // keystroke), and the reload affordance needs a fresh read. Returns at
+      // minimum ["execute", "plan"] (the builtins) so the picker always has the
+      // two states it used to toggle between.
+      const cwd = active()?.cwd;
+      if (!cwd) return ["execute", "plan"];
+      try {
+        const { stdout } = await runPolytokenText(polytokenBin, [
+          "--working-dir",
+          cwd,
+          "vfs",
+          "ls",
+          "polytoken://facets",
+        ]);
+        const facets = stdout
+          .split("\n")
+          .map((l) => l.trim())
+          .filter((l) => l.length > 0);
+        return facets.length > 0 ? facets : ["execute", "plan"];
+      } catch (e) {
+        console.error("[polytoken] listFacets failed", e);
+        return ["execute", "plan"];
+      }
+    },
+
     async listFileIndex(
       sessionId?: SessionId,
     ): Promise<{ files: FileInfo[]; truncated: boolean }> {

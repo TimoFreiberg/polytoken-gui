@@ -150,6 +150,9 @@ class PilotStore {
   // Slash commands the focused session offers, for the composer typeahead. Server-
   // authoritative, delivered like `models`; refreshed on session switch (cwd-scoped).
   commands = $state<CommandInfo[]>([]);
+  // Available facets for the focused session's cwd (from `polytoken vfs ls
+  // polytoken://facets`). Pushed on connect + session switch like `commands`.
+  facets = $state<string[]>(["execute", "plan"]);
   // The focused session's full file index (cwd-scoped), pushed by the server on connect +
   // session switch. The composer fuzzy-matches this locally so the @-mention menu is
   // instant — no per-keystroke round-trip. `truncated` is true when the cwd overflowed the
@@ -835,6 +838,9 @@ class PilotStore {
         break;
       case "commandList":
         this.commands = [...msg.commands];
+        break;
+      case "facetList":
+        this.facets = [...msg.facets];
         break;
       case "fileIndex":
         this.fileIndex = { files: [...msg.files], truncated: msg.truncated };
@@ -1887,6 +1893,12 @@ class PilotStore {
    *  property of an active session, not a new-session draft setting. */
   setFacet(facet: string): void {
     send({ type: "setFacet", facet });
+  }
+
+  /** Ask the server to re-read the available facets (reload affordance for when
+   *  facet files change on disk while a session is open). */
+  refreshFacets(): void {
+    send({ type: "listFacets" });
   }
 
   /** Switch the active permission-monitor mode (standard/bypass/autonomous).

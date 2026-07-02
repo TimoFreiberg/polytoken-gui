@@ -750,6 +750,17 @@ export class SessionHub {
     }
   }
 
+  /** Fetch + send ONE client its focused session's available facets (for the
+   *  FacetBadge picker). Per-connection like {@link sendCommandList}. */
+  private async sendFacetList(conn: ClientConn): Promise<void> {
+    try {
+      const facets = await this.driver.listFacets(conn.focusedId ?? undefined);
+      conn.send({ type: "facetList", facets });
+    } catch (e) {
+      console.error("[hub] listFacets failed", e);
+    }
+  }
+
   /** Fetch + send ONE client the full @-mention file index for its focused session's cwd.
    *  Pushed on that client's connect + session switch (like {@link sendCommandList}); the
    *  client fuzzy-matches it locally so the menu is instant. `truncated` tells the client
@@ -1057,6 +1068,7 @@ export class SessionHub {
       else conn.send({ type: "snapshot", state: this.snapshotOf(sid) });
       await this.broadcastSessionList();
       await this.sendCommandList(conn);
+      void this.sendFacetList(conn);
       void this.sendFileIndex(conn);
       return sid;
     } finally {
@@ -1120,6 +1132,7 @@ export class SessionHub {
     void this.broadcastSessionList();
     void this.broadcastModelList();
     void this.sendCommandList(conn);
+    void this.sendFacetList(conn);
     void this.sendFileIndex(conn);
     void this.broadcastModelDefaults();
     // A client arriving while a turn is already running starts the ticker (and one
@@ -1372,6 +1385,9 @@ export class SessionHub {
       case "listCommands":
         void this.sendCommandList(conn);
         return;
+      case "listFacets":
+        void this.sendFacetList(conn);
+        return;
       case "queryFiles":
         void this.sendFileList(conn, msg.query, msg.cwd);
         return;
@@ -1500,6 +1516,7 @@ export class SessionHub {
     void this.broadcastSessionList();
     for (const conn of this.clients.values()) {
       void this.sendCommandList(conn);
+      void this.sendFacetList(conn);
       void this.sendFileIndex(conn);
     }
   }

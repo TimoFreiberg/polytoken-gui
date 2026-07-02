@@ -371,7 +371,7 @@ New parity/UX items from the owner, grounded against current source.
       The popup replaces the need to type `/compact`; the slash command stays as a
       power-user path. Needs a tooltip (repo rule).
 
-- [ ] **Show all available facets** (`polytoken vfs ls polytoken://facets`). The session
+- [x] **Show all available facets** (`polytoken vfs ls polytoken://facets`). The session
       snapshot exposes `available_skills` and `available_subagents`
       (`wire-types.ts:2635-2636`) but **no `available_facets`**. The current `FacetBadge`
       (`FacetBadge.svelte`) hardcodes execute ↔ plan (toggling via `Shift+Tab` /
@@ -383,12 +383,24 @@ New parity/UX items from the owner, grounded against current source.
       **Decided 2026-07-01:** approach (a) — shell out to `polytoken vfs ls`. Call it
       once on each new session open (not just warm-up), and provide a daemon-reload
       affordance (see the dedicated todo below).
-- [ ] **Facets list reload affordance.** When facets are added/removed on disk (e.g. the
+      **Done 2026-07-02:** `listFacets` method on `PilotDriver` (polytoken driver
+      shells out to `polytoken vfs ls polytoken://facets`, cached per cwd like
+      `commandsCache`; mock returns `["execute", "plan"]`). `facetList` wire event
+      (server→client, pushed on connect + session switch) + `listFacets` wire message
+      (client→server, for reload). `store.facets` state. FacetBadge converted from a
+      toggle to a dropdown picker (badge + panel with keyboard nav, mirroring
+      PermissionBadge). Shift+Tab still toggles execute/plan. E2e tests for picker +
+      reload.
+- [x] **Facets list reload affordance.** When facets are added/removed on disk (e.g. the
       operator edits a facet file while a session is open), the cached `available_facets`
       list goes stale. Add a reload button or menu action that re-runs
       `polytoken vfs ls polytoken://facets` and refreshes the FacetBadge picker. Pairs with
       the "show all available facets" todo above.
       **human input**: this could be in the settings tbh, or in the sidebar at the bottom. doesn't need to be prominent
+      **Done 2026-07-02:** "↻ Reload facets" button at the bottom of the FacetBadge
+      picker panel. Calls `store.refreshFacets()` which sends a `listFacets` wire
+      message → hub calls `driver.listFacets()` (no cache — always re-shells-out) →
+      `facetList` event refreshes the picker. E2e test verifies the button works.
 
 - [ ] **Ctrl+R prompt-history popup** (polytoken TUI parity — nice-to-have polish,
       bottom of parity work). The polytoken TUI offers a ctrl+r popup showing a few

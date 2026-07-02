@@ -175,6 +175,9 @@ export type ServerMessage =
    *  composer's typeahead. Server-authoritative like `modelList`; re-broadcast on
    *  session switch because the set is cwd-scoped. See {@link CommandInfo}. */
   | { type: "commandList"; commands: readonly CommandInfo[] }
+  /** The available facets for the focused session's cwd (for the FacetBadge picker).
+   *  Pushed on connect + session switch like {@link commandList}. */
+  | { type: "facetList"; facets: readonly string[] }
   /** The full file index for the focused session's cwd, pushed on connect + session
    *  switch (like {@link commandList}). The client fuzzy-matches it locally so the
    *  @-mention menu is instant (no per-keystroke round-trip). Capped server-side;
@@ -377,6 +380,9 @@ export type ClientMessage =
   | { type: "cleanupWorktree"; path: string; force?: boolean }
   /** Ask the server to re-read the focused session's commands and re-broadcast them. */
   | { type: "listCommands" }
+  /** Ask the server to re-read the focused session's available facets and
+   *  re-broadcast them (reload affordance for the FacetBadge picker). */
+  | { type: "listFacets" }
   /** Fallback file search for a composer @-mention query (the text after `@`). Only sent
    *  when the {@link fileIndex} was truncated and local matches are thin — the common case
    *  is served entirely client-side from the index. The server responds with {@link fileList}.

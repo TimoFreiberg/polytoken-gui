@@ -781,6 +781,10 @@ export class MockDriver implements PilotDriver {
     return MOCK_COMMANDS.map((c) => ({ ...c }));
   }
 
+  async listFacets(): Promise<string[]> {
+    return ["execute", "plan"];
+  }
+
   async listFileIndex(): Promise<{ files: FileInfo[]; truncated: boolean }> {
     // The fixture set is small, so the client always has the full index — for a real session
     // the per-query fallback never fires (truncated stays false). A new-session DRAFT still
