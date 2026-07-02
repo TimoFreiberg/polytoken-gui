@@ -142,7 +142,9 @@
   //   arrow-key navigate, Enter fills the composer. Mirrors the polytoken TUI.
   let historyOpen = $state(false);
   let historySel = $state(0);
-  let historyItems: string[] = [];
+  // $state: passed as a prop to the mounted popup — a reassignment while it's
+  // open (re-opening over fresh history) must re-render the list.
+  let historyItems = $state<string[]>([]);
   function openHistory() {
     historyItems = [...store.currentPromptHistory].reverse(); // newest first
     if (historyItems.length === 0) return;

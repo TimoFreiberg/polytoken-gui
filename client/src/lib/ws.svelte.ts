@@ -28,6 +28,12 @@ export function reconnectAttempts(): number {
 let ws: WebSocket | null = null;
 let listeners: MessageListener[] = [];
 let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+// Handshake watchdog: a blackholed connect (SYN into a dead Tailscale route)
+// can sit CONNECTING for minutes with NO retry timer armed — "Reconnecting…"
+// would lie. If the socket hasn't opened within the window, kill it and fall
+// back to the normal backoff schedule.
+let connectWatchdog: ReturnType<typeof setTimeout> | null = null;
+const CONNECT_TIMEOUT_MS = 8_000;
 let intentionalClose = false;
 // The store registers a provider for the focused session's fold watermark; the
 // (re)connect hello carries it so the server can tail-replay just the missed
@@ -65,7 +71,17 @@ function scheduleReconnect(): void {
   }, delay);
 }
 
+function clearConnectWatchdog(): void {
+  if (connectWatchdog !== null) {
+    clearTimeout(connectWatchdog);
+    connectWatchdog = null;
+  }
+}
+
 function cleanupSocket(): void {
+  // Every path that discards a socket (close, force-reconnect, disconnect)
+  // also invalidates its handshake watchdog.
+  clearConnectWatchdog();
   if (ws) {
     ws.onopen = null;
     ws.onmessage = null;
@@ -93,7 +109,24 @@ function doConnect(): void {
   _state = _reconnectAttempt === 0 ? "connecting" : "reconnecting";
   ws = new WebSocket(url);
 
+  // Arm the handshake watchdog for THIS socket. The identity guard matters:
+  // forceReconnect may have swapped the socket before the timer fires, and the
+  // watchdog must never kill a replacement it didn't arm for.
+  const armed = ws;
+  clearConnectWatchdog();
+  connectWatchdog = setTimeout(() => {
+    connectWatchdog = null;
+    if (ws !== armed || armed.readyState !== WebSocket.CONNECTING) return;
+    console.warn("[ws] connect timed out — closing and retrying with backoff");
+    cleanupSocket(); // detaches onclose so the close below can't double-schedule
+    armed.close();
+    // Deliberately NOT resetting _reconnectAttempt: a timed-out handshake is a
+    // failed attempt, so the backoff keeps growing.
+    scheduleReconnect();
+  }, CONNECT_TIMEOUT_MS);
+
   ws.onopen = () => {
+    clearConnectWatchdog();
     _reconnectAttempt = 0;
     send({
       type: "hello",

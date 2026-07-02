@@ -277,7 +277,9 @@
   //     live bottom. The CURSOR — not the scroll position — is the source of truth, so a
   //     rapid burst of presses steps deterministically even while a scroll from the
   //     previous press is still settling (reading scrollTop mid-jump would stutter).
-  let navIndex: number | null = null;
+  // $state: the template reads it (`class:visible` keeps the floating nav
+  // control shown while actively stepping) — a plain let wouldn't re-render.
+  let navIndex = $state<number | null>(null);
   // Whether the transcript area is hovered or focused, so the floating prev/next
   // prompt-nav control is visible. On touch (pointer: coarse) the control is always
   // visible via CSS — hover/focus doesn't apply there.

@@ -658,7 +658,7 @@ New parity/UX items from the owner, grounded against current source.
 
 ### Hand-backs from the 2026-07-02 overnight-batch review (verified against source 2026-07-02)
 
-- [ ] **clearQueue loses queued text on partial drain failure.** `clearQueue`
+- [x] **clearQueue loses queued text on partial drain failure.** `clearQueue`
       (`polytoken-driver.ts:1607-1635`) snapshots the queue, then drains via repeated
       `dequeueNewestInput()` inside one try/catch. If a dequeue fails partway, the catch
       returns `{steering: [], followUp: []}` — the texts of items *already deleted from the
@@ -668,6 +668,12 @@ New parity/UX items from the owner, grounded against current source.
       failure return the harvested texts anyway; after any failure re-fetch
       `turnInputSnapshot()` and emit the *real* remaining queue instead of assuming
       empty/stale.
+      **Fixed 2026-07-02:** the drain stops at the first failure, then re-fetches the
+      daemon's real remaining queue — broadcast as the honest `queueUpdated` — and
+      returns the drained texts reconciled **by id** against it (snapshot-vs-newest
+      ordering is undocumented, so id-diffing beats counting). Only when the resync
+      fetch itself also fails does it fall back to the dequeue-count guess; the texts
+      still reach the composer in every path.
 - [x] **`bypass_plus` is unreachable and mislabeled in the permission badge.**
       `PermissionMonitorMode` has 4 modes (`protocol/src/session-driver.ts:33`) but
       `PermissionBadge.MODES` lists 3 (`PermissionBadge.svelte:12-20`); in `bypass_plus` —
@@ -711,10 +717,12 @@ New parity/UX items from the owner, grounded against current source.
       unit tests run in milliseconds: idle+healthy → exactly 1 `/events` fetch
       across 6 periods, zero discontinuities; idle+hung-probe → reconnect +
       `stream_discontinuity` emitted.
-- [ ] **Minor: `hasClients` comment mislabels fail-open as deny-safe.** The default
+- [x] **Minor: `hasClients` comment mislabels fail-open as deny-safe.** The default
       `() => true` (`polytoken-driver.ts:208`) means "assume someone can answer" — that is
       fail-open; the comment calls it "deny-safe = don't block". Reword when the first
       read site lands (the inline TODO already tracks that no read site exists).
+      **Fixed 2026-07-02:** comment reworded to name the default fail-open and say why
+      (never auto-deny just because the hub hasn't registered the real predicate yet).
 
 ### Fix-chips converted to TODO entries (2026-07-02, owner request)
 
@@ -731,7 +739,7 @@ New parity/UX items from the owner, grounded against current source.
       **Fixed 2026-07-02:** the UI was right (six tabs: appearance, notifications,
       models, environment, mcp, token) — the spec was stale. Renamed the test to
       "Alt+1..6", asserts Alt+5 → MCP tab and Alt+6 → Access token. 12/12 green.
-- [ ] **Non-reactive `$state` warnings: Transcript `navIndex` + Composer
+- [x] **Non-reactive `$state` warnings: Transcript `navIndex` + Composer
       `historyItems`.** svelte-check reports `non_reactive_update` for both
       (`Transcript.svelte:261`, `Composer.svelte:145`): plain `let` declarations that
       templates read reactively — `class:visible={navHovered || navIndex !== null}`
@@ -743,6 +751,10 @@ New parity/UX items from the owner, grounded against current source.
       prompt-nav control; a Ctrl+R spec exists). Fixing both drops the svelte-check
       warning count 12 → 10. Predates the 2026-07-02 facet/hotkey commits (verified via
       `jj file show` at base `zwqsxmky`).
+      **Fixed 2026-07-02:** both converted to `$state` with comments naming the
+      reactive read each serves. svelte-check 12 → 10 warnings confirmed; the
+      existing polish + prompt-history-popup e2e suites stay green (they are the
+      regression net — both reads are template-driven).
 
 
 
@@ -821,12 +833,19 @@ titles below match its `findings[]` entries. Ranked by felt-quality-per-effort.
    now has a `.catch` (previously had no catch at all). 7 unit tests in
    `config-notify.test.ts` cover success (no emit), rejection with Error/non-Error,
    rollback on failure, and no rollback on success.
-6. **WS connect watchdog.** A blackholed handshake leaves the socket CONNECTING for
+6. **[x] WS connect watchdog.** A blackholed handshake leaves the socket CONNECTING for
    minutes with *no retry timer armed* — "Reconnecting…" lies (`ws.svelte.ts:51-60, 72-77,
    110-114`). Fix: 8s watchdog after `new WebSocket(url)`: if still CONNECTING → detach
    onclose, close, `scheduleReconnect()`; clear in onopen/onclose/cleanupSocket; don't
    reset the backoff counter. Effort: hours. Risk: low (guard against firing after
    forceReconnect swapped the socket).
+   **Fixed 2026-07-02:** implemented exactly as specced — 8s watchdog armed per
+   socket with an identity guard (`ws !== armed` no-ops after a swap),
+   `cleanupSocket` clears it on every discard path, timeout path detaches
+   handlers before `close()` so onclose can't double-schedule, and the backoff
+   counter deliberately keeps growing. Reconnect/resume e2e suites green
+   (a deterministic blackholed-handshake e2e isn't feasible with the mock —
+   watchdog covered by review + the normal-path suites).
 7. ⚠️ **Push notifications never fire in the real topology.** `maybeNotify` mutes Web Push
    whenever ANY client is connected (`hub.ts:629`) — the desktop WKWebView is always
    connected, so the phone never buzzes; half-open phone sockets extend the mute window.

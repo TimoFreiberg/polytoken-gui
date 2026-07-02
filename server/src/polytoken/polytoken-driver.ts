@@ -201,8 +201,10 @@ export async function createPolytokenDriver(
   const now = () => new Date().toISOString();
 
   // Client-presence predicate, set by the hub at construction so the driver can
-  // deny-safe an interactive prompt when nobody is connected. Defaults to true
-  // (deny-safe = don't block on a prompt nobody can answer).
+  // auto-deny an interactive prompt when nobody is connected. The `() => true`
+  // default is FAIL-OPEN — "assume someone can answer" — chosen so a prompt is
+  // never auto-denied just because the hub hasn't registered the real predicate
+  // yet. A deny-safe default would be `() => false`.
   //
   // TODO: no read site yet — a future trust/prompt auto-deny path should consult
   // hasClients() before issuing a prompt that nobody can answer.
@@ -1769,13 +1771,34 @@ export async function createPolytokenDriver(
       // newest item (the daemon has no bulk-clear endpoint). Return all texts in
       // followUp — the daemon has no steer/followUp discriminator (pilot-side UX
       // only), and the client joins both arrays into the composer draft.
+      let items: { id: string; content: string }[];
       try {
         const { data } = await ws.client.turnInputSnapshot();
-        const items = data?.items ?? [];
-        for (const _ of items) {
+        items = data?.items ?? [];
+      } catch (e) {
+        console.error("[polytoken] clearQueue: queue snapshot failed", e);
+        return { steering: [], followUp: [] };
+      }
+      // A drain failure is PARTIAL by nature: every dequeue that already
+      // succeeded deleted that item from the daemon, so its text MUST still
+      // reach the composer or it's destroyed. Stop at the first failure and
+      // reconcile below.
+      let dequeued = 0;
+      let drainFailed = false;
+      for (const _ of items) {
+        try {
           await ws.client.dequeueNewestInput();
+          dequeued++;
+        } catch (e) {
+          console.error(
+            `[polytoken] clearQueue: drain failed after ${dequeued}/${items.length} items`,
+            e,
+          );
+          drainFailed = true;
+          break;
         }
-        const texts = items.map((item) => item.content);
+      }
+      if (!drainFailed) {
         // Emit an empty queueUpdated so all clients' queue trays clear.
         emit({
           sessionRef: ws.ref,
@@ -1783,10 +1806,42 @@ export async function createPolytokenDriver(
           type: "queueUpdated",
           messages: [],
         });
-        return { steering: [], followUp: texts };
+        return { steering: [], followUp: items.map((item) => item.content) };
+      }
+      // Partial drain: re-fetch the daemon's REAL remaining queue. It gives
+      // both an honest tray broadcast (assuming empty — or leaving the stale
+      // pre-drain tray — would show clients a queue the daemon no longer has)
+      // and ground truth for WHICH items were deleted (by id — the snapshot's
+      // ordering vs /turn/input/newest is undocumented, so counting is a guess).
+      try {
+        const { data } = await ws.client.turnInputSnapshot();
+        const remaining = data?.items ?? [];
+        emit({
+          sessionRef: ws.ref,
+          timestamp: now(),
+          type: "queueUpdated",
+          messages: remaining.map((item) => ({
+            id: item.id,
+            mode: "steer" as const, // daemon doesn't distinguish steer/followUp (spike §3)
+            text: item.content,
+            createdAt: now(),
+            updatedAt: now(),
+          })),
+        });
+        const remainingIds = new Set(remaining.map((item) => item.id));
+        const drained = items
+          .filter((item) => !remainingIds.has(item.id))
+          .map((item) => item.content);
+        return { steering: [], followUp: drained };
       } catch (e) {
-        console.error("[polytoken] clearQueue failed", e);
-        return { steering: [], followUp: [] };
+        console.error("[polytoken] clearQueue: post-failure resync failed", e);
+        // Can't resync — fall back to the dequeue count, assuming the snapshot
+        // lists oldest→newest (newest-K were removed). Imperfect, but the texts
+        // still reach the composer instead of being destroyed.
+        return {
+          steering: [],
+          followUp: items.slice(items.length - dequeued).map((i) => i.content),
+        };
       }
     },
   };
