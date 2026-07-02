@@ -68,7 +68,23 @@ export function copyCodeButtons(node: HTMLElement) {
     for (const pre of blocks) decorate(pre);
   };
   scan();
-  const mo = new MutationObserver(scan);
+  // Only re-scan when an added node is/contains a `<pre>` — the streaming renderer
+  // fires many mutation batches (inline text deltas, etc.) that never add code blocks,
+  // and a full-subtree querySelectorAll on each one is wasteful during streaming.
+  const mo = new MutationObserver((records) => {
+    for (const r of records) {
+      for (const added of r.addedNodes) {
+        if (
+          (added instanceof HTMLElement && added.tagName === "PRE") ||
+          (added instanceof HTMLElement &&
+            added.querySelector("pre[data-markstream-code-block]"))
+        ) {
+          scan();
+          return;
+        }
+      }
+    }
+  });
   mo.observe(node, { childList: true, subtree: true });
   return {
     destroy() {

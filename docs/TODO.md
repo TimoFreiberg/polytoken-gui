@@ -75,9 +75,12 @@ resolution is non-obvious or likely to bite again. Otherwise see `jj log`.
       `Transcript.svelte` recomputes grouping over the whole item list on every
       structural event. Memoize per-turn so only the active turn recomputes;
       real windowing after that.
-- [ ] **Scope the copy-code `MutationObserver` (C4).** Observes
+- [x] **Scope the copy-code `MutationObserver` (C4).** Observes
       `{childList:true, subtree:true}` and runs `scan()` on every mutation batch
       while streaming. Fix: only re-scan when an added node is/contains a `<pre>`.
+      **done:** the observer callback now inspects mutation records for added `<pre>`
+      nodes (or containers holding them) before calling `scan()`, skipping the
+      full-subtree `querySelectorAll` on text-delta batches that never add code blocks.
 
 ## If fable doesn't do it first
 
