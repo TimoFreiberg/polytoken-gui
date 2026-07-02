@@ -93,6 +93,16 @@ export function appendEvent(j: SessionJournal, ev: SessionDriverEvent): number {
   return j.seq;
 }
 
+/** Can a client folded through `seq` (same epoch) be caught up from the tail
+ *  alone? True when nothing is missing between its watermark and the ring:
+ *  either it's already current, or the ring's oldest frame is at most seq+1. */
+export function tailCovers(j: SessionJournal, seq: number): boolean {
+  if (seq > j.seq) return false; // claims a future this journal never stamped
+  if (seq === j.seq) return true; // already current — nothing to replay
+  const first = j.tail[0]?.seq;
+  return first !== undefined && first <= seq + 1;
+}
+
 /** The seed for one connecting client: every journaled event, delta-coalesced,
  *  plus the {epoch, seq} watermark of the last event folded into it. */
 export function buildSeed(j: SessionJournal): {

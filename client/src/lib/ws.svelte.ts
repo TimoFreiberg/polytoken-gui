@@ -5,15 +5,13 @@
 import {
   type ClientMessage,
   parseServerMessage,
+  type ResumeToken,
   type ServerMessage,
 } from "@pilot/protocol";
 import { getToken } from "./auth.js";
 
 export type ConnectionState =
-  | "disconnected"
-  | "connecting"
-  | "connected"
-  | "reconnecting";
+  "disconnected" | "connecting" | "connected" | "reconnecting";
 
 type MessageListener = (msg: ServerMessage) => void;
 
@@ -31,6 +29,14 @@ let ws: WebSocket | null = null;
 let listeners: MessageListener[] = [];
 let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 let intentionalClose = false;
+// The store registers a provider for the focused session's fold watermark; the
+// (re)connect hello carries it so the server can tail-replay just the missed
+// events instead of re-shipping the whole transcript (protocol v2 resume).
+let resumeProvider: (() => ResumeToken | null) | null = null;
+
+export function setResumeProvider(fn: () => ResumeToken | null): void {
+  resumeProvider = fn;
+}
 
 const BASE_DELAY_MS = 500;
 const MAX_DELAY_MS = 15_000;
@@ -89,7 +95,11 @@ function doConnect(): void {
 
   ws.onopen = () => {
     _reconnectAttempt = 0;
-    send({ type: "hello", auth: getToken() ?? undefined });
+    send({
+      type: "hello",
+      auth: getToken() ?? undefined,
+      resume: resumeProvider?.() ?? undefined,
+    });
   };
 
   ws.onmessage = (event: MessageEvent) => {

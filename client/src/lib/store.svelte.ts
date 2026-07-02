@@ -64,6 +64,7 @@ import {
   forceReconnect,
   onMessage,
   send,
+  setResumeProvider,
 } from "./ws.svelte.js";
 
 /** A transient snackbar. `action` is an optional one-shot affordance (e.g. Undo). */
@@ -125,6 +126,15 @@ class PilotStore {
   // rendered ahead of the snapshot — so it's deliberately not captured.)
   private booted = false;
   private reconnectFocusId: string | null = null;
+  // Fold watermark of the adopted transcript build (protocol v2): which session
+  // the last seed named, its epoch, and the seq of the last event folded. This
+  // is the resume token a reconnect hello carries (the server then tail-replays
+  // just the gap), and the gate that drops stale frames racing a reseed.
+  private seedSessionId: string | null = null;
+  private seedEpoch = 0;
+  private seedSeq = 0;
+  // One requestSeed per detected gap — cleared when the fresh seed arrives.
+  private seedRequested = false;
   // Session ids with a live turn right now (server-pushed via `sessionStatus`).
   runningIds = $state<Set<string>>(new Set());
   // Session ids warming up (created/opened, not yet streaming) — server-pushed in the
@@ -716,6 +726,17 @@ class PilotStore {
 
   start(): void {
     onMessage((msg) => this.onServer(msg));
+    // Reconnect hellos carry the fold watermark so the server can tail-replay
+    // the gap instead of re-shipping the transcript (protocol v2 resume).
+    setResumeProvider(() =>
+      this.seedSessionId && this.seedEpoch > 0
+        ? {
+            sessionId: this.seedSessionId,
+            epoch: this.seedEpoch,
+            seq: this.seedSeq,
+          }
+        : null,
+    );
     connect();
     void this.refreshPushState();
     // The inline script in index.html already applied the theme pre-paint; re-apply
@@ -744,6 +765,16 @@ class PilotStore {
     const id = this.creatingSession?.promptId;
     if (id !== undefined && this.session.items.some((item) => item.id === id))
       this.creatingSession = null;
+  }
+
+  /** Client-detected desync (an event-seq gap): ask the server to re-seed the
+   *  focused session rather than fold a diverged stream. One request in flight
+   *  at a time — a burst of gapped frames must not storm the server. */
+  private requestSeed(): void {
+    if (this.seedRequested) return;
+    this.seedRequested = true;
+    console.error("[pilot] event seq gap — requesting a fresh seed");
+    send({ type: "requestSeed" });
   }
 
   private onServer(msg: ServerMessage): void {
@@ -776,6 +807,10 @@ class PilotStore {
         // fold can never render half-applied). Same reducer as the server's
         // internal fold and the incremental `event` path below.
         const built = foldAll([...msg.events]);
+        this.seedSessionId = msg.sessionId;
+        this.seedEpoch = msg.epoch;
+        this.seedSeq = msg.seq;
+        this.seedRequested = false;
         this.session = built;
         this.ready = true;
         // A seed for the session we're creating may already carry its first prompt
@@ -794,6 +829,19 @@ class PilotStore {
         break;
       }
       case "event": {
+        // Stamp gate (protocol v2): an older/newer epoch is a stale frame racing
+        // a reseed — the superseding seed is already adopted or in flight, so
+        // drop it. A seq gap means a frame was lost; refuse to fold a diverged
+        // stream and ask for a fresh seed instead.
+        if (msg.epoch !== this.seedEpoch) break;
+        if (msg.seq !== this.seedSeq + 1) {
+          this.requestSeed();
+          break;
+        }
+        this.seedSeq = msg.seq;
+        // A contiguous frame folded — any earlier gap was healed (e.g. by a
+        // resume replay), so a future gap may request again.
+        this.seedRequested = false;
         const ev = msg.event;
         // A blocking dialog this client was showing but didn't answer just vanished —
         // first-responder-wins resolved it on another device. Surface a transient notice

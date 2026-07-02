@@ -3,10 +3,12 @@ import type { ServerMessage } from "@pilot/protocol";
 import { sendJson, sendOrClose, type SendableSocket } from "./ws-send.js";
 
 /** Minimal mock implementing the SendableSocket interface. */
-function mockSocket(opts: {
-  readyState?: number;
-  sendResult?: number;
-} = {}): {
+function mockSocket(
+  opts: {
+    readyState?: number;
+    sendResult?: number;
+  } = {},
+): {
   ws: SendableSocket;
   sendSpy: ReturnType<typeof mock>;
   closeSpy: ReturnType<typeof mock>;
@@ -86,7 +88,7 @@ describe("sendJson", () => {
   test("stringifies, sends, and invokes onDrop when the message is dropped", () => {
     const { ws, sendSpy, closeSpy } = mockSocket({ sendResult: 0 });
     const onDrop = mock(() => {});
-    // A real ServerMessage fixture — an incremental event to fold.
+    // A real ServerMessage fixture — an incremental stamped event to fold.
     const msg: ServerMessage = {
       type: "event",
       event: {
@@ -95,6 +97,8 @@ describe("sendJson", () => {
         timestamp: "2026-07-02T00:00:00.000Z",
         reason: "manual",
       },
+      epoch: 1,
+      seq: 1,
     };
 
     const dropped = sendJson(ws, msg, onDrop);

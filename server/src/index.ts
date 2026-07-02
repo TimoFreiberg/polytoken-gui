@@ -4,7 +4,11 @@
 // driver is the out-of-process polytoken daemon; PILOT_DRIVER=mock selects the
 // deterministic mock for e2e + local UI dev.
 
-import { type ServerMessage, parseClientMessage } from "@pilot/protocol";
+import {
+  parseClientMessage,
+  type ResumeToken,
+  type ServerMessage,
+} from "@pilot/protocol";
 import { join } from "node:path";
 import type { ServerWebSocket } from "bun";
 import { config, tokenFromRequest, tokenOk } from "./config.js";
@@ -161,13 +165,13 @@ const rawSend = (ws: ServerWebSocket<WsData>, msg: ServerMessage) => {
   );
 };
 
-function authenticate(ws: ServerWebSocket<WsData>): void {
+function authenticate(ws: ServerWebSocket<WsData>, resume?: ResumeToken): void {
   ws.data.authed = true;
   // Mint one stable send closure for this connection and reuse it for both addClient
   // and every handleClient — the hub identifies the connection by this reference.
   const send = (m: ServerMessage) => rawSend(ws, m);
   ws.data.send = send;
-  ws.data.unsub = hub.addClient(send);
+  ws.data.unsub = hub.addClient(send, resume);
   log.info("client connected", { clients: hub.clientCount() });
 }
 
@@ -297,9 +301,12 @@ const server = Bun.serve<WsData>({
     // trims. Off by default in Bun; cost is per-connection deflate memory + CPU
     // on the Mac Mini — negligible for a single-user app.
     perMessageDeflate: true,
-    open(ws) {
-      // No token configured -> open access (dev). Otherwise wait for an authed hello.
-      if (config.token === null) authenticate(ws);
+    open() {
+      // Attach happens on the client's hello — never here. The client always
+      // sends one immediately on open (ws.svelte.ts onopen), and the hello may
+      // carry a resume token that must be in hand BEFORE the seed goes out (the
+      // whole point of resume is to not send that seed). With no token
+      // configured, tokenOk() accepts the tokenless hello, so dev keeps working.
     },
     message(ws, raw) {
       const msg = parseClientMessage(
@@ -307,7 +314,8 @@ const server = Bun.serve<WsData>({
       );
       if (!msg) return;
       if (!ws.data.authed) {
-        if (msg.type === "hello" && tokenOk(msg.auth)) authenticate(ws);
+        if (msg.type === "hello" && tokenOk(msg.auth))
+          authenticate(ws, msg.resume);
         else {
           rawSend(ws, { type: "error", message: "unauthorized" });
           ws.close();

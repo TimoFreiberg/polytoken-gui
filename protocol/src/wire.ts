@@ -152,8 +152,12 @@ export type ServerMessage =
       seq: number;
       events: readonly SessionDriverEvent[];
     }
-  /** One incremental driver event to fold. */
-  | { type: "event"; event: SessionDriverEvent }
+  /** One incremental driver event to fold, stamped with the journal watermark
+   *  it advanced the session to. The client folds it only when `epoch` matches
+   *  its adopted seed and `seq` is contiguous — an epoch mismatch is a stale
+   *  frame racing a reseed (drop it), a seq gap is a lost frame (request a
+   *  fresh seed rather than fold a diverged stream). */
+  | { type: "event"; event: SessionDriverEvent; epoch: number; seq: number }
   /** The sessions available to open + which one is active (server-authoritative).
    *  Kept separate from `snapshot` because it's cross-session meta-state, not the
    *  folded transcript of the active session. */
@@ -282,8 +286,19 @@ export type ServerMessage =
   | { type: "worktreeRetained"; path: string; reason: string }
   | { type: "error"; message: string; kind?: "session-switch" };
 
+/** Tail-resume request: "I still hold {sessionId} folded through {epoch, seq}".
+ *  Carried on the reconnect hello; when the server's journal epoch matches and
+ *  its ring still covers the gap, it replays only the missed stamped events
+ *  instead of re-shipping the whole transcript — the cost that hurts on every
+ *  phone wake over LTE. Any mismatch degrades to a full seed, never an error. */
+export interface ResumeToken {
+  readonly sessionId: SessionId;
+  readonly epoch: number;
+  readonly seq: number;
+}
+
 export type ClientMessage =
-  | { type: "hello"; auth?: string }
+  | { type: "hello"; auth?: string; resume?: ResumeToken }
   | {
       type: "prompt";
       /** Stable client-generated id used for ACK/retry reconciliation and deduplication. */
@@ -449,6 +464,10 @@ export type ClientMessage =
    *  watcher reads on its next poll, then immediately fetches and applies if origin/main
    *  moved (pull → rebuild → restart). No-op only if the clone is already current. */
   | { type: "forceUpdate" }
+  /** Client-detected desync (an event-seq gap): ask for a fresh seed of the
+   *  targeted session (omitted -> this connection's focus) instead of folding
+   *  a diverged stream. */
+  | { type: "requestSeed"; sessionId?: SessionId }
   /** Dev-only: drive the mock fixture to a named scripted state. */
   | { type: "mock"; script: string }
   /** Reveal the server's data directory in the platform file manager (Finder on macOS).

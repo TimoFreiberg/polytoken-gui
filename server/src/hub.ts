@@ -11,6 +11,7 @@ import {
   isDialogRequest,
   type ModelOption,
   PROTOCOL_VERSION,
+  type ResumeToken,
   type ServerMessage,
   type SessionAttention,
   type SessionDriverEvent,
@@ -25,6 +26,7 @@ import {
   createJournal,
   metaSeedEvents,
   type SessionJournal,
+  tailCovers,
 } from "./journal.js";
 import { getLoginEnvStatus, resolveLoginShell } from "./shared/login-env.js";
 import { resolveBackgroundModel } from "./shared/background-model.js";
@@ -383,10 +385,17 @@ export class SessionHub {
     if (!j) {
       // Lifecycle invariant broken (journal must exist iff state exists). Keep
       // serving viewers, but say so loudly — a stale seed beats a silent one.
+      // The zero stamps make every receiving client drop the frame and request
+      // a fresh seed, which is the honest degraded behavior here.
       console.error(
         `[hub] no journal for viewed session ${sid} — seeds will be stale`,
       );
-    } else if (ev.type === "sessionReset") {
+      for (const conn of this.clients.values())
+        if (conn.focusedId === sid)
+          conn.send({ type: "event", event: ev, epoch: 0, seq: 0 });
+      return;
+    }
+    if (ev.type === "sessionReset") {
       // Transcript identity changed: restart the journal under a new epoch. The
       // synthetic meta prefix reproduces everything the fold carries across a
       // reset (ref/title/config/queued/approvals/ambient — items clear), so a
@@ -397,11 +406,19 @@ export class SessionHub {
         this.nextEpoch(),
         metaSeedEvents(st, ev.sessionRef, ev.timestamp),
       );
-    } else {
-      appendEvent(j, ev);
+      // Viewers get the fresh (tiny — meta prefix only) seed rather than the raw
+      // reset event: it hands them the new epoch/seq base in one message, and it
+      // is correct even for a viewer that had silently missed a frame before the
+      // reset (the seed re-asserts everything; a folded reset would only trust).
+      const msg = this.seedMsg(sid);
+      for (const conn of this.clients.values())
+        if (conn.focusedId === sid) conn.send(msg);
+      return;
     }
+    const seq = appendEvent(j, ev);
     for (const conn of this.clients.values())
-      if (conn.focusedId === sid) conn.send({ type: "event", event: ev });
+      if (conn.focusedId === sid)
+        conn.send({ type: "event", event: ev, epoch: j.epoch, seq });
   }
 
   /** The seed message for one session (or the empty landing when sid is null):
@@ -1180,16 +1197,29 @@ export class SessionHub {
     }
   }
 
-  /** Register a client. Synchronously sends hello + a snapshot of the session this
+  /** Register a client. Synchronously sends hello + a seed of the session this
    *  connection focuses (the landing default; a brand-new client has none and lands
-   *  empty, then restores its own last-focused session). Focus is per-connection. */
-  addClient(send: Send): () => void {
+   *  empty, then restores its own last-focused session). Focus is per-connection.
+   *
+   *  `resume` (protocol v2): the reconnecting client still holds a session folded
+   *  through {epoch, seq}. When the journal's epoch matches and its ring still
+   *  covers the gap, adopt that session as this connection's focus and replay
+   *  only the missed stamped events — killing the full-transcript re-send on
+   *  every phone wake. Any mismatch (unknown session, bumped epoch, evicted
+   *  tail) silently degrades to the normal full seed. */
+  addClient(send: Send, resume?: ResumeToken): () => void {
     const conn: ClientConn = {
       send,
       focusedId: this.defaultFocusId,
       switchInFlight: false,
       pendingSwitch: null,
     };
+    const j = resume ? this.journals.get(resume.sessionId) : undefined;
+    const resumeTail =
+      resume && j && j.epoch === resume.epoch && tailCovers(j, resume.seq)
+        ? { j, afterSeq: resume.seq, sid: resume.sessionId }
+        : null;
+    if (resumeTail) conn.focusedId = resumeTail.sid;
     this.clients.set(send, conn);
     this.everConnected = true;
     send({
@@ -1198,7 +1228,18 @@ export class SessionHub {
       serverId: this.serverId,
       dataDir: this.dataDir ?? "",
     });
-    send(this.seedMsg(conn.focusedId));
+    if (resumeTail) {
+      for (const f of resumeTail.j.tail)
+        if (f.seq > resumeTail.afterSeq)
+          send({
+            type: "event",
+            event: f.ev,
+            epoch: resumeTail.j.epoch,
+            seq: f.seq,
+          });
+    } else {
+      send(this.seedMsg(conn.focusedId));
+    }
     // Tell the fresh client what's already running / warming up (in-memory, synchronous).
     send({
       type: "sessionStatus",
@@ -1608,6 +1649,11 @@ export class SessionHub {
           this.applying = true;
           this.broadcastUpdateStatus();
         }
+        return;
+      case "requestSeed":
+        // Client-detected desync (seq gap / dropped frame): re-seed rather than
+        // let it fold a diverged stream. Cheap — one journal walk, no driver IO.
+        send(this.seedMsg(msg.sessionId ?? conn.focusedId ?? null));
         return;
       case "mock":
         this.driver.runScript?.(msg.script);

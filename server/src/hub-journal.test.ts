@@ -240,6 +240,155 @@ describe("usage ticker side-door", () => {
   });
 });
 
+describe("tail resume (hello.resume)", () => {
+  const user = (id: string, text: string): SessionDriverEvent => ({
+    type: "userMessage",
+    sessionRef: SESSION_REF,
+    timestamp: "t",
+    id,
+    text,
+  });
+
+  test("a matching resume replays exactly the gap — no seed", () => {
+    const driver = new ScriptedDriver();
+    const hub = new SessionHub(driver, undefined, 60_000, "test-server");
+    const a = connectClient(hub);
+    driver.emit(user("u1", "one"));
+    // The returning client folded through here…
+    const w = hub.seedOf(SID);
+    expect(w).not.toBeNull();
+    if (!w) return;
+    const heldState = foldAll(w.events);
+    // …then missed these while disconnected.
+    driver.emit(user("u2", "two"));
+    driver.emit(user("u3", "three"));
+
+    const received: ServerMessage[] = [];
+    hub.addClient((m) => received.push(m), {
+      sessionId: SID,
+      epoch: w.epoch,
+      seq: w.seq,
+    });
+    expect(received.some((m) => m.type === "seed")).toBe(false);
+    const events = received.filter(
+      (m): m is Extract<ServerMessage, { type: "event" }> => m.type === "event",
+    );
+    expect(events.map((m) => m.seq)).toEqual([w.seq + 1, w.seq + 2]);
+    for (const m of events) foldEvent(heldState, m.event);
+    expect(heldState).toEqual(a.drain());
+  });
+
+  test("an up-to-date resume replays nothing and sends no seed", () => {
+    const driver = new ScriptedDriver();
+    const hub = new SessionHub(driver, undefined, 60_000, "test-server");
+    connectClient(hub);
+    driver.emit(user("u1", "one"));
+    const w = hub.seedOf(SID);
+    if (!w) throw new Error("no journal");
+    const received: ServerMessage[] = [];
+    hub.addClient((m) => received.push(m), {
+      sessionId: SID,
+      epoch: w.epoch,
+      seq: w.seq,
+    });
+    expect(received.some((m) => m.type === "seed")).toBe(false);
+    expect(received.some((m) => m.type === "event")).toBe(false);
+  });
+
+  test("a resume older than the ring degrades to a full seed", () => {
+    const driver = new ScriptedDriver();
+    const hub = new SessionHub(driver, undefined, 60_000, "test-server");
+    connectClient(hub);
+    driver.emit(user("u1", "one"));
+    const w = hub.seedOf(SID);
+    if (!w) throw new Error("no journal");
+    // Overflow the ring so seq w.seq+1 is evicted into the compacted prefix.
+    for (let i = 0; i < 1100; i++) driver.emit(user(`bulk-${i}`, "x"));
+
+    const received: ServerMessage[] = [];
+    hub.addClient((m) => received.push(m), {
+      sessionId: SID,
+      epoch: w.epoch,
+      seq: w.seq,
+    });
+    const seed = received.find(
+      (m): m is Extract<ServerMessage, { type: "seed" }> => m.type === "seed",
+    );
+    expect(seed).toBeDefined();
+    expect(seed?.sessionId).toBe(SID);
+  });
+
+  test("a resume across an epoch bump degrades to a full seed", () => {
+    const driver = new ScriptedDriver();
+    const hub = new SessionHub(driver, undefined, 60_000, "test-server");
+    connectClient(hub);
+    driver.emit(user("u1", "one"));
+    const w = hub.seedOf(SID);
+    if (!w) throw new Error("no journal");
+    driver.emit({
+      type: "sessionReset",
+      sessionRef: SESSION_REF,
+      timestamp: "rt",
+    });
+    const received: ServerMessage[] = [];
+    hub.addClient((m) => received.push(m), {
+      sessionId: SID,
+      epoch: w.epoch,
+      seq: w.seq,
+    });
+    const seed = received.find((m) => m.type === "seed");
+    expect(seed).toBeDefined();
+  });
+
+  test("a resume for an unknown session lands on the default seed", () => {
+    const driver = new ScriptedDriver();
+    const hub = new SessionHub(driver, undefined, 60_000, "test-server");
+    const received: ServerMessage[] = [];
+    hub.addClient((m) => received.push(m), {
+      sessionId: "never-seen",
+      epoch: 42,
+      seq: 7,
+    });
+    const seed = received.find(
+      (m): m is Extract<ServerMessage, { type: "seed" }> => m.type === "seed",
+    );
+    expect(seed?.sessionId).toBe(SID);
+  });
+
+  test("requestSeed re-sends the focused session's seed", () => {
+    const driver = new ScriptedDriver();
+    const hub = new SessionHub(driver, undefined, 60_000, "test-server");
+    const received: ServerMessage[] = [];
+    const send = (m: ServerMessage) => received.push(m);
+    hub.addClient(send);
+    driver.emit(user("u1", "one"));
+    const before = received.filter((m) => m.type === "seed").length;
+    hub.handleClient(send, { type: "requestSeed" });
+    const seeds = received.filter(
+      (m): m is Extract<ServerMessage, { type: "seed" }> => m.type === "seed",
+    );
+    expect(seeds.length).toBe(before + 1);
+    const st = foldAll([...(seeds.at(-1)?.events ?? [])]);
+    expect(st.items.some((i) => i.kind === "user" && i.text === "one")).toBe(
+      true,
+    );
+  });
+
+  test("live events are stamped contiguously within an epoch", () => {
+    const driver = new ScriptedDriver();
+    const hub = new SessionHub(driver, undefined, 60_000, "test-server");
+    const a = connectClient(hub);
+    for (let i = 1; i <= 5; i++) driver.emit(user(`u${i}`, `m${i}`));
+    const events = a.received.filter(
+      (m): m is Extract<ServerMessage, { type: "event" }> => m.type === "event",
+    );
+    expect(events.length).toBe(5);
+    const epochs = new Set(events.map((m) => m.epoch));
+    expect(epochs.size).toBe(1);
+    expect(events.map((m) => m.seq)).toEqual([1, 2, 3, 4, 5]);
+  });
+});
+
 describe("switch + reload journal lifecycle", () => {
   test("first attach starts a journal; a reload reseeds it under a new epoch", async () => {
     const driver = new ScriptedDriver();
