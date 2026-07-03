@@ -33,8 +33,13 @@ export const config = {
   token: process.env.PILOT_TOKEN ?? null,
   // Debug/introspection endpoints. On by default; set PILOT_DEBUG=0 to disable.
   debug: process.env.PILOT_DEBUG !== "0",
-  // Built client bundle (served in prod; in dev Vite serves it instead).
-  clientDist: resolve(import.meta.dir, "../../client/dist"),
+  // Built client bundle (served in prod; in dev Vite serves it instead). The env
+  // override exists for the compiled single-binary hub (bundled desktop app), where
+  // import.meta.dir points into the binary's embedded filesystem, not the repo —
+  // the shell passes the .app's bundled client-dist path instead.
+  clientDist:
+    process.env.PILOT_CLIENT_DIST ??
+    resolve(import.meta.dir, "../../client/dist"),
   // Max kept-warm sessions before the least-recently-focused one is evicted
   // (its services disposed). ≤0 disables the cap. Only the polytoken driver honors it.
   warmCap: Number(process.env.PILOT_WARM_CAP ?? 8),

@@ -1,5 +1,6 @@
 //! Shared app state, managed by Tauri and reached from tray handlers / event threads.
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 use crate::config::PilotConfig;
@@ -12,9 +13,12 @@ pub struct AppState {
     pub supervisor: Mutex<Option<Supervisor>>,
     pub watcher: Mutex<Option<Watcher>>,
     pub overlay: Overlay,
-    /// Target sha of the last update-deferred notification — the watcher re-emits the
-    /// event every tick while an update is pending; notify once per new target.
+    /// Target sha/version of the last update-deferred notification — the update loops
+    /// re-emit every tick while an update is pending; notify once per new target.
     pub last_deferred: Mutex<Option<String>>,
+    /// Quit signal for the bundled-mode updater loop (a plain detached thread — this
+    /// keeps it from starting an install/relaunch while teardown is in flight).
+    pub updater_stop: Arc<AtomicBool>,
 }
 
 impl AppState {
@@ -25,12 +29,15 @@ impl AppState {
             watcher: Mutex::new(None),
             overlay: Overlay::new(),
             last_deferred: Mutex::new(None),
+            updater_stop: Arc::new(AtomicBool::new(false)),
         }
     }
 
-    /// Stop the watcher first (so it can't SIGTERM the server mid-teardown), then the
-    /// supervisor (SIGTERM → bounded wait → SIGKILL). Idempotent: both are take()n.
+    /// Stop the updater loop and watcher first (so neither can restart/SIGTERM anything
+    /// mid-teardown), then the supervisor (SIGTERM → bounded wait → SIGKILL).
+    /// Idempotent: the flag is sticky and both handles are take()n.
     pub fn teardown(&self) {
+        self.updater_stop.store(true, Ordering::SeqCst);
         if let Some(w) = self.watcher.lock().unwrap().take() {
             w.stop();
         }

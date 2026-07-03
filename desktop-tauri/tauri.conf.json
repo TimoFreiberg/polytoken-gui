@@ -4,7 +4,9 @@
   "version": "0.1.0",
   "identifier": "dev.pilot.app",
   "build": {
-    "frontendDist": "ui"
+    "frontendDist": "ui",
+    "beforeDevCommand": "bun ../scripts/desktop/build-hub.ts",
+    "beforeBuildCommand": "bun ../scripts/desktop/build-hub.ts && bun run --cwd .. build"
   },
   "app": {
     "windows": [],
@@ -18,6 +20,10 @@
     "createUpdaterArtifacts": true,
     "category": "DeveloperTool",
     "icon": ["icons/icon.icns"],
+    "externalBin": ["binaries/pilot-hub"],
+    "resources": {
+      "../client/dist": "client-dist"
+    },
     "macOS": {
       "minimumSystemVersion": "13.0"
     }

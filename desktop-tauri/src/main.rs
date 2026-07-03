@@ -47,21 +47,36 @@ fn main() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .setup(|app| {
             let port = free_port()?;
-            let config = PilotConfig::resolve(port);
-            app.manage(AppState::new(config));
+            let resource_dir = app.path().resource_dir()?;
             let handle = app.handle().clone();
+            let (config, fatal) = match PilotConfig::resolve(port, &resource_dir) {
+                Ok(c) => (c, None),
+                // A resolve failure still wants the window + tray up so the fatal
+                // dialog has an app to hang off — park a harmless fallback config
+                // (nothing gets started; the dialog exits on dismiss).
+                Err(message) => (PilotConfig::fallback(port), Some(message)),
+            };
+            app.manage(AppState::new(config));
 
             shell::create_main_window(&handle)?;
             shell::create_tray(&handle)?;
 
+            if let Some(message) = fatal {
+                shell::present_fatal(&handle, &message);
+                return Ok(());
+            }
+
             let state = app.state::<AppState>();
             let config = state.config.clone();
 
-            // The app runs everything from a dedicated clone — a bare `.git` check is
-            // enough (always a plain `git clone`, not a worktree). Fail with setup
+            // Clone mode runs everything from a dedicated checkout — a bare `.git` check
+            // is enough (always a plain `git clone`, not a worktree). Fail with setup
             // instructions rather than a confusing blank window (present_fatal shows the
-            // dialog on its own thread while the loading page sits underneath).
-            if !config.clone.join(".git").exists() {
+            // dialog on its own thread while the loading page sits underneath). Bundled
+            // mode already verified its payload in resolve().
+            if matches!(config.hub_mode, crate::config::HubMode::Clone)
+                && !config.clone.join(".git").exists()
+            {
                 shell::present_fatal(
                     &handle,
                     &format!(
@@ -137,13 +152,25 @@ fn on_supervisor_event(app: &AppHandle, event: SupervisorEvent) {
             state.overlay.navigated();
             shell::navigate_main(app, &state.config.app_url());
             if first_time {
-                let watcher = Watcher::start(state.config.clone(), {
-                    let app = app.clone();
-                    move |event| on_watcher_event(&app, event)
-                });
-                state.watcher.lock().unwrap().replace(watcher);
-                // Startup shell-update check; silent when no endpoint is configured.
-                updater::spawn_check(app.clone(), false);
+                match state.config.hub_mode {
+                    // Clone mode: the TS update-watcher owns TS-payload updates; the
+                    // Tauri updater covers only the shell (one startup check).
+                    crate::config::HubMode::Clone => {
+                        let watcher = Watcher::start(state.config.clone(), {
+                            let app = app.clone();
+                            move |event| on_watcher_event(&app, event)
+                        });
+                        state.watcher.lock().unwrap().replace(watcher);
+                        // Startup shell-update check; silent when no endpoint is configured.
+                        updater::spawn_check(app.clone(), false);
+                    }
+                    // Bundled mode: one artifact = shell + hub + client, so the shell's
+                    // own update loop replaces the watcher — it drives the sidebar card
+                    // over /update/state and applies via the Tauri updater.
+                    crate::config::HubMode::Bundled { .. } => {
+                        updater::spawn_periodic(app.clone());
+                    }
+                }
             }
         }
         SupervisorEvent::Unrecoverable(message) => {

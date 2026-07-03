@@ -88,18 +88,37 @@ fn run_loop(
 
     while !stop.load(Ordering::SeqCst) {
         let spawn_time = Instant::now();
-        let mut cmd = Command::new(&config.bun_path);
-        cmd.args(["run", "src/index.ts"])
-            .current_dir(config.clone.join("server"))
-            .envs(config.server_env())
-            .stdin(Stdio::null());
+        // Clone mode: `bun run src/index.ts` in the checkout. Bundled mode: the compiled
+        // hub sidecar, cwd'd to the data dir (the hub resolves every path it needs from
+        // env — cwd just has to exist and stay valid across updates).
+        let mut cmd = match &config.hub_mode {
+            crate::config::HubMode::Clone => {
+                let mut c = Command::new(&config.bun_path);
+                c.args(["run", "src/index.ts"])
+                    .current_dir(config.clone.join("server"));
+                c
+            }
+            crate::config::HubMode::Bundled { hub_bin, .. } => {
+                let mut c = Command::new(hub_bin);
+                c.current_dir(&config.data_dir);
+                c
+            }
+        };
+        cmd.envs(config.server_env()).stdin(Stdio::null());
         let mut child = match crate::proc::spawn_with_clean_signals(&mut cmd) {
             Ok(c) => c,
             Err(e) => {
-                on_event(SupervisorEvent::Unrecoverable(format!(
-                    "Couldn't launch the pilot server with bun at {}: {e}",
-                    config.bun_path
-                )));
+                let what = match &config.hub_mode {
+                    crate::config::HubMode::Clone => format!(
+                        "Couldn't launch the pilot server with bun at {}: {e}",
+                        config.bun_path
+                    ),
+                    crate::config::HubMode::Bundled { hub_bin, .. } => format!(
+                        "Couldn't launch the bundled pilot hub at {}: {e}",
+                        hub_bin.display()
+                    ),
+                };
+                on_event(SupervisorEvent::Unrecoverable(what));
                 return;
             }
         };
@@ -123,10 +142,19 @@ fn run_loop(
             0
         };
         if rapid_restarts > MAX_RAPID_RESTARTS {
+            let hint = match &config.hub_mode {
+                crate::config::HubMode::Clone => format!(
+                    "Check that the clone builds (bun install && bun run build in {}).",
+                    config.clone.display()
+                ),
+                crate::config::HubMode::Bundled { .. } => format!(
+                    "Check the hub log at {} — the bundled hub may be refusing a locked \
+                     data dir or crashing at startup.",
+                    config.data_dir.join("pilot.log").display()
+                ),
+            };
             on_event(SupervisorEvent::Unrecoverable(format!(
-                "The pilot server keeps exiting right after launch. Check that the clone \
-                 builds (bun install && bun run build in {}).",
-                config.clone.display()
+                "The pilot server keeps exiting right after launch. {hint}"
             )));
             return;
         }

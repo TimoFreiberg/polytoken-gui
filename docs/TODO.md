@@ -56,11 +56,16 @@ resolution is non-obvious or likely to bite again. Otherwise see `jj log`.
   in it. Remaining to fully retire `desktop/` (Swift):
   - [ ] Dogfood `desktop-tauri/` (tray, close-to-tray, titlebar/traffic-light fit,
         update overlay — the visual bits an agent can't eyeball).
+  - [x] **Bundled mode shipped (2026-07-03):** compiled hub as `externalBin` + client
+        as a bundle resource; packaged .apps are self-contained (no clone, no bun) and
+        the shell's updater loop replaces the TS watcher there — same defer policy and
+        sidebar card via `/update/state`, verified E2E against a local manifest
+        server. Clone mode stays as the dev loop.
   - [ ] Set up updater-artifact hosting (ADR "Owner decisions" #2; owner lean: a
-        separate public GitHub releases repo — drop the
-        `dangerousInsecureTransportProtocol` flag when it lands) + a publish script
-        that derives `latest.json` from the built bundle (a version-mismatched
-        manifest loops under AUTO update).
+        separate public GitHub releases repo — note the artifact now contains the
+        whole app, hub+client included): create the repo, run the first
+        `bun scripts/desktop/publish.ts --repo <owner/releases-repo>`, configure the
+        endpoint on installed apps, then drop `dangerousInsecureTransportProtocol`.
   - [ ] Then delete `desktop/` + its watcher desktop-sha plumbing, and point
         docs/DESIGN.md at the Tauri shell.
 - [ ] **Decompose the hub (god object).** `server/src/hub.ts` owns the per-session
@@ -87,6 +92,8 @@ resolution is non-obvious or likely to bite again. Otherwise see `jj log`.
       hub: its own change, e2e as the net.
 
 ## 🧹 Minor
+
+- [ ] add `x` delete button on queued prompts (if not there already)
 
 - [ ] Fix the two perf scripts (broken under Bun isolated `node_modules`) so the
       C1 measurements stay reproducible.

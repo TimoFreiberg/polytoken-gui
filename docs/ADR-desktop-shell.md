@@ -201,20 +201,25 @@ replacement, and the Swift shell's simplicity (600 lines, zero deps) retired.
 ## Owner decisions needed
 
 1. ~~Sign off on sequence: spike in clone mode first, bundled mode later?~~
-   **Answered 2026-07-03: clone mode shipped first** (the spike). Bundled mode
-   (`bun build --compile` hub as `externalBin`, one atomic updater artifact) stays the
-   target, unblocked whenever wanted.
+   **Answered 2026-07-03: clone mode shipped first** (the spike). **Bundled mode
+   shipped later the same day**: compiled hub as `externalBin` + client as a bundle
+   resource, packaged-.app runs default to it, and the shell's own periodic updater
+   loop replaces the TS watcher there (same defer policy, same sidebar card via
+   `/update/state`) — verified end to end against a local manifest server (unattended
+   0.1.0→0.1.1 in ~5s; deferred card→click→0.1.2). Clone mode remains the dev loop.
 2. Where do updater artifacts live — **still open; owner lean (2026-07-03): a separate
    public GitHub releases repo** (code stays on tangled — release hosting doesn't have
    to match the git remote). That's https, so `dangerousInsecureTransportProtocol`
    gets REMOVED when it lands (the https-only rule is release-builds-only, so debug
    updater testing is unaffected). Public is effectively required (a private repo
-   would bake an auth header into every install) — fine in clone mode where the
-   artifact is just the generic shell; recheck if bundled mode ever ships the whole
-   client+hub inside it. The shell keeps the endpoint runtime-configurable
-   (`PILOT_SHELL_UPDATE_URL` env or a `shell-update-url` file in the data dir; checks
-   stay dormant until one exists), so nothing is baked in. A publish script belongs
-   with this decision.
+   would bake an auth header into every install) — NOTE the recheck flagged earlier
+   now applies: bundled mode ships the whole client+hub inside the artifact, so a
+   public release repo publishes the app itself, not just the generic shell. The shell
+   keeps the endpoint runtime-configurable (`PILOT_SHELL_UPDATE_URL` env or a
+   `shell-update-url` file in the data dir; checks stay dormant until one exists), so
+   nothing is baked in. The publish script exists (`scripts/desktop/publish.ts`,
+   derives `latest.json` from the built bundle); only the repo creation + first
+   publish remain.
 3. Keep the headless launchd path (Mini with no window) documented as a supported
    variant of the sidecar-free hub, or fold the Mini onto the tray-resident app too?
    **Still open** (untouched by the spike).
