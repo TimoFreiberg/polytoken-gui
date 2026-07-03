@@ -211,6 +211,7 @@ const hub = new SessionHub(
   config.dataDir,
   openInFileManager,
   servedBuildSha,
+  config.deltaFlushMs,
 );
 
 const rawSend = (ws: ServerWebSocket<WsData>, msg: ServerMessage) => {

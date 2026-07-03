@@ -31,6 +31,7 @@ import {
   metaSeedEvents,
   type SessionJournal,
   tailCovers,
+  tryMerge,
 } from "./journal.js";
 import { getLoginEnvStatus, resolveLoginShell } from "./shared/login-env.js";
 import { resolveBackgroundModel } from "./shared/background-model.js";
@@ -231,6 +232,18 @@ export class SessionHub {
   // append-only, and the few readers that need a SessionState fold on demand
   // (`foldedState`).
   private journals = new Map<SessionId, SessionJournal>();
+  // Server-side `assistantDelta` coalescing (N1). At most ONE pending merged delta per
+  // session: a token burst on the same effective channel is merged in place (via the
+  // journal's `tryMerge` rule) and held until its timer fires or a non-delta event
+  // forces a flush, so a burst becomes one journal append + one WS frame instead of one
+  // per token. The pending event is INVISIBLE to everyone until flushed — it is not in
+  // any journal, so seeds/resumes never observe it mid-buffer. Empty (and never touched)
+  // when `deltaFlushMs` is 0. Keyed by session because the flush-before-any-other-event
+  // ordering only has to hold within a session; cross-session order is irrelevant.
+  private pendingDeltas = new Map<
+    SessionId,
+    { ev: SessionDriverEvent; timer: ReturnType<typeof setTimeout> }
+  >();
   // The switchTo attach window: while a swap is off fetching a cold session's
   // seed (driver GET /state + /history), that session's live SSE events reach
   // onEvent but have no journal to enter — and the in-flight seed may
@@ -356,6 +369,12 @@ export class SessionHub {
     // startup. Carried in `hello` so a stale running client can detect a server
     // update. Empty when no build marker exists (dev / marker missing).
     private buildSha = "",
+    // Flush window (ms) for server-side `assistantDelta` coalescing (N1). >0 buffers a
+    // per-session token burst into ONE merged journal frame flushed on this timer; 0
+    // (the default) disables buffering so every delta ships immediately — the exact
+    // pre-N1 behavior, which is why every direct-construction unit test that omits this
+    // param keeps its original meaning. index.ts passes config.deltaFlushMs (default 50).
+    private deltaFlushMs = 0,
   ) {
     driver.subscribe((ev) => this.onEvent(ev));
     // Per-client focus lives here, not in the driver — hand it a live predicate
@@ -465,11 +484,15 @@ export class SessionHub {
   }
 
   /** The single append path: every event a viewed session's clients fold enters
-   *  its journal here — `onEvent` and the usage ticker's synthetic
-   *  `usageUpdated` both come through, so seeds/resumes can never diverge from
-   *  what clients folded. Append-only: stamps the journal, routes to viewers.
-   *  Background sessions (no journal) are untouched. */
-  private ingest(ev: SessionDriverEvent): void {
+   *  the journal through here (append-only: stamp the journal, route to viewers;
+   *  background sessions with no journal are untouched).
+   *
+   *  All callers go through {@link ingest}, which is this plus the N1
+   *  delta-coalescing buffer. This is the un-buffered core — the immediate
+   *  append — so `ingest`'s flush path can commit a merged delta without
+   *  re-entering the buffer. With `deltaFlushMs` 0 (default) `ingest` is a thin
+   *  pass-through to this, i.e. exactly the pre-N1 behavior. */
+  private ingestNow(ev: SessionDriverEvent): void {
     const sid = ev.sessionRef.sessionId;
     const j = this.journals.get(sid);
     if (!j) return;
@@ -502,6 +525,80 @@ export class SessionHub {
     for (const conn of this.clients.values())
       if (conn.focusedId === sid)
         conn.send({ type: "event", event: ev, epoch: j.epoch, seq });
+  }
+
+  /** The buffered append path (N1). Every event still enters the journal through
+   *  here; `assistantDelta`s are coalesced per session behind the `deltaFlushMs`
+   *  flush window, everything else appends immediately after flushing whatever
+   *  deltas were pending for its session first.
+   *
+   *  With `deltaFlushMs` 0 (default) this is a straight pass-through to
+   *  {@link ingestNow} — the map is never touched, so pre-N1 behavior is exact.
+   *
+   *  Ordering invariant (load-bearing, per-session): a non-delta event
+   *  (toolStarted/userMessage/sessionReset/usageUpdated/…) MUST NOT be appended
+   *  ahead of the deltas that preceded it — the fold cares (which bubble closes,
+   *  which channel is open). So any non-delta flushes the pending delta first.
+   *  Cross-session order is irrelevant; buffers are per-session. */
+  private ingest(ev: SessionDriverEvent): void {
+    const sid = ev.sessionRef.sessionId;
+    // Coalescing off, or this session has no journal (a background session whose
+    // events ingestNow drops anyway — never buffer what would have been dropped, or
+    // a later flush would resurrect it into a journal that meanwhile appeared).
+    if (this.deltaFlushMs <= 0 || !this.journals.has(sid)) {
+      this.ingestNow(ev);
+      return;
+    }
+    if (ev.type !== "assistantDelta") {
+      // Any non-delta: commit the pending deltas for THIS session first (preserve
+      // fold order), then append the event immediately.
+      this.flushPending(sid);
+      this.ingestNow(ev);
+      return;
+    }
+    const pending = this.pendingDeltas.get(sid);
+    if (pending) {
+      const merged = tryMerge(pending.ev, ev);
+      if (merged) {
+        // Same effective channel — extend the held frame in place. Timestamp/entryId
+        // stay the first delta's (tryMerge's contract), so the flushed frame is
+        // byte-identical to what the journal's own coalescing would have produced.
+        pending.ev = merged;
+        return;
+      }
+      // Channel switch (e.g. thinking → text): the held run is complete. Flush it so
+      // it lands before this delta, then start a fresh pending run below.
+      this.flushPending(sid);
+    }
+    // Start a new pending run and arm its flush timer. unref so a lone buffered delta
+    // can't keep the process alive.
+    const timer = setTimeout(() => this.flushPending(sid), this.deltaFlushMs);
+    (timer as { unref?: () => void }).unref?.();
+    this.pendingDeltas.set(sid, { ev, timer });
+  }
+
+  /** Commit one session's pending merged delta (if any) to the journal: clear its
+   *  timer, drop it from the buffer, and append it through {@link ingestNow}. A
+   *  no-op when nothing is pending. Called on the flush timer, before any
+   *  non-delta event for the session, and on a channel switch. */
+  private flushPending(sid: SessionId): void {
+    const pending = this.pendingDeltas.get(sid);
+    if (!pending) return;
+    clearTimeout(pending.timer);
+    this.pendingDeltas.delete(sid);
+    this.ingestNow(pending.ev);
+  }
+
+  /** DROP one session's pending merged delta without committing it (clear the
+   *  timer, forget the frame). Used wherever the journal's identity changes or
+   *  dies under the buffer — a reseed in `switchTo`, a journal deletion after
+   *  `sessionClosed`, `reset()` — where flushing would leak a stale delta into a
+   *  fresh (or gone) epoch. */
+  private dropPending(sid: SessionId): void {
+    const pending = this.pendingDeltas.get(sid);
+    if (!pending) return;
+    clearTimeout(pending.timer);
+    this.pendingDeltas.delete(sid);
   }
 
   /** The seed message for one session (or the empty landing when sid is null):
@@ -570,6 +667,11 @@ export class SessionHub {
       sid !== this.defaultFocusId &&
       !this.hasViewer(sid)
     ) {
+      // The sessionClosed above, being non-delta, already flushed this session's
+      // pending delta through `ingest`'s uniform rule — so this dropPending is a
+      // guard, not the primary drain: it guarantees no orphaned timer survives the
+      // journal it was going to append into.
+      this.dropPending(sid);
       this.journals.delete(sid);
     }
     this.maybeNotify(ev);
@@ -746,7 +848,10 @@ export class SessionHub {
   /** Build a `sessionStatus` message from the current running/initializing/attention
    *  projections. Shared by `broadcastSessionStatus` and the hello handshake in
    *  `addClient`, which both emit the same snapshot. */
-  private sessionStatusMsg(): Extract<ServerMessage, { type: "sessionStatus" }> {
+  private sessionStatusMsg(): Extract<
+    ServerMessage,
+    { type: "sessionStatus" }
+  > {
     return {
       type: "sessionStatus",
       runningIds: [...this.running],
@@ -910,9 +1015,7 @@ export class SessionHub {
     // Backward compatibility for an older client: dispatch, but there is no id to ACK
     // or deduplicate. Current clients always send promptId.
     if (!promptId) {
-      void run().catch((e) =>
-        send({ type: "error", message: errMsg(e) }),
-      );
+      void run().catch((e) => send({ type: "error", message: errMsg(e) }));
       return;
     }
 
@@ -1303,6 +1406,12 @@ export class SessionHub {
       // reseed (reload/branch) restarts it — the swap's raw seed events are the
       // new compacted prefix and any resume token goes stale.
       if (opts.reseed || !this.journals.has(sid)) {
+        // The journal's identity is being replaced (reseed) or first-established.
+        // Any delta buffered against the OUTGOING journal belongs to the transcript
+        // we're discarding — drop it rather than flush it into the fresh epoch, where
+        // it would fold onto the wrong base (or, on a first attach, resurrect an event
+        // ingest never actually buffered). Never a flush: the seed is authoritative.
+        this.dropPending(sid);
         this.journals.set(sid, createJournal(this.nextEpoch(), seed));
         if (metaChanged) this.broadcastSessionStatus();
       }
@@ -1496,8 +1605,10 @@ export class SessionHub {
         this.driver.setPermissionMonitor(msg.mode, target(msg));
         return;
       case "toggleAdventurousHandoff":
-        callOptional(this.driver.toggleAdventurousHandoff, "adventurous handoff", () =>
-          this.driver.toggleAdventurousHandoff!(target(msg)),
+        callOptional(
+          this.driver.toggleAdventurousHandoff,
+          "adventurous handoff",
+          () => this.driver.toggleAdventurousHandoff!(target(msg)),
         );
         return;
       case "setNotificationAutodrain":
@@ -1750,6 +1861,10 @@ export class SessionHub {
    *  fixture, and re-point + re-seed every connected client. `bootstrap:false`
    *  exposes the production empty landing. */
   reset(opts: { bootstrap?: boolean } = {}): void {
+    // Drop every buffered delta (and its timer) before wiping the journals — a stale
+    // pending frame must never leak into the fresh landing/epoch reset re-seeds below.
+    // Materialize the keys first: dropPending mutates the map it iterates.
+    for (const sid of [...this.pendingDeltas.keys()]) this.dropPending(sid);
     this.journals.clear();
     this.defaultFocusId = null;
     this.running.clear();

@@ -139,8 +139,14 @@ function compactedAppend(
  *  - usageUpdated + usageUpdated keeps the later one (the fold overwrites
  *    `usage` wholesale, so only the last of an adjacent run matters).
  *
- *  Never mutates its inputs — journal events may be aliased by in-flight sends. */
-function tryMerge(
+ *  Never mutates its inputs — journal events may be aliased by in-flight sends.
+ *
+ *  Exported so the hub's delta-coalescing buffer (N1) reuses this exact rule
+ *  rather than duplicating "same effective channel → concatenate": the hub
+ *  merges a pending `assistantDelta` with the next arrival iff this returns
+ *  non-null, so the buffered frame is byte-identical to what the journal would
+ *  have coalesced anyway. */
+export function tryMerge(
   a: SessionDriverEvent,
   b: SessionDriverEvent,
 ): SessionDriverEvent | null {

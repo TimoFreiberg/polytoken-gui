@@ -1,5 +1,10 @@
 import { describe, expect, test } from "bun:test";
-import { foldAll, PROTOCOL_VERSION } from "@pilot/protocol";
+import {
+  foldAll,
+  foldEvent,
+  initialSessionState,
+  PROTOCOL_VERSION,
+} from "@pilot/protocol";
 import type {
   CommandInfo,
   FileInfo,
@@ -1460,6 +1465,308 @@ describe("SessionHub", () => {
         (m) => m.type === "promptResult" && m.promptId === "client-new-1",
       ).length,
     ).toBe(2);
+  });
+});
+
+describe("assistantDelta coalescing (N1)", () => {
+  const FLUSH_MS = 15;
+  // Wait past a flush window so any armed timer has fired.
+  const settle = () => new Promise((r) => setTimeout(r, FLUSH_MS * 3));
+  // Construct a hub with coalescing enabled (deltaFlushMs is the trailing 9th param).
+  const coalescingHub = (d: PilotDriver) =>
+    new SessionHub(
+      d,
+      undefined,
+      60_000,
+      "test-server",
+      undefined,
+      undefined,
+      "",
+      FLUSH_MS,
+    );
+  // Fold the sequence of frames a client received exactly as the real client does: a
+  // `seed` frame replaces the state from zero, an `event` frame folds on top. Starts from
+  // an empty state so tests that clear `received` (dropping the connect seed) still fold
+  // their event frames — matching a raw fold that also starts from initialSessionState().
+  const foldReceived = (received: ServerMessage[]): SessionState => {
+    let state: SessionState = initialSessionState();
+    for (const m of received) {
+      if (m.type === "seed") state = foldAll([...m.events]);
+      else if (m.type === "event") foldEvent(state, m.event);
+    }
+    return state;
+  };
+  // The state you'd get with NO coalescing: fold the raw driver events on top of the
+  // client's initial seed. The invariant every test checks is `foldReceived ≡ this`.
+  const eventFrames = (received: ServerMessage[]) =>
+    received.filter(
+      (m): m is Extract<ServerMessage, { type: "event" }> => m.type === "event",
+    );
+
+  test("a burst of same-channel deltas becomes ONE frame, text concatenated, seq +1", async () => {
+    const d = new FakeDriver();
+    const hub = coalescingHub(d);
+    const a = client();
+    hub.addClient(a.send); // adopts the landing default "s"
+    a.received.length = 0;
+
+    d.emit(ev({ type: "assistantDelta", text: "Hel", channel: "text" }));
+    d.emit(ev({ type: "assistantDelta", text: "lo, ", channel: "text" }));
+    d.emit(ev({ type: "assistantDelta", text: "world", channel: "text" }));
+    // Buffered: nothing has shipped yet.
+    expect(eventFrames(a.received).length).toBe(0);
+
+    await settle();
+
+    // Exactly one frame carrying the full concatenation.
+    const frames = eventFrames(a.received);
+    expect(frames.length).toBe(1);
+    const only = frames[0]!;
+    expect(only.event.type === "assistantDelta" && only.event.text).toBe(
+      "Hello, world",
+    );
+    // One journal append → seq advanced by exactly 1.
+    expect(only.seq).toBe(1);
+
+    // The client's fold equals folding the three raw deltas unbuffered.
+    const unbuffered = initialSessionState();
+    for (const t of ["Hel", "lo, ", "world"])
+      foldEvent(
+        unbuffered,
+        ev({ type: "assistantDelta", text: t, channel: "text" }),
+      );
+    const folded = foldReceived(a.received);
+    expect(folded).toEqual(unbuffered);
+    const lastItem = folded.items.at(-1);
+    expect(lastItem?.kind).toBe("assistant");
+    expect(lastItem?.kind === "assistant" && lastItem.text).toBe(
+      "Hello, world",
+    );
+    // And the server's own seed (journal) matches the client's fold — the single-truth
+    // invariant, now through the buffer.
+    expect(foldAll(hub.seedOf("s")!.events).items.at(-1)).toEqual(lastItem);
+  });
+
+  test("a toolStarted after buffered deltas flushes the merged delta BEFORE the tool frame", async () => {
+    const d = new FakeDriver();
+    const hub = coalescingHub(d);
+    const a = client();
+    hub.addClient(a.send);
+    a.received.length = 0;
+
+    d.emit(ev({ type: "assistantDelta", text: "on it ", channel: "text" }));
+    d.emit(ev({ type: "assistantDelta", text: "now", channel: "text" }));
+    // The non-delta event forces the pending delta out first, synchronously.
+    d.emit(
+      ev({ type: "toolStarted", callId: "c1", toolName: "read", input: {} }),
+    );
+
+    const frames = eventFrames(a.received);
+    // Two frames, delta then tool, in that order.
+    expect(frames.length).toBe(2);
+    expect(frames[0]!.event.type).toBe("assistantDelta");
+    expect(
+      frames[0]!.event.type === "assistantDelta" && frames[0]!.event.text,
+    ).toBe("on it now");
+    expect(frames[1]!.event.type).toBe("toolStarted");
+    // seqs are contiguous — delta got 1, tool got 2.
+    expect(frames.map((f) => f.seq)).toEqual([1, 2]);
+
+    await settle(); // no stray extra frame from a leftover timer
+    expect(eventFrames(a.received).length).toBe(2);
+
+    // Folding the received frames equals folding the raw sequence.
+    const raw = initialSessionState();
+    foldEvent(
+      raw,
+      ev({ type: "assistantDelta", text: "on it ", channel: "text" }),
+    );
+    foldEvent(
+      raw,
+      ev({ type: "assistantDelta", text: "now", channel: "text" }),
+    );
+    foldEvent(
+      raw,
+      ev({ type: "toolStarted", callId: "c1", toolName: "read", input: {} }),
+    );
+    expect(foldReceived(a.received)).toEqual(raw);
+  });
+
+  test("a userMessage after buffered deltas flushes them first (same ordering rule)", async () => {
+    const d = new FakeDriver();
+    const hub = coalescingHub(d);
+    const a = client();
+    hub.addClient(a.send);
+    a.received.length = 0;
+
+    d.emit(ev({ type: "assistantDelta", text: "partial", channel: "text" }));
+    d.emit(ev({ type: "userMessage", id: "u1", text: "interrupt" }));
+
+    const frames = eventFrames(a.received);
+    expect(frames.map((f) => f.event.type)).toEqual([
+      "assistantDelta",
+      "userMessage",
+    ]);
+    expect(frames.map((f) => f.seq)).toEqual([1, 2]);
+
+    const raw = initialSessionState();
+    foldEvent(
+      raw,
+      ev({ type: "assistantDelta", text: "partial", channel: "text" }),
+    );
+    foldEvent(raw, ev({ type: "userMessage", id: "u1", text: "interrupt" }));
+    expect(foldReceived(a.received)).toEqual(raw);
+  });
+
+  test("a thinking delta after buffered text deltas produces two frames in arrival order", async () => {
+    const d = new FakeDriver();
+    const hub = coalescingHub(d);
+    const a = client();
+    hub.addClient(a.send);
+    a.received.length = 0;
+
+    d.emit(ev({ type: "assistantDelta", text: "answer ", channel: "text" }));
+    d.emit(ev({ type: "assistantDelta", text: "start", channel: "text" }));
+    // Channel switch: the held text run flushes, a fresh thinking run buffers.
+    d.emit(ev({ type: "assistantDelta", text: "hmm", channel: "thinking" }));
+
+    // The text run flushed synchronously on the channel switch; the thinking run is
+    // still buffered until its timer.
+    let frames = eventFrames(a.received);
+    expect(frames.length).toBe(1);
+    expect(
+      frames[0]!.event.type === "assistantDelta" && frames[0]!.event.text,
+    ).toBe("answer start");
+
+    await settle();
+    frames = eventFrames(a.received);
+    expect(frames.length).toBe(2);
+    const second = frames[1]!;
+    expect(second.event.type === "assistantDelta" && second.event.channel).toBe(
+      "thinking",
+    );
+    expect(second.event.type === "assistantDelta" && second.event.text).toBe(
+      "hmm",
+    );
+    expect(frames.map((f) => f.seq)).toEqual([1, 2]);
+
+    // Fold equivalence against the raw three-delta sequence.
+    const raw = initialSessionState();
+    foldEvent(
+      raw,
+      ev({ type: "assistantDelta", text: "answer ", channel: "text" }),
+    );
+    foldEvent(
+      raw,
+      ev({ type: "assistantDelta", text: "start", channel: "text" }),
+    );
+    foldEvent(
+      raw,
+      ev({ type: "assistantDelta", text: "hmm", channel: "thinking" }),
+    );
+    expect(foldReceived(a.received)).toEqual(raw);
+  });
+
+  test("a client connecting mid-buffer loses nothing: seed + later frames fold to the full text", async () => {
+    const d = new FakeDriver();
+    const hub = coalescingHub(d);
+    const a = client();
+    hub.addClient(a.send); // "a" is viewing "s" and drives the buffer
+
+    // Two deltas buffer; nothing has flushed. A second client connects now.
+    d.emit(ev({ type: "assistantDelta", text: "first ", channel: "text" }));
+    d.emit(ev({ type: "assistantDelta", text: "second ", channel: "text" }));
+    const b = client();
+    hub.addClient(b.send); // gets a seed built from the journal, which excludes the buffer
+    // The mid-buffer seed can't contain the un-flushed deltas yet.
+    const bSeed = b.received.find((m) => m.type === "seed");
+    expect(bSeed?.type).toBe("seed");
+    const bSeedState =
+      bSeed?.type === "seed" ? foldAll([...bSeed.events]) : null;
+    const bSeedLast = bSeedState?.items.at(-1);
+    expect(bSeedLast?.kind === "assistant" ? bSeedLast.text : "").not.toContain(
+      "first",
+    );
+
+    // A third delta merges into the still-pending run, then the timer flushes ONE frame.
+    d.emit(ev({ type: "assistantDelta", text: "third", channel: "text" }));
+    await settle();
+
+    // Both clients fold to the identical full text — no loss, no duplication.
+    const expectedTail = "first second third";
+    for (const c of [a, b]) {
+      const last = foldReceived(c.received).items.at(-1);
+      expect(last?.kind).toBe("assistant");
+      expect(last?.kind === "assistant" && last.text).toBe(expectedTail);
+    }
+    // b received exactly one event frame (the single flushed merge), proving no dup.
+    expect(eventFrames(b.received).length).toBe(1);
+  });
+
+  test("reset() with a pending delta doesn't leak it into the fresh epoch", async () => {
+    const d = new FakeDriver();
+    const hub = coalescingHub(d);
+    const a = client();
+    hub.addClient(a.send);
+
+    d.emit(ev({ type: "assistantDelta", text: "stale ", channel: "text" }));
+    d.emit(ev({ type: "assistantDelta", text: "buffered", channel: "text" }));
+    // Reset before the flush timer fires — the pending delta must be dropped, not flushed.
+    hub.reset({ bootstrap: true });
+    a.received.length = 0;
+    await settle();
+
+    // No frame from the dropped buffer arrived after the reset.
+    expect(eventFrames(a.received).length).toBe(0);
+    // The fresh landing seed carries none of the stale text.
+    const seedState = foldAll(hub.seedOf("s")?.events ?? []);
+    const leaked = seedState.items.some(
+      (i) => i.kind === "assistant" && /stale|buffered/.test(i.text),
+    );
+    expect(leaked).toBe(false);
+  });
+
+  test("a reload (reseed) with a pending delta drops it rather than fold it onto the new epoch", async () => {
+    const d = new FakeDriver();
+    const hub = coalescingHub(d);
+    const a = client();
+    hub.addClient(a.send); // viewing "s"
+
+    // Buffer a delta for "s", then reload "s" (same id, reseed) before the flush.
+    d.emit(
+      ev({ type: "assistantDelta", text: "pre-reload text", channel: "text" }),
+    );
+    hub.handleClient(a.send, { type: "reloadSession", path: "/s.jsonl" });
+    await flush();
+    await settle();
+
+    // The reloaded seed is authoritative; the buffered delta was dropped, not folded in.
+    const seedState = foldAll(hub.seedOf("s")?.events ?? []);
+    expect(
+      seedState.items.some(
+        (i) => i.kind === "assistant" && i.text.includes("pre-reload text"),
+      ),
+    ).toBe(false);
+    expect(seedState.items.some((i) => i.text === "reloaded session")).toBe(
+      true,
+    );
+  });
+
+  test("with coalescing disabled (default 0) every delta ships immediately — no buffering", () => {
+    const d = new FakeDriver();
+    const hub = new SessionHub(d); // no deltaFlushMs → 0 → pass-through
+    const a = client();
+    hub.addClient(a.send);
+    a.received.length = 0;
+
+    d.emit(ev({ type: "assistantDelta", text: "one", channel: "text" }));
+    d.emit(ev({ type: "assistantDelta", text: "two", channel: "text" }));
+    // Immediate: two frames, synchronously, no timer involved.
+    const frames = a.received.filter(
+      (m): m is Extract<ServerMessage, { type: "event" }> => m.type === "event",
+    );
+    expect(frames.length).toBe(2);
+    expect(frames.map((f) => f.seq)).toEqual([1, 2]);
   });
 });
 

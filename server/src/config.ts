@@ -48,6 +48,13 @@ export const config = {
   // composer's context meter climb live instead of freezing until the turn ends).
   // Default 1s; the e2e suite shortens it so a test sees movement quickly.
   liveRefreshMs: Number(process.env.PILOT_LIVE_REFRESH_MS ?? 1000),
+  // Flush window (ms) for server-side coalescing of streamed `assistantDelta`s (N1). The
+  // hub buffers a token burst per session and flushes it as ONE merged journal frame on
+  // this timer, so a burst becomes one WS frame + one client markdown re-parse instead of
+  // one per token. Default 50ms; 0 disables coalescing entirely (every delta ships
+  // immediately — the exact pre-N1 behavior). The knob exists because "chunkier reveal vs
+  // token-smooth" is a feel judgement best tuned at runtime.
+  deltaFlushMs: Number(process.env.PILOT_DELTA_FLUSH_MS ?? 50),
 };
 
 /** Token check. null token = auth disabled. This is a plain string compare, not a

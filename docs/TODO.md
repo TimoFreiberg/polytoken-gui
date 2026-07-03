@@ -16,18 +16,32 @@ resolution is non-obvious or likely to bite again. Otherwise see `jj log`.
 
 ## ⚡ Performance
 
-- [ ] **Server-side coalescing of streamed `assistantDelta`s (N1).** Highest-
-      leverage fix for CPU + network. Today every `text_delta` becomes its own
-      WS frame, each driving a full client markdown re-parse. Fix: buffer deltas
-      in the hub keyed by `(sessionId, channel)`, flush on ~50ms timer. Fold is
-      additive so folding N deltas vs one concatenation yields byte-identical
-      state; no wire change. **Deferred** — needs a live interactive session to
-      watch chunkier reveal vs token-smooth before committing. Subsumes C1/C3.
+- ~~[x]~~ **Server-side coalescing of streamed `assistantDelta`s (N1).** Done.
+      The hub buffers at most one pending merged `assistantDelta` per session and
+      flushes it as ONE journal append + one WS frame on a timer, reusing the
+      journal's `tryMerge` rule so the frame is byte-identical to what coalescing
+      would have produced (no wire change, fold unaffected). Any non-delta event
+      flushes the session's pending delta first (the per-session ordering
+      invariant the fold depends on); a channel switch flushes then re-buffers;
+      journal-identity changes (reseed/reload, `sessionClosed` deletion,
+      `reset()`) DROP the pending delta rather than leak it into a new epoch.
+      Tunable at runtime via **`PILOT_DELTA_FLUSH_MS`** (config `deltaFlushMs`):
+      default **50**, **0 disables** (every delta ships immediately — the exact
+      pre-N1 behavior, and the default the unit tests construct with). The knob
+      exists precisely because "chunkier reveal vs token-smooth" was the feel
+      question that got N1 deferred — now it's a live dial, not a rebuild.
+      Buffering lives in `SessionHub.ingest` (wrapping the un-buffered
+      `ingestNow`); see `server/src/hub.ts` + the "assistantDelta coalescing (N1)"
+      block in `hub.test.ts`.
 - [ ] **Client markdown re-parse is O(n²) per streamed message (C1).**
       `Markdown.svelte` re-parses full content on every content change; the
-      parser has no incremental/prefix caching. Was described as "mostly fixed
-      by N1" but N1 remains deferred and C1 was never independently verified.
-      Needs re-evaluation after N1 or standalone profiling.
+      parser has no incremental/prefix caching. **Re-measure now that N1 landed:**
+      N1 collapses a token burst into one frame, so it cuts the *number* of
+      re-parses (was one per token, now one per ~50ms flush) but not the per-parse
+      O(n) cost — a long message still re-parses its full length on each flush, so
+      the O(n²)-over-a-message shape may persist at lower constant factor. Profile
+      a long streamed message under the 50ms default before deciding if incremental
+      parsing is still worth it.
 - [ ] **Virtualize the transcript + memoize per-turn grouping (C2).**
       `Transcript.svelte` recomputes grouping over the whole item list on every
       structural event. Memoize per-turn so only the active turn recomputes;
