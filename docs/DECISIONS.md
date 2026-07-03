@@ -49,3 +49,13 @@ Everything settable in the new-session draft UI is persisted per-project (keyed
 half-configured draft erodes trust in the tool. Default for any new draft
 control: persist it, unless it's inherently ephemeral. Add an e2e round-trip
 in `e2e/drafts.e2e.ts` for each persisted field.
+
+## D18. Desktop shell = Tauri v2, hub stays a Bun sidecar
+The Swift/AppKit shell is replaced by a Tauri v2 app (`desktop-tauri/`): Rust
+owns exactly the part that must never die (port pick, spawn, /health gate,
+liveness, crash-loop breaker, signal-safe teardown), while hub logic stays TS
+where its tests live. Shell self-updates via tauri-plugin-updater (minisign,
+our key, no Apple involvement — ad-hoc self-update verified quarantine- and
+TCC-prompt-free, even in /Applications). The Rust-hub rewrite remains a
+separate, criteria-gated decision. Full rationale, spike results, and the open
+artifact-hosting decision: `docs/ADR-desktop-shell.md`.

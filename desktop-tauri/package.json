@@ -1,0 +1,15 @@
+{
+  "name": "desktop-tauri",
+  "private": true,
+  "type": "module",
+  "version": "0.1.0",
+  "scripts": {
+    "dev": "tauri dev",
+    "build": "tauri build",
+    "icon": "tauri icon ../desktop/icon-1024.png",
+    "check": "cargo check --locked"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.9.0"
+  }
+}

@@ -49,10 +49,18 @@ resolution is non-obvious or likely to bite again. Otherwise see `jj log`.
 
 ## 🏗️ Architecture
 
-- **ADR-desktop-shell.md** — Tauri v2 desktop shell proposal (proposed, awaiting
-  owner sign-off). The "📐 Architecture direction" note that lived here
-  (Rust hub end-state, distribution model) is superseded by that ADR; the
-  Rust-hub target stays gated by the criteria in it.
+- **ADR-desktop-shell.md** — accepted; spike complete 2026-07-03, all five exit
+  criteria green. The Tauri shell lives in `desktop-tauri/` (see its README). The
+  "📐 Architecture direction" note that lived here (Rust hub end-state, distribution
+  model) is superseded by that ADR; the Rust-hub target stays gated by the criteria
+  in it. Remaining to fully retire `desktop/` (Swift):
+  - [ ] Dogfood `desktop-tauri/` (tray, close-to-tray, titlebar/traffic-light fit,
+        update overlay — the visual bits an agent can't eyeball).
+  - [ ] Decide updater-artifact hosting (ADR "Owner decisions" #2; likely a
+        Tailscale-served dir) + a publish script that derives `latest.json` from the
+        built bundle (a version-mismatched manifest loops under AUTO update).
+  - [ ] Then delete `desktop/` + its watcher desktop-sha plumbing, and point
+        docs/DESIGN.md at the Tauri shell.
 - [ ] **Decompose the hub (god object).** `server/src/hub.ts` owns the per-session
       journals, running/attention maps, clients map, live ticker, OAuth pending,
       prompt-results ledger; `handleClient` is one giant switch. Extract

@@ -1,0 +1,7 @@
+{
+  "$schema": "../target/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "Baseline for the shell's own bundled pages (the loading page). The web client itself is served by the hub over http and gets NO Tauri IPC — the shell drives everything from Rust.",
+  "windows": ["main"],
+  "permissions": ["core:default"]
+}

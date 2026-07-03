@@ -1,9 +1,12 @@
 # ADR — Desktop shell: Tauri now, Bun hub as supervised sidecar, Rust hub behind go/no-go
 
-Status: **proposed, awaiting owner sign-off** (2026-07-02, from the design-dossier track).
-Supersedes the shell part of the "📐 Architecture direction" note in `docs/TODO.md`
-(2026-07-01) — the Rust-hub end-state there stays a valid *target*, gated by the criteria
-below. Companion: `desktop/README.md` (the Swift shell this replaces).
+Status: **accepted 2026-07-03** (owner sign-off) — **spike complete, all five exit
+criteria green**; the walking skeleton shipped as `desktop-tauri/` (see "Spike results"
+below and `desktop-tauri/README.md`). Originally proposed 2026-07-02 from the
+design-dossier track. Supersedes the shell part of the "📐 Architecture direction" note
+in `docs/TODO.md` (2026-07-01) — the Rust-hub end-state there stays a valid *target*,
+gated by the criteria below. Companion: `desktop/README.md` (the Swift shell this
+replaces; kept until the Tauri shell has dogfood mileage).
 
 ## Decision
 
@@ -147,6 +150,47 @@ Exit: all five green → schedule `desktop/` replacement as a normal task. Any r
 document it in this ADR and stay on the Swift shell (which keeps working meanwhile —
 nothing in this ADR breaks it).
 
+## Spike results (2026-07-03) — all five green
+
+Shipped as `desktop-tauri/` (tauri 2.11, six official plugins, ~900 lines of Rust).
+Verified on macOS 15 (Apple Silicon), mock driver + dry-run watcher for hermetic runs:
+
+1. **Scaffold** ✓ — tray menu (Open / Copy App URL / Restart Hub / Check for Shell
+   Updates / Quit), single-instance (second launch exits, first gets focused — verified
+   by process observation), close-to-tray wired (visual check pending owner dogfood;
+   accessibility scripting was denied for automating the close button).
+2. **Supervisor** ✓ — free port → clone-mode spawn → /health gate → navigate; hub
+   healthy ~600-700ms after process start. Beyond spec: a liveness probe (6 misses at
+   5s intervals → SIGTERM + respawn) and signal-safe teardown — SIGTERM/SIGINT route
+   through the same cleanup as Cmd+Q, so no orphaned bun processes (measured: the Swift
+   shell orphans both children on SIGTERM).
+3. **Kill test** ✓ — `kill -9` the hub → healthy again in **290ms**; webview
+   re-navigated, client WS reconnects (verified via /health `clients`). Crash-loop
+   breaker: broken clone → exactly 6 spawn attempts (~15s) → fatal dialog, no spin;
+   quitting with the dialog up exits cleanly.
+4. **Updater** ✓ — local static manifest: v0.1.0 detected v0.1.1, downloaded +
+   minisign-verified + swapped its own bundle **in ~2s**, relaunched as v0.1.1 with a
+   fully working second-generation lifecycle. **No quarantine xattr** re-acquired (only
+   `com.apple.provenance`), no Gatekeeper prompt. **Repeated from `/Applications`: no
+   TCC App Management prompt** — the in-process self-update never trips it (the Swift
+   README's fear was about *external* swap+relaunch, which this isn't). Two caveats:
+   (a) the updater plugin enforces https unless `dangerousInsecureTransportProtocol`
+   is set — it is, deliberately: integrity comes from the minisign signature, the
+   realistic endpoint is tailnet-internal, and the residual risk (manifest downgrade
+   games by an on-path attacker) doesn't exist inside a tailnet. Use `tailscale serve`
+   https if that posture ever changes. (b) A published manifest whose `version`
+   mismatches the artifact's baked version causes an update **loop** under
+   `PILOT_SHELL_UPDATE_AUTO=1` — the publish script (follow-up) must derive the
+   manifest from the built bundle.
+5. **Measured** (same method both shells: direct exec → first /health 200; `ps` RSS of
+   the shell process after 20s idle; mock driver): Tauri release **723ms / ~103MB**,
+   Swift installed **438ms / ~94MB**. Same class; no regression that matters at this
+   size. Shell bundle: **3.9MB** compressed.
+
+Per the exit rule, `desktop/` (Swift) replacement is now a normal scheduled task:
+dogfood `desktop-tauri/` (visual/tray/titlebar polish included), decide artifact
+hosting, then retire the Swift shell.
+
 ## Consequences
 
 Gained: shell self-update, tray-resident phone serving, single-instance, a supervised-in-
@@ -156,13 +200,18 @@ replacement, and the Swift shell's simplicity (600 lines, zero deps) retired.
 
 ## Owner decisions needed
 
-1. Sign off on sequence: spike in clone mode first, bundled mode later? (Alternative:
-   jump straight to bundled — cleaner end-state, but couples the migration to building
-   the compile+sign+manifest pipeline in week one.)
-2. Where do updater artifacts live — Tailscale-served static dir on the Mini, or GitHub
-   releases?
+1. ~~Sign off on sequence: spike in clone mode first, bundled mode later?~~
+   **Answered 2026-07-03: clone mode shipped first** (the spike). Bundled mode
+   (`bun build --compile` hub as `externalBin`, one atomic updater artifact) stays the
+   target, unblocked whenever wanted.
+2. Where do updater artifacts live — **still open.** The git remote is tangled, so
+   GitHub releases are out; a Tailscale-served static dir is the likely home. The shell
+   keeps the endpoint runtime-configurable (`PILOT_SHELL_UPDATE_URL` env or a
+   `shell-update-url` file in the data dir; checks stay dormant until one exists), so
+   nothing is baked in. A publish script belongs with this decision.
 3. Keep the headless launchd path (Mini with no window) documented as a supported
    variant of the sidecar-free hub, or fold the Mini onto the tray-resident app too?
+   **Still open** (untouched by the spike).
 
 ## References
 
