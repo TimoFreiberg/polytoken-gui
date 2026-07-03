@@ -1167,8 +1167,11 @@ export async function createPolytokenDriver(
       // Create a fresh session. The cwd is the project dir (the daemon's
       // --working-dir); `worktree` isolates it in a fresh jj/git worktree first.
       // `model`/`thinking` apply after warm-up via POST /model (the daemon's
-      // default applies until then).
-      let cwd = opts.cwd?.trim() || join(homedir(), "projects");
+      // default applies until then). A bare newSession (no cwd) defaults to
+      // $HOME — matching the contract the whole stack advertises (wire.ts,
+      // driver.ts, and the hub's `defaultNewSessionCwd`). $HOME always exists,
+      // so the existence guard below can't spuriously reject a cwd-less call.
+      let cwd = opts.cwd?.trim() || homedir();
       cwd = resolveGuiPath(cwd);
       // Validate the cwd exists + is a dir, loudly — don't let the daemon spawn
       // against a typo'd path. Mirrors the original driver's newSession guard.
