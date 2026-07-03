@@ -1,0 +1,74 @@
+# CI — every PR and every push to main. Two independent jobs:
+#   web:     typechecks (protocol/server/scripts/e2e/parity/svelte), unit tests, and
+#            the Playwright e2e suite (mock driver; boots its own dev server on
+#            auto-assigned ports, so nothing collides on a shared runner).
+#   desktop: fmt + clippy for the Tauri shell, on macOS because that's the only
+#            target the shell builds for. The hub sidecar must be compiled first —
+#            tauri-build stages `externalBin` at compile time and errors if missing.
+#
+# The release pipeline (tag-triggered) hangs off these jobs via `needs`; see
+# desktop-tauri/README.md "Publishing a release".
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  web:
+    name: web — typecheck, unit, e2e
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+      - run: bun install --frozen-lockfile
+      - run: bun run check
+      - run: bun test
+      # The file-mention e2e drives the server's file search, which spawns `fd`.
+      # Ubuntu packages it as `fdfind` — shim the name the server expects.
+      - name: Install fd (as fdfind, shimmed to fd)
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -yq fd-find
+          sudo ln -sf "$(command -v fdfind)" /usr/local/bin/fd
+      - name: Cache Playwright browsers
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('bun.lock') }}
+      - run: bunx playwright install --with-deps chromium
+      - run: bun run test:e2e
+      - name: Upload traces on e2e failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-results
+          path: test-results/
+          retention-days: 7
+
+  desktop:
+    name: desktop shell — fmt, clippy
+    runs-on: macos-14
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+      - run: bun install --frozen-lockfile
+      # tauri-build stages externalBin + resources at compile time; build-hub.ts also
+      # ensures client/dist exists so the resource mapping never trips.
+      - run: bun scripts/desktop/build-hub.ts
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: desktop-tauri
+      - run: cargo fmt --check
+        working-directory: desktop-tauri
+      - run: cargo clippy --locked --all-targets -- -D warnings
+        working-directory: desktop-tauri
