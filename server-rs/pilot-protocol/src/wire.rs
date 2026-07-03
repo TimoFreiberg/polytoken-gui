@@ -340,6 +340,8 @@ pub enum ClientMessage {
         thinking: Option<String>,
         #[serde(skip_serializing_if = "Option::is_none", default)]
         facet: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none", default, rename = "permissionMonitor")]
+        permission_monitor: Option<PermissionMonitorMode>,
         #[serde(skip_serializing_if = "Option::is_none", default)]
         prompt: Option<String>,
         #[serde(skip_serializing_if = "Option::is_none", default, rename = "promptId")]

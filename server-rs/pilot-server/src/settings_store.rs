@@ -30,11 +30,10 @@ pub fn read_pilot_settings(data_dir: &Path) -> PilotSettings {
         Ok(raw) => {
             match serde_json::from_str::<PartialSettings>(&raw) {
                 Ok(partial) => {
-                    let defaults = PilotSettings::default();
                     PilotSettings {
-                        login_shell: partial.login_shell.or(defaults.login_shell),
-                        background_model: partial.background_model.or(defaults.background_model),
-                        enabled_extensions: partial.enabled_extensions.or(defaults.enabled_extensions),
+                        login_shell: partial.login_shell.flatten(),
+                        background_model: partial.background_model.flatten(),
+                        enabled_extensions: partial.enabled_extensions.flatten(),
                     }
                 }
                 Err(e) => {
@@ -50,14 +49,32 @@ pub fn read_pilot_settings(data_dir: &Path) -> PilotSettings {
     }
 }
 
-/// Merge a patch into persisted settings and write it back. Returns the new full
-/// settings so callers can broadcast the authoritative value.
-pub fn write_pilot_settings(data_dir: &Path, patch: &PilotSettings) -> PilotSettings {
+/// Merge a field-level patch into persisted settings and write it back. Returns
+/// the new full settings so callers can broadcast the authoritative value.
+///
+/// Mirrors the TS spread semantics (`{ ...readPilotSettings(), ...patch }`): a
+/// field present in `patch` overwrites — including to `None` (clears it) —
+/// while a field absent from `patch` keeps its current value. This is why the
+/// argument is `PartialSettings`, not `PilotSettings`: `PilotSettings` uses
+/// `Option<T>` which can't distinguish "set to null" from "leave unchanged".
+pub fn write_pilot_settings(data_dir: &Path, patch: &PartialSettings) -> PilotSettings {
     let current = read_pilot_settings(data_dir);
     let next = PilotSettings {
-        login_shell: patch.login_shell.clone().or(current.login_shell),
-        background_model: patch.background_model.clone().or(current.background_model),
-        enabled_extensions: patch.enabled_extensions.clone().or(current.enabled_extensions),
+        login_shell: patch
+            .login_shell
+            .clone()
+            .or_else(|| Some(current.login_shell.clone()))
+            .flatten(),
+        background_model: patch
+            .background_model
+            .clone()
+            .or_else(|| Some(current.background_model.clone()))
+            .flatten(),
+        enabled_extensions: patch
+            .enabled_extensions
+            .clone()
+            .or_else(|| Some(current.enabled_extensions.clone()))
+            .flatten(),
     };
     fs::create_dir_all(data_dir).ok();
     let json = serde_json::to_string_pretty(&next).unwrap_or_else(|_| "{}".into());
@@ -67,14 +84,18 @@ pub fn write_pilot_settings(data_dir: &Path, patch: &PilotSettings) -> PilotSett
 }
 
 /// A partial view of PilotSettings for merge-patching — all fields optional.
-#[derive(Debug, Clone, Deserialize)]
-struct PartialSettings {
+///
+/// A field set to `Some(None)` (null in JSON) clears the value; a field that is
+/// `None` (absent from the JSON) keeps the current value. This mirrors the TS
+/// `Partial<PilotSettings>` spread semantics.
+#[derive(Debug, Clone, Deserialize, Default)]
+pub struct PartialSettings {
     #[serde(rename = "loginShell", default)]
-    login_shell: Option<String>,
+    pub login_shell: Option<Option<String>>,
     #[serde(rename = "backgroundModel", default)]
-    background_model: Option<String>,
+    pub background_model: Option<Option<String>>,
     #[serde(rename = "enabledExtensions", default)]
-    enabled_extensions: Option<Vec<String>>,
+    pub enabled_extensions: Option<Option<Vec<String>>>,
 }
 
 #[cfg(test)]
@@ -102,9 +123,9 @@ mod tests {
     #[test]
     fn write_then_read_roundtrips() {
         let dir = tempfile::tempdir().unwrap();
-        let patch = PilotSettings {
-            login_shell: Some("/bin/zsh".into()),
-            background_model: None,
+        let patch = PartialSettings {
+            login_shell: Some(Some("/bin/zsh".into())),
+            background_model: None, // absent — keep default
             enabled_extensions: None,
         };
         let written = write_pilot_settings(dir.path(), &patch);
@@ -121,8 +142,8 @@ mod tests {
         // First write: set login shell
         write_pilot_settings(
             dir.path(),
-            &PilotSettings {
-                login_shell: Some("/bin/zsh".into()),
+            &PartialSettings {
+                login_shell: Some(Some("/bin/zsh".into())),
                 background_model: None,
                 enabled_extensions: None,
             },
@@ -130,13 +151,41 @@ mod tests {
         // Second write: set background model only — login shell should persist
         let next = write_pilot_settings(
             dir.path(),
-            &PilotSettings {
-                login_shell: None,
-                background_model: Some("sonnet".into()),
+            &PartialSettings {
+                login_shell: None, // absent — keep current
+                background_model: Some(Some("sonnet".into())),
                 enabled_extensions: None,
             },
         );
         assert_eq!(next.login_shell, Some("/bin/zsh".into()));
         assert_eq!(next.background_model, Some("sonnet".into()));
+    }
+
+    #[test]
+    fn write_can_clear_a_field() {
+        // C2 fix: setting a field to Some(None) must clear it, not keep current.
+        let dir = tempfile::tempdir().unwrap();
+        write_pilot_settings(
+            dir.path(),
+            &PartialSettings {
+                login_shell: Some(Some("/bin/zsh".into())),
+                background_model: Some(Some("sonnet".into())),
+                enabled_extensions: None,
+            },
+        );
+        let cleared = write_pilot_settings(
+            dir.path(),
+            &PartialSettings {
+                login_shell: Some(None), // explicit clear
+                background_model: None,   // absent — keep
+                enabled_extensions: None,
+            },
+        );
+        assert!(cleared.login_shell.is_none(), "login_shell should be cleared");
+        assert_eq!(
+            cleared.background_model,
+            Some("sonnet".into()),
+            "background_model should persist"
+        );
     }
 }

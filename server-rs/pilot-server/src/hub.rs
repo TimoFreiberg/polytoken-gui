@@ -8,10 +8,11 @@
 //!
 //! Port of `server/src/hub.ts` (1967 lines).
 //!
-//! NOTE: This is a work-in-progress port. The core event-handling, tracking,
-//! and journal management are ported. The handleClient switch, switchTo,
-//! addClient, and client management are stubbed and will be filled in as the
-//! next step. Dead-code warnings are expected until the full port is complete.
+//! NOTE: The core event-handling, tracking, journal management, handleClient
+//! switch, switchTo state machine, and client management are ported. The
+//! `#![allow(dead_code)]` suppresses warnings for fields used by not-yet-ported
+//! paths (e.g. swap_buffer consumed by the attach-window race fix which is
+//! stubbed pending Phase 4's daemon-client port).
 
 #![allow(dead_code)]
 
@@ -27,7 +28,7 @@ use pilot_protocol::session_driver::{
 };
 use pilot_protocol::state::{fold_all, fold_event, initial_session_state, SessionState};
 use pilot_protocol::wire::{
-    ClientMessage, PilotSettings, ResumeToken, ServerMessage, SessionAttention, SessionAttentionPhase,
+    ClientMessage, ResumeToken, ServerMessage, SessionAttention, SessionAttentionPhase,
 };
 use tokio::sync::mpsc;
 use tracing::error;
@@ -37,6 +38,9 @@ use crate::journal::{
     append_event, build_seed, bump_epoch, create_journal, meta_seed_events, tail_covers, try_merge,
     SessionJournal,
 };
+
+/// A boxed, pinned, Send future — the return type of swap closures.
+type SwapFuture = std::pin::Pin<Box<dyn std::future::Future<Output = Vec<SessionDriverEvent>> + Send + 'static>>;
 
 /// What the hub hands to a notifier (e.g. the Web Push sender) for notable events.
 #[derive(Debug, Clone)]
@@ -87,7 +91,13 @@ struct ClientConn {
 
 /// A queued switch waiting for an in-flight one to finish.
 struct PendingSwitch {
-    /// The session id to resolve with (or None if the swap fails).
+    /// The swap closure to run when the in-flight swap finishes.
+    swap: Box<dyn FnOnce(Arc<Mutex<SessionHub>>) -> SwapFuture + Send>,
+    /// Whether this is a reseed (branch/reload) or first attach.
+    reseed: bool,
+    /// Whether to retry on raced events (idempotent swaps only).
+    retry_on_raced_events: bool,
+    /// Resolve the awaiting caller with the eventual session id (or None).
     resolve: tokio::sync::oneshot::Sender<Option<SessionId>>,
 }
 
@@ -144,7 +154,11 @@ pub struct SessionHub {
     available_models: Vec<ModelOption>,
 
     // ── Prompt idempotency ledger ─────────────────────────────────────────
-    prompt_inflight: HashSet<String>,
+    // Maps promptId → cached PromptResult. A retried promptId replays the
+    // cached result instead of re-running the prompt. Capped at 2048 entries
+    // (oldest evicted, matching the TS PROMPT_RESULT_CAP).
+    prompt_results: HashMap<String, ServerMessage>,
+    prompt_result_order: std::collections::VecDeque<String>,
 
     // ── Client management ──────────────────────────────────────────────────
     clients: HashMap<u64, ClientConn>,
@@ -189,7 +203,8 @@ impl SessionHub {
             desktop_stale: false,
             force_requested: false,
             available_models: Vec::new(),
-            prompt_inflight: HashSet::new(),
+            prompt_results: HashMap::new(),
+            prompt_result_order: std::collections::VecDeque::new(),
             clients: HashMap::new(),
             next_client_key: 0,
             epoch_counter: now_ms() as u64,
@@ -365,19 +380,19 @@ impl SessionHub {
     }
 
     /// Whether any connected client is currently focused on a session.
-    fn has_viewer(&self, _sid: &SessionId) -> bool {
-        // This is checked against client connections — in the Rust port, clients
-        // are managed by the WS handler, so this is called from the hub context.
-        // For now, we track this via the focused_id in ClientConn.
-        // The actual client map lives in the hub's external state.
-        false // will be wired when clients are managed
+    fn has_viewer(&self, sid: &SessionId) -> bool {
+        self.clients
+            .values()
+            .any(|c| c.focused_id.as_ref() == Some(sid))
     }
 
     /// Get all send channels focused on a session.
-    fn clients_focused(&self, _sid: &SessionId) -> Vec<mpsc::Sender<ServerMessage>> {
-        // Clients are managed externally in the Rust port — this returns empty
-        // until the client map is wired into the hub.
-        Vec::new()
+    fn clients_focused(&self, sid: &SessionId) -> Vec<mpsc::Sender<ServerMessage>> {
+        self.clients
+            .values()
+            .filter(|c| c.focused_id.as_ref() == Some(sid))
+            .map(|c| c.send.clone())
+            .collect()
     }
 
     /// The main event ingestion path — called by the driver's event stream.
@@ -772,6 +787,22 @@ impl SessionHub {
         self.default_focus_id = None;
         self.session_list_dirty = true;
         self.swaps_in_flight = 0;
+        self.prompt_results.clear();
+        self.prompt_result_order.clear();
+
+        // Restore pilot-local settings to defaults so a test's setLoginShell/
+        // setBackgroundModel mutation doesn't leak into sibling specs (the persisted
+        // file is shared across the per-port data dir for the whole e2e run).
+        if let Some(dir) = &self.data_dir {
+            let _ = crate::settings_store::write_pilot_settings(
+                dir,
+                &crate::settings_store::PartialSettings {
+                    login_shell: Some(None),
+                    background_model: Some(None),
+                    enabled_extensions: None,
+                },
+            );
+        }
 
         self.driver.reset(bootstrap);
         if bootstrap {
@@ -910,13 +941,18 @@ impl SessionHub {
         match &msg {
             ClientMessage::Hello { .. } | ClientMessage::Ping => {}
             ClientMessage::Prompt { text, deliver_as, images, prompt_id, session_id, .. } => {
+                // C3 fix: check the prompt idempotency ledger before running.
+                // A retried promptId replays the cached result instead of re-running.
+                if let Some(cached) = self.check_prompt_idempotency(prompt_id) {
+                    self.send_to_client(client_key, cached);
+                    return;
+                }
                 let target = session_id.clone().or(focused_id);
                 let driver = self.driver.clone();
                 let text = text.clone();
                 let deliver_as = deliver_as.clone();
                 let images = images.clone().unwrap_or_default();
                 let prompt_id_clone = prompt_id.clone();
-                // Spawn the prompt as a separate task to avoid holding the lock
                 let hub_clone = hub.clone();
                 let client_key_clone = client_key;
                 let pid = prompt_id.clone();
@@ -946,7 +982,11 @@ impl SessionHub {
                             error: Some("prompt failed".into()),
                         },
                     };
-                    let h = hub_clone.lock();
+                    let mut h = hub_clone.lock();
+                    // Cache the result for idempotent replay
+                    if let Some(ref pid_str) = pid {
+                        h.cache_prompt_result(pid_str.clone(), msg.clone());
+                    }
                     h.send_to_client(client_key_clone, msg);
                 });
             }
@@ -1021,8 +1061,13 @@ impl SessionHub {
                 let hub_clone = hub.clone();
                 let path = path.clone();
                 tokio::spawn(async move {
-                    let seed = driver.open_session(path).await;
-                    switch_to(hub_clone, client_key, seed, false, true).await;
+                    let swap = Box::new(move |_hub: Arc<Mutex<SessionHub>>| {
+                        let driver = driver.clone();
+                        let path = path.clone();
+                        Box::pin(async move { driver.open_session(path).await })
+                            as SwapFuture
+                    });
+                    switch_to(hub_clone, client_key, swap, false, true).await;
                 });
             }
             ClientMessage::ReloadSession { path } => {
@@ -1030,8 +1075,13 @@ impl SessionHub {
                 let hub_clone = hub.clone();
                 let path = path.clone();
                 tokio::spawn(async move {
-                    let seed = driver.reload_session(path).await;
-                    switch_to(hub_clone, client_key, seed, true, true).await;
+                    let swap = Box::new(move |_hub: Arc<Mutex<SessionHub>>| {
+                        let driver = driver.clone();
+                        let path = path.clone();
+                        Box::pin(async move { driver.reload_session(path).await })
+                            as SwapFuture
+                    });
+                    switch_to(hub_clone, client_key, swap, true, true).await;
                 });
             }
             ClientMessage::RespondUi { response, session_id } => {
@@ -1078,18 +1128,41 @@ impl SessionHub {
                 let entry_id = entry_id.clone();
                 let summarize = *summarize;
                 tokio::spawn(async move {
-                    let result = driver.branch_from(entry_id, summarize.unwrap_or(false), target_id).await;
-                    if !result.cancelled {
-                        let hub_clone2 = hub_clone.clone();
-                        switch_to(hub_clone, client_key, result.seed, true, false).await;
-                        if let Some(prefill) = result.editor_text {
-                            let h = hub_clone2.lock();
-                            h.send_to_client(client_key, ServerMessage::EditorPrefill { text: prefill });
+                    // The editorText (a user-prompt branch's re-editable text) is
+                    // per-client, so it goes ONLY to the requester after the swap lands.
+                    let prefill: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
+                    let prefill_clone = prefill.clone();
+                    let swap = Box::new(move |_hub: Arc<Mutex<SessionHub>>| {
+                        let driver = driver.clone();
+                        let entry_id = entry_id.clone();
+                        let prefill_clone = prefill_clone.clone();
+                        Box::pin(async move {
+                            let result = driver.branch_from(
+                                entry_id,
+                                summarize.unwrap_or(false),
+                                target_id,
+                            ).await;
+                            if let Some(text) = result.editor_text {
+                                *prefill_clone.lock() = Some(text);
+                            }
+                            result.seed
+                        }) as SwapFuture
+                    });
+                    let sid = switch_to(hub_clone.clone(), client_key, swap, true, false).await;
+                    if sid.is_some() {
+                        if let Some(text) = prefill.lock().take() {
+                            let h = hub_clone.lock();
+                            h.send_to_client(client_key, ServerMessage::EditorPrefill { text });
                         }
                     }
                 });
             }
-            ClientMessage::NewSession { cwd, worktree, model, thinking, facet, prompt, images, prompt_id, .. } => {
+            ClientMessage::NewSession { cwd, worktree, model, thinking, facet, permission_monitor, prompt, images, prompt_id, .. } => {
+                // C3 fix: check the prompt idempotency ledger before running.
+                if let Some(cached) = self.check_prompt_idempotency(prompt_id) {
+                    self.send_to_client(client_key, cached);
+                    return;
+                }
                 let first_prompt = prompt.as_ref().map(|p| p.trim()).filter(|p| !p.is_empty());
                 let has_images = images.as_ref().map(|i| !i.is_empty()).unwrap_or(false);
                 let has_first_prompt = first_prompt.is_some() || has_images;
@@ -1104,18 +1177,25 @@ impl SessionHub {
                     }),
                     thinking: thinking.clone(),
                     facet: facet.clone(),
-                    permission_monitor: None,
+                    permission_monitor: *permission_monitor,
                 };
                 let prompt_text = first_prompt.map(|s| s.to_string());
                 let first_images = images.clone().unwrap_or_default();
                 let prompt_id_clone = prompt_id.clone();
                 tokio::spawn(async move {
-                    let seed = driver.new_session(opts).await;
-                    let sid = switch_to(hub_clone.clone(), client_key, seed, false, false).await;
+                    let driver_for_prompt = driver.clone();
+                    let swap = Box::new(move |_hub: Arc<Mutex<SessionHub>>| {
+                        let driver = driver.clone();
+                        let opts = opts.clone();
+                        Box::pin(async move { driver.new_session(opts).await })
+                            as SwapFuture
+                    });
+                    let sid = switch_to(hub_clone.clone(), client_key, swap, false, false).await;
                     if let Some(sid) = sid {
                         if has_first_prompt {
                             let pid = prompt_id_clone.clone();
-                            let driver_clone = driver.clone();
+                            let pid_for_cache = prompt_id_clone.clone();
+                            let driver_clone = driver_for_prompt.clone();
                             let prompt_text = prompt_text.clone();
                             let images_clone = first_images.clone();
                             let hub_clone2 = hub_clone.clone();
@@ -1133,16 +1213,37 @@ impl SessionHub {
                                     session_id: Some(sid),
                                     error: None,
                                 };
-                                let h = hub_clone2.lock();
+                                let mut h = hub_clone2.lock();
+                                // C3: cache the result for idempotent replay
+                                if let Some(ref pid_str) = pid_for_cache {
+                                    h.cache_prompt_result(pid_str.clone(), msg.clone());
+                                }
                                 h.send_to_client(client_key, msg);
                             });
                         }
                     } else {
-                        let h = hub_clone.lock();
-                        h.send_to_client(client_key, ServerMessage::Error {
-                            message: "Could not create the new session".into(),
-                            kind: None,
-                        });
+                        // C5 fix: when create fails and the client is awaiting a prompt ACK
+                        // by promptId, send PromptResult (not just Error) so the client
+                        // unblocks. Mirrors TS createAndPrompt throwing inside acceptPrompt.
+                        let mut h = hub_clone.lock();
+                        if has_first_prompt {
+                            let msg = ServerMessage::PromptResult {
+                                prompt_id: prompt_id_clone.clone().unwrap_or_default(),
+                                accepted: false,
+                                session_id: None,
+                                error: Some("Could not create the new session".into()),
+                            };
+                            // C3: cache the failure for idempotent replay
+                            if let Some(ref pid_str) = prompt_id_clone {
+                                h.cache_prompt_result(pid_str.clone(), msg.clone());
+                            }
+                            h.send_to_client(client_key, msg);
+                        } else {
+                            h.send_to_client(client_key, ServerMessage::Error {
+                                message: "Could not create the new session".into(),
+                                kind: None,
+                            });
+                        }
                     }
                 });
             }
@@ -1268,8 +1369,8 @@ impl SessionHub {
             ClientMessage::SetLoginShell { path } => {
                 let shell = path.as_ref().map(|p| p.trim()).filter(|p| !p.is_empty()).map(|s| s.to_string());
                 if let Some(dir) = &self.data_dir {
-                    let _ = crate::settings_store::write_pilot_settings(dir, &PilotSettings {
-                        login_shell: shell,
+                    let _ = crate::settings_store::write_pilot_settings(dir, &crate::settings_store::PartialSettings {
+                        login_shell: Some(shell),
                         background_model: None,
                         enabled_extensions: None,
                     });
@@ -1279,9 +1380,9 @@ impl SessionHub {
             ClientMessage::SetBackgroundModel { spec } => {
                 let model_spec = spec.as_ref().map(|p| p.trim()).filter(|p| !p.is_empty()).map(|s| s.to_string());
                 if let Some(dir) = &self.data_dir {
-                    let _ = crate::settings_store::write_pilot_settings(dir, &PilotSettings {
+                    let _ = crate::settings_store::write_pilot_settings(dir, &crate::settings_store::PartialSettings {
                         login_shell: None,
-                        background_model: model_spec,
+                        background_model: Some(model_spec),
                         enabled_extensions: None,
                     });
                 }
@@ -1317,7 +1418,8 @@ impl SessionHub {
                 }
             }
             _ => {
-                // TrustResponse and any future variants — no-op for now.
+                // TrustResponse and any future variants — the TS hub has no
+                // handler for these (trust is handled by the driver, not the hub).
             }
         }
     }
@@ -1343,52 +1445,31 @@ impl SessionHub {
 
     // ── Prompt idempotency ────────────────────────────────────────────────
 
-    async fn accept_prompt<F>(
-        &mut self,
-        client_key: u64,
-        prompt_id: Option<String>,
-        run: F,
-    )
-    where
-        F: std::future::Future<Output = Option<SessionId>>,
-    {
-        // No promptId → just run, no ACK
-        if prompt_id.is_none() {
-            match run.await {
-                _ => {}
+    /// Check the prompt idempotency ledger. If a result is already cached for
+    /// this promptId, return it for replay. Otherwise return None — the caller
+    /// runs the prompt and calls `cache_prompt_result` when done.
+    ///
+    /// Mirrors TS `acceptPrompt`: a retried promptId replays the cached result
+    /// instead of re-running the prompt. The cache is capped at 2048 entries.
+    fn check_prompt_idempotency(&self, prompt_id: &Option<String>) -> Option<ServerMessage> {
+        let pid = prompt_id.as_ref()?;
+        self.prompt_results.get(pid).cloned()
+    }
+
+    /// Cache a completed prompt result and evict the oldest entry if over cap.
+    fn cache_prompt_result(&mut self, prompt_id: String, msg: ServerMessage) {
+        const PROMPT_RESULT_CAP: usize = 2048;
+        // If this pid is already cached (update), remove from order queue
+        if self.prompt_results.contains_key(&prompt_id) {
+            self.prompt_result_order.retain(|p| p != &prompt_id);
+        }
+        self.prompt_results.insert(prompt_id.clone(), msg);
+        self.prompt_result_order.push_back(prompt_id);
+        while self.prompt_result_order.len() > PROMPT_RESULT_CAP {
+            if let Some(oldest) = self.prompt_result_order.pop_front() {
+                self.prompt_results.remove(&oldest);
             }
-            return;
         }
-
-        let pid = prompt_id.unwrap();
-
-        // Check if we already have a result for this prompt id
-        if self.prompt_inflight.contains(&pid) {
-            // Already in-flight — the result will be sent when it completes
-            return;
-        }
-        self.prompt_inflight.insert(pid.clone());
-
-        let result = run.await;
-        let msg = match &result {
-            Some(sid) => ServerMessage::PromptResult {
-                prompt_id: pid.clone(),
-                accepted: true,
-                session_id: Some(sid.clone()),
-                error: None,
-            },
-            None => ServerMessage::PromptResult {
-                prompt_id: pid.clone(),
-                accepted: false,
-                session_id: None,
-                error: Some("prompt failed".into()),
-            },
-        };
-
-        if let Some(conn) = self.clients.get(&client_key) {
-            let _ = conn.send.try_send(msg);
-        }
-        self.prompt_inflight.remove(&pid);
     }
 
     // ── Broadcast helpers ──────────────────────────────────────────────────
@@ -1549,20 +1630,102 @@ impl SessionHub {
 
 // ── switch_to free function ──────────────────────────────────────────────
 
-/// The atomic session-swap state machine. Runs as a spawned task.
-/// Locks the hub synchronously at each step; awaits the driver between steps.
+/// A boxed, pinned, Send future — the return type of switch_to.
+type SwitchFuture = std::pin::Pin<Box<dyn std::future::Future<Output = Option<SessionId>> + Send + 'static>>;
+
+/// The atomic session-swap state machine. Implements single-flight per connection:
+/// if a swap is already in-flight on this connection, the latest request coalesces
+/// into `pending_switch` (depth 1, latest wins) and runs when the in-flight one
+/// finishes. The caller gets a oneshot that resolves with the eventual session id.
 ///
+/// `swap`: a closure that fetches the seed events (driver call).
 /// `reseed`: restart the journal even if the session is already live.
 /// `retry_on_raced_events`: re-run the swap if live events raced the seed fetch.
-async fn switch_to(
+fn switch_to(
     hub: Arc<Mutex<SessionHub>>,
+    client_key: u64,
+    swap: Box<dyn FnOnce(Arc<Mutex<SessionHub>>) -> SwapFuture + Send>,
+    reseed: bool,
+    retry_on_raced_events: bool,
+) -> SwitchFuture {
+    Box::pin(async move {
+    // ── Single-flight check: if a swap is already in-flight on this connection,
+    // coalesce this one as the latest pending (depth 1, latest wins). Resolve
+    // any previously-queued request with None so its awaiter unblocks.
+    let mut swap = Some(swap);
+    let pending_rx: Option<tokio::sync::oneshot::Receiver<Option<SessionId>>> = {
+        let mut h = hub.lock();
+        let conn = h.clients.get_mut(&client_key);
+        if let Some(conn) = conn {
+            if conn.switch_in_flight {
+                // Supersede a previously-queued request
+                if let Some(prev) = conn.pending_switch.take() {
+                    let _ = prev.resolve.send(None);
+                }
+                let (tx, rx) = tokio::sync::oneshot::channel();
+                conn.pending_switch = Some(PendingSwitch {
+                    swap: swap.take().unwrap(),
+                    reseed,
+                    retry_on_raced_events,
+                    resolve: tx,
+                });
+                Some(rx)
+            } else {
+                conn.switch_in_flight = true;
+                None
+            }
+        } else {
+            None
+        }
+    }; // guard dropped here
+    if let Some(rx) = pending_rx {
+        return rx.await.ok().flatten();
+    }
+
+    // ── Run the swap. We wrap the fetch in swaps_in_flight++/-- so on_event
+    // buffers live events for journal-less sessions during the fetch.
+    hub.lock().swaps_in_flight += 1;
+    let swap = swap.take().unwrap();
+    let seed = swap(hub.clone()).await;
+    hub.lock().swaps_in_flight = hub.lock().swaps_in_flight.saturating_sub(1);
+
+    // ── Fold the seed + set up journal/focus
+    let sid = finish_switch(&hub, client_key, seed, reseed, retry_on_raced_events).await;
+
+    // ── Finally: clear switch_in_flight and dispatch any queued swap.
+    let queued = {
+        let mut h = hub.lock();
+        let conn = h.clients.get_mut(&client_key);
+        if let Some(conn) = conn {
+            conn.switch_in_flight = false;
+            conn.pending_switch.take()
+        } else {
+            None
+        }
+    };
+    if let Some(next) = queued {
+        let PendingSwitch { swap, reseed, retry_on_raced_events, resolve } = next;
+        let hub_clone = hub.clone();
+        tokio::spawn(async move {
+            let sid = switch_to(hub_clone.clone(), client_key, swap, reseed, retry_on_raced_events).await;
+            let _ = resolve.send(sid);
+        });
+    }
+
+    sid
+    })
+}
+
+/// The post-fetch half of switch_to: fold the seed, set up the journal, move
+/// focus, reseed co-viewers, and spawn the session-list/commands/facets/files
+/// refresh. Returns the session id (or None on failure).
+async fn finish_switch(
+    hub: &Arc<Mutex<SessionHub>>,
     client_key: u64,
     seed: Vec<SessionDriverEvent>,
     reseed: bool,
-    retry_on_raced_events: bool,
+    _retry_on_raced_events: bool,
 ) -> Option<SessionId> {
-    let _ = retry_on_raced_events; // TODO: implement attach-window race detection
-
     // Fold the seed to get the session id + track running/attention
     let (meta_changed, sid) = {
         let mut h = hub.lock();
@@ -1596,13 +1759,31 @@ async fn switch_to(
                 h.broadcast_session_status();
             }
         }
-        // Move focus + re-seed the client
+        // Move focus + re-seed the requesting client
         h.set_client_focus(client_key, sid.clone());
         let msg = h.seed_msg(Some(&sid));
         h.send_to_client(client_key, msg);
     }
 
+    // C6 fix: on a reseed (branch/reload), re-seed ALL viewers focused on this
+    // session — a second client viewing the same session needs the fresh seed
+    // to recover from its now-wedged journal.
+    if reseed {
+        let viewers: Vec<mpsc::Sender<ServerMessage>> = {
+            let h = hub.lock();
+            h.clients_focused(&sid)
+        };
+        let msg = {
+            let h = hub.lock();
+            h.seed_msg(Some(&sid))
+        };
+        for send in viewers {
+            let _ = send.try_send(msg.clone());
+        }
+    }
+
     // Spawn async work: session list, commands, facets, file index
+    // C7 fix: also send facet list + file index (TS sends all four after a swap)
     {
         let h = hub.lock();
         let driver = h.driver.clone();
@@ -1623,6 +1804,30 @@ async fn switch_to(
             let commands = driver.list_commands(focused).await;
             let h = hub_clone.lock();
             h.send_to_client(client_key, ServerMessage::CommandList { commands });
+        });
+    }
+    // C7: facet list
+    {
+        let h = hub.lock();
+        let driver = h.driver.clone();
+        let hub_clone = hub.clone();
+        let focused = Some(sid.clone());
+        tokio::spawn(async move {
+            let facets = driver.list_facets(focused).await;
+            let h = hub_clone.lock();
+            h.send_to_client(client_key, ServerMessage::FacetList { facets });
+        });
+    }
+    // C7: file index
+    {
+        let h = hub.lock();
+        let driver = h.driver.clone();
+        let hub_clone = hub.clone();
+        let focused = Some(sid.clone());
+        tokio::spawn(async move {
+            let files = driver.list_files(String::new(), focused, None).await;
+            let h = hub_clone.lock();
+            h.send_to_client(client_key, ServerMessage::FileList { query: String::new(), files });
         });
     }
 
