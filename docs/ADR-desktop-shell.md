@@ -1,9 +1,10 @@
 # ADR — Desktop shell: Tauri now, Bun hub as supervised sidecar, Rust hub behind go/no-go
 
-Status: **accepted 2026-07-03** (owner sign-off) — **spike complete, all five exit
-criteria green**; the walking skeleton shipped as `desktop-tauri/` (see "Spike results"
-below and `desktop-tauri/README.md`). Originally proposed 2026-07-02 from the
-design-dossier track. Supersedes the shell part of the "📐 Architecture direction" note
+Status: **amended** (2026-07-03 — Rust hub GO decision recorded below; see
+"Rust hub: GO decision"). Previously **accepted 2026-07-03** (owner sign-off) —
+**spike complete, all five exit criteria green**; the walking skeleton shipped as
+`desktop-tauri/` (see "Spike results" below and `desktop-tauri/README.md`).
+Originally proposed 2026-07-02 from the design-dossier track. Supersedes the shell part of the "📐 Architecture direction" note
 in `docs/TODO.md` (2026-07-01) — the Rust-hub end-state there stays a valid *target*,
 gated by the criteria below. Companion: `desktop/README.md` (the Swift shell this
 replaces; kept until the Tauri shell has dogfood mileage).
@@ -134,6 +135,49 @@ GO only when **all** hold:
 
 If GO: port incrementally behind the same wire contract, phone/PWA unaffected. If never
 GO: the sidecar model is a perfectly stable end-state — supervision is already Rust.
+
+## Rust hub: GO decision (2026-07-03)
+
+The owner has evaluated the four criteria and chosen **GO** now:
+
+1. **Protocol v2 landed** — ✓ (shipped 2026-07-02; confirmed at line 119 above).
+   The hub is a journaling router with no server-side fold — the fold stays TS on the
+   client, and the Rust server journals + fans out.
+2. **Hub churn has flattened** — the owner is **overriding** this criterion (see the
+   inline note at line 126: the churn is from the polytoken migration, and a Rust rewrite
+   simply continues development on the Rust version). The rewrite itself is the freeze:
+   porting to Rust forces a precise specification of the hub's behavior, and the e2e
+   suite (79 specs) locks it in.
+3. **Concrete Bun deficiency** — the owner's inline note at line 131 says it directly:
+   "just having rusts error handling would be enough for me to say go." Rust's
+   exhaustive `match`, `Result`-based error handling, and lack of GC pauses are the
+   justification, not a performance benchmark. The ADR originally located this argument
+   at the supervisor; the owner extends it to the hub itself.
+4. **The port is small** — ✓. The hub is WS fan-out + journal + HTTP/SSE + fold + driver;
+   all are mechanical ports. The fold reducer is pure switch logic (ports directly to
+   `match`), the journal is an append-only frame buffer, and the driver is HTTP+SSE
+   client + state machine.
+
+### Architecture: fake-daemon approach
+
+The mock driver becomes a **fake daemon** — an in-process axum router speaking the
+daemon wire protocol — so the driver seam collapses to "endpoint URL" and one Rust
+`DaemonDriver` implementation serves both real-daemon and mock modes. The fake daemon
+serves all daemon HTTP endpoints + SSE from fixture data, and adds `/dev/*` endpoints
+for test control (reset, scripts, failure injection, trust).
+
+### Crate structure
+
+```
+server-rs/                        # Cargo workspace
+├── pilot-protocol/               # WS protocol types + fold reducer (shared logic)
+├── pilot-daemon-types/           # Daemon wire types (generated from OpenAPI)
+└── pilot-server/                 # The server binary
+```
+
+The TS `protocol/` package stays — the client still imports it. The Rust
+`pilot-protocol` crate is a separate port validated by the e2e suite (byte-compatibility
+of `ServerMessage` JSON).
 
 ## Walking-skeleton spike (1 day, exit criteria explicit)
 
