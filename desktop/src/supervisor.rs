@@ -1,8 +1,6 @@
-//! Owns the lifecycle of the local pilot server process — the Rust port of the Swift
-//! shell's `ServerSupervisor.swift`, plus the liveness loop the ADR asked for. This is
-//! the "supervisor" the update-watcher's restart contract depends on: the watcher
-//! SIGTERMs the server (via pilot.pid) after staging an update, and we KeepAlive-respawn
-//! it from the now-updated clone. The same path covers an unexpected crash.
+//! Owns the lifecycle of the local pilot server process, plus the liveness loop the ADR
+//! asked for: spawn, gate on /health, poll for liveness, respawn on crash with a
+//! crash-loop breaker, SIGTERM → bounded wait → SIGKILL on teardown.
 
 use std::io::{Read, Write};
 use std::net::{SocketAddr, TcpStream};
@@ -134,7 +132,7 @@ fn run_loop(
         let _ = child.wait();
 
         // KeepAlive with a crash-loop guard: a quick exit (<5s uptime) counts toward the
-        // strike limit; a restart after real uptime (e.g. a watcher update) resets it.
+        // strike limit; a restart after real uptime (e.g. a tray-menu restart) resets it.
         let uptime = spawn_time.elapsed();
         rapid_restarts = if uptime < Duration::from_secs(5) {
             rapid_restarts + 1

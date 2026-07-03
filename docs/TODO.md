@@ -50,26 +50,24 @@ resolution is non-obvious or likely to bite again. Otherwise see `jj log`.
 ## 🏗️ Architecture
 
 - **ADR-desktop-shell.md** — accepted; spike complete 2026-07-03, all five exit
-  criteria green. The Tauri shell lives in `desktop-tauri/` (see its README). The
+  criteria green. The Tauri shell lives in `desktop/` (see its README). The
   "📐 Architecture direction" note that lived here (Rust hub end-state, distribution
   model) is superseded by that ADR; the Rust-hub target stays gated by the criteria
-  in it. Remaining to fully retire `desktop/` (Swift):
-  - [ ] Dogfood `desktop-tauri/` (tray, close-to-tray, titlebar/traffic-light fit,
+  in it.
+  - [ ] Dogfood `desktop/` (tray, close-to-tray, titlebar/traffic-light fit,
         update overlay — the visual bits an agent can't eyeball).
   - [x] **Bundled mode shipped (2026-07-03):** compiled hub as `externalBin` + client
         as a bundle resource; packaged .apps are self-contained (no clone, no bun) and
-        the shell's updater loop replaces the TS watcher there — same defer policy and
-        sidebar card via `/update/state`, verified E2E against a local manifest
-        server. Clone mode stays as the dev loop.
+        the shell's updater loop owns updates — same defer policy and sidebar card via
+        `/update/state`, verified E2E against a local manifest server. Clone mode stays
+        as the dev loop.
   - [x] **Updater hosting live (2026-07-03):** public releases repo
         `TimoFreiberg/polytoken-gui`, v0.2.0 published; endpoint baked into the shell
         as the default (env/file overrides remain, `PILOT_SHELL_UPDATE_URL=off`
         disables), `dangerousInsecureTransportProtocol` dropped. First installs use
         `curl … | tar xz -C /Applications` — browser downloads of ad-hoc apps hit
-        Gatekeeper's "damaged" refusal (see desktop-tauri/README.md "Installing a
+        Gatekeeper's "damaged" refusal (see desktop/README.md "Installing a
         release").
-  - [ ] Then delete `desktop/` + its watcher desktop-sha plumbing, and point
-        docs/DESIGN.md at the Tauri shell.
 - [ ] **Decompose the hub (god object).** `server/src/hub.ts` owns the per-session
       journals, running/attention maps, clients map, live ticker, OAuth pending,
       prompt-results ledger; `handleClient` is one giant switch. Extract

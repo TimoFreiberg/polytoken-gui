@@ -6,13 +6,10 @@
 //! - `spawn_check` — one-shot check (startup in clone mode, or the tray item; `manual`
 //!   surfaces every outcome in a dialog).
 //! - `spawn_periodic` — the **bundled-mode auto-update loop**. One updater artifact is
-//!   the whole app (shell + hub + client), so this loop inherits the TS update-watcher's
-//!   job AND its policy: unattended-and-idle → install + relaunch silently; anything
-//!   else → defer, surface the sidebar update card by POSTing /update/state to the hub
-//!   (exactly the wire the watcher used), and poll the same endpoint for the user's
-//!   "Update now"/force click. The card, the notification dedupe, and the never-restart-
-//!   mid-turn guarantee all carry over; only the payload changed (git pull+rebuild →
-//!   signed bundle swap + app relaunch).
+//!   the whole app (shell + hub + client). Policy: unattended-and-idle → install +
+//!   relaunch silently; anything else → defer, surface the sidebar update card by
+//!   POSTing /update/state to the hub, and poll the same endpoint for the user's
+//!   "Update now"/force click. Never restarts mid-turn (/health `busy` gates it).
 //!
 //! Endpoint resolution order (re-resolved every cycle, so overrides apply live):
 //!   1. PILOT_SHELL_UPDATE_URL env var (`off` disables checks — hermetic test runs)
@@ -136,7 +133,7 @@ fn run_check(app: &AppHandle, manual: bool) {
     };
 
     // PILOT_SHELL_UPDATE_AUTO=1 installs startup-check updates without asking — the
-    // unattended dogfood posture (mirrors the TS watcher's apply-when-idle policy).
+    // unattended dogfood posture (apply-when-idle).
     // Manual tray checks always ask.
     let auto = !manual && std::env::var("PILOT_SHELL_UPDATE_AUTO").as_deref() == Ok("1");
     if !auto {
@@ -165,7 +162,7 @@ fn run_check(app: &AppHandle, manual: bool) {
     match result {
         Ok(()) => {
             // The event-loop-mediated restart: RunEvent::Exit fires first (teardown
-            // SIGTERMs the hub + watcher), then the new binary execs. Plain restart()
+            // SIGTERMs the hub), then the new binary execs. Plain restart()
             // from a non-main thread does the same, but this is the documented-reliable
             // variant.
             app.request_restart();
@@ -193,7 +190,7 @@ fn check_interval() -> Duration {
 }
 
 /// Fast cadence while an update is staged — keeps the card's "Update now" responsive
-/// (same 5s the TS watcher used for its /update/state poll).
+/// (5s: snappy enough that a card click applies before the user wonders).
 const PENDING_POLL: Duration = Duration::from_secs(5);
 
 pub fn spawn_periodic(app: AppHandle) {
@@ -253,7 +250,7 @@ fn run_cycle_locked(app: &AppHandle, port: u16, endpoint: &str) -> Duration {
     };
     let version = update.version.clone();
 
-    // Same policy as the TS watcher's decideAction: restart unattended only when
+    // Restart unattended only when
     // there's no open UI (not even a half-typed prompt) and no turn in flight.
     // /health unreachable → unattended-and-idle (nothing to interrupt), same as TS.
     let (clients, busy) = hub_activity(port);
@@ -331,7 +328,7 @@ fn notify_once(app: &AppHandle, version: &str) {
     }
 }
 
-/// POST /update/state — the same wire the TS watcher drove the sidebar card with.
+/// POST /update/state — the hub relays it to clients as the sidebar update card.
 /// `version` Some → card up (sha field carries the version string); None → card
 /// cleared. Returns (applying, force): did the user click the card / force-update?
 /// Any transport error → (false, false): a flaky report must never trigger an install.
@@ -356,7 +353,7 @@ fn report_update_state(port: u16, version: Option<&str>, apply_failed: bool) -> 
 
 /// GET /health → (clients, busy). Unreachable/garbled → (0, false): if the hub isn't
 /// answering there's no UI to interrupt and no turn to protect (the supervisor is
-/// already respawning it) — mirrors the TS watcher's readHostState.
+/// already respawning it).
 fn hub_activity(port: u16) -> (u64, bool) {
     let Some(body) = http_loopback(port, "GET", "/health", None) else {
         return (0, false);

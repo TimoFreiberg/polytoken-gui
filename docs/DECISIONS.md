@@ -51,7 +51,7 @@ control: persist it, unless it's inherently ephemeral. Add an e2e round-trip
 in `e2e/drafts.e2e.ts` for each persisted field.
 
 ## D18. Desktop shell = Tauri v2, hub stays a Bun sidecar
-The Swift/AppKit shell is replaced by a Tauri v2 app (`desktop-tauri/`): Rust
+The Swift/AppKit shell is replaced by a Tauri v2 app (`desktop/`): Rust
 owns exactly the part that must never die (port pick, spawn, /health gate,
 liveness, crash-loop breaker, signal-safe teardown), while hub logic stays TS
 where its tests live. Shell self-updates via tauri-plugin-updater (minisign,

@@ -1,6 +1,6 @@
-//! Pilot desktop shell (Tauri). Boots a local pilot server from the dedicated clone,
-//! gates on /health, then shows the hub-served web client in a chromeless window and
-//! starts the TS update-watcher. See desktop-tauri/README.md and docs/ADR-desktop-shell.md.
+//! Pilot desktop shell (Tauri). Boots a local pilot server (bundled sidecar binary, or
+//! a dedicated clone in dev), gates on /health, then shows the hub-served web client in
+//! a chromeless window. See desktop/README.md and docs/ADR-desktop-shell.md.
 
 #![cfg_attr(
     all(not(debug_assertions), target_os = "windows"),
@@ -13,7 +13,6 @@ mod shell;
 mod state;
 mod supervisor;
 mod updater;
-mod watcher;
 
 use tauri::{AppHandle, Manager, RunEvent};
 
@@ -22,7 +21,6 @@ use std::sync::OnceLock;
 
 use crate::state::AppState;
 use crate::supervisor::{Supervisor, SupervisorEvent};
-use crate::watcher::{Watcher, WatcherEvent};
 
 /// Process start, for the launch-to-healthy stderr line (agent-legible perf probe).
 static LAUNCHED: OnceLock<std::time::Instant> = OnceLock::new();
@@ -31,7 +29,7 @@ fn main() {
     // Block SIGTERM/SIGINT process-wide BEFORE any thread exists (threads inherit the
     // mask); a dedicated thread sigwait()s them into a normal app exit. Without this a
     // logout / launchd stop / plain `kill` tears the shell down WITHOUT RunEvent::Exit,
-    // orphaning the hub and watcher it supervises.
+    // orphaning the hub it supervises.
     let term_signals = block_term_signals();
     LAUNCHED.set(std::time::Instant::now()).ok();
 
@@ -153,20 +151,14 @@ fn on_supervisor_event(app: &AppHandle, event: SupervisorEvent) {
             shell::navigate_main(app, &state.config.app_url());
             if first_time {
                 match state.config.hub_mode {
-                    // Clone mode: the TS update-watcher owns TS-payload updates; the
-                    // Tauri updater covers only the shell (one startup check).
+                    // Clone mode is the dev loop: no payload auto-update (you're editing
+                    // that checkout). One silent startup check covers the shell.
                     crate::config::HubMode::Clone => {
-                        let watcher = Watcher::start(state.config.clone(), {
-                            let app = app.clone();
-                            move |event| on_watcher_event(&app, event)
-                        });
-                        state.watcher.lock().unwrap().replace(watcher);
-                        // Startup shell-update check; silent when no endpoint is configured.
                         updater::spawn_check(app.clone(), false);
                     }
                     // Bundled mode: one artifact = shell + hub + client, so the shell's
-                    // own update loop replaces the watcher — it drives the sidebar card
-                    // over /update/state and applies via the Tauri updater.
+                    // own update loop owns updates — it drives the sidebar card over
+                    // /update/state and applies via the Tauri updater.
                     crate::config::HubMode::Bundled { .. } => {
                         updater::spawn_periodic(app.clone());
                     }
@@ -176,36 +168,6 @@ fn on_supervisor_event(app: &AppHandle, event: SupervisorEvent) {
         SupervisorEvent::Unrecoverable(message) => {
             state.overlay.hide(app);
             shell::present_fatal(app, &message);
-        }
-    }
-}
-
-fn on_watcher_event(app: &AppHandle, event: WatcherEvent) {
-    let state = app.state::<AppState>();
-    match event {
-        WatcherEvent::UpdateDeferred { remote } => {
-            // The watcher re-emits every tick while an update is pending — buzz once per
-            // new target commit.
-            let mut last = state.last_deferred.lock().unwrap();
-            if *last != remote {
-                *last = remote;
-                shell::notify(
-                    app,
-                    "Pilot update ready",
-                    "A new version is ready — it applies when your session is idle, or \
-                     use the sidebar's Update now.",
-                );
-            }
-        }
-        WatcherEvent::Apply { phase, label } => {
-            if phase == "failed" {
-                // The sidebar update card offers retry; just drop the scrim.
-                state.overlay.hide(app);
-            } else {
-                state
-                    .overlay
-                    .raise(app, label.as_deref().unwrap_or("Updating Pilot…"));
-            }
         }
     }
 }

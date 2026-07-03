@@ -3,11 +3,11 @@
 //! Two hub modes (docs/ADR-desktop-shell.md "Sidecar mechanics"):
 //! - **Bundled** (the packaged .app): the hub is a compiled sidecar binary inside the
 //!   bundle (Contents/MacOS/pilot-hub) serving the bundled client (Resources/client-dist).
-//!   Fully self-contained — no clone, no bun, no TS update-watcher; the Tauri updater
-//!   updates shell + hub + client atomically (updater.rs owns the loop).
+//!   Fully self-contained — no clone, no bun; the Tauri updater updates shell + hub +
+//!   client atomically (updater.rs owns the loop).
 //! - **Clone** (dev / `tauri dev` / bare binary runs): the hub is `bun run src/index.ts`
-//!   in a dedicated checkout that tracks origin/main; the TS update-watcher keeps it
-//!   current. The pre-bundled posture, kept as the dev loop.
+//!   in a dedicated checkout. The dev loop — no payload auto-update; restart the hub
+//!   (tray) after editing it.
 //!
 //! Default: running from inside a .app → bundled, anything else → clone.
 //! `PILOT_HUB_MODE=clone|bundled` overrides (e.g. bundled-mode testing on a debug
@@ -41,10 +41,10 @@ pub struct PilotConfig {
     pub data_dir: PathBuf,
     /// Absolute path to `bun` — a Finder-launched app has a minimal PATH that omits it.
     pub bun_path: String,
-    /// Free loopback port chosen at launch; passed to the server and the watcher.
+    /// Free loopback port chosen at launch; passed to the server.
     pub server_port: u16,
-    /// PATH handed to spawned processes so the server (git/rg/shell) and the watcher
-    /// (git/bun) resolve their tools. Mirrors the deploy plists' PATH.
+    /// PATH handed to the spawned server so it (git/rg/shell) resolves its tools.
+    /// Mirrors the deploy plists' PATH.
     pub augmented_path: String,
     /// Node-style dependency lookup path for Bun-hosted provider packages.
     pub bun_node_path: String,
@@ -150,30 +150,6 @@ impl PilotConfig {
         }
         env
     }
-
-    /// Environment for the update-watcher: point it at this clone, this server's port, and
-    /// the same data dir (so it finds pilot.pid for the restart signal). PILOT_PORT (not
-    /// individual URLs) so the watcher derives BOTH /health and /update/state from one
-    /// source of truth. We do NOT pass PILOT_APP_DESKTOP_SHA: that was the Swift shell's
-    /// "rebuild desktop/ by hand" detection — this shell updates itself via the Tauri
-    /// updater instead, and without the sha the watcher never emits a native-stale signal.
-    pub fn watcher_env(&self) -> Vec<(String, String)> {
-        vec![
-            ("PATH".into(), self.augmented_path.clone()),
-            (
-                "PILOT_APP_CLONE".into(),
-                self.clone.to_string_lossy().into_owned(),
-            ),
-            ("PILOT_PORT".into(), self.server_port.to_string()),
-            (
-                "PILOT_DATA_DIR".into(),
-                self.data_dir.to_string_lossy().into_owned(),
-            ),
-            // The shell owns notifications (posted on the watcher's stdout events); the
-            // watcher's own osascript fallback is attributed to Script Editor — disable it.
-            ("PILOT_UPDATE_NATIVE_NOTIFY".into(), "0".into()),
-        ]
-    }
 }
 
 /// Bundled vs clone (see module docs). The "am I inside a .app" probe is the exe path
@@ -211,7 +187,7 @@ fn resolve_hub_mode(resource_dir: &Path) -> Result<HubMode, String> {
     if !hub_bin.is_file() {
         return Err(format!(
             "bundled hub binary missing at {} — broken bundle (was the app built with \
-             `bun run build` in desktop-tauri, which compiles the hub sidecar?)",
+             `bun run build` in desktop, which compiles the hub sidecar?)",
             hub_bin.display()
         ));
     }

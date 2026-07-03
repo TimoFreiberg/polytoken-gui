@@ -27,8 +27,8 @@
         "vite": "^8.0.0",
       },
     },
-    "desktop-tauri": {
-      "name": "desktop-tauri",
+    "desktop": {
+      "name": "desktop",
       "version": "0.1.0",
       "devDependencies": {
         "@tauri-apps/cli": "^2.9.0",
@@ -251,7 +251,7 @@
 
     "dequal": ["dequal@2.0.3", "", {}, "sha512-0je+qPKHEMohvfRTCEo3CrPG6cAzAYgmzKyxRiYSSDkS6eGJdyVJm7WaYA5ECaAD9wLB2T4EEeymA5aFVcYXCA=="],
 
-    "desktop-tauri": ["desktop-tauri@workspace:desktop-tauri"],
+    "desktop": ["desktop@workspace:desktop"],
 
     "detect-libc": ["detect-libc@2.1.2", "", {}, "sha512-Btj2BOOO83o3WyH59e8MgXsxEQVcarkUOpEYrubB0urwnN10yQ364rsiByU11nZlqWYZm05i/of7io4mzihBtQ=="],
 

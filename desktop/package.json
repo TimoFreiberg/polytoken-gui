@@ -1,12 +1,12 @@
 {
-  "name": "desktop-tauri",
+  "name": "desktop",
   "private": true,
   "type": "module",
   "version": "0.1.0",
   "scripts": {
     "dev": "tauri dev",
     "build": "tauri build",
-    "icon": "tauri icon ../desktop/icon-1024.png",
+    "icon": "tauri icon icons/icon.png",
     "check": "cargo check --locked"
   },
   "devDependencies": {

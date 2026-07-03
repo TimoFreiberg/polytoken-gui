@@ -3,7 +3,7 @@
   "private": true,
   "type": "module",
   "version": "0.0.0",
-  "workspaces": ["protocol", "server", "client", "desktop-tauri"],
+  "workspaces": ["protocol", "server", "client", "desktop"],
   "scripts": {
     "dev": "bun run scripts/dev.ts",
     "dev:server": "bun run --cwd server dev",

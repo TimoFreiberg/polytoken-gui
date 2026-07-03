@@ -7,7 +7,7 @@
 #            tauri-build stages `externalBin` at compile time and errors if missing.
 #
 # The release pipeline (tag-triggered) hangs off these jobs via `needs`; see
-# desktop-tauri/README.md "Publishing a release".
+# desktop/README.md "Publishing a release".
 
 name: CI
 
@@ -76,11 +76,11 @@ jobs:
       - run: bun scripts/desktop/build-hub.ts
       - uses: Swatinem/rust-cache@v2
         with:
-          workspaces: desktop-tauri
+          workspaces: desktop
       - run: cargo fmt --check
-        working-directory: desktop-tauri
+        working-directory: desktop
       - run: cargo clippy --locked --all-targets -- -D warnings
-        working-directory: desktop-tauri
+        working-directory: desktop
 
   # Tag pushes only (scripts/desktop/release.ts creates them): build the signed
   # bundled .app and publish it + latest.json as a GitHub release — but only after
@@ -101,7 +101,7 @@ jobs:
       - run: bun install --frozen-lockfile
       - uses: Swatinem/rust-cache@v2
         with:
-          workspaces: desktop-tauri
+          workspaces: desktop
       - name: Build and publish
         env:
           GH_TOKEN: ${{ github.token }}

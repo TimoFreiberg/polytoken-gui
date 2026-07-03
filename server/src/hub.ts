@@ -309,23 +309,17 @@ export class SessionHub {
   // (open/new/branch/archive) bypass the gate by calling broadcastSessionList directly.
   // Starts true so the very first tick after a turn starts still refreshes.
   private sessionListDirty = true;
-  // Desktop auto-update (driven by scripts/desktop/update-watcher.ts via /update/state).
-  // `updateSha` is the origin/main commit the watcher staged but deferred because a client
-  // is connected; null = up to date. `applying` flips true when a client clicks the
-  // sidebar card's "update now" — the watcher reads it back on its next poll and applies.
+  // Desktop auto-update (driven by the shell's updater loop via /update/state).
+  // `updateSha` is the version the updater staged but deferred because a client is
+  // connected; null = up to date. `applying` flips true when a client clicks the
+  // sidebar card's "update now" — the updater reads it back on its next poll and applies.
   private updateSha: string | null = null;
   private applying = false;
-  // True when the running Pilot.app's native shell differs from the clone's checked-out
-  // `HEAD:desktop` — the binary no longer matches its source and needs a manual build-app.sh
-  // rebuild (the TS auto-update path can't replace the .app). Set by the watcher on every
-  // /update/state report and broadcast in `updateStatus`; drives the durable sidebar rebuild
-  // dot. Independent of `updateSha` (a stale binary is orthogonal to a staged TS commit).
-  private desktopStale = false;
-  // Set by a `forceUpdate` message (the build-stamp menu, for clicking right after a push).
-  // The watcher consumes it on its next /update/state poll and does an immediate fetch +
-  // apply, bypassing the ~60s fetch cadence and the defer-while-connected policy. Read-once:
-  // reportUpdate hands it to that one caller and clears it (the apply's restart wipes hub
-  // state anyway; a failed apply un-flags via applyFailed).
+  // Set by a `forceUpdate` message (the build-stamp menu, for clicking right after a
+  // release). The updater consumes it on its next /update/state poll and does an immediate
+  // check + apply, bypassing the periodic cadence and the defer-while-connected policy.
+  // Read-once: reportUpdate hands it to that one caller and clears it (the apply's restart
+  // wipes hub state anyway; a failed apply un-flags via applyFailed).
   private forceRequested = false;
   // Cached view of the available models (the `ModelOption[]` the driver returns via
   // listModels), so `pilotSettingsMsg()` can resolve the background-model spec's
@@ -871,7 +865,6 @@ export class SessionHub {
       available: this.updateSha !== null,
       sha: this.updateSha ?? undefined,
       applying: this.applying,
-      desktopStale: this.desktopStale,
     };
   }
 
@@ -1494,7 +1487,7 @@ export class SessionHub {
     // Tell the fresh client what's already running / warming up (in-memory, synchronous).
     send(this.sessionStatusMsg());
     // Current desktop-update state, so a connecting client immediately shows (or hides)
-    // the sidebar update card without waiting for the watcher's next poll.
+    // the sidebar update card without waiting for the updater's next poll.
     send(this.updateStatusMsg());
     // Pilot-local settings + live login-env status (Settings "Environment" section).
     // Synchronous: both are in-memory / a small file read.
@@ -1792,7 +1785,7 @@ export class SessionHub {
         return;
       }
       case "applyUpdate":
-        // User clicked "update now". Flag it (the watcher reads it back on its next
+        // User clicked "update now". Flag it (the shell updater reads it back on its next
         // /update/state poll and applies) and reflect "applying" in the card. No-op if
         // nothing is staged or an apply is already in flight.
         if (this.updateSha !== null && !this.applying) {
@@ -1802,10 +1795,11 @@ export class SessionHub {
         return;
       case "forceUpdate":
         // User picked "force-update" off the build-stamp menu (typically right after
-        // pushing to main). Flag the force for the watcher; unlike applyUpdate this is NOT
-        // gated on a staged commit — the watcher will fetch-and-apply on its next poll even
-        // if it hasn't noticed the new commit yet. If a commit *is* already staged, also
-        // flip the card to "Updating…" for immediate feedback (same as applyUpdate).
+        // publishing a release). Flag the force for the shell updater; unlike applyUpdate
+        // this is NOT gated on a staged version — the updater will check-and-apply on its
+        // next poll even if it hasn't noticed the new release yet. If a version *is*
+        // already staged, also flip the card to "Updating…" for immediate feedback (same
+        // as applyUpdate).
         this.forceRequested = true;
         if (this.updateSha !== null && !this.applying) {
           this.applying = true;
@@ -1873,7 +1867,6 @@ export class SessionHub {
     this.sessionTitles.clear();
     this.updateSha = null;
     this.applying = false;
-    this.desktopStale = false;
     this.forceRequested = false;
     // Restore pilot-local settings to defaults so a test's `setBackgroundModel`/
     // `setLoginShell` mutation doesn't leak into sibling specs (the persisted file is
@@ -1913,10 +1906,10 @@ export class SessionHub {
     return this.clients.size;
   }
 
-  /** Host activity, surfaced on /health so an external poller (the desktop
-   *  update-watcher, scripts/desktop/update-watcher.ts) can tell whether it may
-   *  auto-apply an update or must defer to avoid interrupting a turn. `busy` is the
-   *  only thing the watcher reads; the breakdown is there for eyeballing /health.
+  /** Host activity, surfaced on /health so an external poller (the desktop shell's
+   *  updater loop) can tell whether it may auto-apply an update or must defer to avoid
+   *  interrupting a turn. `busy` is the only thing the updater reads; the breakdown is
+   *  there for eyeballing /health.
    *  `/debug/state` can't answer this — it only carries the *focused* session, so a
    *  background session running a turn would be invisible to it. */
   activity(): { running: number; initializing: number; busy: boolean } {
@@ -1927,27 +1920,20 @@ export class SessionHub {
     };
   }
 
-  /** Watcher → server: report the staged-update commit (or null when up to date), and
-   *  optionally that an attempted apply failed (resets a stuck "applying" so the card
+  /** Shell updater → server: report the staged-update version (or null when up to date),
+   *  and optionally that an attempted apply failed (resets a stuck "applying" so the card
    *  offers retry). Broadcasts updateStatus on change. Returns `applying` (did the user
-   *  click "update now"?) and `force` (did they pick "force-update"?) so the watcher learns
+   *  click "update now"?) and `force` (did they pick "force-update"?) so the updater learns
    *  both on this same poll. `force` is read-once — handed to this caller and cleared — so a
-   *  force triggers exactly one fetch-and-apply. `desktopStale` (running .app vs the clone's
-   *  HEAD:desktop) rides along when the watcher knows it; `undefined` leaves the last value
-   *  untouched so a partial report can't clear the dot. */
+   *  force triggers exactly one check-and-apply. */
   reportUpdate(
     sha: string | null,
     applyFailed = false,
-    desktopStale?: boolean,
   ): { applying: boolean; force: boolean } {
     let changed = false;
     if (sha !== this.updateSha) {
       this.updateSha = sha;
       if (sha === null) this.applying = false; // applied/gone — drop any apply flag
-      changed = true;
-    }
-    if (desktopStale !== undefined && desktopStale !== this.desktopStale) {
-      this.desktopStale = desktopStale;
       changed = true;
     }
     if (applyFailed && this.applying) {

@@ -4,7 +4,7 @@ import { gotoFresh, openSidebar } from "./helpers.js";
 // The build-stamp right-click menu (sidebar footer): copy the commit hash, or force an
 // app update. A desktop affordance (right-click only), so this spec runs in the desktop
 // project. The force path's server effect is covered by hub unit tests — the mock harness
-// has no update-watcher to observe a restart — so here we assert the UI interactions.
+// has no updater to observe a restart — so here we assert the UI interactions.
 test.beforeEach(async ({ page }) => {
   await gotoFresh(page);
 });

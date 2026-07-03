@@ -209,25 +209,17 @@ export type ServerMessage =
       pendingRestart: boolean;
       backgroundModelWarning?: string;
     }
-  /** Desktop auto-update status (driven by scripts/desktop/update-watcher.ts via the
-   *  /update/state endpoint). `available` true means a new origin/main was staged but
-   *  deferred because a client is connected — clients show the sidebar update card.
-   *  `applying` flips true after a client clicks "update now" (the watcher then pulls,
-   *  rebuilds, and restarts the server). NOT the PWA service-worker update — that's the
-   *  separate `swUpdateReady` "reload" toast.
-   *
-   *  `desktopStale` is independent of `available`: it's true when the running Pilot.app's
-   *  native shell (`desktop/`) differs from the clone's checked-out `HEAD:desktop` — i.e. the
-   *  binary you're running no longer matches its source and needs a manual `build-app.sh`
-   *  rebuild (the TS auto-update can't replace the .app — see desktop/README). Drives the
-   *  durable "rebuild" dot on the sidebar build stamp; only ever set under the desktop app
-   *  (the watcher knows the running bundle's stamp), so it stays false in a plain browser. */
+  /** Desktop auto-update status (driven by the desktop shell's updater loop via the
+   *  /update/state endpoint). `available` true means a new app version was downloaded but
+   *  deferred because a client is connected — clients show the sidebar update card; `sha`
+   *  carries the version string. `applying` flips true after a client clicks "update now"
+   *  (the shell then installs the bundle and relaunches). NOT the PWA service-worker
+   *  update — that's the separate `swUpdateReady` "reload" toast. */
   | {
       type: "updateStatus";
       available: boolean;
       sha?: string;
       applying: boolean;
-      desktopStale?: boolean;
     }
   /** Prefill the composer after a branch landed on a user prompt — navigateTree hands
    *  back that prompt's text for re-editing. Sent ONLY to the client that asked to
@@ -426,14 +418,14 @@ export type ClientMessage =
    *  {@link pathStat}. */
   | { type: "statPath"; path: string }
   /** Apply the staged desktop update now (the sidebar card's button). The server marks
-   *  it applying and the update-watcher picks it up on its next poll — pull, rebuild,
-   *  restart. No-op if nothing is staged. */
+   *  it applying and the shell's updater picks it up on its next /update/state poll —
+   *  install the bundle, relaunch. No-op if nothing is staged. */
   | { type: "applyUpdate" }
-  /** Force an update *now* (the build-stamp right-click menu), for clicking right after a
-   *  push to main — before the watcher's next ~60s fetch has even noticed the new commit.
+  /** Force an update check *now* (the build-stamp right-click menu), for clicking right
+   *  after publishing a release — before the updater's next periodic check has noticed.
    *  Unlike `applyUpdate` it's NOT a no-op when nothing is staged: it flags a force the
-   *  watcher reads on its next poll, then immediately fetches and applies if origin/main
-   *  moved (pull → rebuild → restart). No-op only if the clone is already current. */
+   *  shell reads on its next poll, then immediately checks and applies if a new version
+   *  exists. No-op only if the app is already current. */
   | { type: "forceUpdate" }
   /** Client-detected desync (an event-seq gap): ask for a fresh seed of the
    *  targeted session (omitted -> this connection's focus) instead of folding
@@ -455,8 +447,7 @@ export type ClientMessage =
 function parseMessage<T extends { type: string }>(raw: string): T | null {
   try {
     const v = JSON.parse(raw);
-    if (v && typeof v === "object" && typeof v.type === "string")
-      return v as T;
+    if (v && typeof v === "object" && typeof v.type === "string") return v as T;
   } catch {
     /* drop */
   }

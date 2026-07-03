@@ -1,2 +1,3 @@
-# The assembled app bundle is a build artifact (rebuilt by build-app.sh).
-Pilot.app/
+target/
+gen/
+binaries/

@@ -14,8 +14,7 @@ test("the sidebar shows a build stamp (commit hash + date)", async ({
   // Value is non-deterministic (depends on the checkout's VCS state): either a short
   // hash optionally followed by a commit date, or the "dev" fallback if neither git nor
   // jj was reachable at build time.
-  // useInnerText: the div also holds the (text-less) stale-dot span, and Svelte collapses
-  // the whitespace between that block and the label into a leading space in textContent
+  // useInnerText: Svelte collapses whitespace, so textContent can carry a leading space
   // (" dev"). innerText is the *rendered* text the user actually sees ("dev"), which is
   // what this assertion cares about and what keeps the anchored regex honest.
   await expect(version).toHaveText(

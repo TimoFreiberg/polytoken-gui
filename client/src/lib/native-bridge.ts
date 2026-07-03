@@ -16,9 +16,9 @@ function updateHandler(): PilotMessageHandler | null {
 }
 
 /** Ask the native shell to raise its fullscreen "Updating Pilot…" overlay NOW, instead of
- *  waiting ~one watcher poll (≈5s) for the watcher's first `apply` event to raise it. The
- *  watcher's later phase events refresh the same overlay; teardown is unchanged. No-op
- *  outside the desktop app. */
+ *  waiting ~one updater poll (≈5s) for the updater's first apply event to raise it. Later
+ *  apply events refresh the same overlay; teardown is unchanged. No-op outside the desktop
+ *  app. */
 export function notifyNativeUpdateStarting(): void {
   updateHandler()?.postMessage({ type: "updateStarting" });
 }

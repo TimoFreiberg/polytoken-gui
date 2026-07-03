@@ -13,7 +13,7 @@
 //   config: a manifest version that outruns the artifact makes every relaunch "update"
 //   again — an infinite install loop under the unattended policy.
 // - Refuses to overwrite an existing release tag: bump `version` in
-//   desktop-tauri/tauri.conf.json (keep Cargo.toml in step) and rebuild instead.
+//   desktop/tauri.conf.json (keep Cargo.toml in step) and rebuild instead.
 // - Signing key comes from TAURI_SIGNING_PRIVATE_KEY or ~/.tauri/pilot-shell.key —
 //   missing key fails BEFORE the (multi-minute) build, not after.
 //
@@ -21,7 +21,7 @@
 //   https://github.com/<owner/name>/releases/latest/download/latest.json
 // (each release carries its own latest.json asset; GitHub's `latest` alias serves the
 // newest release's copy). Put that URL in PILOT_SHELL_UPDATE_URL or the data dir's
-// `shell-update-url` file — see desktop-tauri/README.md "Updates".
+// `shell-update-url` file — see desktop/README.md "Updates".
 
 import { existsSync } from "node:fs";
 import { homedir } from "node:os";
@@ -30,7 +30,7 @@ import { join, resolve } from "node:path";
 const repoRoot = resolve(import.meta.dir, "../..");
 const bundleDir = join(
   repoRoot,
-  "desktop-tauri",
+  "desktop",
   "target",
   "release",
   "bundle",
@@ -162,7 +162,7 @@ if (import.meta.main) {
   // artifacts (not the config) are what's being published.
   if (mustMatchTag && !skipBuild) {
     const conf = (await Bun.file(
-      join(repoRoot, "desktop-tauri", "tauri.conf.json"),
+      join(repoRoot, "desktop", "tauri.conf.json"),
     ).json()) as { version?: string };
     if (`v${conf.version}` !== mustMatchTag) {
       fail(
@@ -175,7 +175,7 @@ if (import.meta.main) {
   // ── build (signed, updater artifacts included) ──
   if (!skipBuild) {
     await run(["bun", "run", "build"], {
-      cwd: join(repoRoot, "desktop-tauri"),
+      cwd: join(repoRoot, "desktop"),
       env: sign,
     });
   }
@@ -256,7 +256,7 @@ if (import.meta.main) {
   if (existing.code === 0) {
     fail(
       `release ${tag} already exists on ${repo} — bump "version" in ` +
-        `desktop-tauri/tauri.conf.json (and Cargo.toml), rebuild, and publish again. ` +
+        `desktop/tauri.conf.json (and Cargo.toml), rebuild, and publish again. ` +
         `Re-publishing a tag with different bytes would strand installed apps.`,
     );
   }

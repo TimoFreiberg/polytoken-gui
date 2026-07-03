@@ -1798,7 +1798,7 @@ describe("desktop update relay", () => {
     expect(lastUpdate(late)).toMatchObject({ available: true, sha: "def456" });
   });
 
-  test("applyUpdate flips applying + the watcher learns it on its next report", () => {
+  test("applyUpdate flips applying + the updater learns it on its next report", () => {
     const hub = new SessionHub(new FakeDriver());
     const a = client();
     hub.addClient(a.send);
@@ -1806,7 +1806,7 @@ describe("desktop update relay", () => {
 
     hub.handleClient(a.send, { type: "applyUpdate" });
     expect(lastUpdate(a)).toMatchObject({ available: true, applying: true });
-    // The watcher's next poll (any sha report) returns applying=true → it applies.
+    // The updater's next poll (any sha report) returns applying=true → it applies.
     expect(hub.reportUpdate("abc123")).toEqual({
       applying: true,
       force: false,
@@ -1846,13 +1846,13 @@ describe("desktop update relay", () => {
     expect(lastUpdate(a)).toMatchObject({ available: true, applying: false });
   });
 
-  test("forceUpdate flags a force the watcher reads once, even with nothing staged", () => {
+  test("forceUpdate flags a force the updater reads once, even with nothing staged", () => {
     const hub = new SessionHub(new FakeDriver());
     const a = client();
     hub.addClient(a.send);
-    // Nothing staged (just pushed; the watcher hasn't fetched yet).
+    // Nothing staged (just released; the updater hasn't checked yet).
     hub.handleClient(a.send, { type: "forceUpdate" });
-    // No card to show (nothing staged), but the next watcher poll learns force=true…
+    // No card to show (nothing staged), but the next updater poll learns force=true…
     expect(hub.reportUpdate(null)).toEqual({ applying: false, force: true });
     // …exactly once — it's read-once, so a second poll no longer reports it.
     expect(hub.reportUpdate(null)).toEqual({ applying: false, force: false });
@@ -1865,7 +1865,7 @@ describe("desktop update relay", () => {
     hub.reportUpdate("abc123");
     hub.handleClient(a.send, { type: "forceUpdate" });
     expect(lastUpdate(a)).toMatchObject({ available: true, applying: true });
-    // The watcher's next poll learns both the apply and the force.
+    // The updater's next poll learns both the apply and the force.
     expect(hub.reportUpdate("abc123")).toEqual({ applying: true, force: true });
   });
 
@@ -1874,59 +1874,11 @@ describe("desktop update relay", () => {
     const a = client();
     hub.addClient(a.send);
     hub.handleClient(a.send, { type: "forceUpdate" });
-    // The watcher fetched, found the commit, tried to apply, and it failed.
+    // The updater found the release, tried to apply, and it failed.
     expect(hub.reportUpdate("abc123", true)).toEqual({
       applying: false,
       force: false,
     });
-  });
-
-  test("desktopStale relays to clients independently of a staged TS update", () => {
-    const hub = new SessionHub(new FakeDriver());
-    const a = client();
-    hub.addClient(a.send);
-    // Baseline: not stale, nothing staged.
-    expect(lastUpdate(a)).toMatchObject({
-      available: false,
-      desktopStale: false,
-    });
-
-    // The watcher reports a stale .app with NO staged TS commit (sha null) — the dot is
-    // orthogonal to the update card.
-    hub.reportUpdate(null, false, true);
-    expect(lastUpdate(a)).toMatchObject({
-      available: false,
-      desktopStale: true,
-    });
-
-    // A later rebuild clears it.
-    hub.reportUpdate(null, false, false);
-    expect(lastUpdate(a)).toMatchObject({
-      available: false,
-      desktopStale: false,
-    });
-  });
-
-  test("omitting desktopStale leaves the last value untouched (partial report)", () => {
-    const hub = new SessionHub(new FakeDriver());
-    const a = client();
-    hub.addClient(a.send);
-    hub.reportUpdate(null, false, true);
-    expect(lastUpdate(a)).toMatchObject({ desktopStale: true });
-    // A report that doesn't mention desktopStale (undefined) must not clear the dot.
-    hub.reportUpdate("abc123");
-    expect(lastUpdate(a)).toMatchObject({
-      available: true,
-      desktopStale: true,
-    });
-  });
-
-  test("a client connecting while the .app is stale sees the dot immediately", () => {
-    const hub = new SessionHub(new FakeDriver());
-    hub.reportUpdate(null, false, true);
-    const late = client();
-    hub.addClient(late.send);
-    expect(lastUpdate(late)).toMatchObject({ desktopStale: true });
   });
 
   test("openDataDir calls the injected opener, not the real spawn", () => {

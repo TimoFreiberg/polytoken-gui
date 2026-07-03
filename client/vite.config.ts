@@ -13,8 +13,8 @@ const SERVER = process.env.PILOT_SERVER ?? "http://localhost:8787";
 // running tests from such a worktree is routine, and a meaningful stamp beats "dev".
 // Falls back to "dev" only if neither VCS is reachable, rather than failing the build.
 // `fullHash` is the un-abbreviated sha, written to a marker file (see stampBuiltSha) so
-// the desktop update-watcher can tell when the *served* bundle has fallen behind HEAD —
-// which short-hash display can't express and HEAD-only checks miss.
+// the server can tell when the *served* bundle has fallen behind HEAD — which short-hash
+// display can't express and HEAD-only checks miss.
 function run(cmd: string): string {
   return execSync(cmd, { stdio: ["ignore", "pipe", "ignore"] })
     .toString()
@@ -46,11 +46,11 @@ function gitInfo(): { hash: string; date: string; fullHash: string } {
 const BUILD = gitInfo();
 
 // Write the built commit's full sha into <outDir>/.pilot-built-sha after a production
-// build. The desktop update-watcher reads this — NOT git HEAD — to decide whether the
-// running app is current: HEAD can advance without a rebuild (a manual `git pull`, an
-// apply interrupted before its build, a build that failed after the pull), and only the
-// stamped bundle sha reveals that the user is still looking at stale code. Build-only and
-// best-effort: a missing marker just costs one extra rebuild on the watcher's first tick.
+// build. The server reads this — NOT git HEAD — to decide whether the running app is
+// current: HEAD can advance without a rebuild (a manual `git pull`, an apply interrupted
+// before its build, a build that failed after the pull), and only the stamped bundle sha
+// reveals that the user is still looking at stale code. Build-only and best-effort: a
+// missing marker just means clients skip the comparison.
 function stampBuiltSha(fullHash: string): Plugin {
   let root = process.cwd();
   let outDir = "dist";

@@ -252,8 +252,8 @@ const server = Bun.serve<WsData>({
     }
 
     if (url.pathname === "/health") {
-      // `...activity()` adds { running, initializing, busy } — the desktop
-      // update-watcher polls `busy` to decide auto-apply vs defer (no token/debug
+      // `...activity()` adds { running, initializing, busy } — the desktop shell's
+      // updater polls `busy` to decide auto-apply vs defer (no token/debug
       // gate here, so a loopback poller can read it without credentials).
       return Response.json({
         ok: true,
@@ -295,13 +295,11 @@ const server = Bun.serve<WsData>({
       return new Response("not found", { status: 404 });
     }
 
-    // Desktop auto-update relay. The update-watcher POSTs whether a new origin/main is
-    // staged-and-waiting (body { available, sha?, applyFailed?, desktopStale? }); the hub
-    // broadcasts the card to clients and returns { applying, force } so the watcher learns on
-    // this same poll whether the user clicked "update now" (force = a force-update was
-    // requested). `desktopStale` (running .app vs the clone's HEAD:desktop) rides along to
-    // drive the durable rebuild dot. Token-gated like /push (off on the local
-    // desktop app; required behind tailscale).
+    // Desktop auto-update relay. The shell's updater loop POSTs whether a new version is
+    // staged-and-waiting (body { available, sha?, applyFailed? }); the hub broadcasts the
+    // card to clients and returns { applying, force } so the updater learns on this same
+    // poll whether the user clicked "update now" (force = a force-update was requested).
+    // Token-gated like /push (off on the local desktop app; required behind tailscale).
     if (url.pathname === "/update/state" && req.method === "POST") {
       if (!tokenOk(tokenFromRequest(req, url)))
         return new Response("unauthorized", { status: 401 });
@@ -310,18 +308,9 @@ const server = Bun.serve<WsData>({
           available?: boolean;
           sha?: string;
           applyFailed?: boolean;
-          desktopStale?: boolean;
         };
         const sha = body.available ? (body.sha ?? null) : null;
-        // Absent desktopStale → undefined → hub leaves its last value untouched (a partial
-        // report must not silently clear the dot).
-        const desktopStale =
-          typeof body.desktopStale === "boolean"
-            ? body.desktopStale
-            : undefined;
-        return Response.json(
-          hub.reportUpdate(sha, body.applyFailed === true, desktopStale),
-        );
+        return Response.json(hub.reportUpdate(sha, body.applyFailed === true));
       } catch (e) {
         return new Response(`bad request: ${String(e)}`, { status: 400 });
       }

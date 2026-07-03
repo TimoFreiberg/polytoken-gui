@@ -3,11 +3,10 @@
 Status: **amended** (2026-07-03 — Rust hub GO decision recorded below; see
 "Rust hub: GO decision"). Previously **accepted 2026-07-03** (owner sign-off) —
 **spike complete, all five exit criteria green**; the walking skeleton shipped as
-`desktop-tauri/` (see "Spike results" below and `desktop-tauri/README.md`).
+`desktop/` (see "Spike results" below and `desktop/README.md`).
 Originally proposed 2026-07-02 from the design-dossier track. Supersedes the shell part of the "📐 Architecture direction" note
 in `docs/TODO.md` (2026-07-01) — the Rust-hub end-state there stays a valid *target*,
-gated by the criteria below. Companion: `desktop/README.md` (the Swift shell this
-replaces; kept until the Tauri shell has dogfood mileage).
+gated by the criteria below. The Swift shell (`desktop/`, deleted) is fully retired.
 
 ## Decision
 
@@ -196,8 +195,8 @@ nothing in this ADR breaks it).
 
 ## Spike results (2026-07-03) — all five green
 
-Shipped as `desktop-tauri/` (tauri 2.11, six official plugins, ~900 lines of Rust).
-Verified on macOS 15 (Apple Silicon), mock driver + dry-run watcher for hermetic runs:
+Shipped as `desktop/` (tauri 2.11, six official plugins, ~900 lines of Rust).
+Verified on macOS 15 (Apple Silicon), mock driver + dry-run updater for hermetic runs:
 
 1. **Scaffold** ✓ — tray menu (Open / Copy App URL / Restart Hub / Check for Shell
    Updates / Quit), single-instance (second launch exits, first gets focused — verified
@@ -232,8 +231,8 @@ Verified on macOS 15 (Apple Silicon), mock driver + dry-run watcher for hermetic
    size. Shell bundle: **3.9MB** compressed.
 
 Per the exit rule, `desktop/` (Swift) replacement is now a normal scheduled task:
-dogfood `desktop-tauri/` (visual/tray/titlebar polish included), decide artifact
-hosting, then retire the Swift shell.
+dogfood `desktop/` (visual/tray/titlebar polish included), decide artifact
+hosting, then retire the Swift shell. — *Done 2026-07-03: Swift shell deleted, Tauri shell renamed to `desktop/`.*
 
 ## Consequences
 
@@ -249,7 +248,7 @@ replacement, and the Swift shell's simplicity (600 lines, zero deps) retired.
    shipped later the same day**: compiled hub as `externalBin` + client as a bundle
    resource, packaged-.app runs default to it, and the shell's own periodic updater
    loop replaces the TS watcher there (same defer policy, same sidebar card via
-   `/update/state`) — verified end to end against a local manifest server (unattended
+   `/update/state`; the watcher is now deleted) — verified end to end against a local manifest server (unattended
    0.1.0→0.1.1 in ~5s; deferred card→click→0.1.2). Clone mode remains the dev loop.
 2. ~~Where do updater artifacts live?~~ **Answered 2026-07-03: the public GitHub
    releases repo `TimoFreiberg/polytoken-gui`** (code stays on tangled — release
@@ -263,7 +262,7 @@ replacement, and the Swift shell's simplicity (600 lines, zero deps) retired.
    file. Distribution reality check: ad-hoc + notarization-skipped means a *browser*
    download is Gatekeeper-"damaged" — first installs go through
    `curl … | tar xz -C /Applications` (no quarantine xattr; self-updates never
-   re-acquire it), documented in desktop-tauri/README.md.
+   re-acquire it), documented in desktop/README.md.
 3. Keep the headless launchd path (Mini with no window) documented as a supported
    variant of the sidecar-free hub, or fold the Mini onto the tray-resident app too?
    **Still open** (untouched by the spike).

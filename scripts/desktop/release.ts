@@ -8,7 +8,7 @@
 //
 // Default bump: --patch. What it does, in order:
 //   1. refuse a dirty working copy (the release commit must contain ONLY the bump)
-//   2. bump "version" in desktop-tauri/tauri.conf.json + Cargo.toml, sync Cargo.lock
+//   2. bump "version" in desktop/tauri.conf.json + Cargo.toml, sync Cargo.lock
 //   3. jj commit those three files ("Release vX.Y.Z")
 //   4. git tag vX.Y.Z on that commit (jj can't create tags; the colocated .git can)
 //   5. move the `main` bookmark to the release commit, `jj git push`, push the tag
@@ -19,8 +19,8 @@
 import { join, resolve } from "node:path";
 
 const repoRoot = resolve(import.meta.dir, "../..");
-const confPath = join(repoRoot, "desktop-tauri", "tauri.conf.json");
-const cargoPath = join(repoRoot, "desktop-tauri", "Cargo.toml");
+const confPath = join(repoRoot, "desktop", "tauri.conf.json");
+const cargoPath = join(repoRoot, "desktop", "Cargo.toml");
 
 function fail(msg: string): never {
   console.error(`release: ${msg}`);
@@ -117,7 +117,7 @@ if (import.meta.main) {
   // and touches nothing else).
   await capture(
     ["cargo", "update", "--workspace"],
-    join(repoRoot, "desktop-tauri"),
+    join(repoRoot, "desktop"),
   );
 
   // ── commit + tag ──
@@ -127,9 +127,9 @@ if (import.meta.main) {
   await capture([
     "jj",
     "commit",
-    "desktop-tauri/tauri.conf.json",
-    "desktop-tauri/Cargo.toml",
-    "desktop-tauri/Cargo.lock",
+    "desktop/tauri.conf.json",
+    "desktop/Cargo.toml",
+    "desktop/Cargo.lock",
     "-m",
     `Release ${tag}`,
   ]);

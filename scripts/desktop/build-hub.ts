@@ -2,7 +2,7 @@
 // build-hub.ts — compile the pilot hub (server/src/index.ts) into a single
 // self-contained binary for the bundled desktop app.
 //
-// The output lands in desktop-tauri/binaries/pilot-hub-<target-triple> — the
+// The output lands in desktop/binaries/pilot-hub-<target-triple> — the
 // target-triple suffix is Tauri's externalBin convention (the bundler strips it
 // and ships the binary as Contents/MacOS/pilot-hub). The binary embeds the Bun
 // runtime and every workspace/npm dependency; at runtime it only needs the
@@ -11,7 +11,7 @@
 // client-dist resource; see server/src/config.ts).
 //
 // Run from anywhere: `bun scripts/desktop/build-hub.ts`. Used as the Tauri
-// beforeDevCommand/beforeBuildCommand (desktop-tauri/tauri.conf.json) — dev
+// beforeDevCommand/beforeBuildCommand (desktop/tauri.conf.json) — dev
 // needs the file to exist because tauri-build stages externalBin next to the
 // dev binary and errors when it's missing, even though clone-mode dev never
 // spawns it.
@@ -43,7 +43,7 @@ export function hostTriple(
 }
 
 if (import.meta.main) {
-  const outDir = join(repoRoot, "desktop-tauri", "binaries");
+  const outDir = join(repoRoot, "desktop", "binaries");
   mkdirSync(outDir, { recursive: true });
   // tauri.conf.json maps ../client/dist as a bundle resource; guarantee the dir
   // exists so a fresh checkout can `tauri dev` (clone mode) before any client build.

@@ -1,11 +1,10 @@
-//! Process-spawn helper shared by the supervisor and watcher.
+//! Process-spawn helper for the supervisor.
 
 use std::process::{Child, Command};
 
 /// Spawn with an EMPTY signal mask. main() blocks SIGTERM/SIGINT process-wide for the
-/// sigwait thread, and the mask survives fork+exec — without this reset the hub and
-/// watcher would be born deaf to SIGTERM, breaking both our teardown and the watcher's
-/// restart-via-pilot.pid contract.
+/// sigwait thread, and the mask survives fork+exec — without this reset the hub would
+/// be born deaf to SIGTERM, breaking our teardown.
 pub fn spawn_with_clean_signals(cmd: &mut Command) -> std::io::Result<Child> {
     use std::os::unix::process::CommandExt;
     unsafe {

@@ -319,11 +319,6 @@ class PilotStore {
   // `applying` is true between clicking "update now" and the server restarting. Distinct
   // from `swUpdateReady` (that's the PWA asset-cache refresh).
   appUpdate = $state<{ sha: string; applying: boolean } | null>(null);
-  // Desktop app: the running Pilot.app's native shell (`desktop/`) no longer matches the
-  // clone's checked-out source, so the binary needs a manual `build-app.sh` rebuild (the TS
-  // auto-update can't replace the .app). Server-pushed via `updateStatus`; drives the durable
-  // rebuild dot on the sidebar build stamp. Stays false in a plain browser (no stamped app).
-  desktopStale = $state(false);
   // Global hotkey dispatch — incremented so $effect catches every keystroke.
   hotkeyAction = $state<{ which: "model" | "thinking"; n: number } | null>(
     null,
@@ -1004,7 +999,6 @@ class PilotStore {
         this.appUpdate = msg.available
           ? { sha: msg.sha ?? "", applying: msg.applying }
           : null;
-        this.desktopStale = msg.desktopStale === true;
         break;
       case "error":
         if (msg.message === "unauthorized") {
@@ -1365,20 +1359,22 @@ class PilotStore {
       this.lastError = "Can't restore queued messages while offline.";
   }
   /** Apply the staged desktop update now (the sidebar card's button). The server marks
-   *  it applying; the watcher pulls/rebuilds/restarts and the card clears on reconnect.
-   *  We also ping the native desktop shell (no-op in a browser/PWA) so it raises its
-   *  fullscreen "Updating…" overlay immediately, rather than trailing the click by ~one
-   *  watcher poll (≈5s) until the watcher's first `apply` event reaches it. Gated on the
-   *  send landing: if the socket is down the request never reaches the hub, so don't raise
-   *  an overlay that nothing would ever tear down (until the native 5-min failsafe). */
+   *  it applying; the shell's updater installs the bundle and relaunches, and the card
+   *  clears on reconnect. We also ping the native desktop shell (no-op in a browser/PWA)
+   *  so it raises its fullscreen "Updating…" overlay immediately, rather than trailing
+   *  the click by ~one updater poll (≈5s) until the updater's first apply event reaches
+   *  it. Gated on the send landing: if the socket is down the request never reaches the
+   *  hub, so don't raise an overlay that nothing would ever tear down (until the native
+   *  5-min failsafe). */
   requestAppUpdate(): void {
     if (send({ type: "applyUpdate" })) notifyNativeUpdateStarting();
   }
-  /** Force an update now (the build-stamp right-click menu) — for clicking right after a
-   *  push to main, before the watcher's next fetch has noticed the commit. Unlike
-   *  requestAppUpdate this isn't a no-op when nothing is staged: the watcher fetches and
-   *  applies on its next poll if origin/main moved. Feedback is the restart/reconnect (and
-   *  a new build hash); a no-op force (already current) shows nothing. */
+  /** Force an update check now (the build-stamp right-click menu) — for clicking right
+   *  after publishing a release, before the updater's next periodic check has noticed.
+   *  Unlike requestAppUpdate this isn't a no-op when nothing is staged: the updater
+   *  checks and applies on its next poll if a new version exists. Feedback is the
+   *  restart/reconnect (and a new build hash); a no-op force (already current) shows
+   *  nothing. */
   requestForceUpdate(): void {
     send({ type: "forceUpdate" });
   }

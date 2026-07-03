@@ -860,7 +860,7 @@
   {/if}
   </div>
 
-  <!-- Desktop auto-update card: shown when a new origin/main is staged but deferred
+  <!-- Desktop auto-update card: shown when a new app version is staged but deferred
        because we're connected (server pushes `updateStatus`). One action, no dismiss —
        leave it sitting until you choose to apply. Distinct from the PWA refresh toast. -->
   {#if store.appUpdate}
@@ -869,7 +869,7 @@
       <Button
         variant="primary"
         size="sm"
-        title="Pull the latest main, rebuild, and restart Pilot"
+        title="Install the update and relaunch Pilot"
         disabled={store.appUpdate.applying}
         onclick={() => store.requestAppUpdate()}
       >
@@ -884,28 +884,12 @@
   <!-- svelte-ignore a11y_no_static_element_interactions -->
   <div
     class="version"
-    class:stale={store.desktopStale}
     data-testid="version"
     title={(buildDate
       ? `pilot build ${buildHash} · committed ${buildDate}`
-      : `pilot build ${buildHash}`) +
-      (store.desktopStale
-        ? " — app shell changed; quit Pilot and run desktop/build-app.sh to rebuild"
-        : " — right-click for build actions")}
+      : `pilot build ${buildHash}`) + " — right-click for build actions"}
     oncontextmenu={openBuildMenu}
   >
-    {#if store.desktopStale}
-      <!-- Durable "this binary is stale" dot: the running Pilot.app's native shell differs
-           from the checked-out desktop/ source, so the .app needs a manual build-app.sh
-           rebuild (the TS auto-update can't replace the bundle). Informational only — the
-           rebuild happens in a shell, not here. -->
-      <span
-        class="stale-dot"
-        data-testid="desktop-stale-dot"
-        title="The Pilot.app shell is out of date with its source. Quit Pilot and run desktop/build-app.sh in the clone to rebuild."
-        aria-label="App shell out of date — rebuild needed"
-      ></span>
-    {/if}
     {buildLabel}
   </div>
   {#if buildMenuPos}
@@ -930,7 +914,7 @@
         class="menu-item"
         role="menuitem"
         data-testid="force-update"
-        title="Force the app to pull the latest main, rebuild, and restart now — for clicking right after a push"
+        title="Force an update check and install now — for clicking right after publishing a release"
         onclick={forceUpdate}
       >
         <span>Force-update</span>
@@ -1114,22 +1098,6 @@
     text-overflow: ellipsis;
     cursor: default;
     user-select: none;
-  }
-  /* When the running .app is stale, lift the stamp out of the faint footer color so the
-     amber dot beside it reads as a real signal rather than disabled chrome. */
-  .version.stale {
-    color: var(--text-muted);
-  }
-  .stale-dot {
-    display: inline-block;
-    width: 7px;
-    height: 7px;
-    margin-right: 6px;
-    border-radius: 50%;
-    background: var(--warning);
-    vertical-align: middle;
-    /* nudge up a hair so it optically centers on the lowercase mono stamp */
-    margin-bottom: 1px;
   }
   .empty {
     padding: 16px 10px;
