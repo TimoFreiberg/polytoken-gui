@@ -23,17 +23,24 @@ export interface SendableSocket {
   close(code?: number, reason?: string): void;
 }
 
-/** Frames at or under this size skip deflate: the CPU + ~6-byte frame overhead
- *  isn't worth it for tiny acks/deltas, while markdown bubbles, snapshots, and
- *  seed events (the frames that dominate bytes on the wire) compress 4-40x. */
+/** Frames at or under this size skip the per-send compress flag: the CPU +
+ *  ~6-byte frame overhead isn't worth it for tiny acks/deltas, while markdown
+ *  bubbles, snapshots, and seed events (the frames that dominate bytes on the
+ *  wire) compress 4-40x. NOTE: the flag is currently inert — the server
+ *  disables permessage-deflate entirely (index.ts; Bun's BFINAL framing on
+ *  small compressed output kills WKWebView), so nothing negotiates the
+ *  extension and Bun sends every frame uncompressed. Kept so flipping the
+ *  server config back is the whole re-enable (TODO.md "Re-enable WS
+ *  compression"). */
 export const COMPRESS_MIN_BYTES = 512;
 
 /**
  * Send a string message, detecting Bun's backpressure-drop signal.
  *
  * Frames larger than {@link COMPRESS_MIN_BYTES} are sent with the per-send
- * compress flag — `perMessageDeflate: true` in the server config only
- * *negotiates* the extension; Bun compresses nothing unless each send asks.
+ * compress flag — Bun compresses a frame only when the extension was
+ * negotiated AND the send asks; with `perMessageDeflate` off server-side
+ * (index.ts) the flag is a no-op.
  *
  * Returns `true` if the connection was closed (message was dropped), `false`
  * otherwise. Skips sends to an already-closing/closed socket (`readyState >= 2`)

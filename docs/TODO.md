@@ -46,6 +46,25 @@ resolution is non-obvious or likely to bite again. Otherwise see `jj log`.
       `Transcript.svelte` recomputes grouping over the whole item list on every
       structural event. Memoize per-turn so only the active turn recomputes;
       real windowing after that.
+- [ ] **Re-enable WS compression (permessage-deflate) when safe.** Disabled
+      2026-07-03 (`perMessageDeflate: false`, `server/src/index.ts`) because it
+      killed the desktop app: Bun's WS compressor emits a BFINAL-terminated
+      deflate stream whenever a message's compressed output is small (observed
+      ≤ ~1.6KB; bigger output gets the normal open-ended sync-flush form), and
+      WKWebView (macOS 26.5) fails the whole connection — 1006 in JS, 1002 on
+      the wire — the moment an *uncompressed* frame follows such a message.
+      The greeting is a guaranteed trigger (sessionList ≈30KB compressed-big →
+      modelList ≈2.5KB compressed-small/BFINAL → small status frames follow),
+      so the Tauri webview died ~10ms after every connect, in a reconnect
+      flap. Bun 1.3.11 and 1.3.14 both affected; Chrome and Bun's own WS
+      client tolerate the framing, which is why Vite dev and the phone PWA
+      never showed it. `sendOrClose` still passes the per-send compress flag
+      (inert without negotiation), so flipping the config back is the whole
+      re-enable. Preconditions: a Bun release that emits spec-shaped
+      sync-flush endings (file/track the upstream issue — a ~20-line repro
+      exists from the 2026-07-03 investigation), then re-verify with a
+      WKWebView probe before shipping. The win is 4-40x on seeds/markdown for
+      the tailscale/LTE phone path.
 
 ## 🏗️ Architecture
 

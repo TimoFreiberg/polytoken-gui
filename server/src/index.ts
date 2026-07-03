@@ -348,13 +348,19 @@ const server = Bun.serve<WsData>({
   },
 
   websocket: {
-    // permessage-deflate: assistant markdown, fenced code, and full reconnect
-    // seeds are highly compressible (measured 4-40x). NOTE: this option only
-    // NEGOTIATES the extension — Bun compresses a frame only when the per-send
-    // compress flag asks for it, which sendOrClose (ws-send.ts) does for frames
-    // over COMPRESS_MIN_BYTES. Cost is per-connection deflate memory + CPU on
-    // the Mac Mini — negligible for a single-user app.
-    perMessageDeflate: true,
+    // permessage-deflate is OFF — Bun + WKWebView corrupt the connection when
+    // it's on: Bun emits a BFINAL-terminated deflate stream whenever a
+    // message's compressed output is small, and WebKit fails the connection
+    // (1002 on the wire, 1006 in JS) the moment an uncompressed frame follows
+    // such a message. The greeting (sessionList: big, modelList:
+    // small+BFINAL, then small status frames) hits that sequence on every
+    // connect, so the desktop app's webview died ~10ms after auth in a
+    // reconnect flap. Chrome and Bun's own WS client tolerate the framing —
+    // only WKWebView dies — which is why Vite dev and the phone PWA never
+    // showed it. Compression is worth having back for the tailscale/LTE phone
+    // path (seeds/markdown measured 4-40x); see the "Re-enable WS
+    // compression" TODO.md entry for the preconditions.
+    perMessageDeflate: false,
     // Explicit backpressure ceiling per socket (Bun default: 16MB). Past this,
     // Bun's send() returns 0 (dropped) and sendOrClose closes the connection
     // (1011) — the client reconnects and its hello.resume tail-replays exactly
@@ -392,13 +398,20 @@ const server = Bun.serve<WsData>({
       // Reuse this connection's stable send so the hub matches it to its focus state.
       if (ws.data.send) hub.handleClient(ws.data.send, msg);
     },
-    close(ws) {
+    close(ws, code, reason) {
       const wasAuthed = ws.data.authed;
       ws.data.unsub?.();
       ws.data.unsub = null;
       ws.data.send = null;
+      // code/reason distinguish a clean goodbye (1000/1001) from a transport
+      // abort (1006) or a peer protocol complaint (1002); without them a
+      // failing client is indistinguishable from a routine disconnect.
       if (wasAuthed)
-        log.info("client disconnected", { clients: hub.clientCount() });
+        log.info("client disconnected", {
+          clients: hub.clientCount(),
+          code,
+          reason,
+        });
     },
   },
 });
