@@ -781,12 +781,12 @@ impl SessionHub {
 
     // ── Client management ──────────────────────────────────────────────────
 
-    /// Register a client. Returns a send channel for the client's messages.
+    /// Register a client. Returns the client key + send channel for the client's messages.
     /// The caller spawns a task that reads from the channel and sends over WS.
     pub fn add_client(
         &mut self,
         resume: Option<ResumeToken>,
-    ) -> (mpsc::Sender<ServerMessage>, mpsc::Receiver<ServerMessage>) {
+    ) -> (u64, mpsc::Sender<ServerMessage>, mpsc::Receiver<ServerMessage>) {
         let (tx, rx) = mpsc::channel(128);
 
         let focused_id = match &resume {
@@ -858,7 +858,12 @@ impl SessionHub {
         let _ = tx.try_send(self.update_status_msg());
 
         // Return the channel — the caller will spawn async work for the lists
-        (tx, rx)
+        (client_key, tx, rx)
+    }
+
+    /// Get the last client key assigned (for backward compat with main.rs hack).
+    pub fn last_client_key(&self) -> u64 {
+        self.next_client_key - 1
     }
 
     /// Remove a client by key.
@@ -889,8 +894,15 @@ impl SessionHub {
     // ── handleClient dispatch ──────────────────────────────────────────────
 
     /// Handle a client message. This is the main WS dispatch — the ~35 case
-    /// switch from hub.ts. Returns messages to send back (or handles them internally).
-    pub async fn handle_client(&mut self, client_key: u64, msg: ClientMessage) {
+    /// switch from hub.ts. Synchronous (no await) — driver calls are spawned
+    /// as tokio tasks with a clone of the Arc<dyn PilotDriver> and the hub
+    /// handle, so the hub lock is never held across an await point.
+    pub fn handle_client(
+        &mut self,
+        client_key: u64,
+        msg: ClientMessage,
+        hub: Arc<Mutex<SessionHub>>,
+    ) {
         // Get the focused session id for this connection
         let focused_id = self.clients.get(&client_key)
             .and_then(|c| c.focused_id.clone());
@@ -904,16 +916,39 @@ impl SessionHub {
                 let deliver_as = deliver_as.clone();
                 let images = images.clone().unwrap_or_default();
                 let prompt_id_clone = prompt_id.clone();
-                self.accept_prompt(client_key, prompt_id.clone(), async move {
-                    driver.prompt(
-                        text,
-                        deliver_as,
-                        target.clone(),
-                        images,
-                        prompt_id_clone,
-                    ).await;
-                    target
-                }).await;
+                // Spawn the prompt as a separate task to avoid holding the lock
+                let hub_clone = hub.clone();
+                let client_key_clone = client_key;
+                let pid = prompt_id.clone();
+                tokio::spawn(async move {
+                    let result = async {
+                        driver.prompt(
+                            text,
+                            deliver_as,
+                            target.clone(),
+                            images,
+                            prompt_id_clone,
+                        ).await;
+                        target
+                    }.await;
+
+                    let msg = match &result {
+                        Some(sid) => ServerMessage::PromptResult {
+                            prompt_id: pid.clone().unwrap_or_default(),
+                            accepted: true,
+                            session_id: Some(sid.clone()),
+                            error: None,
+                        },
+                        None => ServerMessage::PromptResult {
+                            prompt_id: pid.clone().unwrap_or_default(),
+                            accepted: false,
+                            session_id: None,
+                            error: Some("prompt failed".into()),
+                        },
+                    };
+                    let h = hub_clone.lock();
+                    h.send_to_client(client_key_clone, msg);
+                });
             }
             ClientMessage::Abort { session_id } => {
                 let target = session_id.clone().or(focused_id);
@@ -937,50 +972,76 @@ impl SessionHub {
             }
             ClientMessage::ToggleAdventurousHandoff { session_id } => {
                 let target = session_id.clone().or(focused_id);
-                self.driver.toggle_adventurous_handoff(target).await;
+                let driver = self.driver.clone();
+                tokio::spawn(async move { driver.toggle_adventurous_handoff(target).await; });
             }
             ClientMessage::SetNotificationAutodrain { enabled, session_id } => {
                 let target = session_id.clone().or(focused_id);
-                self.driver.set_notification_autodrain(*enabled, target).await;
+                let driver = self.driver.clone();
+                let enabled = *enabled;
+                tokio::spawn(async move { driver.set_notification_autodrain(enabled, target).await; });
             }
             ClientMessage::Compact { session_id } => {
                 let target = session_id.clone().or(focused_id);
-                self.driver.compact(target).await;
+                let driver = self.driver.clone();
+                tokio::spawn(async move { driver.compact(target).await; });
             }
             ClientMessage::ClearContext { session_id } => {
                 let target = session_id.clone().or(focused_id);
-                self.driver.clear_context(target).await;
+                let driver = self.driver.clone();
+                tokio::spawn(async move { driver.clear_context(target).await; });
             }
             ClientMessage::SetMcpServer { server_name, action, session_id } => {
                 let target = session_id.clone().or(focused_id);
-                self.driver.set_mcp_server(server_name.clone(), action.clone(), target).await;
+                let driver = self.driver.clone();
+                let server_name = server_name.clone();
+                let action = action.clone();
+                tokio::spawn(async move { driver.set_mcp_server(server_name, action, target).await; });
             }
             ClientMessage::OpenSession { path: _ } => {
-                // switchTo with retryOnRacedEvents
-                // This is async and complex — will be implemented when switchTo is wired
+                // TODO: switchTo — needs the atomic session-swap state machine
             }
             ClientMessage::ListSessions => {
-                self.broadcast_session_list().await;
+                let driver = self.driver.clone();
+                let hub_clone = hub.clone();
+                tokio::spawn(async move {
+                    let sessions = driver.list_sessions().await;
+                    let default_cwd = std::env::var("HOME").unwrap_or_default();
+                    let mut h = hub_clone.lock();
+                    h.broadcast_session_list_with(sessions, default_cwd);
+                });
             }
             ClientMessage::RequestSeed { session_id } => {
                 let target = session_id.clone().or(focused_id);
                 let msg = self.seed_msg(target.as_ref());
-                if let Some(conn) = self.clients.get(&client_key) {
-                    let _ = conn.send.try_send(msg);
-                }
+                self.send_to_client(client_key, msg);
             }
             ClientMessage::Mock { script } => {
                 self.driver.run_script(script.clone());
             }
             _ => {
-                // Remaining cases (respondUi, restoreQueue, branch, newSession,
-                // setArchived, renameSession, cleanupWorktree, listCommands,
-                // listFacets, queryFiles, queryDir, statPath, setLoginShell,
-                // setBackgroundModel, applyUpdate, forceUpdate, openDataDir,
-                // reloadSession) — will be implemented as the port progresses.
-                // For now they're no-ops.
+                // Remaining cases — will be implemented as the port progresses.
             }
         }
+    }
+
+    /// Send a message to a specific client by key.
+    pub fn send_to_client(&self, client_key: u64, msg: ServerMessage) {
+        if let Some(conn) = self.clients.get(&client_key) {
+            let _ = conn.send.try_send(msg);
+        }
+    }
+
+    /// Broadcast a session list with pre-fetched data (avoids re-locking).
+    fn broadcast_session_list_with(&mut self, sessions: Vec<pilot_protocol::session_driver::SessionListEntry>, default_cwd: String) {
+        for conn in self.clients.values() {
+            let _ = conn.send.try_send(ServerMessage::SessionList {
+                sessions: sessions.clone(),
+                active_session_id: conn.focused_id.clone(),
+                default_new_session_cwd: default_cwd.clone(),
+            });
+        }
+        self.session_list_dirty = false;
     }
 
     // ── Prompt idempotency ────────────────────────────────────────────────

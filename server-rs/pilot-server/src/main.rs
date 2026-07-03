@@ -9,6 +9,7 @@ pub mod journal;
 pub mod pidlock;
 pub mod settings_store;
 pub mod static_serve;
+pub mod stub_driver;
 pub mod ws_send;
 
 use std::net::SocketAddr;
@@ -20,15 +21,21 @@ use axum::http::{header, HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
+use parking_lot::Mutex;
 use serde::Deserialize;
 use serde_json::json;
-use tracing::{error, info};
+use tracing::{error, info, warn};
+
+use crate::driver::PilotDriver;
+use crate::hub::SessionHub;
+use crate::stub_driver::StubDriver;
 
 /// Shared app state.
 #[derive(Clone)]
 pub struct AppState {
     pub config: Arc<config::Config>,
     pub static_server: Arc<static_serve::StaticServer>,
+    pub hub: Arc<Mutex<SessionHub>>,
 }
 
 #[tokio::main]
@@ -67,10 +74,25 @@ async fn main() {
             }
         };
 
+    // Driver selection: PILOT_DRIVER=mock uses the stub driver for now.
+    // The real fake daemon (Phase 5) and polytoken driver (Phase 4) replace this.
+    let driver: Arc<dyn PilotDriver> = Arc::new(StubDriver::new());
+
+    let hub = SessionHub::new(
+        driver,
+        None, // notify — wired in Phase 6 (push)
+        cfg.live_refresh_ms,
+        server_id.clone(),
+        Some(cfg.data_dir.clone()),
+        String::new(), // build_sha — read from dist marker
+        cfg.delta_flush_ms,
+    );
+
     let static_server = Arc::new(static_serve::StaticServer::new(cfg.client_dist.clone()));
     let state = AppState {
         config: Arc::new(cfg.clone()),
         static_server,
+        hub,
     };
 
     let app = build_router(state.clone());
@@ -115,40 +137,133 @@ fn build_router(state: AppState) -> Router {
 
 // ── /health ─────────────────────────────────────────────────────────────
 
-async fn health() -> Json<serde_json::Value> {
-    Json(json!({ "ok": true }))
+async fn health(State(state): State<AppState>) -> Json<serde_json::Value> {
+    let _hub = state.hub.lock();
+    Json(json!({
+        "ok": true,
+        "clients": 0, // TODO: track client count in hub
+        "running": 0,
+        "initializing": 0,
+        "busy": false,
+    }))
 }
 
 // ── /ws ─────────────────────────────────────────────────────────────────
 
-async fn ws_handler(ws: WebSocketUpgrade, State(_state): State<AppState>) -> Response {
-    ws.on_upgrade(handle_ws_connection)
+async fn ws_handler(ws: WebSocketUpgrade, State(state): State<AppState>) -> Response {
+    ws.on_upgrade(move |socket| handle_ws_connection(socket, state))
 }
 
-async fn handle_ws_connection(mut ws: WebSocket) {
-    // The client sends a hello immediately on open. Until then, messages are
-    // rejected. For now this is a minimal echo — the hub (Phase 3) will replace it.
-    while let Some(Ok(msg)) = ws.recv().await {
-        match msg {
-            Message::Text(text) => {
-                // Parse as ClientMessage — the hub will handle this in Phase 3.
-                // For now, respond to hello with a minimal hello back.
-                if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&text) {
-                    if parsed.get("type").and_then(|t| t.as_str()) == Some("hello") {
-                        let hello = json!({
-                            "type": "hello",
-                            "protocolVersion": 2,
-                            "serverId": "rust-pilot",
-                            "dataDir": "/tmp/pilot",
-                        });
-                        let _ = ws_send::send_json(&mut ws, &hello, None).await;
+async fn handle_ws_connection(ws: WebSocket, state: AppState) {
+    use futures_util::{SinkExt, StreamExt};
+
+    let (ws_sink, mut ws_stream) = ws.split();
+
+    // Wait for the hello message before registering the client.
+    let (client_key, rx) = loop {
+        match ws_stream.next().await {
+            Some(Ok(Message::Text(text))) => {
+                let parsed: serde_json::Value = match serde_json::from_str(&text) {
+                    Ok(v) => v,
+                    Err(_) => {
+                        // Can't send errors yet — no sink access in this loop.
+                        return;
                     }
+                };
+                if parsed.get("type").and_then(|t| t.as_str()) != Some("hello") {
+                    return;
+                }
+
+                // Check auth token
+                let auth = parsed.get("auth").and_then(|a| a.as_str());
+                if !config::token_ok(auth, &state.config) {
+                    return;
+                }
+
+                // Parse resume token if present
+                let resume = parsed.get("resume").and_then(|r| {
+                    serde_json::from_value::<pilot_protocol::wire::ResumeToken>(r.clone()).ok()
+                });
+
+                // Register the client with the hub.
+                // add_client returns (client_key, tx, rx) — tx is a clone of what's
+                // stored in the ClientConn; we drop it. rx goes to the pump task.
+                let (client_key, _tx, rx) = {
+                    let mut hub = state.hub.lock();
+                    hub.add_client(resume)
+                };
+
+                break (client_key, rx);
+            }
+            Some(Ok(_)) => continue,
+            Some(Err(e)) => {
+                warn!("ws error before hello: {e}");
+                return;
+            }
+            None => return,
+        }
+    };
+
+    // Pump task: owns the sink, reads from the hub channel, writes to WS.
+    // Clear ownership: this task is the sole writer to the WebSocket.
+    let mut ws_sink = ws_sink;
+    let pump = tokio::spawn(async move {
+        let mut rx = rx;
+        while let Some(msg) = rx.recv().await {
+            let json = serde_json::to_string(&msg).unwrap_or_default();
+            if ws_sink.send(Message::Text(json.into())).await.is_err() {
+                break;
+            }
+        }
+        // Channel closed (client removed from hub) — close the WebSocket.
+        let _ = ws_sink.send(Message::Close(None)).await;
+    });
+
+    // Main loop: owns the stream, reads from WS, dispatches to hub.
+    while let Some(msg) = ws_stream.next().await {
+        match msg {
+            Ok(Message::Text(text)) => {
+                let parsed: serde_json::Value = match serde_json::from_str(&text) {
+                    Ok(v) => v,
+                    Err(_) => continue,
+                };
+
+                // Skip hello (already authed)
+                if parsed.get("type").and_then(|t| t.as_str()) == Some("hello") {
+                    continue;
+                }
+
+                // Parse as ClientMessage and dispatch to hub
+                let client_msg = match serde_json::from_value::<
+                    pilot_protocol::wire::ClientMessage,
+                >(parsed)
+                {
+                    Ok(m) => m,
+                    Err(e) => {
+                        warn!("failed to parse client message: {e}");
+                        continue;
+                    }
+                };
+
+                // Dispatch to the hub (lock briefly — handle_client is sync,
+                // driver calls are spawned as separate tasks)
+                {
+                    let mut hub = state.hub.lock();
+                    hub.handle_client(client_key, client_msg, state.hub.clone());
                 }
             }
-            Message::Close(_) => break,
+            Ok(Message::Close(_)) | Err(_) => break,
             _ => {}
         }
     }
+
+    // Clean up: remove the client from the hub (drops the tx, closing the pump).
+    {
+        let mut hub = state.hub.lock();
+        hub.remove_client(client_key);
+    }
+    // pump task will exit when rx returns None (tx dropped).
+    let _ = pump.await;
 }
 
 // ── /push/* ─────────────────────────────────────────────────────────────
@@ -165,7 +280,6 @@ struct PushQuery {
 }
 
 async fn push_vapid(State(_state): State<AppState>, Query(_q): Query<PushQuery>) -> Response {
-    // TODO Phase 6: wire up PushService
     Json(json!({ "publicKey": "" })).into_response()
 }
 
@@ -173,7 +287,6 @@ async fn push_subscribe(State(state): State<AppState>, Query(q): Query<PushQuery
     if !check_token(&state, &HeaderMap::new(), &q) {
         return (StatusCode::UNAUTHORIZED, "unauthorized").into_response();
     }
-    // TODO Phase 6: push.add(subscription)
     Json(json!({ "ok": true })).into_response()
 }
 
@@ -181,7 +294,6 @@ async fn push_unsubscribe(State(state): State<AppState>, Query(q): Query<PushQue
     if !check_token(&state, &HeaderMap::new(), &q) {
         return (StatusCode::UNAUTHORIZED, "unauthorized").into_response();
     }
-    // TODO Phase 6: push.remove(endpoint)
     Json(json!({ "ok": true })).into_response()
 }
 
@@ -189,18 +301,21 @@ async fn push_test(State(state): State<AppState>, Query(q): Query<PushQuery>) ->
     if !check_token(&state, &HeaderMap::new(), &q) {
         return (StatusCode::UNAUTHORIZED, "unauthorized").into_response();
     }
-    // TODO Phase 6: push.sendToAll(...)
     Json(json!({ "ok": true, "subscriptions": 0, "sent": 0 })).into_response()
 }
 
 // ── /update/state ────────────────────────────────────────────────────────
 
-async fn update_state(State(state): State<AppState>, Query(q): Query<PushQuery>) -> Response {
+async fn update_state(
+    State(state): State<AppState>,
+    Query(q): Query<PushQuery>,
+) -> Response {
     if !check_token(&state, &HeaderMap::new(), &q) {
         return (StatusCode::UNAUTHORIZED, "unauthorized").into_response();
     }
-    // TODO Phase 3: hub.reportUpdate(...)
-    Json(json!({ "applying": false, "force": false })).into_response()
+    let mut hub = state.hub.lock();
+    let result = hub.report_update(None, false, None);
+    Json(result).into_response()
 }
 
 // ── /debug/* ────────────────────────────────────────────────────────────
@@ -212,18 +327,22 @@ async fn debug_state(State(state): State<AppState>, Query(q): Query<PushQuery>) 
     if !check_token(&state, &HeaderMap::new(), &q) {
         return (StatusCode::UNAUTHORIZED, "unauthorized").into_response();
     }
-    // TODO Phase 3: hub.snapshot()
-    Json(json!({})).into_response()
+    let hub = state.hub.lock();
+    Json(hub.snapshot()).into_response()
 }
 
-async fn debug_reset(State(state): State<AppState>, Query(q): Query<PushQuery>) -> Response {
+async fn debug_reset(
+    State(state): State<AppState>,
+    Query(q): Query<PushQuery>,
+) -> Response {
     if !state.config.debug {
         return (StatusCode::NOT_FOUND, "debug disabled").into_response();
     }
     if !check_token(&state, &HeaderMap::new(), &q) {
         return (StatusCode::UNAUTHORIZED, "unauthorized").into_response();
     }
-    // TODO Phase 3: hub.reset() — mock-only
+    let mut hub = state.hub.lock();
+    hub.reset(true);
     Json(json!({ "ok": true })).into_response()
 }
 
