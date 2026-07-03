@@ -323,7 +323,7 @@ export async function createPolytokenDriver(
   async function refreshAndEmit(
     ws: WarmSession,
     label: string,
-    action: () => Promise<void>,
+    action: () => Promise<unknown>,
     fetchState = true,
   ): Promise<void> {
     try {
@@ -1228,7 +1228,10 @@ export async function createPolytokenDriver(
           await ws.client.setPermissionMode(opts.permissionMonitor);
           ws.monitorMode = opts.permissionMonitor;
         } catch (e) {
-          console.error("[polytoken] newSession: permission-monitor apply failed", e);
+          console.error(
+            "[polytoken] newSession: permission-monitor apply failed",
+            e,
+          );
         }
       }
       return seedFor(ws);
