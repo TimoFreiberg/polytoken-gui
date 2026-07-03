@@ -748,7 +748,10 @@ export class MockDriver implements PilotDriver {
   }
 
   async listFacets(): Promise<string[]> {
-    return ["execute", "plan"];
+    // execute + plan are the builtins; "research" is a custom facet (a real
+    // daemon derives arbitrary names from facet files' frontmatter) so the
+    // picker + draft-persistence round-trip can exercise a non-builtin name.
+    return ["execute", "plan", "research"];
   }
 
   async listFileIndex(): Promise<{ files: FileInfo[]; truncated: boolean }> {

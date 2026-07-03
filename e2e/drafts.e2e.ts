@@ -261,6 +261,40 @@ test("a draft's facet + permission-monitor survive leaving and reopening", async
   await expect(page.getByTestId("permission-badge")).toContainText("Bypass");
 });
 
+// Facets are dynamic — the daemon derives arbitrary names from facet files, so a
+// CUSTOM facet (the mock offers "research" alongside the execute/plan builtins) must
+// persist just like the builtins. This guards the bug where persistDraftConfig stored
+// any divergent facet but loadDraftConfigMap only re-accepted "execute"/"plan", so a
+// custom pick was silently dropped on reload and the draft reverted to Execute.
+test("a draft's CUSTOM facet survives leaving/reopening and a reload", async ({
+  page,
+}) => {
+  await openSidebar(page);
+  await page.getByRole("button", { name: "New session…" }).click();
+
+  // Pick the custom facet (not a builtin) via the facet badge picker.
+  await page.getByTestId("facet-badge").click();
+  await page.getByRole("option", { name: "Research" }).click();
+  await expect(page.getByTestId("facet-badge")).toHaveText("Research");
+
+  // Navigate to an existing session — exits the draft.
+  await row(page, "Explore the fold reducer").click();
+  await openSidebar(page);
+  await expect(composer(page)).toHaveValue("");
+
+  // Reopen the new-session view (same project) — the custom pick rides draftConfigMap.
+  await page.getByRole("button", { name: "New session…" }).click();
+  await expect(page.getByTestId("facet-badge")).toHaveText("Research");
+
+  // And survives a full reload: pagehide flushes draftConfigMap to localStorage, boot
+  // restores it. Without the fix, loadDraftConfigMap drops "research" and this reverts
+  // to "Execute".
+  await page.reload();
+  await openSidebar(page);
+  await page.getByRole("button", { name: "New session…" }).click();
+  await expect(page.getByTestId("facet-badge")).toHaveText("Research");
+});
+
 test("submitting a plan-facet draft creates a session whose badge reads Plan", async ({
   page,
 }) => {

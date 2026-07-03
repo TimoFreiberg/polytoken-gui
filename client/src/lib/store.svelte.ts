@@ -2437,10 +2437,10 @@ function loadDraftConfigMap(): Record<string, StoredDraftConfig> {
       if (m && typeof m.provider === "string" && typeof m.modelId === "string")
         cfg.model = { provider: m.provider, modelId: m.modelId };
       if (typeof rec.thinking === "string") cfg.thinking = rec.thinking;
-      if (
-        typeof rec.facet === "string" &&
-        (rec.facet === "execute" || rec.facet === "plan")
-      )
+      // Facets are dynamic (the daemon extracts frontmatter `name`s from facet
+      // files), so any non-empty string is valid — not just the execute/plan
+      // builtins. An overly strict allowlist here silently dropped a custom pick.
+      if (typeof rec.facet === "string" && rec.facet !== "")
         cfg.facet = rec.facet;
       const pm = rec.permissionMonitor as string | undefined;
       if (

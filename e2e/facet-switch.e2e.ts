@@ -42,7 +42,9 @@ test("the facet badge sits in the composer toolbar, left of the model badge", as
   const order = await page
     .locator(".toolbar-right [data-testid]")
     .evaluateAll((els) => els.map((e) => e.getAttribute("data-testid")));
-  expect(order.indexOf("facet-badge")).toBeLessThan(order.indexOf("model-badge"));
+  expect(order.indexOf("facet-badge")).toBeLessThan(
+    order.indexOf("model-badge"),
+  );
 });
 
 test("Cmd+Shift+C cycles facets even when the composer is focused", async ({
@@ -63,10 +65,13 @@ test("Cmd+Shift+C cycles through all facets and wraps", async ({ page }) => {
   const badge = page.getByTestId("facet-badge");
   await expect(badge).toHaveText("Execute");
 
-  // The mock returns two facets: ["execute", "plan"]. Pressing the hotkey
-  // twice (N = facet count) should cycle execute → plan → execute (wrap).
+  // The mock returns three facets: ["execute", "plan", "research"]. Pressing the
+  // hotkey N (= facet count) times cycles execute → plan → research → execute (wrap).
   await page.keyboard.press("Meta+Shift+C");
   await expect(badge).toHaveText("Plan");
+
+  await page.keyboard.press("Meta+Shift+C");
+  await expect(badge).toHaveText("Research");
 
   await page.keyboard.press("Meta+Shift+C");
   await expect(badge).toHaveText("Execute");
