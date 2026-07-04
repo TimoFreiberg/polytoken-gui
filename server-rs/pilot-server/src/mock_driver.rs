@@ -6,18 +6,54 @@
 
 #![allow(dead_code)]
 
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::collections::VecDeque;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
 use parking_lot::Mutex;
 use pilot_protocol::session_driver::*;
 use pilot_protocol::wire::DeliveryMode;
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, oneshot};
 use tracing::warn;
 
 use async_trait::async_trait;
-use crate::driver::{NewSessionOptsData, PilotDriver};
+use crate::driver::{ArchiveResult, NewSessionOptsData, PilotDriver, WorktreeCleanupResult, WorktreeRetained};
+
+/// Whether a HostUiRequest is a dialog (awaiting a response), mirroring the TS
+/// `isDialogRequest`. Notify/Status/Widget are fire-and-forget ambient UI.
+fn is_dialog_request(r: &HostUiRequest) -> bool {
+    matches!(
+        r,
+        HostUiRequest::Confirm { .. }
+            | HostUiRequest::Input { .. }
+            | HostUiRequest::Select { .. }
+            | HostUiRequest::Editor { .. }
+            | HostUiRequest::Qna { .. }
+            | HostUiRequest::Plan { .. }
+            | HostUiRequest::Permission { .. }
+    )
+}
+
+/// Accessor for the requestId field shared by every HostUiRequest variant.
+/// (Free function — we can't add an inherent impl on a type from another crate.)
+fn request_id_of(r: &HostUiRequest) -> &str {
+    match r {
+        HostUiRequest::Confirm { request_id, .. }
+        | HostUiRequest::Input { request_id, .. }
+        | HostUiRequest::Select { request_id, .. }
+        | HostUiRequest::Editor { request_id, .. }
+        | HostUiRequest::Qna { request_id, .. }
+        | HostUiRequest::Plan { request_id, .. }
+        | HostUiRequest::Permission { request_id, .. }
+        | HostUiRequest::Notify { request_id, .. }
+        | HostUiRequest::Status { request_id, .. }
+        | HostUiRequest::Widget { request_id, .. }
+        | HostUiRequest::Title { request_id, .. }
+        | HostUiRequest::EditorText { request_id, .. }
+        | HostUiRequest::Reset { request_id, .. } => request_id,
+    }
+}
 
 // ── Fixture constants (ported from fixtures.ts) ─────────────────────────
 
@@ -25,6 +61,12 @@ const GREETING_PROMPT: &str = "Add a /health route to the server and a smoke tes
 const WORKSPACE_ID: &str = "ws-demo";
 const WORKSPACE_PATH: &str = "/Users/timo/src/pilot";
 const SESSION_ID: &str = "demo-session";
+
+/// The synthetic session list row prepended when a new session is created —
+/// faithful port of TS `NEW_SESSION_ENTRY` (fixtures.ts). `new_session` spreads
+/// the resolved cwd + a cwd-derived session id over this before prepending it.
+const NEW_SESSION_PATH: &str = "/sessions/new-session.jsonl";
+const NEW_SESSION_TITLE: &str = "New session";
 
 /// Markdown showcase text (ported from fixtures.ts MARKDOWN_SAMPLE).
 const MARKDOWN_SAMPLE: &str = "## Markdown showcase\n\nHere's **bold**, *italic*, ~~struck~~, and `inline code`, plus a [link](https://example.com).\n\n### A table\n\n| Feature     | Status |\n| ----------- | ------ |\n| Headers     | done   |\n| Tables      | done   |\n| Code blocks | done   |\n\n### A wide table\n\nA many-columned table is wider than a phone screen; it must scroll\nhorizontally instead of overflowing the viewport.\n\n| Country | Capital  | Population | Currency | Language   | Continent     | CallingCode |\n| ------- | -------- | ---------- | -------- | ---------- | ------------- | ----------- |\n| Japan   | Tokyo    | 125.7M     | JPY      | Japanese   | Asia          | +81         |\n| Brazil  | Brasília | 214.3M     | BRL      | Portuguese | South America | +55         |\n\n### A list\n\n1. First item\n2. Second item\n   - nested bullet\n   - another\n\n> A blockquote, for good measure.\n\n```ts\nfunction greet(name: string) {\n  return `hello, ${name}`;\n}\n```";
@@ -187,7 +229,14 @@ fn mock_default_config() -> SessionConfig {
 
 fn mock_session_list() -> Vec<SessionListEntry> {
     let now = chrono::Utc::now();
-    let iso_ago = |ms: i64| (now - chrono::Duration::milliseconds(ms)).to_rfc3339();
+    // JS `new Date(...).toISOString()` → `YYYY-MM-DDTHH:mm:ss.SSSZ` (trailing Z,
+    // exactly 3 fractional digits). chrono's default `to_rfc3339()` emits a
+    // `+00:00` offset + up to 9 digits, which is NOT byte-faithful to the TS
+    // wire format. Match `toISOString()` exactly via SecondsFormat::Millis + use_z.
+    let iso_ago = |ms: i64| {
+        (now - chrono::Duration::milliseconds(ms))
+            .to_rfc3339_opts(chrono::SecondsFormat::Millis, true)
+    };
     let day = 24 * 60 * 60 * 1000;
     vec![
         SessionListEntry {
@@ -238,11 +287,117 @@ fn mock_session_list() -> Vec<SessionListEntry> {
     ]
 }
 
+/// Seed the `worktrees` map from the fixture session list — faithful port of TS
+/// `seedWorktrees(SESSION_LIST)`: every entry whose `worktree` is set contributes
+/// `{ base, name }` keyed by its cwd. The static `mock_session_list()` baseline
+/// carries no worktree rows, so this yields an empty map (as in TS where SESSION_LIST
+/// has no worktree entries either); `new_session(worktree: true)` populates it.
+fn seed_worktrees(sessions: &[SessionListEntry]) -> std::collections::HashMap<String, WorktreeMeta> {
+    sessions
+        .iter()
+        .filter_map(|s| {
+            s.worktree.as_ref().map(|w| {
+                (
+                    s.cwd.clone(),
+                    WorktreeMeta { base: w.base.clone(), name: w.name.clone() },
+                )
+            })
+        })
+        .collect()
+}
+
+/// Resolve a path the way TS `path.resolve` does for the dir-picker: normalize
+/// `.`/`..`, drop trailing slashes, and make it absolute against `/` (the mock's
+/// fixture paths are already absolute under `/Users/timo` or `$HOME`). Empty →
+/// `$HOME` (the picker's default open). Mirrors TS `listDir`/`statPath`'s
+/// `resolve(path.trim())`.
+fn mock_resolve(path: Option<&str>) -> String {
+    use std::path::{Component, Path, PathBuf};
+    let raw = path.map(|s| s.trim()).filter(|s| !s.is_empty());
+    let (mut out, rel): (PathBuf, Option<&Path>) = match raw {
+        Some(p) if Path::new(p).is_absolute() => (PathBuf::from("/"), Some(Path::new(p))),
+        // Node's `path.resolve(p)` resolves a non-empty relative path against
+        // `process.cwd()`, NOT `$HOME`. (The empty/whitespace → `$HOME` case is
+        // handled by the `None` arm below, mirroring TS `listDir`'s `homedir()`.)
+        Some(p) => (
+            std::env::current_dir().unwrap_or_else(|_| PathBuf::from("/")),
+            Some(Path::new(p)),
+        ),
+        None => return std::env::var("HOME").unwrap_or_else(|_| "/".to_string()),
+    };
+    for comp in rel.unwrap().components() {
+        match comp {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                out.pop();
+            }
+            Component::Normal(c) => out.push(c),
+            Component::RootDir | Component::Prefix(_) => {} // already rooted (out starts at "/")
+        }
+    }
+    let s = out.to_string_lossy().into_owned();
+    if s.is_empty() { "/".to_string() } else { s }
+}
+
+/// The synthetic directory tree for the new-session picker — faithful port of TS
+/// `MOCK_DIR_LAYOUT` + `MOCK_DIR_TREE` (fixtures.ts / mock-driver.ts). Keyed by
+/// absolute path under BOTH `$HOME` and `/Users/timo` (the fixture-cwd prefix) so
+/// the picker has content regardless of the dev host's `$HOME`; child names are
+/// stable. `demo`/`elsewhere` are empty project dirs e2e navigates into; `dirty`
+/// simulates uncommitted changes (archive keeps its worktree). The picker
+/// (`list_dir`) reads this; `stat_path` reports existence from it. The mock never
+/// touches the real disk.
+fn mock_dir_tree() -> &'static std::collections::HashMap<String, Vec<String>> {
+    use std::sync::OnceLock;
+    static TREE: OnceLock<std::collections::HashMap<String, Vec<String>>> = OnceLock::new();
+    TREE.get_or_init(|| {
+        // rel-path → child names (TS MOCK_DIR_LAYOUT). "" is the root ($HOME).
+        let layout: &[(&str, &[&str])] = &[
+            ("", &["src", "Documents", "Downloads", "Projects", ".config"]),
+            ("src", &["pilot", "pi", "pi-gui", "kellercomm", "scratch", "demo", "elsewhere", "dirty"]),
+            ("src/pilot", &["client", "server", "protocol", "e2e", "docs"]),
+            ("src/pi", &["src", "docs", "examples"]),
+            ("Documents", &["notes", "receipts"]),
+            ("Projects", &["website"]),
+            (".config", &["pi", "fish"]),
+        ];
+        let roots: Vec<String> = std::iter::once(std::env::var("HOME").unwrap_or_else(|_| String::new()))
+            .chain(std::iter::once("/Users/timo".to_string()))
+            .filter(|r| !r.is_empty())
+            .collect::<std::collections::HashSet<_>>()
+            .into_iter()
+            .collect();
+        let mut tree: std::collections::HashMap<String, Vec<String>> = std::collections::HashMap::new();
+        for root in &roots {
+            for (rel, kids) in layout {
+                let key = if rel.is_empty() {
+                    root.clone()
+                } else {
+                    format!("{root}/{rel}")
+                };
+                tree.insert(key, kids.iter().map(|s| s.to_string()).collect());
+            }
+        }
+        tree
+    })
+}
+
 // ── Script steps + event builders ──────────────────────────────────────
 
 fn base() -> SessionEventBase {
     SessionEventBase {
         session_ref: mock_session_ref(),
+        timestamp: ts(),
+        run_id: None,
+    }
+}
+
+/// Like `base()` but stamps a specific session ref — used by `respond_ui`, which
+/// must emit under the dialog's session (not always the default mock session),
+/// mirroring TS `respondUi`'s `pending?.sessionRef ?? SESSION_REF`.
+fn base_with_ref(session_ref: SessionRef) -> SessionEventBase {
+    SessionEventBase {
+        session_ref,
         timestamp: ts(),
         run_id: None,
     }
@@ -359,6 +514,60 @@ fn deltas(text: &str, chunk: usize) -> Vec<String> {
     out
 }
 
+/// Render submitted Q&A into the same transcript text the answer extension's
+/// `formatQnA` produces (Q / context / Options / A lines), so the mock exercises
+/// the client's parse-and-render path. Faithful port of TS `formatQnaText`.
+fn format_qna_text(questions: &[QnaQuestion], answers: &[QnaAnswer]) -> String {
+    let mut parts: Vec<String> = Vec::new();
+    for (i, q) in questions.iter().enumerate() {
+        let a = answers.get(i);
+        parts.push(format!("Q: {}", q.question));
+        if let Some(ctx) = &q.context {
+            parts.push(format!("> {ctx}"));
+        }
+        let opts: &[QnaQuestionOption] = q.options.as_deref().unwrap_or(&[]);
+        let has_options = !opts.is_empty();
+        if has_options {
+            let picked: std::collections::HashSet<i64> = a
+                .map(|ans| ans.selected_option_indices.iter().copied().collect())
+                .unwrap_or_default();
+            parts.push("Options:".into());
+            for (j, opt) in opts.iter().enumerate() {
+                let mark = if picked.contains(&(j as i64)) { "[x]" } else { "[ ]" };
+                parts.push(format!("  {mark} {}", opt.label));
+            }
+        }
+        let chosen: Vec<String> = match a {
+            Some(ans) => ans
+                .selected_option_indices
+                .iter()
+                .filter(|&&idx| idx >= 0 && (idx as usize) < opts.len())
+                .map(|&idx| opts[idx as usize].label.clone())
+                .collect(),
+            None => Vec::new(),
+        };
+        let mut segments = chosen;
+        let custom = a
+            .map(|ans| ans.custom_text.trim().to_string())
+            .unwrap_or_default();
+        if !custom.is_empty() {
+            segments.push(if has_options {
+                format!("(typed) {custom}")
+            } else {
+                custom
+            });
+        }
+        let answer = if segments.is_empty() {
+            "(no answer)".to_string()
+        } else {
+            segments.join(", ")
+        };
+        parts.push(format!("A: {answer}"));
+        parts.push(String::new());
+    }
+    parts.join("\n").trim_end().to_string()
+}
+
 /// Script step for delayed playback.
 struct ScriptStep {
     wait_ms: u64,
@@ -451,41 +660,186 @@ fn greeting_script() -> Vec<ScriptStep> {
     steps
 }
 
-/// Build a prompt reply script.
-fn prompt_reply_script(text: &str, _prompt_id: Option<&str>) -> Vec<ScriptStep> {
+/// Build a prompt reply script — faithful port of TS `promptReply()`.
+/// Emits: userMessage (with stable branch handles) → sessionUpdated(running) →
+/// thinking deltas → text deltas → read tool span → text deltas → runCompleted.
+fn prompt_reply_script(text: &str, prompt_id: Option<&str>) -> Vec<ScriptStep> {
+    // Stable branch handles for this turn, derived from the user message id so the
+    // turn-final assistant offers "branch from here" and the prompt offers "branch
+    // from this prompt" — mirroring the real daemon. (See TS promptReply.)
+    let u_id = prompt_id
+        .map(|p| p.to_string())
+        .unwrap_or_else(|| format!("u-{}", ts()));
+    let call_id = format!("t-{}", ts());
+
     let mut steps = vec![
-        ScriptStep { wait_ms: 0, event: SessionDriverEvent::UserMessage { base: base(), id: "u2".into(), text: text.into(), entry_id: None, images: None } },
+        ScriptStep { wait_ms: 0, event: SessionDriverEvent::UserMessage {
+            base: base(), id: u_id.clone(), text: text.into(), images: None,
+            entry_id: Some(format!("e-{u_id}")),
+        }},
+        ScriptStep { wait_ms: 0, event: SessionDriverEvent::SessionUpdated {
+            base: base(), snapshot: mock_snapshot(SessionStatus::Running),
+        }},
     ];
 
-    // A short reply with a tool span
-    for chunk in deltas("Looking into this now.", 3) {
-        steps.push(ScriptStep { wait_ms: 28, event: SessionDriverEvent::AssistantDelta { base: base(), text: chunk, channel: Some(AssistantDeltaChannel::Text), entry_id: None } });
+    // Thinking deltas (rendered under a "Thought process" collapsed block).
+    for chunk in deltas("Let me think about the cleanest way to do that.", 3) {
+        steps.push(ScriptStep { wait_ms: 28, event: SessionDriverEvent::AssistantDelta {
+            base: base(), text: chunk, channel: Some(AssistantDeltaChannel::Thinking), entry_id: None,
+        }});
     }
 
-    steps.push(ScriptStep { wait_ms: 100, event: SessionDriverEvent::ToolStarted {
-        base: base(), call_id: "t2".into(), tool_name: "bash".into(),
-        label: Some("Run shell command".into()),
-        description: Some("Execute a command in the workspace shell".into()),
-        input: Some(serde_json::json!({"command": "cat src/index.ts"})),
-    }});
-    advance_ts(280);
-    steps.push(ScriptStep { wait_ms: 200, event: SessionDriverEvent::ToolFinished {
-        base: base(), call_id: "t2".into(), success: true,
-        output: Some(serde_json::json!("// file contents here")),
-        images: None,
-    }});
-
-    for chunk in deltas("Done! The change is ready.", 3) {
-        steps.push(ScriptStep { wait_ms: 28, event: SessionDriverEvent::AssistantDelta { base: base(), text: chunk, channel: Some(AssistantDeltaChannel::Text), entry_id: None } });
+    // Text deltas — the visible narration.
+    for chunk in deltas("Good question. Here's the plan: I'll start by checking the existing structure, then make the change incrementally so each step is verifiable.", 3) {
+        steps.push(ScriptStep { wait_ms: 28, event: SessionDriverEvent::AssistantDelta {
+            base: base(), text: chunk, channel: Some(AssistantDeltaChannel::Text), entry_id: None,
+        }});
     }
 
-    steps.push(ScriptStep { wait_ms: 60, event: SessionDriverEvent::RunCompleted {
+    // Read tool span — ~1.2s (a file read that touches disk).
+    steps.extend(tool_span(
+        &call_id, "read", "Read file", Some("Read a file from the workspace"),
+        serde_json::json!({"path": "server/src/index.ts"}),
+        true,
+        serde_json::json!("// 42 lines — Bun.serve with WS + /debug/state"),
+        140, 260, 1200,
+    ));
+
+    // Final text deltas.
+    for chunk in deltas("That confirms it. Making the change now and then I'll verify it builds.", 3) {
+        steps.push(ScriptStep { wait_ms: 28, event: SessionDriverEvent::AssistantDelta {
+            base: base(), text: chunk, channel: Some(AssistantDeltaChannel::Text), entry_id: None,
+        }});
+    }
+
+    steps.push(ScriptStep { wait_ms: 80, event: SessionDriverEvent::RunCompleted {
         base: base(),
         snapshot: mock_snapshot(SessionStatus::Idle),
-        user_entry_id: None,
-        assistant_entry_id: None,
+        user_entry_id: Some(format!("e-{u_id}")),
+        assistant_entry_id: Some(format!("e-a-{u_id}")),
     }});
 
+    steps
+}
+
+/// The synthetic sidebar row prepended for a freshly-created session — faithful
+/// port of TS `NEW_SESSION_ENTRY` (fixtures.ts), spread with the resolved cwd +
+/// a cwd-derived session id by `new_session`. Empty preview/count, not archived,
+/// no worktree field (listSessions overlays that). Timestamps are `isoAgo(0)` — a
+/// REAL RFC3339 now (NOT the mock clock's `ts()`): the client sorts rows by
+/// `updatedAt` lexicographically, and `ts()` returns a zero-padded 10-digit mock
+/// string (e.g. "0000037045") that sorts BEFORE the fixture rows' real ISO
+/// timestamps, dropping the just-created (newest) row to the bottom of the
+/// group instead of the top.
+fn new_session_entry(session_id: &str, cwd: &str) -> SessionListEntry {
+    let now = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+    SessionListEntry {
+        session_id: session_id.into(),
+        path: NEW_SESSION_PATH.into(),
+        cwd: cwd.into(),
+        display_name: Some(NEW_SESSION_TITLE.into()),
+        preview: String::new(),
+        user_message_count: 0,
+        updated_at: now.clone(),
+        created_at: now.clone(),
+        last_user_message_at: now,
+        parent_session_path: None,
+        usage: None,
+        archived: false,
+        worktree: None,
+    }
+}
+
+/// Seed events for a freshly created (empty) session — faithful port of TS
+/// `newSessionSeed`. `dir`/`config` are the ALREADY-RESOLVED cwd + config — the
+/// `new_session` driver method derives them (worktree suffix, chosen model's
+/// thinking levels) the way TS `newSession()` does before calling `newSessionSeed`.
+/// Returns the seed events + the sessionOpened snapshot (so the caller can
+/// remember it for the deferred first-prompt flow).
+fn new_session_seed(
+    dir: &str,
+    config: SessionConfig,
+    facet: Option<String>,
+    permission_monitor: PermissionMonitorMode,
+) -> (Vec<SessionDriverEvent>, SessionSnapshot) {
+    let ref_id = session_ref_for("new-session");
+    let workspace = if dir == WORKSPACE_PATH {
+        mock_workspace()
+    } else {
+        WorkspaceRef {
+            workspace_id: dir.into(),
+            path: dir.into(),
+            display_name: Some(
+                dir.trim_end_matches('/')
+                    .rsplit('/')
+                    .next()
+                    .unwrap_or(dir)
+                    .to_string(),
+            ),
+        }
+    };
+    let snapshot = SessionSnapshot {
+        r#ref: ref_id.clone(),
+        workspace,
+        title: "New session".into(),
+        status: SessionStatus::Idle,
+        updated_at: ts(),
+        archived_at: None,
+        preview: None,
+        config: Some(config),
+        usage: None,
+        running_run_id: None,
+        queued_messages: None,
+        facet,
+        permission_monitor: Some(permission_monitor),
+        adventurous_handoff: None,
+        notification_autodrain: None,
+        active_plan: None,
+        goal: None,
+        flags: None,
+        todos: None,
+        mcp_servers: None,
+    };
+    let events = vec![
+        SessionDriverEvent::SessionOpened { base: SessionEventBase { session_ref: ref_id, timestamp: ts(), run_id: None }, snapshot: snapshot.clone() },
+    ];
+    (events, snapshot)
+}
+
+/// The first turn of a freshly created session, streamed under that session's OWN
+/// ref — faithful port of TS `newSessionReply`. The deferred-creation flow
+/// delivers the first prompt only after the new session is focused, so its turn
+/// must land in the new session's transcript. Streams "On it — the session's up."
+fn new_session_reply(template: &SessionSnapshot, user_text: &str, user_id: &str, images: &[ImageContent]) -> Vec<ScriptStep> {
+    let ref_id = template.r#ref.clone();
+    let b = || SessionEventBase { session_ref: ref_id.clone(), timestamp: ts(), run_id: None };
+    let snap = |status: SessionStatus| SessionSnapshot {
+        status,
+        updated_at: ts(),
+        ..template.clone()
+    };
+    let reply = "On it — the session's up. Let me take a first look at what you asked for.";
+    let mut steps = vec![
+        ScriptStep { wait_ms: 0, event: SessionDriverEvent::UserMessage {
+            base: b(), id: user_id.into(), text: user_text.into(),
+            images: if images.is_empty() { None } else { Some(images.to_vec()) },
+            entry_id: Some(format!("e-{user_id}")),
+        }},
+        ScriptStep { wait_ms: 0, event: SessionDriverEvent::SessionUpdated { base: b(), snapshot: snap(SessionStatus::Running) } },
+    ];
+    // Stream the reply in ~3-word chunks (same cadence as deltas, inlined so the
+    // events carry the new session's ref instead of base()'s demo ref).
+    for chunk in deltas(reply, 3) {
+        steps.push(ScriptStep { wait_ms: 32, event: SessionDriverEvent::AssistantDelta {
+            base: b(), text: chunk, channel: Some(AssistantDeltaChannel::Text), entry_id: None,
+        }});
+    }
+    steps.push(ScriptStep { wait_ms: 80, event: SessionDriverEvent::RunCompleted {
+        base: b(),
+        snapshot: snap(SessionStatus::Idle),
+        user_entry_id: Some(format!("e-{user_id}")),
+        assistant_entry_id: Some(format!("e-a-{user_id}")),
+    }});
     steps
 }
 
@@ -497,6 +851,94 @@ pub struct MockDriver {
     /// Generation counter — bumped on reset(). play_script captures the current
     /// generation and aborts if it changes (cancel pending events on reset).
     generation: Arc<AtomicU64>,
+    /// The most recently created session's id + seed snapshot, so the FIRST prompt
+    /// that follows (the deferred-creation first turn) streams under that session's
+    /// own ref instead of the demo session's. Consumed (cleared) by that first prompt.
+    /// Mirrors the TS MockDriver's `lastCreated`.
+    last_created: Mutex<Option<LastCreated>>,
+    /// Pending host-UI dialogs (keyed by requestId), so respondUi can look up the
+    /// original request (e.g. a Q&A's questions) when forming the tool result.
+    /// Mirrors the TS MockDriver's `pendingDialogs`.
+    pending_dialogs: Arc<Mutex<std::collections::HashMap<String, PendingDialog>>>,
+    /// The adventurous-handoff flag, toggled by `toggle_adventurous_handoff`.
+    /// Mirrors the TS MockDriver's `adventurousHandoff` private field.
+    adventurous_handoff: Arc<std::sync::Mutex<bool>>,
+    /// In-flight script flush handle. When `play_script` starts a new script, it
+    /// flushes any previous one first — mirroring TS `play()` → `flushScheduled()`,
+    /// which fires all pending steps immediately (cancelling timers) so two scripts
+    /// never interleave. The spawned task parks on `flush_rx` between steps; a flush
+    /// closes the channel, which makes `flush_rx.try_recv()` return `Err(Closed)`,
+    /// signalling the task to drain its remaining steps with zero delay.
+    in_flight: Arc<Mutex<Option<InFlightHandle>>>,
+    /// Monotonic per-script id, so a spawned task can compare-and-clear `in_flight`
+    /// only for its own handle (TOCTOU: an old task finishing concurrently with a
+    /// new `play_script` must not null out the newer handle).
+    next_script_id: AtomicU64,
+    /// Mutable session list — `mock_session_list()` at construction + reset, with a
+    /// synthetic "new" row PREPENDED by `new_session` (mirrors TS `this.sessions`).
+    /// `list_sessions` returns this overlaid with worktree/archive state. The TS
+    /// mock served this mutable list so a freshly-created session appears in the
+    /// sidebar immediately; the Rust mock previously returned the static list and a
+    /// new session never showed up.
+    sessions: Arc<Mutex<Vec<SessionListEntry>>>,
+    /// Worktrees the mock "created" (the `-worktree` sibling dirs), keyed by the
+    /// worktree cwd (== the session's cwd) → {base, name}. Mirrors the TS
+    /// `worktrees` map (seeded from SESSION_LIST at construction + reset) so
+    /// `list_sessions` flags worktree-backed rows with their parent project for
+    /// grouping, and cleanup/archive only ever touch mock worktrees.
+    worktrees: Arc<Mutex<std::collections::HashMap<String, WorktreeMeta>>>,
+    /// cwds of mock worktrees created under a `dirty` project — simulate
+    /// uncommitted changes so archive keeps them + reports `worktreeRetained`
+    /// (mirrors TS `dirtyWorktrees`).
+    dirty_worktrees: Arc<Mutex<std::collections::HashSet<String>>>,
+    /// cwds whose worktree dir has been reaped (cleaned up / archived). Tombstone:
+    /// the meta stays in `worktrees` so the orphaned session keeps grouping under
+    /// its parent project, but the live affordances + ownership gate drop it
+    /// (mirrors TS `reapedWorktrees`).
+    reaped_worktrees: Arc<Mutex<std::collections::HashSet<String>>>,
+}
+
+/// Handle to a currently-running script, so the next `play_script` can flush it.
+struct InFlightHandle {
+    /// Per-script id, so the spawned task can compare-and-clear `in_flight` only
+    /// when it still holds THIS handle (prevents a late-exiting old task from
+    /// nulling out a newer script's handle — TOCTOU).
+    script_id: u64,
+    /// Remaining steps the spawned task hasn't fired yet. The task PEEKS the front
+    /// step while sleeping and only `pop_front()`s it immediately before firing —
+    /// so a flush arriving mid-sleep can still drain (and fire) that step. Mirrors
+    /// TS `play()`, where a timer splices its entry out of `scheduled` only inside
+    /// its own callback, immediately before `fireStep`; `flushScheduled` fires ALL
+    /// still-pending entries in order. The pop+fire happens UNDER this lock so the
+    /// flusher's drain can't interleave between them (ordering — see play_script).
+    remaining: Arc<Mutex<VecDeque<ScriptStep>>>,
+    /// Set by the flusher once it has drained + fired `remaining`. The task checks
+    /// this after waking from sleep, before pop+fire, so it never double-fires a
+    /// step the flusher already emitted.
+    drained: Arc<AtomicBool>,
+    /// Closed by the flusher to signal the spawned task to stop sleeping.
+    flush_tx: oneshot::Sender<()>,
+}
+
+/// The ref + snapshot of a just-created session, consumed by the first prompt.
+struct LastCreated {
+    session_id: String,
+    snapshot: SessionSnapshot,
+}
+
+/// A pending host-UI dialog, tracked so respondUi can look up the original
+/// request (e.g. a Q&A's questions) when forming the answer tool result.
+struct PendingDialog {
+    request: HostUiRequest,
+    session_ref: SessionRef,
+}
+
+/// A mock worktree's parent-project metadata, keyed by the worktree cwd in the
+/// `worktrees` map. Mirrors TS `{ base, name }` — `base` is the parent project
+/// dir the worktree groups under, `name` the worktree's own dir name.
+struct WorktreeMeta {
+    base: String,
+    name: String,
 }
 
 impl MockDriver {
@@ -505,6 +947,15 @@ impl MockDriver {
             listeners: Arc::new(Mutex::new(Vec::new())),
             next_id: Mutex::new(0),
             generation: Arc::new(AtomicU64::new(0)),
+            last_created: Mutex::new(None),
+            pending_dialogs: Arc::new(Mutex::new(std::collections::HashMap::new())),
+            adventurous_handoff: Arc::new(std::sync::Mutex::new(false)),
+            in_flight: Arc::new(Mutex::new(None)),
+            next_script_id: AtomicU64::new(0),
+            sessions: Arc::new(Mutex::new(mock_session_list())),
+            worktrees: Arc::new(Mutex::new(seed_worktrees(&mock_session_list()))),
+            dirty_worktrees: Arc::new(Mutex::new(std::collections::HashSet::new())),
+            reaped_worktrees: Arc::new(Mutex::new(std::collections::HashSet::new())),
         }
     }
 
@@ -516,24 +967,171 @@ impl MockDriver {
     }
 
     fn play_script(&self, steps: Vec<ScriptStep>) {
+        // Serialize replays: instantly settle any in-flight script before starting a
+        // new one — faithful port of TS `play()` → `flushScheduled()`. Two concurrent
+        // timer sequences interleave their assistantDelta events, and foldEvent appends
+        // each delta to whichever assistant is currently open — so an overlapping
+        // greeting + reply splits one thinking block across two turns and leaks the
+        // greeting's tail text into the reply. Flushing keeps the mock's
+        // one-turn-at-a-time semantics, matching the real driver.
+        self.flush_scheduled();
+
+        let remaining: Arc<Mutex<VecDeque<ScriptStep>>> =
+            Arc::new(Mutex::new(steps.into_iter().collect()));
+        let drained = Arc::new(AtomicBool::new(false));
+        let (flush_tx, mut flush_rx) = oneshot::channel::<()>();
+        let script_id = self.next_script_id.fetch_add(1, Ordering::Relaxed);
+        *self.in_flight.lock() = Some(InFlightHandle {
+            script_id,
+            remaining: remaining.clone(),
+            drained: drained.clone(),
+            flush_tx,
+        });
+
         let listeners = self.listeners.clone();
         let gen_ctr = self.generation.clone();
         let start_gen = gen_ctr.load(Ordering::Relaxed);
+        let pending = self.pending_dialogs.clone();
+        let in_flight = self.in_flight.clone();
         tokio::spawn(async move {
-            for step in steps {
-                if step.wait_ms > 0 {
-                    tokio::time::sleep(Duration::from_millis(step.wait_ms)).await;
+            loop {
+                // PEEK (don't pop) the front step while we may still sleep on it.
+                // TS `play()` keeps every not-yet-fired timer entry in `scheduled`;
+                // the timer only splices its entry out inside its own callback,
+                // immediately before `fireStep`. We mirror that: the step stays in
+                // the deque across the await so a flush can still drain + fire it.
+                let wait_ms = {
+                    let q = remaining.lock();
+                    match q.front() {
+                        Some(step) => step.wait_ms,
+                        None => break,
+                    }
+                };
+                if wait_ms > 0 {
+                    // Race the delay against a flush. On the flush arm we return
+                    // WITHOUT popping — the step is still in the deque, so the
+                    // flusher's drain(..) picks it up and fires it. (No dropped step.)
+                    tokio::select! {
+                        _ = tokio::time::sleep(Duration::from_millis(wait_ms)) => {}
+                        _ = &mut flush_rx => { return; }
+                    }
                 }
                 // Abort if reset() was called since we started.
                 if gen_ctr.load(Ordering::Relaxed) != start_gen {
                     return;
                 }
-                let listeners = listeners.lock();
-                for (_, tx) in listeners.iter() {
-                    let _ = tx.try_send(step.event.clone());
+                // The flusher may have drained + fired `remaining` while we slept
+                // (it sets `drained` under the same lock). If so, skip pop+fire to
+                // avoid duplicating a step the flusher already emitted. The drained
+                // check + pop are atomic under one lock hold, matching the flusher's
+                // atomic set-drained + drain — so the two can't interleave.
+                //
+                // ORDERING: fire_step runs UNDER the `remaining` lock (no `drop(q)`
+                // first). Without this, on a multi-threaded runtime a flusher could
+                // run in the gap between our pop and our fire: it takes the handle,
+                // sets `drained`, drains+fires the LATER queued steps, then we resume
+                // and fire this earlier step — emitting later steps before the popped
+                // one and violating TS's strict step order (transcript fold order).
+                // TS `play()` splices a timer entry out and calls `fireStep` in the
+                // SAME synchronous JS callback; `flushScheduled` cannot run between
+                // splice and fireStep on the single event loop. Holding the lock here
+                // reproduces that atomicity: pop+fire is one critical section, so the
+                // flusher's drain (which locks `remaining`) can't observe a popped-
+                // but-unfired step — it only ever drains steps AFTER the one we fire.
+                // fire_step is non-blocking (try_send + a HashMap insert), so holding
+                // the lock across it is cheap and deadlock-free: it takes
+                // `pending`→`listeners`, never the inverse, and no path takes
+                // `remaining` after either.
+                let fired_here = {
+                    let mut q = remaining.lock();
+                    if drained.load(Ordering::Relaxed) {
+                        false
+                    } else {
+                        match q.pop_front() {
+                            Some(step) => {
+                                fire_step(&step, &listeners, &pending);
+                                true
+                            }
+                            None => false,
+                        }
+                    }
+                };
+                if !fired_here {
+                    // Either the queue was drained by the flusher (stop — it owns
+                    // the rest) or it emptied naturally (loop will break next iter).
+                    if drained.load(Ordering::Relaxed) {
+                        return;
+                    }
+                }
+            }
+            // Script completed normally — clear the in-flight handle, but ONLY if it
+            // still points at THIS task (compare-and-clear). A concurrent
+            // `play_script` may have flushed us and installed a newer handle; we must
+            // not null that out (TOCTOU).
+            {
+                let mut h = in_flight.lock();
+                if let Some(current) = h.as_ref() {
+                    if current.script_id == script_id {
+                        *h = None;
+                    }
                 }
             }
         });
+    }
+
+    /// Fire all remaining steps of the in-flight script immediately, in order,
+    /// then clear the handle. Mirrors TS `flushScheduled()` — cancelling timers
+    /// and emitting each step so a new replay never overlaps the previous one.
+    /// Invariant: fires EVERY not-yet-fired step (including the one the task is
+    /// currently sleeping on, which stays in the deque), with zero dropped and
+    /// zero duplicated (the `drained` flag makes the task skip pop+fire).
+    fn flush_scheduled(&self) {
+        let handle = { self.in_flight.lock().take() };
+        if let Some(handle) = handle {
+            // Mark drained BEFORE draining so the task, if it wakes from sleep
+            // concurrently, sees `drained` and skips pop+fire (no double-fire).
+            // The drain holds `remaining`, serializing against the task's pop+fire
+            // (which now also fires UNDER that lock — see play_script). By the time
+            // we release the lock the deque is EMPTY, so the task can't pop any of
+            // the steps we drained: its next `front()` is None (break) and, even on
+            // a racy re-entry, `drained` is set (return). That makes firing the
+            // drained steps OUTSIDE the lock safe — we own all of them exclusively,
+            // matching TS `flushScheduled`'s single synchronous clear+fire loop.
+            let drained_steps: Vec<ScriptStep> = {
+                let _ = handle.flush_tx.send(());
+                handle.drained.store(true, Ordering::Relaxed);
+                handle.remaining.lock().drain(..).collect()
+            };
+            let listeners = self.listeners.clone();
+            let pending = self.pending_dialogs.clone();
+            for step in drained_steps {
+                fire_step(&step, &listeners, &pending);
+            }
+        }
+    }
+}
+
+/// Emit one step's event plus its side bookkeeping. Shared by the timer path and
+/// `flush_scheduled` so a flushed event behaves exactly like a fired one — faithful
+/// port of TS `fireStep()`.
+fn fire_step(
+    step: &ScriptStep,
+    listeners: &Arc<Mutex<Vec<(usize, mpsc::Sender<SessionDriverEvent>)>>>,
+    pending: &Arc<Mutex<std::collections::HashMap<String, PendingDialog>>>,
+) {
+    // Track dialog requests so respondUi can look them up later
+    // (mirrors TS fireStep's pendingDialogs.set for hostUiRequest).
+    if let SessionDriverEvent::HostUiRequest { base, request } = &step.event {
+        if is_dialog_request(request) {
+            pending.lock().insert(
+                request_id_of(request).to_string(),
+                PendingDialog { request: request.clone(), session_ref: base.session_ref.clone() },
+            );
+        }
+    }
+    let listeners = listeners.lock();
+    for (_, tx) in listeners.iter() {
+        let _ = tx.try_send(step.event.clone());
     }
 }
 
@@ -562,8 +1160,28 @@ impl PilotDriver for MockDriver {
         self.listeners.lock().retain(|(sid, _)| *sid != id);
     }
 
-    async fn prompt(&self, text: String, _deliver_as: Option<DeliveryMode>, _session_id: Option<SessionId>, _images: Vec<ImageContent>, _prompt_id: Option<String>) {
-        let steps = prompt_reply_script(&text, _prompt_id.as_deref());
+    async fn prompt(&self, text: String, _deliver_as: Option<DeliveryMode>, session_id: Option<SessionId>, images: Vec<ImageContent>, prompt_id: Option<String>) {
+        // Deferred-creation first turn: this prompt targets the session we JUST
+        // created, so stream it under that session's own ref (not the demo
+        // session's) and consume the one-shot marker. Subsequent prompts fall
+        // through to the normal demo-session reply. (Mirrors TS prompt().)
+        let pid = prompt_id.clone().unwrap_or_else(|| format!("u-{}", ts()));
+        if let Some(session_id) = session_id {
+            let taken = {
+                let mut lc = self.last_created.lock();
+                if lc.as_ref().map(|c| c.session_id == session_id).unwrap_or(false) {
+                    lc.take()
+                } else {
+                    None
+                }
+            };
+            if let Some(created) = taken {
+                let steps = new_session_reply(&created.snapshot, &text, &pid, &images);
+                self.play_script(steps);
+                return;
+            }
+        }
+        let steps = prompt_reply_script(&text, Some(&pid));
         self.play_script(steps);
     }
 
@@ -586,31 +1204,47 @@ impl PilotDriver for MockDriver {
             HostUiResponse::Answers { request_id, .. } => request_id.clone(),
             HostUiResponse::Cancelled { request_id, .. } => request_id.clone(),
         };
+        // Look up the pending dialog (mirrors TS pendingDialogs.get/delete) so we
+        // can recover the Q&A questions for the answer tool's input + formatted text.
+        let pending = self.pending_dialogs.lock().remove(&request_id);
+        let session_ref = pending
+            .as_ref()
+            .map(|d| d.session_ref.clone())
+            .unwrap_or_else(mock_session_ref);
         // Emit HostUiResolved to clear the dialog.
         self.emit(SessionDriverEvent::HostUiResolved {
-            base: base(),
+            base: base_with_ref(session_ref.clone()),
             request_id: request_id.clone(),
         });
 
         match &response {
             HostUiResponse::Answers { answers, .. } => {
-                // Q&A: emit a toolStarted/toolFinished pair with the answer text,
-                // mirroring the real driver where the `answer` tool records the result.
+                // Q&A: mirror the real driver, where the `answer` tool records the
+                // filled-in Q&A as its result. Emit a toolStarted/toolFinished pair
+                // (not a notify) so the client's tool-result render path is exercised.
+                let questions: Vec<QnaQuestion> = match &pending {
+                    Some(d) => match &d.request {
+                        HostUiRequest::Qna { questions, .. } => questions.clone(),
+                        _ => Vec::new(),
+                    },
+                    None => Vec::new(),
+                };
+                let text = format_qna_text(&questions, answers);
                 let call_id = format!("answer-{request_id}");
                 self.emit(SessionDriverEvent::ToolStarted {
-                    base: base(),
+                    base: base_with_ref(session_ref.clone()),
                     call_id: call_id.clone(),
                     tool_name: "answer".into(),
                     label: Some("Answer".into()),
                     description: None,
-                    input: Some(serde_json::json!({"questions": []})),
+                    input: Some(serde_json::json!({ "questions": questions })),
                 });
                 self.emit(SessionDriverEvent::ToolFinished {
-                    base: base(),
+                    base: base_with_ref(session_ref.clone()),
                     call_id,
                     success: true,
                     output: Some(serde_json::json!({
-                        "content": [{"type": "text", "text": format!("Q&A answered ({} answers)", answers.len())}]
+                        "content": [{ "type": "text", "text": text }]
                     })),
                     images: None,
                 });
@@ -630,7 +1264,7 @@ impl PilotDriver for MockDriver {
                     HostUiResponse::Answers { .. } => unreachable!(),
                 };
                 self.emit(SessionDriverEvent::HostUiRequest {
-                    base: base(),
+                    base: base_with_ref(session_ref.clone()),
                     request: HostUiRequest::Notify {
                         request_id: format!("resolved-{request_id}"),
                         message: summary,
@@ -641,10 +1275,188 @@ impl PilotDriver for MockDriver {
         }
     }
 
-    async fn list_sessions(&self) -> Vec<SessionListEntry> { mock_session_list() }
+    async fn list_sessions(&self) -> Vec<SessionListEntry> {
+        // Faithful port of TS `listSessions()`: clone the mutable `sessions` list
+        // and overlay each row's `worktree` field from the driver's `worktrees` map
+        // (carrying `reaped` from the tombstone set). The static baseline rows carry
+        // no worktree meta; rows `new_session` created under `worktree: true` do, so
+        // the sidebar groups them under their parent project and shows the path chip.
+        // (TS also overlays a transient `liveCountBumps` on `userMessageCount`; the
+        // Rust mock never tracked that overlay — it's exercised only by specs outside
+        // this fix's scope, so it's omitted here to avoid changing get_usage behavior.)
+        let worktrees = self.worktrees.lock();
+        let reaped = self.reaped_worktrees.lock();
+        self.sessions.lock().iter().map(|s| {
+            let mut s = s.clone();
+            if let Some(meta) = worktrees.get(&s.cwd) {
+                s.worktree = Some(WorktreeInfo {
+                    path: s.cwd.clone(),
+                    base: meta.base.clone(),
+                    name: meta.name.clone(),
+                    reaped: if reaped.contains(&s.cwd) { Some(true) } else { None },
+                });
+            }
+            s
+        }).collect()
+    }
 
-    async fn open_session(&self, path: String) -> Vec<SessionDriverEvent> { mock_session_seed(&path) }
-    async fn new_session(&self, _opts: NewSessionOptsData) -> Vec<SessionDriverEvent> { greeting_seed() }
+    async fn open_session(&self, path: String) -> Vec<SessionDriverEvent> {
+        // Faithful port of TS MockDriver.openSession(): the base seed, then any
+        // pending host-UI dialogs for this session appended to the end so opening
+        // a background session blocked on an approval replays that dialog.
+        let mut seed = mock_session_seed(&path);
+        let session_id = seed.first().map(|e| e.session_ref().session_id.clone());
+        if let Some(sid) = session_id {
+            let pending = self.pending_dialogs.lock();
+            for (_, p) in pending.iter() {
+                if p.session_ref.session_id == sid {
+                    seed.push(SessionDriverEvent::HostUiRequest {
+                        base: SessionEventBase {
+                            session_ref: p.session_ref.clone(),
+                            timestamp: ts(),
+                            run_id: None,
+                        },
+                        request: p.request.clone(),
+                    });
+                }
+            }
+        }
+        seed
+    }
+    async fn new_session(&self, opts: NewSessionOptsData) -> Vec<SessionDriverEvent> {
+        // Faithful port of TS `newSession()`: resolve the cwd (applying a
+        // `-worktree` suffix when the draft asked for an isolated worktree) and
+        // build a config carrying the chosen model's availableThinkingLevels +
+        // the draft's (or default) thinking level, then hand the resolved dir +
+        // config to `newSessionSeed`. Remember the snapshot so the first prompt
+        // streams under this session's own ref — mirrors the real driver's
+        // apply-on-create. Also records the worktree (so listSessions flags it) and
+        // prepends a synthetic "new" row to the mutable session list (so the new
+        // session appears in the sidebar immediately) — both faithful to TS.
+        let NewSessionOptsData { cwd, worktree, model, thinking, facet, permission_monitor } = opts;
+        // base = cwd?.trim() || NEW_SESSION_ENTRY.cwd  (== WORKSPACE_PATH)
+        let base = cwd.as_deref().map(|s| s.trim()).filter(|s| !s.is_empty()).map(|s| s.to_string()).unwrap_or_else(|| WORKSPACE_PATH.to_string());
+        // dir = worktree ? `${base.replace(/\/+$/, "")}-worktree` : base
+        // (clone in the non-worktree arm so `base` stays live for the worktree record below.)
+        let dir = if worktree.unwrap_or(false) {
+            format!("{}-worktree", base.trim_end_matches('/'))
+        } else {
+            base.clone()
+        };
+        // Record the worktree so listSessions flags the row with its parent project
+        // for grouping + shows the isolated-path chip. A `dirty` base simulates
+        // uncommitted changes (archive keeps it + reports worktreeRetained).
+        // Mirrors TS: worktrees.set(dir, { base, name: `pilot-mock-${dir}` });
+        // dirtyWorktrees.add(dir) when /(^|\/)dirty$/.test(base).
+        if worktree.unwrap_or(false) {
+            self.worktrees.lock().insert(
+                dir.clone(),
+                WorktreeMeta { base: base.clone(), name: format!("pilot-mock-{dir}") },
+            );
+            if base.rsplit('/').next().map(|seg| seg == "dirty").unwrap_or(false) || base == "dirty" {
+                self.dirty_worktrees.lock().insert(dir.clone());
+            }
+        }
+        // sessionId = dir === NEW_SESSION_ENTRY.cwd ? NEW_SESSION_ENTRY.sessionId : `new-${dir}`
+        let session_id = if dir == WORKSPACE_PATH {
+            "new-session".to_string()
+        } else {
+            format!("new-{dir}")
+        };
+        // Prepend a synthetic "new" row (unless one for this sessionId already
+        // exists) so the new session shows in the sidebar — faithful port of TS
+        // `this.sessions = [{ ...NEW_SESSION_ENTRY, sessionId, cwd: dir }, ...]`.
+        {
+            let mut sessions = self.sessions.lock();
+            if !sessions.iter().any(|s| s.session_id == session_id) {
+                sessions.insert(0, new_session_entry(&session_id, &dir));
+            }
+        }
+        // Build the config: provider/modelId from the draft (or the default),
+        // thinkingLevel from the draft (or the default), availableThinkingLevels
+        // from the chosen model's entry in MOCK_MODELS (or the default).
+        let default = mock_default_config();
+        let chosen = model.as_ref().and_then(|m| {
+            mock_models().into_iter().find(|opt| opt.provider == m.provider && opt.model_id == m.model_id)
+        });
+        let config = SessionConfig {
+            provider: Some(model.as_ref().map(|m| m.provider.clone()).unwrap_or_else(|| default.provider.clone().unwrap())),
+            model_id: Some(model.as_ref().map(|m| m.model_id.clone()).unwrap_or_else(|| default.model_id.clone().unwrap())),
+            thinking_level: Some(thinking.unwrap_or_else(|| default.thinking_level.clone().unwrap())),
+            available_thinking_levels: Some(
+                chosen.and_then(|m| m.thinking_levels).unwrap_or_else(|| default.available_thinking_levels.clone().unwrap()),
+            ),
+        };
+        let permission_monitor = permission_monitor.unwrap_or(PermissionMonitorMode::Standard);
+        let (events, snapshot) = new_session_seed(&dir, config, facet, permission_monitor);
+        let session_id = snapshot.r#ref.session_id.clone();
+        *self.last_created.lock() = Some(LastCreated { session_id, snapshot });
+        events
+    }
+
+    async fn set_archived(&self, path: String, archived: bool) -> ArchiveResult {
+        // Faithful port of TS `setArchived()`: flip the row's `archived` flag in the
+        // mutable session list, then — on archive — reap a (clean) mock worktree so
+        // the indicator clears. A dirty worktree is kept and reported back so the
+        // client explains the leftover (exactly as the real driver does).
+        {
+            let mut sessions = self.sessions.lock();
+            for s in sessions.iter_mut() {
+                if s.path == path {
+                    s.archived = archived;
+                }
+            }
+        }
+        if archived {
+            let cwd = self.sessions.lock().iter().find(|s| s.path == path).map(|s| s.cwd.clone());
+            if let Some(cwd) = cwd {
+                let has_wt = self.worktrees.lock().contains_key(&cwd);
+                let already_reaped = self.reaped_worktrees.lock().contains(&cwd);
+                if has_wt && !already_reaped {
+                    if self.dirty_worktrees.lock().contains(&cwd) {
+                        return ArchiveResult {
+                            worktree_retained: Some(WorktreeRetained {
+                                path: cwd,
+                                reason: "uncommitted changes".into(),
+                            }),
+                        };
+                    }
+                    // Tombstone, don't delete: keep the meta so the session keeps grouping.
+                    self.reaped_worktrees.lock().insert(cwd);
+                }
+            }
+        }
+        ArchiveResult::default()
+    }
+
+    async fn cleanup_worktree(&self, path: String, _force: bool) -> WorktreeCleanupResult {
+        // Faithful port of TS `cleanupWorktree()`. Mock worktrees are always clean,
+        // so force is moot — just tombstone (mark reaped) rather than delete so the
+        // orphaned session keeps grouping under its parent project.
+        let has_wt = self.worktrees.lock().contains_key(&path);
+        let already_reaped = self.reaped_worktrees.lock().contains(&path);
+        if !has_wt || already_reaped {
+            return WorktreeCleanupResult { removed: false, reason: Some("no pilot worktree at this path".into()) };
+        }
+        self.reaped_worktrees.lock().insert(path);
+        WorktreeCleanupResult { removed: true, reason: None }
+    }
+
+    async fn rename_session(&self, path: String, name: String) {
+        // Faithful port of TS `renameSession()`: set the row's displayName to the
+        // trimmed name (no-op on empty).
+        let next = name.trim();
+        if next.is_empty() {
+            return;
+        }
+        let mut sessions = self.sessions.lock();
+        for s in sessions.iter_mut() {
+            if s.path == path {
+                s.display_name = Some(next.to_string());
+            }
+        }
+    }
+
     async fn list_models(&self) -> Vec<ModelOption> { mock_models() }
     async fn list_commands(&self, _session_id: Option<SessionId>) -> Vec<CommandInfo> { mock_commands() }
     async fn list_facets(&self, _session_id: Option<SessionId>) -> Vec<String> { vec!["execute".into(), "plan".into(), "research".into()] }
@@ -653,12 +1465,27 @@ impl PilotDriver for MockDriver {
         let q = query.to_lowercase();
         mock_files().into_iter().filter(|f| f.path.to_lowercase().contains(&q)).take(20).collect()
     }
-    async fn list_dir(&self, _path: Option<String>) -> DirListing {
-        DirListing { path: WORKSPACE_PATH.into(), parent: None, entries: vec!["server".into(), "client".into(), "protocol".into()], error: None }
+    async fn list_dir(&self, path: Option<String>) -> DirListing {
+        // Faithful port of TS `listDir()`: resolve the (possibly-empty) path, look
+        // it up in the synthetic MOCK_DIR_TREE, and return its entries + parent.
+        // Empty → $HOME (the picker's default open). Unknown dirs come back empty
+        // (the mock never touches the real disk). The picker navigates by `parent`
+        // (Backspace-up) and child `entries`, so both must be right or it hangs.
+        let dir = mock_resolve(path.as_deref());
+        let parent = std::path::Path::new(&dir)
+            .parent()
+            .map(|p| p.to_string_lossy().into_owned())
+            .filter(|p| p != &dir);
+        let entries = mock_dir_tree().get(&dir).cloned().unwrap_or_default();
+        DirListing { path: dir, parent, entries, error: None }
     }
     async fn stat_path(&self, path: String) -> PathStat {
-        let p = std::path::Path::new(&path);
-        PathStat { exists: p.exists(), is_dir: p.is_dir(), path }
+        // Faithful port of TS `statPath()`: existence comes from the synthetic
+        // MOCK_DIR_TREE (never the real disk) so a typed-but-fixture path like
+        // /Users/timo/src/demo reports as existing on a dev host where it doesn't.
+        let abs = mock_resolve(Some(&path));
+        let exists = mock_dir_tree().contains_key(&abs);
+        PathStat { path: abs, exists, is_dir: exists }
     }
 
     fn set_model(&self, provider: String, model_id: String, _session_id: Option<SessionId>) {
@@ -677,6 +1504,19 @@ impl PilotDriver for MockDriver {
     fn set_permission_monitor(&self, mode: PermissionMonitorMode, _session_id: Option<SessionId>) {
         let mut s = snap(SessionStatus::Idle, None, None, None, None, None);
         s.permission_monitor = Some(mode);
+        self.emit(SessionDriverEvent::SessionUpdated { base: base(), snapshot: s });
+    }
+
+    async fn toggle_adventurous_handoff(&self, _session_id: Option<SessionId>) {
+        // Flip the local flag and broadcast a sessionUpdated snapshot carrying the
+        // new value — faithful port of the TS MockDriver.toggleAdventurousHandoff.
+        let flipped = {
+            let mut g = self.adventurous_handoff.lock().unwrap();
+            *g = !*g;
+            *g
+        };
+        let mut s = snap(SessionStatus::Idle, None, None, None, None, None);
+        s.adventurous_handoff = Some(flipped);
         self.emit(SessionDriverEvent::SessionUpdated { base: base(), snapshot: s });
     }
 
@@ -1226,22 +2066,22 @@ impl PilotDriver for MockDriver {
                     ScriptStep { wait_ms: 0, event: SessionDriverEvent::SessionUpdated { base: base(), snapshot: mock_snapshot(SessionStatus::Running) } },
                 ];
                 let c1 = format!("tbt-1-{}", ts());
-                s.extend(tool_span(&c1, "bash", "bash", None, serde_json::json!({"command": "ls client/src/lib"}), true, serde_json::json!("store.svelte.ts\nws.ts"), 40, 90, 180));
+                s.extend(tool_span(&c1, "bash", "bash", Some("Run bash"), serde_json::json!({"command": "ls client/src/lib"}), true, serde_json::json!("store.svelte.ts\nws.ts"), 40, 90, 180));
                 for chunk in deltas("That lists the lib dir. The WS singleton is the likely home.", 3) {
                     s.push(ScriptStep { wait_ms: 28, event: SessionDriverEvent::AssistantDelta { base: base(), text: chunk, channel: Some(AssistantDeltaChannel::Thinking), entry_id: None } });
                 }
                 let c2 = format!("tbt-2-{}", ts());
-                s.extend(tool_span(&c2, "bash", "bash", None, serde_json::json!({"command": "rg -n reconnect client/src"}), true, serde_json::json!("ws.ts:88: scheduleReconnect()"), 40, 90, 180));
+                s.extend(tool_span(&c2, "bash", "bash", Some("Run bash"), serde_json::json!({"command": "rg -n reconnect client/src"}), true, serde_json::json!("ws.ts:88: scheduleReconnect()"), 40, 90, 180));
                 for chunk in deltas("Found the scheduler. Let me read the file to confirm the backoff.", 3) {
                     s.push(ScriptStep { wait_ms: 28, event: SessionDriverEvent::AssistantDelta { base: base(), text: chunk, channel: Some(AssistantDeltaChannel::Thinking), entry_id: None } });
                 }
                 let c3 = format!("tbt-3-{}", ts());
-                s.extend(tool_span(&c3, "read", "read", None, serde_json::json!({"path": "client/src/lib/ws.ts"}), true, serde_json::json!("// reconnecting WS singleton"), 40, 90, 180));
-                let c4 = format!("tbt-4-{}", ts());
-                s.extend(tool_span(&c4, "bash", "bash", None, serde_json::json!({"command": "rg -n scheduleReconnect client/src"}), true, serde_json::json!("ws.ts:88\nws.ts:142"), 40, 90, 180));
+                s.extend(tool_span(&c3, "read", "read", Some("Run read"), serde_json::json!({"path": "client/src/lib/ws.ts"}), true, serde_json::json!("// reconnecting WS singleton"), 40, 90, 180));
                 for chunk in deltas("Backoff looks right. One more check on the call site.", 3) {
                     s.push(ScriptStep { wait_ms: 28, event: SessionDriverEvent::AssistantDelta { base: base(), text: chunk, channel: Some(AssistantDeltaChannel::Thinking), entry_id: None } });
                 }
+                let c4 = format!("tbt-4-{}", ts());
+                s.extend(tool_span(&c4, "bash", "bash", Some("Run bash"), serde_json::json!({"command": "rg -n scheduleReconnect client/src"}), true, serde_json::json!("ws.ts:88\nws.ts:142"), 40, 90, 180));
                 for chunk in deltas("Reconnect is wired correctly — exponential backoff, capped, re-armed on close.", 3) {
                     s.push(ScriptStep { wait_ms: 28, event: SessionDriverEvent::AssistantDelta { base: base(), text: chunk, channel: Some(AssistantDeltaChannel::Text), entry_id: None } });
                 }
@@ -1277,6 +2117,25 @@ impl PilotDriver for MockDriver {
         // Cancel all pending script tasks + reset the mock clock so fixture
         // timestamps are deterministic across resets.
         self.generation.fetch_add(1, Ordering::Relaxed);
+        // Clear the in-flight handle so the next play_script doesn't flush a
+        // stale (already-generation-aborted) task — mirrors TS cancelTimers()
+        // clearing `this.scheduled`.
+        *self.in_flight.lock() = None;
+        // Clear pending host-UI dialogs — mirrors TS `cancelTimers()` calling
+        // `this.pendingDialogs.clear()`. Without this, an un-responded dialog
+        // survives `/debug/reset` and `open_session` replays it next test.
+        self.pending_dialogs.lock().clear();
         reset_ts();
+        *self.last_created.lock() = None;
+        *self.adventurous_handoff.lock().unwrap() = false;
+        // Restore the mutable session/worktree state to the fixture baseline —
+        // faithful port of TS `reset()`: `this.sessions = SESSION_LIST.map(...)`,
+        // `this.worktrees = seedWorktrees(SESSION_LIST)`, clear dirty/reaped sets.
+        // Without this, a `new_session`-created row + its worktree meta survive
+        // `/debug/reset` and leak into the next test's sidebar.
+        *self.sessions.lock() = mock_session_list();
+        *self.worktrees.lock() = seed_worktrees(&mock_session_list());
+        self.dirty_worktrees.lock().clear();
+        self.reaped_worktrees.lock().clear();
     }
 }

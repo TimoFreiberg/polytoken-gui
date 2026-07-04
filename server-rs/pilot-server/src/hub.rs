@@ -682,9 +682,12 @@ impl SessionHub {
     }
 
     fn broadcast_session_status(&mut self) {
-        // Will be wired to the client send channels when clients are managed
-        // by the hub. For now this is a no-op that will be filled in.
-        // The syncLiveRefresh logic also needs the client count.
+        // Broadcast the current sessionStatus (running/initializing/attention) to
+        // every connected client — faithful port of TS hub.broadcastSessionStatus,
+        // which calls this.broadcast(this.sessionStatusMsg()). The TS version also
+        // calls syncLiveRefresh() here; the Rust server reconciles the live-refresh
+        // ticker separately from the main loop (sync_live_refresh/needs_live_refresh).
+        self.broadcast(self.session_status_msg());
     }
 
     // ── Notification ───────────────────────────────────────────────────────
