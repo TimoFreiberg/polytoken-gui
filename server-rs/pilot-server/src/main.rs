@@ -18,6 +18,7 @@ pub mod ws_send;
 
 use std::net::SocketAddr;
 use std::sync::Arc;
+use std::time::Duration;
 
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
 use axum::extract::{Query, State};
@@ -147,6 +148,28 @@ async fn main() {
     let listener = tokio::net::TcpListener::bind(addr)
         .await
         .unwrap_or_else(|e| panic!("failed to bind {addr}: {e}"));
+
+    // Live-refresh ticker: polls running sessions' usage every PILOT_LIVE_REFRESH_MS,
+    // mirroring the TS hub's syncLiveRefresh interval. Only runs while there are
+    // running sessions + connected clients.
+    let hub_clone = state.hub.clone();
+    let refresh_ms = cfg.live_refresh_ms;
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(Duration::from_millis(refresh_ms));
+        loop {
+            interval.tick().await;
+            let should_tick = {
+                let h = hub_clone.lock();
+                h.sync_live_refresh()
+            };
+            if should_tick {
+                // refresh_usage is sync — no .await, so the guard is safe.
+                let mut h = hub_clone.lock();
+                h.refresh_usage();
+            }
+        }
+    });
+
     axum::serve(listener, app)
         .with_graceful_shutdown(shutdown_signal())
         .await

@@ -55,7 +55,11 @@ fn advance_ts(ms: u64) {
 /// Reset the mock clock to zero (called on `reset()`).
 fn reset_ts() {
     MOCK_TS.store(0, Ordering::Relaxed);
+    LIVE_USAGE_TOKENS.store(47200, Ordering::Relaxed);
 }
+
+/// Live context meter — climbs each poll so it's visibly non-static during a run.
+static LIVE_USAGE_TOKENS: AtomicU64 = AtomicU64::new(47200);
 
 fn mock_session_ref() -> SessionRef {
     SessionRef {
@@ -624,6 +628,13 @@ impl PilotDriver for MockDriver {
         let mut s = snap(SessionStatus::Idle, None, None, None, None, None);
         s.permission_monitor = Some(mode);
         self.emit(SessionDriverEvent::SessionUpdated { base: base(), snapshot: s });
+    }
+
+    fn get_usage(&self, _session_id: Option<SessionId>) -> Option<SessionUsage> {
+        let tokens = LIVE_USAGE_TOKENS.fetch_add(2800, Ordering::Relaxed) + 2800;
+        let tokens = tokens.min(200000) as i64;
+        let percent = ((tokens as f64 / 200000.0) * 1000.0).round() / 10.0;
+        Some(SessionUsage { tokens: Some(tokens), context_window: 200000, percent: Some(percent) })
     }
 
     fn default_seed(&self) -> Option<Vec<SessionDriverEvent>> { Some(greeting_seed()) }

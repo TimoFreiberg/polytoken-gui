@@ -1538,6 +1538,14 @@ impl SessionHub {
 
     // ── liveTick / refreshUsage ────────────────────────────────────────────
 
+    /// Start or stop the live-refresh interval based on whether there are running
+    /// sessions + connected clients. Mirrors the TS hub's `syncLiveRefresh`.
+    /// Returns true if a ticker should be started, false if it should stop.
+    pub fn sync_live_refresh(&self) -> bool {
+        let want = !self.running.is_empty() && !self.clients.is_empty();
+        want
+    }
+
     /// Spawn the async follow-up list sends that the TS addClient fires after
     /// hello+seed: sessionList, modelList, commandList, facetList, fileIndex.
     /// Each is a driver call (disk/registry read) that must not block the WS
@@ -1601,7 +1609,7 @@ impl SessionHub {
         self.refresh_usage();
     }
 
-    fn refresh_usage(&mut self) {
+    pub fn refresh_usage(&mut self) {
         let running_sessions: Vec<SessionId> = self.journals.keys()
             .filter(|sid| self.running.contains(*sid))
             .cloned()
