@@ -248,6 +248,43 @@ fn base() -> SessionEventBase {
     }
 }
 
+/// Build a session-specific seed for opening a given session path.
+/// Mirrors the TS `mockSessionSeed(path)` — returns different fixture content
+/// per session so switching to "older-session" shows its own transcript, not
+/// the greeting's.
+fn mock_session_seed(path: &str) -> Vec<SessionDriverEvent> {
+    fn session_seed(session_id: &str, title: &str, user_text: &str, assistant_text: &str) -> Vec<SessionDriverEvent> {
+        let ref_id = session_ref_for(session_id);
+        let b = || SessionEventBase { session_ref: ref_id.clone(), timestamp: ts(), run_id: None };
+        let snap = |status: SessionStatus| SessionSnapshot {
+            r#ref: ref_id.clone(), workspace: mock_workspace(), title: title.into(),
+            status, updated_at: ts(), archived_at: None, preview: None,
+            config: Some(mock_default_config()), usage: None, running_run_id: None,
+            queued_messages: None, facet: None, permission_monitor: None,
+            adventurous_handoff: None, notification_autodrain: None, active_plan: None,
+            goal: None, flags: None, todos: None, mcp_servers: None,
+        };
+        vec![
+            SessionDriverEvent::SessionOpened { base: b(), snapshot: snap(SessionStatus::Idle) },
+            SessionDriverEvent::UserMessage { base: b(), id: format!("u-{session_id}"), text: user_text.into(), images: None, entry_id: None },
+            SessionDriverEvent::AssistantDelta { base: b(), text: assistant_text.into(), channel: Some(AssistantDeltaChannel::Text), entry_id: None },
+            SessionDriverEvent::RunCompleted { base: b(), snapshot: snap(SessionStatus::Idle), user_entry_id: None, assistant_entry_id: None },
+        ]
+    }
+    match path {
+        "/sessions/demo-session.jsonl" => greeting_seed(),
+        "/sessions/older-session.jsonl" => session_seed(
+            "older-session", "Explore the fold reducer",
+            "How does foldEvent assemble the transcript?",
+            "It folds each driver event into render-ready items — assistant deltas accumulate into one bubble, tool cards key off callId, and ambient UI lives in keyed maps.",
+        ),
+        "/sessions/scratch-session.jsonl" => session_seed(
+            "scratch-session", "scratch", "quick scratch session", "Noted — nothing else here.",
+        ),
+        _ => session_seed("unknown", "Session", "(opened)", "No fixture for this session."),
+    }
+}
+
 /// Build the greeting fixture: sessionOpened + userMessage + assistant deltas + tool spans + runCompleted.
 /// This is the seed every fresh client sees.
 fn greeting_seed() -> Vec<SessionDriverEvent> {
@@ -606,7 +643,7 @@ impl PilotDriver for MockDriver {
 
     async fn list_sessions(&self) -> Vec<SessionListEntry> { mock_session_list() }
 
-    async fn open_session(&self, _path: String) -> Vec<SessionDriverEvent> { greeting_seed() }
+    async fn open_session(&self, path: String) -> Vec<SessionDriverEvent> { mock_session_seed(&path) }
     async fn new_session(&self, _opts: NewSessionOptsData) -> Vec<SessionDriverEvent> { greeting_seed() }
     async fn list_models(&self) -> Vec<ModelOption> { mock_models() }
     async fn list_commands(&self, _session_id: Option<SessionId>) -> Vec<CommandInfo> { mock_commands() }
