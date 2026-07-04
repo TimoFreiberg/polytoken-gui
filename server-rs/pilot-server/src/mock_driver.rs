@@ -423,6 +423,58 @@ impl PilotDriver for MockDriver {
     fn set_permission_monitor(&self, _mode: PermissionMonitorMode, _session_id: Option<SessionId>) {}
 
     fn default_seed(&self) -> Option<Vec<SessionDriverEvent>> { Some(greeting_seed()) }
-    fn run_script(&self, name: String) { warn!("[mock] run_script: {name} (not yet implemented)"); }
+
+    fn run_script(&self, name: String) {
+        let b = base();
+        let steps: Vec<ScriptStep> = match name.as_str() {
+            "pendinghold" => {
+                let mut s = vec![
+                    ScriptStep { wait_ms: 0, event: SessionDriverEvent::UserMessage { base: b.clone(), id: "u-pending".into(), text: "Refactor the auth middleware".into(), images: None, entry_id: None } },
+                    ScriptStep { wait_ms: 0, event: SessionDriverEvent::SessionUpdated { base: b.clone(), snapshot: mock_snapshot(SessionStatus::Running) } },
+                ];
+                for chunk in chunk_text("Let me look at how auth is wired before I touch it.", 3) {
+                    s.push(ScriptStep { wait_ms: 28, event: SessionDriverEvent::AssistantDelta { base: b.clone(), text: chunk, channel: Some(AssistantDeltaChannel::Thinking), entry_id: None } });
+                }
+                s
+            }
+            "reply" => prompt_reply_script("Show me the streamed reply script.", None),
+            "confirm" => {
+                vec![
+                    ScriptStep { wait_ms: 0, event: SessionDriverEvent::HostUiRequest { base: b.clone(), request: HostUiRequest::Confirm { request_id: "req-confirm-1".into(), title: "Allow git push?".into(), message: "Allow the agent to run `git push`?".into(), default_value: Some(true), timeout_ms: None } } },
+                ]
+            }
+            "input" => {
+                vec![
+                    ScriptStep { wait_ms: 0, event: SessionDriverEvent::HostUiRequest { base: b.clone(), request: HostUiRequest::Input { request_id: "req-input-1".into(), title: "What should the commit message be?".into(), placeholder: None, initial_value: Some("fix: update auth middleware".into()), timeout_ms: None } } },
+                ]
+            }
+            "ambient" => {
+                vec![
+                    ScriptStep { wait_ms: 0, event: SessionDriverEvent::SessionUpdated { base: b.clone(), snapshot: mock_snapshot(SessionStatus::Running) } },
+                ]
+            }
+            "idle" => {
+                vec![
+                    ScriptStep { wait_ms: 0, event: SessionDriverEvent::UserMessage { base: b.clone(), id: "u-idle".into(), text: "End this turn without a runCompleted, please.".into(), images: None, entry_id: None } },
+                    ScriptStep { wait_ms: 0, event: SessionDriverEvent::SessionUpdated { base: b.clone(), snapshot: mock_snapshot(SessionStatus::Running) } },
+                    ScriptStep { wait_ms: 28, event: SessionDriverEvent::AssistantDelta { base: b.clone(), text: "Sure thing.".into(), channel: Some(AssistantDeltaChannel::Text), entry_id: None } },
+                    ScriptStep { wait_ms: 50, event: SessionDriverEvent::SessionUpdated { base: b.clone(), snapshot: mock_snapshot(SessionStatus::Idle) } },
+                ]
+            }
+            "error" => {
+                vec![
+                    ScriptStep { wait_ms: 0, event: SessionDriverEvent::UserMessage { base: b.clone(), id: "u-err".into(), text: "Do something that fails.".into(), images: None, entry_id: None } },
+                    ScriptStep { wait_ms: 0, event: SessionDriverEvent::SessionUpdated { base: b.clone(), snapshot: mock_snapshot(SessionStatus::Running) } },
+                    ScriptStep { wait_ms: 100, event: SessionDriverEvent::RunFailed { base: b.clone(), error: SessionErrorInfo { message: "API rate limit exceeded".into(), code: None, details: None } } },
+                ]
+            }
+            _ => {
+                warn!("[mock] run_script: {name} (not yet implemented)");
+                return;
+            }
+        };
+        self.play_script(steps);
+    }
+
     fn reset(&self, _bootstrap: bool) {}
 }
