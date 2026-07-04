@@ -1538,6 +1538,61 @@ impl SessionHub {
 
     // ── liveTick / refreshUsage ────────────────────────────────────────────
 
+    /// Spawn the async follow-up list sends that the TS addClient fires after
+    /// hello+seed: sessionList, modelList, commandList, facetList, fileIndex.
+    /// Each is a driver call (disk/registry read) that must not block the WS
+    /// handshake. Mirrors `void this.broadcastSessionList()` etc. in hub.ts.
+    pub fn spawn_connect_lists(&self, client_key: u64, hub: Arc<Mutex<Self>>) {
+        let driver = self.driver.clone();
+        let hub_clone = hub.clone();
+        let focused = self.clients.get(&client_key).and_then(|c| c.focused_id.clone());
+        tokio::spawn(async move {
+            let sessions = driver.list_sessions().await;
+            let default_new_session_cwd = std::env::var("HOME").unwrap_or_default();
+            let h = hub_clone.lock();
+            h.send_to_client(client_key, ServerMessage::SessionList {
+                sessions,
+                active_session_id: focused.clone(),
+                default_new_session_cwd,
+            });
+        });
+
+        let driver = self.driver.clone();
+        let hub_clone = hub.clone();
+        tokio::spawn(async move {
+            let models = driver.list_models().await;
+            let h = hub_clone.lock();
+            h.broadcast(ServerMessage::ModelList { models });
+        });
+
+        let driver = self.driver.clone();
+        let hub_clone = hub.clone();
+        let focused = self.clients.get(&client_key).and_then(|c| c.focused_id.clone());
+        tokio::spawn(async move {
+            let commands = driver.list_commands(focused).await;
+            let h = hub_clone.lock();
+            h.send_to_client(client_key, ServerMessage::CommandList { commands });
+        });
+
+        let driver = self.driver.clone();
+        let hub_clone = hub.clone();
+        let focused = self.clients.get(&client_key).and_then(|c| c.focused_id.clone());
+        tokio::spawn(async move {
+            let facets = driver.list_facets(focused).await;
+            let h = hub_clone.lock();
+            h.send_to_client(client_key, ServerMessage::FacetList { facets });
+        });
+
+        let driver = self.driver.clone();
+        let hub_clone = hub.clone();
+        let focused = self.clients.get(&client_key).and_then(|c| c.focused_id.clone());
+        tokio::spawn(async move {
+            let (files, truncated) = driver.list_file_index(focused).await;
+            let h = hub_clone.lock();
+            h.send_to_client(client_key, ServerMessage::FileIndex { files, truncated });
+        });
+    }
+
     /// One live-refresh pass: fresh session list + context usage.
     pub async fn live_tick(&mut self) {
         if self.session_list_dirty {

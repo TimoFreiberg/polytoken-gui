@@ -163,7 +163,7 @@ fn build_router(state: AppState) -> Router {
         .route("/push/test", post(push_test))
         .route("/update/state", post(update_state))
         .route("/debug/state", get(debug_state))
-        .route("/debug/reset", post(debug_reset))
+        .route("/debug/reset", get(debug_reset).post(debug_reset))
         .fallback(static_fallback)
         .with_state(state)
 }
@@ -223,7 +223,11 @@ async fn handle_ws_connection(ws: WebSocket, state: AppState) {
                 // stored in the ClientConn; we drop it. rx goes to the pump task.
                 let (client_key, _tx, rx) = {
                     let mut hub = state.hub.lock();
-                    hub.add_client(resume)
+                    let result = hub.add_client(resume);
+                    // Spawn the async follow-up lists (sessionList, modelList,
+                    // commandList, facetList, fileIndex) — mirrors TS addClient.
+                    hub.spawn_connect_lists(result.0, state.hub.clone());
+                    result
                 };
 
                 break (client_key, rx);
