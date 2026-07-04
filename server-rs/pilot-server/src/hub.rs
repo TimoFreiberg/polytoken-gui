@@ -808,6 +808,24 @@ impl SessionHub {
         if bootstrap {
             self.seed_default();
         }
+
+        // Re-seed all connected clients: reset their focus + send fresh seeds.
+        // Mirrors the TS hub's reset() which iterates clients and sends seedMsg.
+        let default_focus = self.default_focus_id.clone();
+        let client_keys: Vec<u64> = self.clients.keys().cloned().collect();
+        for ck in client_keys {
+            // Reset the client's focus to the new default (if any)
+            if let Some(ref sid) = default_focus {
+                self.set_client_focus(ck, sid.clone());
+            } else {
+                // No default session — clear the client's focus
+                if let Some(conn) = self.clients.get_mut(&ck) {
+                    conn.focused_id = None;
+                }
+            }
+            let msg = self.seed_msg(default_focus.as_ref());
+            self.send_to_client(ck, msg);
+        }
     }
 
     // ── Client management ──────────────────────────────────────────────────
