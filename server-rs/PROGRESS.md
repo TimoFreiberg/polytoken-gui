@@ -1,7 +1,9 @@
 # Rust Server Port — Status & Resumption Plan
 
 Last updated: 2026-07-04 (full review of the port; supersedes the previous
-progress report, which overstated verification)
+progress report, which overstated verification. Plan revised same day after
+design discussion: fake-daemon e2e tier reinstated as Phase 2.5, hub
+completion queue made deliberate in Phase 1.)
 
 ## Goal (unchanged)
 
@@ -134,20 +136,34 @@ validated" — it validates hub + protocol + mock.
 
 ## Resumption plan
 
-Order matters: make the gaps loud first, then burn them down test-first, and
-treat mock-e2e as *one* of three gates (unit parity, mock e2e, live smoke).
+For the implementer: work the phases top-down; each gates the next. Two
+standing invariants while you work:
+
+1. **The Bun control must stay green.** `bun run test:e2e` (against the TS
+   server) is the oracle for "is this failure mine or the suite's". If it
+   goes red, stop and fix that first.
+2. **jj discipline**: review with `jj diff --git`, commit per completed task,
+   imperative subject ≤72 chars, only the files you touched.
+
+The cutover gate is **four legs**, not one: ported unit tests green, mock e2e
+green, fake-daemon e2e green (Phase 2.5), live smoke (Phase 3). Mock-e2e alone
+proves hub+protocol+client — it never touches the live driver stack.
 
 ### Phase 0 — truth & guardrails (small, do first)
 
-- [ ] Delete `fake_daemon.rs`, the `Passthrough` variant, the `Passthrough`
-      arm in `event_map.rs`, and `with_fake_daemon_url`/`fake_daemon_url`
-      plumbing in `driver.rs`. Re-run `bun run scripts/codegen-polytoken-rs.ts`
-      and commit clean generated output. (If a daemon-protocol integration
-      harness is wanted later, rebuild it emitting **real** `DaemonEvent`s —
-      that's the only version that validates event_map.)
+- [ ] Delete the as-built mock-mode remnants: `fake_daemon.rs`, the
+      `Passthrough` variant in `pilot-daemon-types`, the `Passthrough` arm in
+      `event_map.rs`, and the `with_fake_daemon_url`/`fake_daemon_url`
+      plumbing in `driver.rs`. Re-run
+      `bun run scripts/codegen-polytoken-rs.ts` and commit clean generated
+      output. (The fake-daemon *concept* returns in Phase 2.5, rebuilt to
+      speak real `DaemonEvent`s — the current skeleton validates nothing
+      (Passthrough bypasses event_map) and the hand-edited generated file is
+      a regen landmine. jj history keeps the old skeleton for reference.)
 - [ ] Add server-rs to CI: `cargo fmt --check`, `cargo clippy --locked
       --all-targets -- -D warnings`, `cargo test`, rust-cache with
-      `workspaces: server-rs`, like `desktop/`. Consider a `check:rs` script.
+      `workspaces: server-rs`, like the existing `desktop/` job. Consider a
+      `check:rs` script.
 - [ ] Remove the blanket `#![allow(dead_code)]` / `#![allow(unused_variables)]`;
       convert survivors to item-level `#[expect(dead_code, reason = "...")]`
       so the compiler enumerates remaining gaps and complains when they're
@@ -157,31 +173,58 @@ treat mock-e2e as *one* of three gates (unit parity, mock e2e, live smoke).
 
 ### Phase 1 — mock-mode e2e to green, test-first (hub semantics)
 
-Work the failure clusters largest-first; for each, port the relevant
-`hub.test.ts` / `hub-journal.test.ts` cases *before* fixing, so hub coverage
-back-fills as the burn-down proceeds (target: all 64+14 cases ported by the
-end of this phase). Clusters: see the ground-truth section above.
+Stay on `MockDriver` for this phase — the thin deterministic stack plus the
+Bun control is what makes each of the 71 failures attributable in minutes.
 
-Rules for this phase:
-- Fix by porting TS semantics, never by teaching the mock what the spec wants.
-- Restore error-message parity: audit all TS `{type:"error"}` sends
-  (~17 sites) and mirror them; driver failures must be client-visible.
-- If completion-ordering races cause flakes, funnel spawned-task completions
-  through one `mpsc` consumed by a single applier task (keeps the Mutex,
-  restores TS's deterministic ordering) — don't rewrite the hub into a full
-  actor for this.
+- [ ] **Land the hub completion queue first** (decided, not wait-for-pain):
+      all fire-and-forget `tokio::spawn` driver completions funnel through
+      one `mpsc` consumed by a single applier task that locks the hub and
+      applies results in FIFO order. Keeps the Mutex; restores TS's
+      deterministic ordering; kills the connect-time fan-out races
+      (sessionList/modelList/commandList/facetList/fileIndex). The same
+      queue-over-bare-mutex idiom is reused for SSE in Phase 2 — one
+      concurrency pattern everywhere, documented in the hub.rs header.
+- [ ] Work the failure clusters largest-first (see ground truth above). For
+      each cluster, port the relevant `hub.test.ts` / `hub-journal.test.ts`
+      cases *before* fixing, so hub coverage back-fills as the burn-down
+      proceeds (target: all 64+14 cases ported by the end of this phase).
+- [ ] Restore error-message parity: audit all TS `{type:"error"}` sends
+      (~17 sites) and mirror them; driver failures must be client-visible —
+      the `new-session-failure` cluster is this bug.
 
-### Phase 2 — live-path validation (the real cutover gate)
+Rule: fix by porting TS semantics, never by teaching the mock what the spec
+wants.
 
-- [ ] Port `event-map.test.ts` (129 cases; pure functions, mechanical, highest
-      bug-yield per hour) and `ui-bridge.test.ts` (38).
-- [ ] Fix the SSE ordering bug: per-warm-session `mpsc` + one consumer task
-      (or process inline in the SSE read loop, as TS effectively does).
-- [ ] Implement `FetchState`'s emit path and `RefetchQueue` → `queueUpdated`;
-      port the TS tests that cover them.
+### Phase 2 — live-path validation, part 1: units + integration harness
+
+- [ ] Port `event-map.test.ts` (129 cases; pure functions, mechanical,
+      highest bug-yield per hour) and `ui-bridge.test.ts` (38).
+- [ ] Fix the SSE ordering bug with the Phase-1 idiom: per-warm-session
+      `mpsc` + one consumer task. Never per-event `tokio::spawn` — that's the
+      current bug (two streaming deltas can fold out of order).
+- [ ] Implement `DaemonEffect::FetchState`'s emit path (`emit`/`prompt_id`
+      are currently ignored) and `RefetchQueue` → `queueUpdated`; port the
+      TS tests that cover them.
+- [ ] Build the **daemon-fixture corpus**: hand-translate the mock fixture
+      scripts into real daemon wire sequences (`DaemonEvent`s over SSE plus
+      the matching HTTP responses). Ground it with **golden recordings**:
+      capture a few real polytoken SSE transcripts via the parity harness
+      (streaming turn, tool call + approval, interrogative, abort) and commit
+      them, so the corpus can't drift from what the daemon actually sends.
+      This corpus is also the protocol-change canary for every polytoken
+      bump / codegen regen.
+- [ ] Integration tests: rebuild the fake daemon as a test axum router
+      speaking the **real** wire protocol, driven by the corpus; bind an
+      ephemeral port, point `PolytokenDriver` at it, assert emitted
+      `SessionDriverEvent`s and the effect HTTP calls. This covers the
+      composition MockDriver e2e can never see: SSE loop → accumulator →
+      effects → HTTP back.
 - [ ] Port `daemon-client.test.ts` + `lease-retry.test.ts` (25). Introduce a
-      spawn seam equivalent to TS's `_setSpawnForTesting` so process lifecycle
-      is testable.
+      spawn seam equivalent to TS's `_setSpawnForTesting` — needed regardless
+      of the fake daemon: spawn failure / process death can't be expressed on
+      the wire (in fake mode nothing spawns). Lease conflicts and
+      daemon-death-mid-session CAN be wire-expressed (claim rejection, SSE
+      drop) — cover those in the fake-daemon integration tests.
 - [ ] Port the `shared/` modules **with their tests** and wire them:
       `worktree` (+name, 8 tests) into `new_session`; `login-env` (15) into
       daemon spawn; `warm-cap` (10) into pool eviction; `background-model`
@@ -189,15 +232,33 @@ Rules for this phase:
       Port `archive-store` + `worktree-store` and wire `list_sessions`.
 - [ ] Fix `open_session`'s `$HOME` workspace fabrication (read the session's
       real project path).
-- [ ] Live smoke before declaring parity: drive a real daemon session through
-      the GUI via the parity harness (new session, prompt, stream, approve a
-      tool, switch model/facet, abort, archive) and diff `/debug/state`
-      against the Bun server where feasible.
+
+### Phase 2.5 — live-path validation, part 2: fake-daemon e2e tier
+
+The point: reuse the whole existing e2e suite as continuous live-path
+coverage. Flakes in this tier are product bugs (ordering, races) — the
+fail-loud philosophy applied to tests — not noise to be waited away.
+
+- [ ] Finish the rebuilt fake daemon's dev surface: `/dev/reset` and
+      `/dev/script` replaying corpus sequences — this is what `/debug/reset`
+      and the `mock` WS message hit when the server runs in fake-daemon mode
+      (real `PolytokenDriver` → in-process fake daemon).
+- [ ] Add a Playwright project (or env-gated CI job) running the FULL
+      existing e2e suite in fake-daemon mode. Same specs, second backend.
+- [ ] Keep the MockDriver project as the fast deterministic tier for UI dev
+      (dev bar, Claude_Preview) and triage. Revisit after cutover: if the
+      fake-daemon tier is green and comparably fast, consolidate to one mock
+      (delete MockDriver) rather than carrying both out of inertia.
 
 ### Phase 3 — cutover mechanics
 
+- [ ] Live smoke as the final gate: drive a real daemon session through the
+      GUI via the parity harness (new session, prompt, stream, approve a
+      tool, switch model/facet, abort, archive); diff `/debug/state` against
+      the Bun server where feasible.
 - [ ] `/health`: real client/running/initializing/busy counts.
-- [ ] `POST /update/state`: parse `{available, sha, applyFailed}`.
+- [ ] `POST /update/state`: parse `{available, sha, applyFailed}` (currently
+      the body is discarded and the pending update sha is wiped).
 - [ ] Push: VAPID keygen, web-push delivery, wire `push.rs` endpoints and the
       hub's `notify`.
 - [ ] `build_sha` from the dist marker.
@@ -207,11 +268,16 @@ Rules for this phase:
 
 ### Non-goals (explicitly)
 
-- Don't resurrect the fake daemon for e2e — `MockDriver` is the right e2e
-  fixture (matches TS; deterministic).
-- Don't rewrite the hub as an actor unless Phase 1 ordering races keep biting.
-- Don't chase individual e2e specs with special-cased fixes; every fix should
-  land with its ported unit tests.
+- Don't rebase the existing e2e suite off MockDriver during the Phase-1
+  burn-down — the thin stack and the Bun control are what make failures
+  attributable. The fake-daemon tier is **added** (Phase 2.5), not swapped in.
+- No Passthrough-style shortcuts in the rebuilt fake daemon: if it doesn't
+  speak real `DaemonEvent`s end to end, it validates nothing — that is the
+  exact mistake being undone.
+- Don't rewrite the hub as a full actor; the completion-queue-over-mutex
+  discipline (Phase 1) is the chosen middle ground.
+- Don't chase individual e2e specs with special-cased fixes; every fix lands
+  with its ported unit tests.
 
 ## How to verify current state
 
