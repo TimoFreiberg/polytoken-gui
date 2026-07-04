@@ -47,13 +47,11 @@ pub fn parse_facet_name(content: &str) -> Option<String> {
     let after_newline = strip_one_newline(after_open)?;
 
     // Find the closing `---` line. Look for a line that starts with `---`.
-    let close_pos = after_newline
-        .find("\n---")
-        .or_else(|| {
-            // Handle the case where the closing `---` is at the very end with
-            // a preceding `\r` — match the TS `^---\r?\n([\s\S]*?)\r?\n---`.
-            after_newline.find("\r\n---")
-        });
+    let close_pos = after_newline.find("\n---").or_else(|| {
+        // Handle the case where the closing `---` is at the very end with
+        // a preceding `\r` — match the TS `^---\r?\n([\s\S]*?)\r?\n---`.
+        after_newline.find("\r\n---")
+    });
     let frontmatter = match close_pos {
         Some(pos) => {
             // The content between the opening `---\n` and `\n---`.
@@ -70,7 +68,7 @@ pub fn parse_facet_name(content: &str) -> Option<String> {
     // `name:` at the start of a line (no indent — it's a top-level frontmatter
     // key). The value may be quoted ("plan" or 'plan') or unquoted (plan).
     // Capture the raw value, then strip surrounding quotes and trim.
-    for line in frontmatter.lines() {
+    if let Some(line) = frontmatter.lines().next() {
         let trimmed = line.strip_prefix("name:")?;
         let value = trimmed.trim_start();
         let value = value.trim();

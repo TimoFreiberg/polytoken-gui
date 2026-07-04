@@ -32,10 +32,7 @@ pub fn parse_file_catalog(paths: &[String]) -> Vec<FileInfo> {
         } else {
             p.as_str()
         };
-        if path == ".git"
-            || path.starts_with(".git/")
-            || path.contains("/.git/")
-        {
+        if path == ".git" || path.starts_with(".git/") || path.contains("/.git/") {
             continue;
         }
         out.push(FileInfo {

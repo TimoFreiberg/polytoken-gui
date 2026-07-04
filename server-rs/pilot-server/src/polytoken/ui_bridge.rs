@@ -92,9 +92,9 @@ pub struct PendingInterrogative {
     /// response label → its index → the decision.
     pub plan_handoff_labels: Option<Vec<String>>,
     /// For `ask_user_question` interrogatives: the per-question id + option ids
-    /// + rendered labels, in pilot's qna render order. A `QnaAnswer`'s
+    /// plus rendered labels, in pilot's qna render order. A `QnaAnswer`'s
     /// `selectedOptionIndices` index into `optionLabels`; the builder maps them
-    /// to the daemon's option ids. Also determines question count + ordering
+    /// to the daemon's option ids. Also determines question count and ordering
     /// for the reply.
     pub questions: Option<Vec<PendingQuestion>>,
     /// For permission interrogatives: the rendered approval choices (the pruned
@@ -134,13 +134,34 @@ pub type PersistenceTargetAlias = PersistenceTarget;
 /// `buildPermissionRequest()` in `event-map.ts` renders options in this order,
 /// and this array maps a response index back. Keep them in sync.
 pub const PERMISSION_APPROVAL_CHOICES: [ApprovalChoice; 7] = [
-    ApprovalChoice { granted: false, persistence_target: None }, // "Deny"
-    ApprovalChoice { granted: true, persistence_target: None }, // "Allow once" (null = this occurrence only)
-    ApprovalChoice { granted: true, persistence_target: Some(PersistenceTarget::Session) },
-    ApprovalChoice { granted: true, persistence_target: Some(PersistenceTarget::ProjectLocal) },
-    ApprovalChoice { granted: true, persistence_target: Some(PersistenceTarget::Project) },
-    ApprovalChoice { granted: true, persistence_target: Some(PersistenceTarget::UserLocal) },
-    ApprovalChoice { granted: true, persistence_target: Some(PersistenceTarget::User) },
+    ApprovalChoice {
+        granted: false,
+        persistence_target: None,
+    }, // "Deny"
+    ApprovalChoice {
+        granted: true,
+        persistence_target: None,
+    }, // "Allow once" (null = this occurrence only)
+    ApprovalChoice {
+        granted: true,
+        persistence_target: Some(PersistenceTarget::Session),
+    },
+    ApprovalChoice {
+        granted: true,
+        persistence_target: Some(PersistenceTarget::ProjectLocal),
+    },
+    ApprovalChoice {
+        granted: true,
+        persistence_target: Some(PersistenceTarget::Project),
+    },
+    ApprovalChoice {
+        granted: true,
+        persistence_target: Some(PersistenceTarget::UserLocal),
+    },
+    ApprovalChoice {
+        granted: true,
+        persistence_target: Some(PersistenceTarget::User),
+    },
 ];
 
 /// Human labels for the approval choices, in card order. Used by the forward
@@ -302,14 +323,8 @@ pub fn build_interrogative_response(
             // string. Map label → index → the decision (the labels are parallel
             // to PLAN_HANDOFF_DECISIONS, captured by the forward mapping).
             if let HostUiResponse::Value { value, .. } = response {
-                let labels = pending.plan_handoff_labels.as_deref();
-                let Some(labels) = labels else {
-                    return None;
-                };
-                let idx = labels.iter().position(|l| l == value);
-                let Some(idx) = idx else {
-                    return None;
-                };
+                let labels = pending.plan_handoff_labels.as_deref()?;
+                let idx = labels.iter().position(|l| l == value)?;
                 if idx >= PLAN_HANDOFF_DECISIONS.len() {
                     return None;
                 }
@@ -335,14 +350,8 @@ pub fn build_interrogative_response(
             if let HostUiResponse::Value { value, .. } = response {
                 let idx = PERMISSION_APPROVAL_LABELS
                     .iter()
-                    .position(|l| *l == value.as_str());
-                let Some(idx) = idx else {
-                    return None;
-                };
-                let choice = approval_from_index(idx);
-                let Some(choice) = choice else {
-                    return None;
-                };
+                    .position(|l| *l == value.as_str())?;
+                let choice = approval_from_index(idx)?;
                 if let Some(choices) = &pending.permission_choices {
                     if !choices.contains(&choice) {
                         return None;
@@ -368,9 +377,7 @@ pub fn build_interrogative_response(
                     .enumerate()
                     .map(|(i, ans)| build_ask_user_question_reply(i, ans, questions))
                     .collect();
-                Some(InterrogativeResponse::AskUserQuestionAnswers {
-                    answers: replies,
-                })
+                Some(InterrogativeResponse::AskUserQuestionAnswers { answers: replies })
             } else {
                 None
             }

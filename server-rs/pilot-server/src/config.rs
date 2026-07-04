@@ -61,7 +61,9 @@ pub fn load() -> Config {
         std::env::var("PILOT_VAPID_SUBJECT").unwrap_or_else(|_| "mailto:pilot@example.com".into());
     let host = std::env::var("PILOT_HOST").unwrap_or_else(|_| "127.0.0.1".into());
     let token = std::env::var("PILOT_TOKEN").ok().filter(|t| !t.is_empty());
-    let debug = std::env::var("PILOT_DEBUG").map(|v| v != "0").unwrap_or(true);
+    let debug = std::env::var("PILOT_DEBUG")
+        .map(|v| v != "0")
+        .unwrap_or(true);
     let client_dist = std::env::var("PILOT_CLIENT_DIST")
         .ok()
         .map(PathBuf::from)
@@ -109,10 +111,7 @@ pub fn token_ok(provided: Option<&str>, config: &Config) -> bool {
 
 /// Extract the app token from a request. Prefers `Authorization: Bearer <token>`,
 /// falls back to a `?token=` query param.
-pub fn token_from_request(
-    auth_header: Option<&str>,
-    query_token: Option<&str>,
-) -> Option<String> {
+pub fn token_from_request(auth_header: Option<&str>, query_token: Option<&str>) -> Option<String> {
     if let Some(auth) = auth_header {
         if let Some(rest) = auth.strip_prefix("Bearer ") {
             return Some(rest.trim().to_string());

@@ -294,25 +294,12 @@ pub struct AvailableModelEntry {
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum BlockDeltaPayload {
-    Text {
-        text: String,
-    },
-    ToolUseInput {
-        partial_json: String,
-    },
-    Thinking {
-        text: String,
-    },
-    SignatureDelta {
-        signature: String,
-    },
-    RedactedThinking {
-        data: String,
-    },
-    OpenAiReasoningOpaque {
-        data: String,
-        id: String,
-    },
+    Text { text: String },
+    ToolUseInput { partial_json: String },
+    Thinking { text: String },
+    SignatureDelta { signature: String },
+    RedactedThinking { data: String },
+    OpenAiReasoningOpaque { data: String, id: String },
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -405,6 +392,10 @@ pub struct CurrentGoal {
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[allow(
+    clippy::large_enum_variant,
+    reason = "generated wire type mirrors daemon OpenAPI shape"
+)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum DaemonEvent {
     Heartbeat {
@@ -1264,9 +1255,7 @@ pub enum NotificationType {
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ParentRef {
-    Subagent {
-        handle: String,
-    },
+    Subagent { handle: String },
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -1554,9 +1543,7 @@ pub struct SessionRecord {
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum SessionRef {
     Standalone,
-    Local {
-        session_id: SessionId,
-    },
+    Local { session_id: SessionId },
 }
 
 pub type SessionStateDomain = String;
@@ -1644,6 +1631,10 @@ pub struct SseEnvelope {
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[allow(
+    clippy::large_enum_variant,
+    reason = "generated wire type mirrors daemon OpenAPI shape"
+)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum StateDelta {
     FlagImportant {
@@ -1841,9 +1832,7 @@ pub enum ToolChoice {
     Auto,
     None,
     Required,
-    Tool {
-        name: String,
-    },
+    Tool { name: String },
 }
 
 pub type ToolError = serde_json::Value;
@@ -1856,10 +1845,7 @@ pub enum ToolExposureReason {
     ReloadAffectedToolLoading,
     CompactionReset,
     EagerFallbackActivated,
-    SessionEditFormatRelocked {
-        from: String,
-        to: String,
-    },
+    SessionEditFormatRelocked { from: String, to: String },
 }
 
 pub type ToolLiveDisplayContent = serde_json::Value;
@@ -1969,12 +1955,8 @@ pub enum TurnChunk {
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum UsageAction {
     Proceed,
-    Delay {
-        delay_ms: i64,
-    },
-    Backoff {
-        retry_after_ms: i64,
-    },
+    Delay { delay_ms: i64 },
+    Backoff { retry_after_ms: i64 },
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]

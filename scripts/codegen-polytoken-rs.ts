@@ -13,6 +13,7 @@
 // $PATH, or $PILOT_POLYTOKEN_BIN.
 
 import { mkdtempSync, writeFileSync, rmSync, readFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
 import { resolve, join } from "node:path";
 import { tmpdir } from "node:os";
 
@@ -248,8 +249,12 @@ ${fields.join("\n")}
   const usesKind = variants.some((v) => v.properties?.["kind"]);
   const actualTag = usesType ? "type" : usesKind ? "kind" : "type";
 
+  const largeEnumAllow = new Set(["DaemonEvent", "StateDelta"]).has(name)
+    ? `#[allow(clippy::large_enum_variant, reason = "generated wire type mirrors daemon OpenAPI shape")]\n`
+    : "";
+
   return `#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-#[serde(tag = "${actualTag}", rename_all = "snake_case")]
+${largeEnumAllow}#[serde(tag = "${actualTag}", rename_all = "snake_case")]
 pub enum ${name} {
 ${variantDefs.join("\n")}
 }`;
@@ -435,6 +440,11 @@ async function main() {
 
   const output = parts.join("\n");
   writeFileSync(OUT_PATH, output);
+  const rustfmt = spawnSync("rustfmt", [OUT_PATH], { stdio: "inherit" });
+  if (rustfmt.status !== 0) {
+    console.error("rustfmt failed on generated daemon types");
+    process.exit(rustfmt.status ?? 1);
+  }
 
   // Count variants in DaemonEvent for the summary
   const daemonEvent = schemas["DaemonEvent"];

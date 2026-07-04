@@ -636,6 +636,10 @@ struct InterrogativeMapping {
 /// unrecognized type (a runtime-only path — serde would deserialize it as an
 /// unknown variant), the default arm emits a blocking `confirm` dialog and
 /// registers the pending so the operator can dismiss it → {kind:"cancel"}.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "mapping mirrors daemon interrogative payload fields"
+)]
 fn build_interrogative_mapping(
     interrogative_id: &str,
     interrogative_type: &pilot_daemon_types::InterrogativeType,
@@ -1423,7 +1427,7 @@ pub fn map_daemon_event(
                 vec![SessionDriverEvent::ToolFinished {
                     base,
                     call_id: call_id.clone(),
-                    success: is_error.unwrap_or(false) != true,
+                    success: !is_error.unwrap_or(false),
                     output: extracted.output,
                     images: extracted.images,
                 }],

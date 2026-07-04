@@ -66,7 +66,7 @@ pub enum SessionMessageDeliveryMode {
 #[serde(tag = "type", rename_all = "camelCase")]
 pub enum ImageContent {
     Image {
-        data: String,   // base64
+        data: String, // base64
         #[serde(rename = "mimeType")]
         mime_type: String,
     },
@@ -93,7 +93,11 @@ pub struct SessionConfig {
     pub provider: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none", default, rename = "modelId")]
     pub model_id: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none", default, rename = "thinkingLevel")]
+    #[serde(
+        skip_serializing_if = "Option::is_none",
+        default,
+        rename = "thinkingLevel"
+    )]
     pub thinking_level: Option<String>,
     #[serde(
         skip_serializing_if = "Option::is_none",
@@ -141,7 +145,11 @@ pub struct ModelOption {
     #[serde(rename = "modelId")]
     pub model_id: String,
     pub label: String,
-    #[serde(skip_serializing_if = "Option::is_none", default, rename = "thinkingLevels")]
+    #[serde(
+        skip_serializing_if = "Option::is_none",
+        default,
+        rename = "thinkingLevels"
+    )]
     pub thinking_levels: Option<Vec<String>>,
 }
 
@@ -151,7 +159,11 @@ pub struct ModelDefaults {
     pub provider: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none", default, rename = "modelId")]
     pub model_id: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none", default, rename = "thinkingLevel")]
+    #[serde(
+        skip_serializing_if = "Option::is_none",
+        default,
+        rename = "thinkingLevel"
+    )]
     pub thinking_level: Option<String>,
     #[serde(default)]
     pub favorites: Vec<String>,
@@ -165,7 +177,11 @@ pub struct CommandInfo {
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub description: Option<String>,
     pub source: CommandSource,
-    #[serde(skip_serializing_if = "Option::is_none", default, rename = "argumentHint")]
+    #[serde(
+        skip_serializing_if = "Option::is_none",
+        default,
+        rename = "argumentHint"
+    )]
     pub argument_hint: Option<String>,
 }
 
@@ -252,7 +268,11 @@ pub struct SessionSnapshot {
     pub status: SessionStatus,
     #[serde(rename = "updatedAt")]
     pub updated_at: Timestamp,
-    #[serde(skip_serializing_if = "Option::is_none", default, rename = "archivedAt")]
+    #[serde(
+        skip_serializing_if = "Option::is_none",
+        default,
+        rename = "archivedAt"
+    )]
     pub archived_at: Option<Timestamp>,
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub preview: Option<String>,
@@ -260,19 +280,43 @@ pub struct SessionSnapshot {
     pub config: Option<SessionConfig>,
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub usage: Option<SessionUsage>,
-    #[serde(skip_serializing_if = "Option::is_none", default, rename = "runningRunId")]
+    #[serde(
+        skip_serializing_if = "Option::is_none",
+        default,
+        rename = "runningRunId"
+    )]
     pub running_run_id: Option<RunId>,
-    #[serde(skip_serializing_if = "Option::is_none", default, rename = "queuedMessages")]
+    #[serde(
+        skip_serializing_if = "Option::is_none",
+        default,
+        rename = "queuedMessages"
+    )]
     pub queued_messages: Option<Vec<SessionQueuedMessage>>,
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub facet: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none", default, rename = "permissionMonitor")]
+    #[serde(
+        skip_serializing_if = "Option::is_none",
+        default,
+        rename = "permissionMonitor"
+    )]
     pub permission_monitor: Option<PermissionMonitorMode>,
-    #[serde(skip_serializing_if = "Option::is_none", default, rename = "adventurousHandoff")]
+    #[serde(
+        skip_serializing_if = "Option::is_none",
+        default,
+        rename = "adventurousHandoff"
+    )]
     pub adventurous_handoff: Option<bool>,
-    #[serde(skip_serializing_if = "Option::is_none", default, rename = "notificationAutodrain")]
+    #[serde(
+        skip_serializing_if = "Option::is_none",
+        default,
+        rename = "notificationAutodrain"
+    )]
     pub notification_autodrain: Option<bool>,
-    #[serde(skip_serializing_if = "Option::is_none", default, rename = "activePlan")]
+    #[serde(
+        skip_serializing_if = "Option::is_none",
+        default,
+        rename = "activePlan"
+    )]
     pub active_plan: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none", default, rename = "goal")]
     pub goal: Option<Option<GoalInfo>>,
@@ -280,7 +324,11 @@ pub struct SessionSnapshot {
     pub flags: Option<Vec<FlaggedFile>>,
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub todos: Option<Vec<TodoItem>>,
-    #[serde(skip_serializing_if = "Option::is_none", default, rename = "mcpServers")]
+    #[serde(
+        skip_serializing_if = "Option::is_none",
+        default,
+        rename = "mcpServers"
+    )]
     pub mcp_servers: Option<Vec<McpServerInfo>>,
 }
 
@@ -292,7 +340,11 @@ pub struct SessionListEntry {
     pub session_id: SessionId,
     pub path: String,
     pub cwd: String,
-    #[serde(skip_serializing_if = "Option::is_none", default, rename = "displayName")]
+    #[serde(
+        skip_serializing_if = "Option::is_none",
+        default,
+        rename = "displayName"
+    )]
     pub display_name: Option<String>,
     pub preview: String,
     #[serde(rename = "userMessageCount")]
@@ -303,7 +355,11 @@ pub struct SessionListEntry {
     pub created_at: Timestamp,
     #[serde(rename = "lastUserMessageAt")]
     pub last_user_message_at: Timestamp,
-    #[serde(skip_serializing_if = "Option::is_none", default, rename = "parentSessionPath")]
+    #[serde(
+        skip_serializing_if = "Option::is_none",
+        default,
+        rename = "parentSessionPath"
+    )]
     pub parent_session_path: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub usage: Option<SessionUsage>,
@@ -338,7 +394,11 @@ pub struct QnaQuestion {
     pub context: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub options: Option<Vec<QnaQuestionOption>>,
-    #[serde(skip_serializing_if = "Option::is_none", default, rename = "multiSelect")]
+    #[serde(
+        skip_serializing_if = "Option::is_none",
+        default,
+        rename = "multiSelect"
+    )]
     pub multi_select: Option<bool>,
 }
 
@@ -389,7 +449,11 @@ pub enum HostUiRequest {
         request_id: String,
         title: String,
         message: String,
-        #[serde(skip_serializing_if = "Option::is_none", default, rename = "defaultValue")]
+        #[serde(
+            skip_serializing_if = "Option::is_none",
+            default,
+            rename = "defaultValue"
+        )]
         default_value: Option<bool>,
         #[serde(skip_serializing_if = "Option::is_none", default, rename = "timeoutMs")]
         timeout_ms: Option<i64>,
@@ -400,7 +464,11 @@ pub enum HostUiRequest {
         title: String,
         #[serde(skip_serializing_if = "Option::is_none", default)]
         placeholder: Option<String>,
-        #[serde(skip_serializing_if = "Option::is_none", default, rename = "initialValue")]
+        #[serde(
+            skip_serializing_if = "Option::is_none",
+            default,
+            rename = "initialValue"
+        )]
         initial_value: Option<String>,
         #[serde(skip_serializing_if = "Option::is_none", default, rename = "timeoutMs")]
         timeout_ms: Option<i64>,
@@ -410,7 +478,11 @@ pub enum HostUiRequest {
         request_id: String,
         title: String,
         options: Vec<String>,
-        #[serde(skip_serializing_if = "Option::is_none", default, rename = "allowMultiple")]
+        #[serde(
+            skip_serializing_if = "Option::is_none",
+            default,
+            rename = "allowMultiple"
+        )]
         allow_multiple: Option<bool>,
         #[serde(skip_serializing_if = "Option::is_none", default, rename = "timeoutMs")]
         timeout_ms: Option<i64>,
@@ -419,7 +491,11 @@ pub enum HostUiRequest {
         #[serde(rename = "requestId")]
         request_id: String,
         title: String,
-        #[serde(skip_serializing_if = "Option::is_none", default, rename = "initialValue")]
+        #[serde(
+            skip_serializing_if = "Option::is_none",
+            default,
+            rename = "initialValue"
+        )]
         initial_value: Option<String>,
     },
     Qna {
@@ -437,9 +513,17 @@ pub enum HostUiRequest {
         title: String,
         #[serde(rename = "planText")]
         plan_text: String,
-        #[serde(skip_serializing_if = "Option::is_none", default, rename = "displayPath")]
+        #[serde(
+            skip_serializing_if = "Option::is_none",
+            default,
+            rename = "displayPath"
+        )]
         display_path: Option<String>,
-        #[serde(skip_serializing_if = "Option::is_none", default, rename = "targetFacet")]
+        #[serde(
+            skip_serializing_if = "Option::is_none",
+            default,
+            rename = "targetFacet"
+        )]
         target_facet: Option<String>,
         #[serde(rename = "actionLabels")]
         action_labels: [String; 3],
@@ -544,7 +628,11 @@ pub struct ExtensionCompatibilityIssue {
     pub capability: String,
     pub classification: ExtensionIssueClassification,
     pub message: String,
-    #[serde(skip_serializing_if = "Option::is_none", default, rename = "extensionPath")]
+    #[serde(
+        skip_serializing_if = "Option::is_none",
+        default,
+        rename = "extensionPath"
+    )]
     pub extension_path: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none", default, rename = "eventName")]
     pub event_name: Option<String>,
@@ -689,9 +777,17 @@ pub enum SessionDriverEvent {
         #[serde(flatten)]
         base: SessionEventBase,
         snapshot: SessionSnapshot,
-        #[serde(skip_serializing_if = "Option::is_none", default, rename = "userEntryId")]
+        #[serde(
+            skip_serializing_if = "Option::is_none",
+            default,
+            rename = "userEntryId"
+        )]
         user_entry_id: Option<String>,
-        #[serde(skip_serializing_if = "Option::is_none", default, rename = "assistantEntryId")]
+        #[serde(
+            skip_serializing_if = "Option::is_none",
+            default,
+            rename = "assistantEntryId"
+        )]
         assistant_entry_id: Option<String>,
     },
     UsageUpdated {
@@ -876,15 +972,13 @@ mod tests {
         }"#;
         let ev: SessionDriverEvent = serde_json::from_str(json_str).unwrap();
         match ev {
-            SessionDriverEvent::HostUiRequest { request, .. } => {
-                match request {
-                    HostUiRequest::Confirm { title, message, .. } => {
-                        assert_eq!(title, "Confirm?");
-                        assert_eq!(message, "Are you sure?");
-                    }
-                    _ => panic!("expected Confirm"),
+            SessionDriverEvent::HostUiRequest { request, .. } => match request {
+                HostUiRequest::Confirm { title, message, .. } => {
+                    assert_eq!(title, "Confirm?");
+                    assert_eq!(message, "Are you sure?");
                 }
-            }
+                _ => panic!("expected Confirm"),
+            },
             _ => panic!("expected HostUiRequest"),
         }
     }
@@ -1028,19 +1122,17 @@ mod tests {
         }"#;
         let ev: SessionDriverEvent = serde_json::from_str(json_str).unwrap();
         match ev {
-            SessionDriverEvent::HostUiRequest { request, .. } => {
-                match request {
-                    HostUiRequest::Plan {
-                        plan_text,
-                        action_labels,
-                        ..
-                    } => {
-                        assert_eq!(plan_text, "Do stuff");
-                        assert_eq!(action_labels[0], "New context");
-                    }
-                    _ => panic!("expected Plan"),
+            SessionDriverEvent::HostUiRequest { request, .. } => match request {
+                HostUiRequest::Plan {
+                    plan_text,
+                    action_labels,
+                    ..
+                } => {
+                    assert_eq!(plan_text, "Do stuff");
+                    assert_eq!(action_labels[0], "New context");
                 }
-            }
+                _ => panic!("expected Plan"),
+            },
             _ => panic!("expected HostUiRequest"),
         }
     }

@@ -203,10 +203,20 @@ server = the daemon owns everything it can. Known as of 2026-07-04:
       plumbing in `driver.rs`. Codegen has been re-run cleanly; jj history
       keeps the old skeleton for reference. (The fake-daemon *concept* returns
       in Phase 2.5, rebuilt to speak real `DaemonEvent`s.)
-- [ ] Add server-rs to CI: `cargo fmt --check`, `cargo clippy --locked
+- [x] Add server-rs to CI: `cargo fmt --check`, `cargo clippy --locked
       --all-targets -- -D warnings`, `cargo test`, rust-cache with
-      `workspaces: server-rs`, like the existing `desktop/` job. Consider a
-      `check:rs` script.
+      `workspaces: server-rs`, like the existing `desktop` job. Consider a
+      `check:rs` script. **DONE (2026-07-05):** added `rust-server` job to
+      `.github/workflows/ci.yml` (ubuntu-latest; same release-twin-skip `if:`
+      as web/desktop). Clippy went ~61 warnings → 0: `cargo clippy --fix`
+      auto-fixed mechanical lints across the workspace (all behavior-preserving
+      per Opus review), plus item-level `#[allow(clippy::large_enum_variant)]`
+      on `ServerMessage`/`DaemonEvent`/`StateDelta` (wire shapes; boxing would
+      change serialization) and `#[allow(clippy::too_many_arguments)]` on two
+      TS-parity helpers. Codegen now runs `rustfmt` on the generated file
+      (fail-loud on rustfmt failure) so codegen + `fmt --check` stay consistent.
+      `check:rs` script added to root `package.json`. `server-rs/Cargo.lock` is
+      tracked so `--locked` works on clean checkout.
 - [x] Remove the blanket `#![allow(dead_code)]` / `#![allow(unused_variables)]`;
       convert survivors to item-level `#[expect(dead_code, reason = "...")]`
       so the compiler enumerates remaining gaps and complains when they're

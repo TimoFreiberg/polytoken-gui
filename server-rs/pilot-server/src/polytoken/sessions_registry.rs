@@ -132,18 +132,29 @@ pub fn list_session_ids(sessions_dir: &Path) -> Vec<String> {
         };
         let _ = file_type; // already used by is_dir check
         let name = entry.file_name().to_string_lossy().to_string();
-        let mtime = entry
-            .metadata()
-            .and_then(|m| m.modified())
-            .ok();
+        let mtime = entry.metadata().and_then(|m| m.modified()).ok();
         with_mtime.push((name, mtime));
     }
 
     // Sort by mtime desc (newest first). A missing/unreadable mtime sorts last.
     with_mtime.sort_by(|a, b| {
-        let a_time = a.1.map(|t| t.duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs_f64()).unwrap_or(f64::MIN)).unwrap_or(f64::MIN);
-        let b_time = b.1.map(|t| t.duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs_f64()).unwrap_or(f64::MIN)).unwrap_or(f64::MIN);
-        b_time.partial_cmp(&a_time).unwrap_or(std::cmp::Ordering::Equal)
+        let a_time =
+            a.1.map(|t| {
+                t.duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_secs_f64())
+                    .unwrap_or(f64::MIN)
+            })
+            .unwrap_or(f64::MIN);
+        let b_time =
+            b.1.map(|t| {
+                t.duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_secs_f64())
+                    .unwrap_or(f64::MIN)
+            })
+            .unwrap_or(f64::MIN);
+        b_time
+            .partial_cmp(&a_time)
+            .unwrap_or(std::cmp::Ordering::Equal)
     });
     with_mtime.into_iter().map(|(name, _)| name).collect()
 }
@@ -189,9 +200,9 @@ pub fn cold_session_entry(
         created_at.clone()
     };
     let parent_session_path = match &meta.parent_session_id {
-        Some(ParentSessionRef::Local { session_id: Some(sid) }) if !sid.is_empty() => {
-            Some(sid.clone())
-        }
+        Some(ParentSessionRef::Local {
+            session_id: Some(sid),
+        }) if !sid.is_empty() => Some(sid.clone()),
         _ => None,
     };
     let cwd = if meta.project_path.is_empty() {
@@ -202,7 +213,10 @@ pub fn cold_session_entry(
 
     Some(SessionListEntry {
         session_id: session_id.to_string(),
-        path: session_dir.join("session.json").to_string_lossy().to_string(),
+        path: session_dir
+            .join("session.json")
+            .to_string_lossy()
+            .to_string(),
         cwd,
         display_name: None,
         preview,
@@ -220,15 +234,20 @@ pub fn cold_session_entry(
 }
 
 /// Callbacks the caller provides to resolve pilot-side flags.
+type WorktreeResolver = dyn Fn(&str) -> Option<WorktreeInfo> + Send + Sync;
+
 pub struct ListColdSessionsOpts {
     pub archived_for: Box<dyn Fn(&str) -> bool + Send + Sync>,
-    pub worktree_for: Option<Box<dyn Fn(&str) -> Option<WorktreeInfo> + Send + Sync>>,
+    pub worktree_for: Option<Box<WorktreeResolver>>,
 }
 
 /// List every cold session on disk as `SessionListEntry`s. Sessions with no
 /// `session.json` (failed startups) are skipped. The `worktreeFor`/`archivedFor`
 /// callbacks resolve pilot's own side-flags keyed by the session path.
-pub fn list_cold_sessions(sessions_dir: &Path, opts: ListColdSessionsOpts) -> Vec<SessionListEntry> {
+pub fn list_cold_sessions(
+    sessions_dir: &Path,
+    opts: ListColdSessionsOpts,
+) -> Vec<SessionListEntry> {
     let mut out: Vec<SessionListEntry> = Vec::new();
     for id in list_session_ids(sessions_dir) {
         let session_dir = sessions_dir.join(&id);
@@ -245,20 +264,10 @@ pub fn list_cold_sessions(sessions_dir: &Path, opts: ListColdSessionsOpts) -> Ve
         } else {
             meta.project_path.clone()
         };
-        let worktree = opts
-            .worktree_for
-            .as_ref()
-            .and_then(|f| (f)(&cwd));
+        let worktree = opts.worktree_for.as_ref().and_then(|f| (f)(&cwd));
         let session_json_path = session_dir.join("session.json");
         let archived = (opts.archived_for)(&session_json_path.to_string_lossy());
-        let entry = cold_session_entry(
-            &session_dir,
-            &id,
-            ColdSessionOpts {
-                archived,
-                worktree,
-            },
-        );
+        let entry = cold_session_entry(&session_dir, &id, ColdSessionOpts { archived, worktree });
         let Some(entry) = entry else {
             continue;
         };

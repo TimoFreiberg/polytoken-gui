@@ -27,23 +27,25 @@ pub fn read_pilot_settings(data_dir: &Path) -> PilotSettings {
         return PilotSettings::default();
     }
     match fs::read_to_string(&path) {
-        Ok(raw) => {
-            match serde_json::from_str::<PartialSettings>(&raw) {
-                Ok(partial) => {
-                    PilotSettings {
-                        login_shell: partial.login_shell.flatten(),
-                        background_model: partial.background_model.flatten(),
-                        enabled_extensions: partial.enabled_extensions.flatten(),
-                    }
-                }
-                Err(e) => {
-                    eprintln!("[settings] failed to parse {}: using defaults — {e}", path.display());
-                    PilotSettings::default()
-                }
+        Ok(raw) => match serde_json::from_str::<PartialSettings>(&raw) {
+            Ok(partial) => PilotSettings {
+                login_shell: partial.login_shell.flatten(),
+                background_model: partial.background_model.flatten(),
+                enabled_extensions: partial.enabled_extensions.flatten(),
+            },
+            Err(e) => {
+                eprintln!(
+                    "[settings] failed to parse {}: using defaults — {e}",
+                    path.display()
+                );
+                PilotSettings::default()
             }
-        }
+        },
         Err(e) => {
-            eprintln!("[settings] failed to read {}: using defaults — {e}", path.display());
+            eprintln!(
+                "[settings] failed to read {}: using defaults — {e}",
+                path.display()
+            );
             PilotSettings::default()
         }
     }
@@ -177,11 +179,14 @@ mod tests {
             dir.path(),
             &PartialSettings {
                 login_shell: Some(None), // explicit clear
-                background_model: None,   // absent — keep
+                background_model: None,  // absent — keep
                 enabled_extensions: None,
             },
         );
-        assert!(cleared.login_shell.is_none(), "login_shell should be cleared");
+        assert!(
+            cleared.login_shell.is_none(),
+            "login_shell should be cleared"
+        );
         assert_eq!(
             cleared.background_model,
             Some("sonnet".into()),

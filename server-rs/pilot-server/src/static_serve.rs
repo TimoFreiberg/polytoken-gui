@@ -20,13 +20,21 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use axum::body::Body;
-use axum::http::{header, HeaderMap, StatusCode};
+use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use parking_lot::RwLock;
 use tracing::warn;
 
 const COMPRESSIBLE: &[&str] = &[
-    ".js", ".mjs", ".css", ".html", ".svg", ".json", ".webmanifest", ".map", ".txt",
+    ".js",
+    ".mjs",
+    ".css",
+    ".html",
+    ".svg",
+    ".json",
+    ".webmanifest",
+    ".map",
+    ".txt",
 ];
 
 /// Below this, gzip's frame overhead + CPU isn't worth the bytes saved.
@@ -126,10 +134,7 @@ impl StaticServer {
         let accepts_gzip = req_headers
             .get(header::ACCEPT_ENCODING)
             .and_then(|v| v.to_str().ok())
-            .map(|s| {
-                s.split(|c: char| c == ',' || c == ' ')
-                    .any(|part| part.trim() == "gzip")
-            })
+            .map(|s| s.split([',', ' ']).any(|part| part.trim() == "gzip"))
             .unwrap_or(false);
 
         let mut builder = Response::builder()
@@ -197,9 +202,9 @@ impl StaticServer {
 /// Strip leading slashes and defuse path traversal (`..` segments).
 fn normalize_path(pathname: &str) -> String {
     let stripped = pathname
-        .trim_start_matches(|c| c == '/' || c == '\\')
+        .trim_start_matches(['/', '\\'])
         .trim_start_matches("..")
-        .trim_start_matches(|c| c == '/' || c == '\\');
+        .trim_start_matches(['/', '\\']);
     // Remove any remaining `..` segments
     stripped
         .split('/')

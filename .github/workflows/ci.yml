@@ -1,10 +1,11 @@
-# CI — every PR and every push to main. Two independent jobs:
-#   web:     typechecks (protocol/server/scripts/e2e/parity/svelte), unit tests, and
-#            the Playwright e2e suite (mock driver; boots its own dev server on
-#            auto-assigned ports, so nothing collides on a shared runner).
-#   desktop: fmt + clippy for the Tauri shell, on macOS because that's the only
-#            target the shell builds for. The hub sidecar must be compiled first —
-#            tauri-build stages `externalBin` at compile time and errors if missing.
+# CI — every PR and every push to main. Three independent jobs:
+#   web:         typechecks (protocol/server/scripts/e2e/parity/svelte), unit tests,
+#                and the Playwright e2e suite (mock driver; boots its own dev server
+#                on auto-assigned ports, so nothing collides on a shared runner).
+#   desktop:     fmt + clippy for the Tauri shell, on macOS because that's the only
+#                target the shell builds for. The hub sidecar must be compiled first —
+#                tauri-build stages `externalBin` at compile time and errors if missing.
+#   rust-server: fmt + clippy + tests for the Rust server port.
 #
 # The release pipeline (tag-triggered) hangs off these jobs via `needs`; see
 # desktop/README.md "Publishing a release".
@@ -81,6 +82,23 @@ jobs:
         working-directory: desktop
       - run: cargo clippy --locked --all-targets -- -D warnings
         working-directory: desktop
+
+  rust-server:
+    name: rust server — fmt, clippy, test
+    if: github.ref_type == 'tag' || github.event_name != 'push' || !startsWith(github.event.head_commit.message, 'Release v')
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: server-rs
+      - run: cargo fmt --check
+        working-directory: server-rs
+      - run: cargo clippy --locked --all-targets -- -D warnings
+        working-directory: server-rs
+      - run: cargo test
+        working-directory: server-rs
 
   # Tag pushes only (scripts/desktop/release.ts creates them): build the signed
   # bundled .app and publish it + latest.json as a GitHub release — but only after

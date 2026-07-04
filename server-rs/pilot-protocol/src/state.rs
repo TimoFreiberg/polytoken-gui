@@ -10,9 +10,9 @@ use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
 
 use crate::session_driver::{
-    FlaggedFile, GoalInfo, HostUiRequest, ImageContent,
-    McpServerInfo, NotifyLevel, PermissionMonitorMode, SessionConfig, SessionDriverEvent,
-    SessionQueuedMessage, SessionRef, SessionStatus, SessionUsage, TodoItem,
+    FlaggedFile, GoalInfo, HostUiRequest, ImageContent, McpServerInfo, NotifyLevel,
+    PermissionMonitorMode, SessionConfig, SessionDriverEvent, SessionQueuedMessage, SessionRef,
+    SessionStatus, SessionUsage, TodoItem,
 };
 
 // ── Transcript items ────────────────────────────────────────────────────
@@ -42,7 +42,11 @@ pub struct UserItem {
     /// entries at render time.
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub delivery: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none", default, rename = "deliveryError")]
+    #[serde(
+        skip_serializing_if = "Option::is_none",
+        default,
+        rename = "deliveryError"
+    )]
     pub delivery_error: Option<String>,
 }
 
@@ -56,7 +60,11 @@ pub struct AssistantItem {
     pub ts: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none", default, rename = "entryId")]
     pub entry_id: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none", default, rename = "completedAt")]
+    #[serde(
+        skip_serializing_if = "Option::is_none",
+        default,
+        rename = "completedAt"
+    )]
     pub completed_at: Option<String>,
 }
 
@@ -90,7 +98,11 @@ pub struct ToolItem {
     pub status: ToolStatus,
     #[serde(skip_serializing_if = "Option::is_none", default, rename = "startedAt")]
     pub started_at: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none", default, rename = "finishedAt")]
+    #[serde(
+        skip_serializing_if = "Option::is_none",
+        default,
+        rename = "finishedAt"
+    )]
     pub finished_at: Option<String>,
 }
 
@@ -159,13 +171,29 @@ pub struct SessionState {
     pub usage: Option<SessionUsage>,
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub facet: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none", default, rename = "permissionMonitor")]
+    #[serde(
+        skip_serializing_if = "Option::is_none",
+        default,
+        rename = "permissionMonitor"
+    )]
     pub permission_monitor: Option<PermissionMonitorMode>,
-    #[serde(skip_serializing_if = "Option::is_none", default, rename = "adventurousHandoff")]
+    #[serde(
+        skip_serializing_if = "Option::is_none",
+        default,
+        rename = "adventurousHandoff"
+    )]
     pub adventurous_handoff: Option<bool>,
-    #[serde(skip_serializing_if = "Option::is_none", default, rename = "notificationAutodrain")]
+    #[serde(
+        skip_serializing_if = "Option::is_none",
+        default,
+        rename = "notificationAutodrain"
+    )]
     pub notification_autodrain: Option<bool>,
-    #[serde(skip_serializing_if = "Option::is_none", default, rename = "activePlan")]
+    #[serde(
+        skip_serializing_if = "Option::is_none",
+        default,
+        rename = "activePlan"
+    )]
     pub active_plan: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none", default, rename = "goal")]
     pub goal: Option<Option<GoalInfo>>,
@@ -309,7 +337,7 @@ pub fn fold_event(state: &mut SessionState, ev: &SessionDriverEvent) {
             }
             // goal: null → None (badge hides), object → set, undefined → preserved
             match &snapshot.goal {
-                None => {} // undefined → preserve
+                None => {}                       // undefined → preserve
                 Some(None) => state.goal = None, // null → cleared
                 Some(Some(g)) => state.goal = Some(Some(g.clone())),
             }
@@ -460,7 +488,10 @@ pub fn fold_event(state: &mut SessionState, ev: &SessionDriverEvent) {
         }
 
         E::ToolUpdated {
-            call_id, text, progress, ..
+            call_id,
+            text,
+            progress,
+            ..
         } => {
             for item in state.items.iter_mut() {
                 if let TranscriptItem::Tool(t) = item {
@@ -537,15 +568,24 @@ pub fn fold_event(state: &mut SessionState, ev: &SessionDriverEvent) {
                         }
                     }
                     H::Widget {
-                        key, lines, placement, ..
+                        key,
+                        lines,
+                        placement,
+                        ..
                     } => {
                         // TS: lines present && non-empty → upsert; lines absent or empty → delete.
-                        let keep = lines.as_ref().map_or(false, |ls| !ls.is_empty());
+                        let keep = lines.as_ref().is_some_and(|ls| !ls.is_empty());
                         if keep {
                             let ls = lines.as_ref().unwrap();
-                            let ap = match placement.unwrap_or(crate::session_driver::WidgetPlacement::AboveComposer) {
-                                crate::session_driver::WidgetPlacement::AboveComposer => AmbientPlacement::AboveComposer,
-                                crate::session_driver::WidgetPlacement::BelowComposer => AmbientPlacement::BelowComposer,
+                            let ap = match placement
+                                .unwrap_or(crate::session_driver::WidgetPlacement::AboveComposer)
+                            {
+                                crate::session_driver::WidgetPlacement::AboveComposer => {
+                                    AmbientPlacement::AboveComposer
+                                }
+                                crate::session_driver::WidgetPlacement::BelowComposer => {
+                                    AmbientPlacement::BelowComposer
+                                }
                             };
                             state.ambient.widgets.insert(
                                 key.clone(),
@@ -587,12 +627,16 @@ pub fn fold_event(state: &mut SessionState, ev: &SessionDriverEvent) {
                         // prefill belongs to the per-client composer; ignored in shared state
                     }
                     // Dialog types already handled above
-                    _ => unreachable!("non-dialog request not handled: is_dialog_request should have caught it"),
+                    _ => unreachable!(
+                        "non-dialog request not handled: is_dialog_request should have caught it"
+                    ),
                 }
             }
         }
 
-        E::HostUiResolved { request_id: rid, .. } => {
+        E::HostUiResolved {
+            request_id: rid, ..
+        } => {
             state
                 .pending_approvals
                 .retain(|p| host_request_id(p) != *rid);
@@ -967,12 +1011,7 @@ mod tests {
             },
         );
         assert!(!s.items.is_empty());
-        fold_event(
-            &mut s,
-            &E::SessionReset {
-                base: base(),
-            },
-        );
+        fold_event(&mut s, &E::SessionReset { base: base() });
         assert!(s.items.is_empty());
     }
 
@@ -1005,12 +1044,24 @@ mod tests {
         // First snapshot sets facet
         let mut snap1 = snapshot(SessionStatus::Running);
         snap1.facet = Some("plan".into());
-        fold_event(&mut s, &E::SessionUpdated { base: base(), snapshot: snap1 });
+        fold_event(
+            &mut s,
+            &E::SessionUpdated {
+                base: base(),
+                snapshot: snap1,
+            },
+        );
         assert_eq!(s.facet, Some("plan".to_string()));
 
         // Second snapshot without facet should NOT clear it
         let snap2 = snapshot(SessionStatus::Idle);
-        fold_event(&mut s, &E::SessionUpdated { base: base(), snapshot: snap2 });
+        fold_event(
+            &mut s,
+            &E::SessionUpdated {
+                base: base(),
+                snapshot: snap2,
+            },
+        );
         assert_eq!(s.facet, Some("plan".to_string()));
     }
 
@@ -1171,7 +1222,8 @@ mod tests {
                 base: base(),
                 issue: crate::session_driver::ExtensionCompatibilityIssue {
                     capability: "ui.status".into(),
-                    classification: crate::session_driver::ExtensionIssueClassification::TerminalOnly,
+                    classification:
+                        crate::session_driver::ExtensionIssueClassification::TerminalOnly,
                     message: "not available in TUI".into(),
                     extension_path: None,
                     event_name: None,
@@ -1194,12 +1246,24 @@ mod tests {
         let mut s = initial_session_state();
         let mut snap1 = snapshot(SessionStatus::Idle);
         snap1.permission_monitor = Some(PermissionMonitorMode::Bypass);
-        fold_event(&mut s, &E::SessionUpdated { base: base(), snapshot: snap1 });
+        fold_event(
+            &mut s,
+            &E::SessionUpdated {
+                base: base(),
+                snapshot: snap1,
+            },
+        );
         assert_eq!(s.permission_monitor, Some(PermissionMonitorMode::Bypass));
 
         // A later snapshot without permissionMonitor must NOT clear it.
         let snap2 = snapshot(SessionStatus::Idle);
-        fold_event(&mut s, &E::SessionUpdated { base: base(), snapshot: snap2 });
+        fold_event(
+            &mut s,
+            &E::SessionUpdated {
+                base: base(),
+                snapshot: snap2,
+            },
+        );
         assert_eq!(s.permission_monitor, Some(PermissionMonitorMode::Bypass));
     }
 
@@ -1208,86 +1272,167 @@ mod tests {
         let mut s = initial_session_state();
         let mut snap1 = snapshot(SessionStatus::Idle);
         snap1.active_plan = Some("plan-001".into());
-        fold_event(&mut s, &E::SessionUpdated { base: base(), snapshot: snap1 });
+        fold_event(
+            &mut s,
+            &E::SessionUpdated {
+                base: base(),
+                snapshot: snap1,
+            },
+        );
         assert_eq!(s.active_plan, Some("plan-001".to_string()));
 
         // A later snapshot without activePlan must NOT clear it.
         let snap2 = snapshot(SessionStatus::Idle);
-        fold_event(&mut s, &E::SessionUpdated { base: base(), snapshot: snap2 });
+        fold_event(
+            &mut s,
+            &E::SessionUpdated {
+                base: base(),
+                snapshot: snap2,
+            },
+        );
         assert_eq!(s.active_plan, Some("plan-001".to_string()));
     }
 
     #[test]
     fn snapshot_goal_propagates() {
-        let goal = GoalInfo { summary: "Ship feature X".into(), lifecycle: "active".into() };
+        let goal = GoalInfo {
+            summary: "Ship feature X".into(),
+            lifecycle: "active".into(),
+        };
         let mut snap = snapshot(SessionStatus::Idle);
         snap.goal = Some(Some(goal.clone()));
-        let s = fold_all(&[E::SessionUpdated { base: base(), snapshot: snap }]);
+        let s = fold_all(&[E::SessionUpdated {
+            base: base(),
+            snapshot: snap,
+        }]);
         assert_eq!(s.goal, Some(Some(goal)));
     }
 
     #[test]
     fn snapshot_without_goal_preserves_existing() {
-        let goal = GoalInfo { summary: "Ship feature X".into(), lifecycle: "active".into() };
+        let goal = GoalInfo {
+            summary: "Ship feature X".into(),
+            lifecycle: "active".into(),
+        };
         let mut s = initial_session_state();
         let mut snap1 = snapshot(SessionStatus::Idle);
         snap1.goal = Some(Some(goal.clone()));
-        fold_event(&mut s, &E::SessionUpdated { base: base(), snapshot: snap1 });
+        fold_event(
+            &mut s,
+            &E::SessionUpdated {
+                base: base(),
+                snapshot: snap1,
+            },
+        );
         assert_eq!(s.goal, Some(Some(goal.clone())));
 
         // A later snapshot that omits goal must not erase the known value.
         let snap2 = snapshot(SessionStatus::Idle);
-        fold_event(&mut s, &E::SessionUpdated { base: base(), snapshot: snap2 });
+        fold_event(
+            &mut s,
+            &E::SessionUpdated {
+                base: base(),
+                snapshot: snap2,
+            },
+        );
         assert_eq!(s.goal, Some(Some(goal)));
     }
 
     #[test]
     fn snapshot_goal_null_clears_state_goal() {
-        let goal = GoalInfo { summary: "Ship feature X".into(), lifecycle: "active".into() };
+        let goal = GoalInfo {
+            summary: "Ship feature X".into(),
+            lifecycle: "active".into(),
+        };
         let mut s = initial_session_state();
         let mut snap1 = snapshot(SessionStatus::Idle);
         snap1.goal = Some(Some(goal.clone()));
-        fold_event(&mut s, &E::SessionUpdated { base: base(), snapshot: snap1 });
+        fold_event(
+            &mut s,
+            &E::SessionUpdated {
+                base: base(),
+                snapshot: snap1,
+            },
+        );
         assert_eq!(s.goal, Some(Some(goal)));
 
         // A later snapshot carrying goal: null clears it → state.goal becomes None.
         let mut snap2 = snapshot(SessionStatus::Idle);
         snap2.goal = Some(None);
-        fold_event(&mut s, &E::SessionUpdated { base: base(), snapshot: snap2 });
+        fold_event(
+            &mut s,
+            &E::SessionUpdated {
+                base: base(),
+                snapshot: snap2,
+            },
+        );
         assert_eq!(s.goal, None);
     }
 
     #[test]
     fn snapshot_flags_propagates_and_preserves() {
         let flags = vec![
-            FlaggedFile { path: "src/app.ts".into(), mode: FlaggedFileMode::Included },
-            FlaggedFile { path: "README.md".into(), mode: FlaggedFileMode::Referenced },
+            FlaggedFile {
+                path: "src/app.ts".into(),
+                mode: FlaggedFileMode::Included,
+            },
+            FlaggedFile {
+                path: "README.md".into(),
+                mode: FlaggedFileMode::Referenced,
+            },
         ];
         let mut s = initial_session_state();
         let mut snap1 = snapshot(SessionStatus::Idle);
         snap1.flags = Some(flags.clone());
-        fold_event(&mut s, &E::SessionUpdated { base: base(), snapshot: snap1 });
+        fold_event(
+            &mut s,
+            &E::SessionUpdated {
+                base: base(),
+                snapshot: snap1,
+            },
+        );
         assert_eq!(s.flags, flags);
 
         // A later snapshot that omits flags must not erase the known value.
         let snap2 = snapshot(SessionStatus::Idle);
-        fold_event(&mut s, &E::SessionUpdated { base: base(), snapshot: snap2 });
+        fold_event(
+            &mut s,
+            &E::SessionUpdated {
+                base: base(),
+                snapshot: snap2,
+            },
+        );
         assert_eq!(s.flags, flags);
     }
 
     #[test]
     fn snapshot_flags_empty_clears() {
-        let flags = vec![FlaggedFile { path: "src/app.ts".into(), mode: FlaggedFileMode::Included }];
+        let flags = vec![FlaggedFile {
+            path: "src/app.ts".into(),
+            mode: FlaggedFileMode::Included,
+        }];
         let mut s = initial_session_state();
         let mut snap1 = snapshot(SessionStatus::Idle);
         snap1.flags = Some(flags.clone());
-        fold_event(&mut s, &E::SessionUpdated { base: base(), snapshot: snap1 });
+        fold_event(
+            &mut s,
+            &E::SessionUpdated {
+                base: base(),
+                snapshot: snap1,
+            },
+        );
         assert_eq!(s.flags, flags);
 
         // A later snapshot carrying flags: [] clears it.
         let mut snap2 = snapshot(SessionStatus::Idle);
         snap2.flags = Some(vec![]);
-        fold_event(&mut s, &E::SessionUpdated { base: base(), snapshot: snap2 });
+        fold_event(
+            &mut s,
+            &E::SessionUpdated {
+                base: base(),
+                snapshot: snap2,
+            },
+        );
         assert!(s.flags.is_empty());
     }
 
@@ -1303,12 +1448,24 @@ mod tests {
         let mut s = initial_session_state();
         let mut snap1 = snapshot(SessionStatus::Idle);
         snap1.todos = Some(todos.clone());
-        fold_event(&mut s, &E::SessionUpdated { base: base(), snapshot: snap1 });
+        fold_event(
+            &mut s,
+            &E::SessionUpdated {
+                base: base(),
+                snapshot: snap1,
+            },
+        );
         assert_eq!(s.todos, todos);
 
         // A later snapshot that omits todos must not erase the known value.
         let snap2 = snapshot(SessionStatus::Idle);
-        fold_event(&mut s, &E::SessionUpdated { base: base(), snapshot: snap2 });
+        fold_event(
+            &mut s,
+            &E::SessionUpdated {
+                base: base(),
+                snapshot: snap2,
+            },
+        );
         assert_eq!(s.todos, todos);
     }
 
@@ -1400,10 +1557,14 @@ mod tests {
                 entry_id: None,
             },
         ]);
-        let assistants: Vec<_> = s.items.iter().filter_map(|i| match i {
-            TranscriptItem::Assistant(a) => Some(a),
-            _ => None,
-        }).collect();
+        let assistants: Vec<_> = s
+            .items
+            .iter()
+            .filter_map(|i| match i {
+                TranscriptItem::Assistant(a) => Some(a),
+                _ => None,
+            })
+            .collect();
         assert_eq!(assistants.len(), 2, "expected two assistant bubbles");
         assert!(!assistants[0].streaming, "first should be closed");
         assert!(assistants[1].streaming, "second should still stream");
@@ -1416,37 +1577,46 @@ mod tests {
         let mut s = initial_session_state();
 
         // Status upsert
-        fold_event(&mut s, &E::HostUiRequest {
-            base: base(),
-            request: HostUiRequest::Status {
-                request_id: "x".into(),
-                key: "branch".into(),
-                text: Some("main".into()),
+        fold_event(
+            &mut s,
+            &E::HostUiRequest {
+                base: base(),
+                request: HostUiRequest::Status {
+                    request_id: "x".into(),
+                    key: "branch".into(),
+                    text: Some("main".into()),
+                },
             },
-        });
+        );
         assert_eq!(s.ambient.statuses.get("branch"), Some(&"main".to_string()));
 
         // Status clear (text=None)
-        fold_event(&mut s, &E::HostUiRequest {
-            base: base(),
-            request: HostUiRequest::Status {
-                request_id: "x".into(),
-                key: "branch".into(),
-                text: None,
+        fold_event(
+            &mut s,
+            &E::HostUiRequest {
+                base: base(),
+                request: HostUiRequest::Status {
+                    request_id: "x".into(),
+                    key: "branch".into(),
+                    text: None,
+                },
             },
-        });
-        assert!(s.ambient.statuses.get("branch").is_none());
+        );
+        assert!(!s.ambient.statuses.contains_key("branch"));
 
         // Widget upsert
-        fold_event(&mut s, &E::HostUiRequest {
-            base: base(),
-            request: HostUiRequest::Widget {
-                request_id: "w".into(),
-                key: "todo".into(),
-                lines: Some(vec!["a".into(), "b".into()]),
-                placement: None,
+        fold_event(
+            &mut s,
+            &E::HostUiRequest {
+                base: base(),
+                request: HostUiRequest::Widget {
+                    request_id: "w".into(),
+                    key: "todo".into(),
+                    lines: Some(vec!["a".into(), "b".into()]),
+                    placement: None,
+                },
             },
-        });
+        );
         assert!(s.ambient.widgets.contains_key("todo"));
         assert_eq!(s.ambient.widgets["todo"].lines, vec!["a", "b"]);
     }
@@ -1456,27 +1626,33 @@ mod tests {
         let mut s = initial_session_state();
 
         // Insert a widget
-        fold_event(&mut s, &E::HostUiRequest {
-            base: base(),
-            request: HostUiRequest::Widget {
-                request_id: "w".into(),
-                key: "todo".into(),
-                lines: Some(vec!["a".into()]),
-                placement: None,
+        fold_event(
+            &mut s,
+            &E::HostUiRequest {
+                base: base(),
+                request: HostUiRequest::Widget {
+                    request_id: "w".into(),
+                    key: "todo".into(),
+                    lines: Some(vec!["a".into()]),
+                    placement: None,
+                },
             },
-        });
+        );
         assert!(s.ambient.widgets.contains_key("todo"));
 
         // Clear it with lines: [] (present but empty → delete, like TS)
-        fold_event(&mut s, &E::HostUiRequest {
-            base: base(),
-            request: HostUiRequest::Widget {
-                request_id: "w".into(),
-                key: "todo".into(),
-                lines: Some(vec![]),
-                placement: None,
+        fold_event(
+            &mut s,
+            &E::HostUiRequest {
+                base: base(),
+                request: HostUiRequest::Widget {
+                    request_id: "w".into(),
+                    key: "todo".into(),
+                    lines: Some(vec![]),
+                    placement: None,
+                },
             },
-        });
+        );
         assert!(!s.ambient.widgets.contains_key("todo"));
     }
 
@@ -1495,13 +1671,25 @@ mod tests {
         // Set a non-empty queue via snapshot
         let mut snap = snapshot(SessionStatus::Running);
         snap.queued_messages = Some(vec![msg]);
-        fold_event(&mut s, &E::SessionUpdated { base: base(), snapshot: snap });
+        fold_event(
+            &mut s,
+            &E::SessionUpdated {
+                base: base(),
+                snapshot: snap,
+            },
+        );
         assert_eq!(s.queued.len(), 1);
 
         // Now clear it via snapshot with queuedMessages: []
         let mut snap2 = snapshot(SessionStatus::Running);
         snap2.queued_messages = Some(vec![]);
-        fold_event(&mut s, &E::SessionUpdated { base: base(), snapshot: snap2 });
+        fold_event(
+            &mut s,
+            &E::SessionUpdated {
+                base: base(),
+                snapshot: snap2,
+            },
+        );
         assert!(s.queued.is_empty());
     }
 
@@ -1517,12 +1705,24 @@ mod tests {
         };
         let mut snap1 = snapshot(SessionStatus::Running);
         snap1.queued_messages = Some(vec![msg]);
-        fold_event(&mut s, &E::SessionUpdated { base: base(), snapshot: snap1 });
+        fold_event(
+            &mut s,
+            &E::SessionUpdated {
+                base: base(),
+                snapshot: snap1,
+            },
+        );
         assert_eq!(s.queued.len(), 1);
 
         // A later snapshot without queuedMessages must not erase the known value.
         let snap2 = snapshot(SessionStatus::Running);
-        fold_event(&mut s, &E::SessionUpdated { base: base(), snapshot: snap2 });
+        fold_event(
+            &mut s,
+            &E::SessionUpdated {
+                base: base(),
+                snapshot: snap2,
+            },
+        );
         assert_eq!(s.queued.len(), 1);
     }
 }

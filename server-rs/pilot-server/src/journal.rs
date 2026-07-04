@@ -139,7 +139,19 @@ pub fn try_merge(a: &SessionDriverEvent, b: &SessionDriverEvent) -> Option<Sessi
     use SessionDriverEvent::*;
 
     match (a, b) {
-        (AssistantDelta { base, text, channel, entry_id }, AssistantDelta { text: text_b, channel: channel_b, .. }) => {
+        (
+            AssistantDelta {
+                base,
+                text,
+                channel,
+                entry_id,
+            },
+            AssistantDelta {
+                text: text_b,
+                channel: channel_b,
+                ..
+            },
+        ) => {
             let chan_a = channel.unwrap_or(AssistantDeltaChannel::Text);
             let chan_b = channel_b.unwrap_or(AssistantDeltaChannel::Text);
             if chan_a != chan_b {
@@ -301,7 +313,7 @@ mod tests {
     use super::*;
     use pilot_protocol::session_driver::{
         AssistantDeltaChannel, SessionDriverEvent as E, SessionEventBase, SessionRef,
-        SessionStatus, SessionUsage, WorkspaceRef, SessionSnapshot,
+        SessionSnapshot, SessionStatus, SessionUsage, WorkspaceRef,
     };
     use pilot_protocol::state::fold_all;
 
@@ -371,7 +383,10 @@ mod tests {
     #[test]
     fn create_journal_seeds_compacted() {
         let seed = vec![
-            E::SessionOpened { base: base(), snapshot: snapshot() },
+            E::SessionOpened {
+                base: base(),
+                snapshot: snapshot(),
+            },
             user_msg("u1", "hello"),
         ];
         let j = create_journal(1, &seed);
@@ -432,7 +447,10 @@ mod tests {
 
     #[test]
     fn build_seed_reconstructs_all_events() {
-        let seed = vec![E::SessionOpened { base: base(), snapshot: snapshot() }];
+        let seed = vec![E::SessionOpened {
+            base: base(),
+            snapshot: snapshot(),
+        }];
         let mut j = create_journal(1, &seed);
         append_event(&mut j, user_msg("u1", "one"));
         append_event(&mut j, user_msg("u2", "two"));
@@ -480,10 +498,24 @@ mod tests {
 
     #[test]
     fn try_merge_usage_updated_keeps_later() {
-        let usage1 = SessionUsage { tokens: Some(100), context_window: 200000, percent: Some(0.05) };
-        let usage2 = SessionUsage { tokens: Some(500), context_window: 200000, percent: Some(0.25) };
-        let a = E::UsageUpdated { base: base(), usage: usage1 };
-        let b = E::UsageUpdated { base: base(), usage: usage2.clone() };
+        let usage1 = SessionUsage {
+            tokens: Some(100),
+            context_window: 200000,
+            percent: Some(0.05),
+        };
+        let usage2 = SessionUsage {
+            tokens: Some(500),
+            context_window: 200000,
+            percent: Some(0.25),
+        };
+        let a = E::UsageUpdated {
+            base: base(),
+            usage: usage1,
+        };
+        let b = E::UsageUpdated {
+            base: base(),
+            usage: usage2.clone(),
+        };
         let merged = try_merge(&a, &b).unwrap();
         match merged {
             E::UsageUpdated { usage, .. } => assert_eq!(usage.tokens, Some(500)),
@@ -500,7 +532,13 @@ mod tests {
 
     #[test]
     fn bump_epoch_resets_journal() {
-        let mut j = create_journal(1, &[E::SessionOpened { base: base(), snapshot: snapshot() }]);
+        let mut j = create_journal(
+            1,
+            &[E::SessionOpened {
+                base: base(),
+                snapshot: snapshot(),
+            }],
+        );
         append_event(&mut j, user_msg("u1", "one"));
         assert_eq!(j.seq, 1);
 
@@ -540,7 +578,10 @@ mod tests {
         // The core invariant: fold_all(build_seed(j).events) should produce
         // the same state as folding all events individually
         let events = vec![
-            E::SessionOpened { base: base(), snapshot: snapshot() },
+            E::SessionOpened {
+                base: base(),
+                snapshot: snapshot(),
+            },
             user_msg("u1", "hello"),
             assistant_delta("Hi "),
             assistant_delta("there"),
@@ -566,21 +607,26 @@ mod tests {
 
     #[test]
     fn meta_seed_events_preserves_non_item_state() {
-        use pilot_protocol::state::{initial_session_state, fold_all};
+        use pilot_protocol::state::{fold_all, initial_session_state};
 
         // Build a state with ambient + pending approvals
         let mut state = initial_session_state();
         state.title = "My Session".into();
         state.facet = Some("plan".into());
-        state.ambient.statuses.insert("build".into(), "compiling...".into());
+        state
+            .ambient
+            .statuses
+            .insert("build".into(), "compiling...".into());
         state.ambient.title = Some("Custom Title".into());
-        state.pending_approvals.push(pilot_protocol::session_driver::HostUiRequest::Confirm {
-            request_id: "r1".into(),
-            title: "Confirm?".into(),
-            message: "Sure?".into(),
-            default_value: None,
-            timeout_ms: None,
-        });
+        state
+            .pending_approvals
+            .push(pilot_protocol::session_driver::HostUiRequest::Confirm {
+                request_id: "r1".into(),
+                title: "Confirm?".into(),
+                message: "Sure?".into(),
+                default_value: None,
+                timeout_ms: None,
+            });
 
         let events = meta_seed_events(&state, &sref(), "meta-ts");
         let folded = fold_all(&events);

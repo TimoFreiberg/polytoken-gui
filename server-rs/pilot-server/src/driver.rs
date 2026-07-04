@@ -7,7 +7,7 @@
 use async_trait::async_trait;
 use pilot_protocol::session_driver::{
     CommandInfo, DirListing, FileInfo, HostUiResponse, ImageContent, ModelDefaults, ModelOption,
-    PermissionMonitorMode, SessionDriverEvent, SessionId, SessionListEntry, SessionUsage, PathStat,
+    PathStat, PermissionMonitorMode, SessionDriverEvent, SessionId, SessionListEntry, SessionUsage,
 };
 use pilot_protocol::wire::{DeliveryMode, McpAction};
 
@@ -106,11 +106,7 @@ pub trait PilotDriver: Send + Sync {
     async fn list_sessions(&self) -> Vec<SessionListEntry>;
 
     /// Remove a pilot-created worktree at `path`.
-    async fn cleanup_worktree(
-        &self,
-        _path: String,
-        _force: bool,
-    ) -> WorktreeCleanupResult {
+    async fn cleanup_worktree(&self, _path: String, _force: bool) -> WorktreeCleanupResult {
         WorktreeCleanupResult::default()
     }
 
@@ -164,10 +160,7 @@ pub trait PilotDriver: Send + Sync {
     async fn list_facets(&self, session_id: Option<SessionId>) -> Vec<String>;
 
     /// The full file index for a session's cwd.
-    async fn list_file_index(
-        &self,
-        session_id: Option<SessionId>,
-    ) -> (Vec<FileInfo>, bool);
+    async fn list_file_index(&self, session_id: Option<SessionId>) -> (Vec<FileInfo>, bool);
 
     /// Fallback file search for a composer @-mention query.
     async fn list_files(
@@ -193,11 +186,7 @@ pub trait PilotDriver: Send + Sync {
     fn set_facet(&self, facet: String, session_id: Option<SessionId>);
 
     /// Switch the active permission-monitor mode.
-    fn set_permission_monitor(
-        &self,
-        mode: PermissionMonitorMode,
-        session_id: Option<SessionId>,
-    );
+    fn set_permission_monitor(&self, mode: PermissionMonitorMode, session_id: Option<SessionId>);
 
     /// Toggle the adventurous auto-handoff flag.
     async fn toggle_adventurous_handoff(&self, _session_id: Option<SessionId>) {}

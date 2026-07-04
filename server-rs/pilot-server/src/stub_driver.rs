@@ -103,10 +103,7 @@ impl PilotDriver for StubDriver {
         vec!["execute".into(), "plan".into()]
     }
 
-    async fn list_file_index(
-        &self,
-        _session_id: Option<SessionId>,
-    ) -> (Vec<FileInfo>, bool) {
+    async fn list_file_index(&self, _session_id: Option<SessionId>) -> (Vec<FileInfo>, bool) {
         (Vec::new(), false)
     }
 

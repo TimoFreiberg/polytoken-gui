@@ -15,7 +15,7 @@ pub const PROTOCOL_VERSION: u32 = 2;
 
 // ── PilotSettings (server-side persisted settings) ──────────────────────
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct PilotSettings {
     #[serde(rename = "loginShell")]
     pub login_shell: Option<String>,
@@ -23,16 +23,6 @@ pub struct PilotSettings {
     pub background_model: Option<String>,
     #[serde(rename = "enabledExtensions", default)]
     pub enabled_extensions: Option<Vec<String>>,
-}
-
-impl Default for PilotSettings {
-    fn default() -> Self {
-        Self {
-            login_shell: None,
-            background_model: None,
-            enabled_extensions: None,
-        }
-    }
 }
 
 // ── LoginEnvStatus ──────────────────────────────────────────────────────
@@ -78,9 +68,17 @@ pub struct SessionAttention {
     pub phase: SessionAttentionPhase,
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub activity: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none", default, rename = "pendingCount")]
+    #[serde(
+        skip_serializing_if = "Option::is_none",
+        default,
+        rename = "pendingCount"
+    )]
     pub pending_count: Option<i64>,
-    #[serde(skip_serializing_if = "Option::is_none", default, rename = "pendingTitle")]
+    #[serde(
+        skip_serializing_if = "Option::is_none",
+        default,
+        rename = "pendingTitle"
+    )]
     pub pending_title: Option<String>,
     #[serde(rename = "updatedAt")]
     pub updated_at: String,
@@ -108,6 +106,10 @@ pub struct ResumeToken {
 // ── ServerMessage ───────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[allow(
+    clippy::large_enum_variant,
+    reason = "wire enum; big variant is the snapshot"
+)]
 #[serde(tag = "type", rename_all = "camelCase")]
 pub enum ServerMessage {
     Hello {
@@ -142,7 +144,11 @@ pub enum ServerMessage {
     SessionStatus {
         #[serde(rename = "runningIds")]
         running_ids: Vec<SessionId>,
-        #[serde(skip_serializing_if = "Option::is_none", default, rename = "initializingIds")]
+        #[serde(
+            skip_serializing_if = "Option::is_none",
+            default,
+            rename = "initializingIds"
+        )]
         initializing_ids: Option<Vec<SessionId>>,
         #[serde(skip_serializing_if = "Option::is_none", default)]
         attention: Option<Vec<SessionAttention>>,
@@ -181,7 +187,11 @@ pub enum ServerMessage {
         env: LoginEnvStatus,
         #[serde(rename = "pendingRestart")]
         pending_restart: bool,
-        #[serde(skip_serializing_if = "Option::is_none", default, rename = "backgroundModelWarning")]
+        #[serde(
+            skip_serializing_if = "Option::is_none",
+            default,
+            rename = "backgroundModelWarning"
+        )]
         background_model_warning: Option<String>,
     },
     TrustRequest {
@@ -197,7 +207,11 @@ pub enum ServerMessage {
         #[serde(skip_serializing_if = "Option::is_none", default)]
         sha: Option<String>,
         applying: bool,
-        #[serde(skip_serializing_if = "Option::is_none", default, rename = "desktopStale")]
+        #[serde(
+            skip_serializing_if = "Option::is_none",
+            default,
+            rename = "desktopStale"
+        )]
         desktop_stale: Option<bool>,
     },
     EditorPrefill {
@@ -340,7 +354,11 @@ pub enum ClientMessage {
         thinking: Option<String>,
         #[serde(skip_serializing_if = "Option::is_none", default)]
         facet: Option<String>,
-        #[serde(skip_serializing_if = "Option::is_none", default, rename = "permissionMonitor")]
+        #[serde(
+            skip_serializing_if = "Option::is_none",
+            default,
+            rename = "permissionMonitor"
+        )]
         permission_monitor: Option<PermissionMonitorMode>,
         #[serde(skip_serializing_if = "Option::is_none", default)]
         prompt: Option<String>,
@@ -535,9 +553,7 @@ mod tests {
         let msg: ServerMessage = serde_json::from_str(json_str).unwrap();
         match msg {
             ServerMessage::Seed {
-                session_id,
-                events,
-                ..
+                session_id, events, ..
             } => {
                 assert_eq!(session_id, Some("s1".to_string()));
                 assert!(events.is_empty());
@@ -626,10 +642,7 @@ mod tests {
         }"#;
         let msg = parse_client_message(json_str).unwrap();
         match msg {
-            ClientMessage::TrustResponse {
-                request_id,
-                choice,
-            } => {
+            ClientMessage::TrustResponse { request_id, choice } => {
                 assert_eq!(request_id, "r1");
                 assert_eq!(choice, Some(0));
             }

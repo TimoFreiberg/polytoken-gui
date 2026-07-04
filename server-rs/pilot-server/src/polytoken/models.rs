@@ -68,7 +68,7 @@ fn parse_reasoning_levels(reasoning_line: &str) -> Vec<String> {
 /// is no token after it.
 fn first_token_after_prefix<'a>(line: &'a str, prefix: &str) -> Option<&'a str> {
     let rest = line.strip_prefix(prefix)?;
-    rest.trim_start().split_whitespace().next()
+    rest.split_whitespace().next()
 }
 
 /// Parse `polytoken models` text output into `Vec<ModelOption>` (+ default markers).
@@ -90,9 +90,9 @@ pub fn parse_models(stdout: &str) -> ParsedModels {
 
     // flush closure inlined as a macro-like block.
     let flush = |cid: &mut Option<String>,
-                     cprov: &mut Option<String>,
-                     creason: &mut Option<String>,
-                     models: &mut Vec<ModelOption>| {
+                 cprov: &mut Option<String>,
+                 creason: &mut Option<String>,
+                 models: &mut Vec<ModelOption>| {
         let Some(id) = cid.take() else {
             *cprov = None;
             *creason = None;
@@ -106,9 +106,7 @@ pub fn parse_models(stdout: &str) -> ParsedModels {
         let provider = cprov
             .clone()
             .unwrap_or_else(|| id.split('/').next().unwrap_or(&id).to_string());
-        let thinking_levels = creason
-            .as_ref()
-            .map(|r| parse_reasoning_levels(r));
+        let thinking_levels = creason.as_ref().map(|r| parse_reasoning_levels(r));
         models.push(ModelOption {
             provider,
             model_id: id.clone(),
@@ -141,7 +139,12 @@ pub fn parse_models(stdout: &str) -> ParsedModels {
         // Matches `^-\s+(\S+)` — starts with `-` then whitespace, then non-ws token.
         if in_models_section {
             if let Some(id) = parse_model_header(line) {
-                flush(&mut current_id, &mut current_provider, &mut current_reasoning, &mut models);
+                flush(
+                    &mut current_id,
+                    &mut current_provider,
+                    &mut current_reasoning,
+                    &mut models,
+                );
                 current_id = Some(id);
                 continue;
             }
@@ -161,7 +164,12 @@ pub fn parse_models(stdout: &str) -> ParsedModels {
             continue;
         }
     }
-    flush(&mut current_id, &mut current_provider, &mut current_reasoning, &mut models);
+    flush(
+        &mut current_id,
+        &mut current_provider,
+        &mut current_reasoning,
+        &mut models,
+    );
     ParsedModels {
         models,
         default_model,
@@ -175,7 +183,7 @@ fn parse_model_header(line: &str) -> Option<String> {
     let rest = line.strip_prefix('-')?;
     // Must have at least one whitespace char after `-`.
     let rest = rest.strip_prefix(|c: char| c.is_whitespace())?;
-    let token = rest.trim_start().split_whitespace().next()?;
+    let token = rest.split_whitespace().next()?;
     if token.is_empty() {
         None
     } else {
@@ -193,7 +201,7 @@ fn parse_indented_field(line: &str, field: &str) -> Option<String> {
     }
     let trimmed = line.trim_start();
     let rest = trimmed.strip_prefix(field)?;
-    let token = rest.trim_start().split_whitespace().next()?;
+    let token = rest.split_whitespace().next()?;
     if token.is_empty() {
         None
     } else {

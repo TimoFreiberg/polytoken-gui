@@ -11,10 +11,10 @@
 //!
 //! Port of `server/src/pidlock.ts`.
 
+use serde::{Deserialize, Serialize};
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
-use serde::{Deserialize, Serialize};
 
 /// Parsed contents of a pilot.pid lock file.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -59,7 +59,10 @@ pub fn parse_lock(text: &str) -> Option<LockInfo> {
     // Tolerate a bare integer that isn't valid JSON-as-written
     if let Ok(pid) = trimmed.parse::<i64>() {
         if pid > 0 {
-            return Some(LockInfo { pid, server_id: None });
+            return Some(LockInfo {
+                pid,
+                server_id: None,
+            });
         }
     }
     None
@@ -166,7 +169,11 @@ impl Drop for PidLock {
 /// returning an error if a live process holds it. Writes our pid + serverId.
 /// The caller is responsible for wiring `release()` to shutdown (or just
 /// dropping the handle — Drop calls release).
-pub fn acquire_pid_lock(data_dir: &Path, server_id: &str, self_pid: i64) -> Result<PidLock, LockHeldError> {
+pub fn acquire_pid_lock(
+    data_dir: &Path,
+    server_id: &str,
+    self_pid: i64,
+) -> Result<PidLock, LockHeldError> {
     fs::create_dir_all(data_dir).ok();
     let lock_path = data_dir.join("pilot.pid");
 
@@ -314,14 +321,20 @@ mod tests {
 
     #[test]
     fn lock_decision_reclaim_for_self() {
-        let lock = LockInfo { pid: 100, server_id: None };
+        let lock = LockInfo {
+            pid: 100,
+            server_id: None,
+        };
         assert_eq!(lock_decision(Some(&lock), 100), "reclaim");
     }
 
     #[test]
     fn lock_decision_reclaim_for_dead_pid() {
         // PID 999999 is very unlikely to exist
-        let lock = LockInfo { pid: 999999, server_id: None };
+        let lock = LockInfo {
+            pid: 999999,
+            server_id: None,
+        };
         // This test may be flaky if PID 999999 happens to exist, but that's extremely unlikely
         assert_eq!(lock_decision(Some(&lock), 100), "reclaim");
     }

@@ -14,7 +14,7 @@
 //! - All endpoints are flat (no `/session/{id}/…`) — the daemon IS the session.
 
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -150,7 +150,7 @@ struct StartupJson {
 /// None when the file is absent or unparseable (a loud-fail to a log warning, never
 /// a crash). The daemon writes `{state:"ready", pid, port}` on success or
 /// `{state:"failed", pid, message}` on failure.
-fn read_startup_json(session_dir: &PathBuf) -> Option<StartupJson> {
+fn read_startup_json(session_dir: &Path) -> Option<StartupJson> {
     let file = session_dir.join("startup.json");
     if !file.exists() {
         return None;
@@ -627,8 +627,8 @@ fn parse_rfc3339_millis(s: &str) -> Option<u128> {
         (h, m, sec, millis)
     };
     let days = days_from_civil(year, month, day)?;
-    let total_seconds = days as i64 * 86400 + h as i64 * 3600 + m as i64 * 60 + sec as i64
-        - tz_offset_minutes as i64 * 60;
+    let total_seconds =
+        days * 86400 + h as i64 * 3600 + m as i64 * 60 + sec as i64 - tz_offset_minutes as i64 * 60;
     let total_millis = total_seconds as i128 * 1000 + millis as i128;
     Some(total_millis as u128)
 }
@@ -717,6 +717,8 @@ pub struct DaemonClient {
     pub liveness_probe_timeout_ms: u64,
 }
 
+type ErrorForStatus<T> = dyn Fn(Option<&T>, &str) -> Option<String>;
+
 impl DaemonClient {
     /// Create a new client for a daemon at `127.0.0.1:{port}` with the given pid.
     pub fn new(session_id: String, port: u16, pid: i32) -> Self {
@@ -795,7 +797,7 @@ impl DaemonClient {
         path: &str,
         method: reqwest::Method,
         body: Option<&str>,
-        error_for_status: Option<&dyn Fn(Option<&T>, &str) -> Option<String>>,
+        error_for_status: Option<&ErrorForStatus<T>>,
     ) -> DaemonResponse<T> {
         let url = format!("{}{}", self.base_url, path);
         match self.safe_fetch(&url, method, body, 10_000).await {

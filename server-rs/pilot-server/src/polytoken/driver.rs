@@ -60,6 +60,8 @@ impl WarmSession {
     }
 }
 
+type SessionViewed = dyn Fn(SessionId) -> bool + Send + Sync;
+
 /// The polytoken daemon driver.
 pub struct PolytokenDriver {
     sessions_dir: PathBuf,
@@ -68,7 +70,7 @@ pub struct PolytokenDriver {
     warm: RwLock<HashMap<SessionId, Arc<WarmSession>>>,
     subscribers: Mutex<Vec<(usize, mpsc::Sender<SessionDriverEvent>)>>,
     next_sub_id: Mutex<usize>,
-    is_viewed: RwLock<Option<Box<dyn Fn(SessionId) -> bool + Send + Sync>>>,
+    is_viewed: RwLock<Option<Box<SessionViewed>>>,
     command_cache: Mutex<HashMap<String, Vec<CommandInfo>>>,
 }
 

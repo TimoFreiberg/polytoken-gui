@@ -298,7 +298,7 @@ impl SessionHub {
             };
             let mut st = fold_all(&old_events);
             fold_event(&mut st, ev);
-            let meta = meta_seed_events(&st, &ev.session_ref(), &ev.timestamp());
+            let meta = meta_seed_events(&st, ev.session_ref(), ev.timestamp());
             let epoch = self.next_epoch();
             if let Some(j) = self.journals.get_mut(&sid) {
                 bump_epoch(j, epoch, &meta);
@@ -356,7 +356,7 @@ impl SessionHub {
         }
         // Start a new pending run with a flush timer
         let (abort_tx, abort_rx) = tokio::sync::oneshot::channel();
-        let _ = abort_rx; // would be awaited by the timer task
+        drop(abort_rx); // would be awaited by the timer task
         self.pending_deltas.insert(
             sid.clone(),
             PendingDelta {
@@ -571,31 +571,31 @@ impl SessionHub {
                         sid,
                         AttentionPhase::Running,
                         Some("Working"),
-                        &timestamp,
+                        timestamp,
                     ),
                     Some(SessionStatus::Initializing) => self.set_attention_base(
                         sid,
                         AttentionPhase::Running,
                         Some("Starting session"),
-                        &timestamp,
+                        timestamp,
                     ),
                     Some(SessionStatus::Failed) => self.set_attention_base(
                         sid,
                         AttentionPhase::Failed,
                         Some("Run failed"),
-                        &timestamp,
+                        timestamp,
                     ),
                     _ => {}
                 }
             }
             "userMessage" => {
-                self.set_attention_base(sid, AttentionPhase::Running, Some("Starting"), &timestamp)
+                self.set_attention_base(sid, AttentionPhase::Running, Some("Starting"), timestamp)
             }
             "queuedMessageStarted" => self.set_attention_base(
                 sid,
                 AttentionPhase::Running,
                 Some("Queued a follow-up"),
-                &timestamp,
+                timestamp,
             ),
             "assistantDelta" => {
                 let channel = ev.assistant_delta_channel();
@@ -604,11 +604,11 @@ impl SessionHub {
                 } else {
                     "Responding"
                 };
-                self.set_attention_base(sid, AttentionPhase::Running, Some(activity), &timestamp);
+                self.set_attention_base(sid, AttentionPhase::Running, Some(activity), timestamp);
             }
             "toolStarted" => {
                 let activity = tool_activity(ev);
-                self.set_attention_base(sid, AttentionPhase::Running, Some(&activity), &timestamp);
+                self.set_attention_base(sid, AttentionPhase::Running, Some(&activity), timestamp);
             }
             "toolFinished" => {
                 if self
@@ -621,7 +621,7 @@ impl SessionHub {
                         sid,
                         AttentionPhase::Running,
                         Some("Working"),
-                        &timestamp,
+                        timestamp,
                     );
                 }
             }
@@ -629,10 +629,10 @@ impl SessionHub {
                 if let Some(title) = ev.snapshot_title() {
                     self.session_titles.insert(sid.clone(), title);
                 }
-                self.set_attention_base(sid, AttentionPhase::Done, Some("Done"), &timestamp);
+                self.set_attention_base(sid, AttentionPhase::Done, Some("Done"), timestamp);
             }
             "runFailed" => {
-                self.ensure_attention(sid, &timestamp);
+                self.ensure_attention(sid, timestamp);
                 if let Some(record) = self.attention.get_mut(sid) {
                     record.pending.clear();
                 }
@@ -641,14 +641,14 @@ impl SessionHub {
                     sid,
                     AttentionPhase::Failed,
                     Some(&clipped(&msg, 72)),
-                    &timestamp,
+                    timestamp,
                 );
             }
             "hostUiRequest" => {
                 if let E::HostUiRequest { request, .. } = ev {
                     if is_dialog_request(request) {
                         let title = request_title(request);
-                        self.ensure_attention(sid, &timestamp);
+                        self.ensure_attention(sid, timestamp);
                         if let Some(record) = self.attention.get_mut(sid) {
                             record
                                 .pending
@@ -667,7 +667,7 @@ impl SessionHub {
                                     sid,
                                     AttentionPhase::Running,
                                     Some(&clipped(t, 72)),
-                                    &timestamp,
+                                    timestamp,
                                 );
                             }
                         }
@@ -820,7 +820,7 @@ impl SessionHub {
         serde_json::json!({
             "running": self.running.len(),
             "initializing": self.initializing.len(),
-            "busy": self.running.len() > 0 || self.initializing.len() > 0,
+            "busy": !self.running.is_empty() || !self.initializing.is_empty(),
         })
     }
 
@@ -1054,7 +1054,7 @@ impl SessionHub {
                 let target = session_id.clone().or(focused_id);
                 let driver = self.driver.clone();
                 let text = text.clone();
-                let deliver_as = deliver_as.clone();
+                let deliver_as = *deliver_as;
                 let images = images.clone().unwrap_or_default();
                 let prompt_id_clone = prompt_id.clone();
                 let hub_clone = hub.clone();
@@ -1114,7 +1114,7 @@ impl SessionHub {
             }
             ClientMessage::SetPermissionMonitor { mode, session_id } => {
                 let target = session_id.clone().or(focused_id);
-                self.driver.set_permission_monitor(mode.clone(), target);
+                self.driver.set_permission_monitor(*mode, target);
             }
             ClientMessage::ToggleAdventurousHandoff { session_id } => {
                 let target = session_id.clone().or(focused_id);
@@ -1156,7 +1156,7 @@ impl SessionHub {
                 let target = session_id.clone().or(focused_id);
                 let driver = self.driver.clone();
                 let server_name = server_name.clone();
-                let action = action.clone();
+                let action = *action;
                 tokio::spawn(async move {
                     driver.set_mcp_server(server_name, action, target).await;
                 });
@@ -1212,7 +1212,7 @@ impl SessionHub {
                 let sid = session_id.clone().or(focused_id);
                 // First-responder-wins: only answer if the dialog is still pending.
                 let st = self.folded_state(sid.as_ref());
-                let response_rid = response_request_id(&response);
+                let response_rid = response_request_id(response);
                 let should_respond = st
                     .as_ref()
                     .map(|s| {
@@ -1733,8 +1733,7 @@ impl SessionHub {
     /// sessions + connected clients. Mirrors the TS hub's `syncLiveRefresh`.
     /// Returns true if a ticker should be started, false if it should stop.
     pub fn sync_live_refresh(&self) -> bool {
-        let want = !self.running.is_empty() && !self.clients.is_empty();
-        want
+        !self.running.is_empty() && !self.clients.is_empty()
     }
 
     /// Spawn the async follow-up list sends that the TS addClient fires after
@@ -1923,14 +1922,14 @@ impl SessionHub {
     fn fold_swap_seed(&mut self, seed: &[SessionDriverEvent]) -> (bool, Option<SessionId>) {
         let mut st = initial_session_state();
         let mut meta_changed = false;
-        let sid: Option<SessionId>;
+
         for e in seed {
             fold_event(&mut st, e);
             let e_sid = e.session_ref().session_id.clone();
             meta_changed = self.track_running(&e_sid, e) || meta_changed;
             meta_changed = self.track_attention(&e_sid, e) || meta_changed;
         }
-        sid = st
+        let sid: Option<SessionId> = st
             .session_ref
             .as_ref()
             .map(|r| r.session_id.clone())
@@ -2255,7 +2254,7 @@ fn tool_activity(ev: &SessionDriverEvent) -> String {
                 .unwrap_or_else(|| "Running a command".into());
         }
         return clipped(
-            &label
+            label
                 .as_deref()
                 .or(description.as_deref())
                 .unwrap_or(tool_name),

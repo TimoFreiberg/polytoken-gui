@@ -860,6 +860,10 @@ struct ScriptStep {
 /// A matched toolStarted → toolFinished pair with a deterministic duration.
 /// Bumps the clock by `duration_ms` between stamping the two events so the
 /// card's elapsed badge reads realistically.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "mock fixture helper mirrors scripted tool event fields"
+)]
 fn tool_span(
     call_id: &str,
     tool_name: &str,
@@ -1251,8 +1255,10 @@ fn new_session_reply(
 
 // ── MockDriver ─────────────────────────────────────────────────────────
 
+type ListenerList = Arc<Mutex<Vec<(usize, mpsc::Sender<SessionDriverEvent>)>>>;
+
 pub struct MockDriver {
-    listeners: Arc<Mutex<Vec<(usize, mpsc::Sender<SessionDriverEvent>)>>>,
+    listeners: ListenerList,
     next_id: Mutex<usize>,
     /// Generation counter — bumped on reset(). play_script captures the current
     /// generation and aborts if it changes (cancel pending events on reset).
@@ -1528,7 +1534,7 @@ impl MockDriver {
 /// port of TS `fireStep()`.
 fn fire_step(
     step: &ScriptStep,
-    listeners: &Arc<Mutex<Vec<(usize, mpsc::Sender<SessionDriverEvent>)>>>,
+    listeners: &ListenerList,
     pending: &Arc<Mutex<std::collections::HashMap<String, PendingDialog>>>,
 ) {
     // Track dialog requests so respondUi can look them up later
