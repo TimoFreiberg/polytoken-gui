@@ -454,6 +454,9 @@ fn prompt_reply_script(text: &str, _prompt_id: Option<&str>) -> Vec<ScriptStep> 
 pub struct MockDriver {
     listeners: Arc<Mutex<Vec<(usize, mpsc::Sender<SessionDriverEvent>)>>>,
     next_id: Mutex<usize>,
+    /// Generation counter — bumped on reset(). play_script captures the current
+    /// generation and aborts if it changes (cancel pending events on reset).
+    generation: Arc<AtomicU64>,
 }
 
 impl MockDriver {
@@ -461,6 +464,7 @@ impl MockDriver {
         Self {
             listeners: Arc::new(Mutex::new(Vec::new())),
             next_id: Mutex::new(0),
+            generation: Arc::new(AtomicU64::new(0)),
         }
     }
 
@@ -473,10 +477,16 @@ impl MockDriver {
 
     fn play_script(&self, steps: Vec<ScriptStep>) {
         let listeners = self.listeners.clone();
+        let gen_ctr = self.generation.clone();
+        let start_gen = gen_ctr.load(Ordering::Relaxed);
         tokio::spawn(async move {
             for step in steps {
                 if step.wait_ms > 0 {
                     tokio::time::sleep(Duration::from_millis(step.wait_ms)).await;
+                }
+                // Abort if reset() was called since we started.
+                if gen_ctr.load(Ordering::Relaxed) != start_gen {
+                    return;
                 }
                 let listeners = listeners.lock();
                 for (_, tx) in listeners.iter() {
@@ -1224,10 +1234,9 @@ impl PilotDriver for MockDriver {
     }
 
     fn reset(&self, _bootstrap: bool) {
-        // The TS mock resets its internal state (sessions, queues, timers, etc.).
-        // Our simplified version resets the mock clock so fixture timestamps are
-        // deterministic across resets. The greeting seed is regenerated on each
-        // default_seed() call.
+        // Cancel all pending script tasks + reset the mock clock so fixture
+        // timestamps are deterministic across resets.
+        self.generation.fetch_add(1, Ordering::Relaxed);
         reset_ts();
     }
 }
