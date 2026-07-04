@@ -26,6 +26,16 @@ const WORKSPACE_ID: &str = "ws-demo";
 const WORKSPACE_PATH: &str = "/Users/timo/src/pilot";
 const SESSION_ID: &str = "demo-session";
 
+/// Markdown showcase text (ported from fixtures.ts MARKDOWN_SAMPLE).
+const MARKDOWN_SAMPLE: &str = "## Markdown showcase\n\nHere's **bold**, *italic*, ~~struck~~, and `inline code`, plus a [link](https://example.com).\n\n### A table\n\n| Feature     | Status |\n| ----------- | ------ |\n| Headers     | done   |\n| Tables      | done   |\n| Code blocks | done   |\n\n### A wide table\n\nA many-columned table is wider than a phone screen; it must scroll\nhorizontally instead of overflowing the viewport.\n\n| Country | Capital  | Population | Currency | Language   | Continent     | CallingCode |\n| ------- | -------- | ---------- | -------- | ---------- | ------------- | ----------- |\n| Japan   | Tokyo    | 125.7M     | JPY      | Japanese   | Asia          | +81         |\n| Brazil  | Brasília | 214.3M     | BRL      | Portuguese | South America | +55         |\n\n### A list\n\n1. First item\n2. Second item\n   - nested bullet\n   - another\n\n> A blockquote, for good measure.\n\n```ts\nfunction greet(name: string) {\n  return `hello, ${name}`;\n}\n```";
+
+/// Plan handoff text (ported from fixtures.ts planHandoff()).
+const PLAN_HANDOFF_TEXT: &str = "# Plan: Add facet indicator + plan-handoff card\n\n## Goal\nStop discarding plan-mode data the daemon already streams. Render the plan\nmarkdown in the handoff card and show a facet badge in the header.\n\n## Steps\n1. Add a `plan` variant to `HostUiRequest` in the protocol.\n2. Thread `plan_text` through the server event-map.\n3. Render markdown + 3 buttons in `ApprovalLayer.svelte`.\n4. Add a facet badge to `StatusHeader.svelte`.\n\n## Code\n```ts\ncase \"plan_handoff\": {\n  const ph = ev.plan_handoff;\n  const labels = ph\n    ? [ph.action_labels.implement_new_context,\n       ph.action_labels.implement_current_context,\n       ph.action_labels.cancel]\n    : [\"Implement (new context)\", \"Implement (current context)\", \"Cancel\"];\n  pending.planHandoffLabels = labels;\n}\n```\n\n## Risks\n- `plan_text` can be several KB; the card caps height at ~50vh and scrolls.\n- The default-facet sentinel is `\"execute\"`; a different default would show the\n  badge spuriously.\n\nOnce approved, the chosen label round-trips to a `plan_handoff_answer` decision\nvia the reverse mapping in `ui-bridge.ts` (no change needed there).";
+
+/// Tiny deterministic PNGs (solid-color rectangles) for the images fixture.
+const MOCKUP_PNG_B64: &str = "iVBORw0KGgoAAAANSUhEUgAAAKAAAABkCAIAAACO1KzYAAABAUlEQVR4nO3RAQkAIBDAwE9pDFMazBQijIMLMNisfQib7wU8ZXCcwXEGxxkcZ3CcwXEGxxkcZ3CcwXEGxxkcZ3CcwXEGxxkcZ3CcwXEGxxkcZ3CcwXEGxxkcZ3CcwXEGxxkcZ3CcwXEGxxkcZ3CcwXEGxxkcZ3CcwXEGxxkcZ3CcwXEGxxkcZ3CcwXEGxxkcZ3CcwXEGxxkcZ3CcwXEGxxkcZ3CcwXEGxxkcZ3CcwXEGxxkcZ3CcwXEGxxkcZ3CcwXEGxxkcZ3CcwXEGxxkcZ3CcwXEGxxkcZ3CcwXEGxxkcZ3CcwXEGxxkcZ3CcwXEGxxkcZ3CcwXEGxxkcZ3CcwXEX9RS5koKflW4AAAAASUVORK5CYII=";
+const SHOT_PNG_B64: &str = "iVBORw0KGgoAAAANSUhEUgAAAHgAAABQCAIAAABd+SbeAAAAqElEQVR4nO3QAQkAIADAMFMaw5QGs4XCHTzA2dhr6kLj+cEngQbdCjToVqBBtwINuhVo0K1Ag24FGnQr0KBbgQbdCjToVqBBtwINuhVo0K1Ag24FGnQr0KBbgQbdCjToVqBBtwINuhVo0K1Ag24FGnQr0KBbgQbdCjToVqBBtwINuhVo0K1Ag24FGnQr0KBbgQbdCjToVqBBtwINuhVo0K1Ag24FGnSrA0Iub1g8jaYyAAAAAElFTkSuQmCC";
+
 /// Monotonic mock clock — each call to `ts()` bumps by TS_STEP_MS and returns
 /// a zero-padded 10-digit string, matching the TS fixture's `ts()` exactly.
 const TS_STEP_MS: u64 = 5;
@@ -1008,6 +1018,191 @@ impl PilotDriver for MockDriver {
                 }
                 s.push(ScriptStep { wait_ms: 60, event: SessionDriverEvent::RunCompleted { base: base(), snapshot: mock_snapshot(SessionStatus::Idle), user_entry_id: Some("e-alu-u1".into()), assistant_entry_id: Some("e-alu-a1".into()) } });
                 s
+            }
+            // ── Additional scripts ────────────────────────────────────────
+            "selectmany" => vec![
+                ScriptStep { wait_ms: 0, event: SessionDriverEvent::HostUiRequest { base: base(), request: HostUiRequest::Select {
+                    request_id: "req-select-many-1".into(),
+                    title: "Which environment should I deploy to?".into(),
+                    options: vec!["staging".into(), "production".into(), "canary".into()],
+                    allow_multiple: None,
+                    timeout_ms: None,
+                } } },
+            ],
+            "planhandoff" => vec![
+                ScriptStep { wait_ms: 0, event: SessionDriverEvent::HostUiRequest { base: base(), request: HostUiRequest::Plan {
+                    request_id: "req-plan-handoff-1".into(),
+                    title: "Plan handoff".into(),
+                    plan_text: PLAN_HANDOFF_TEXT.into(),
+                    display_path: Some("plan.md".into()),
+                    target_facet: Some("execute".into()),
+                    action_labels: ["Implement (new context)".into(), "Implement (current context)".into(), "Cancel".into()],
+                    timeout_ms: None,
+                } } },
+            ],
+            "planhandofftimeout" => vec![
+                ScriptStep { wait_ms: 0, event: SessionDriverEvent::HostUiRequest { base: base(), request: HostUiRequest::Plan {
+                    request_id: "req-plan-handoff-timeout-1".into(),
+                    title: "Plan handoff (timed)".into(),
+                    plan_text: "A short plan that will auto-dismiss on timeout.".into(),
+                    display_path: Some("plan.md".into()),
+                    target_facet: Some("execute".into()),
+                    action_labels: ["Implement (new context)".into(), "Implement (current context)".into(), "Cancel".into()],
+                    timeout_ms: Some(1200),
+                } } },
+            ],
+            "planfacet" => vec![
+                ScriptStep { wait_ms: 0, event: SessionDriverEvent::SessionUpdated { base: base(), snapshot: snap(SessionStatus::Idle, Some("plan".into()), None, None, None, None) } },
+                ScriptStep { wait_ms: 1500, event: SessionDriverEvent::SessionUpdated { base: base(), snapshot: snap(SessionStatus::Idle, Some("execute".into()), None, None, None, None) } },
+            ],
+            "permission" => vec![
+                ScriptStep { wait_ms: 0, event: SessionDriverEvent::HostUiRequest { base: base(), request: HostUiRequest::Permission {
+                    request_id: "req-permission-1".into(),
+                    title: "Run bash?".into(),
+                    tool_name: Some("shell_exec".into()),
+                    tool_input: Some(serde_json::to_string_pretty(&serde_json::json!({"command": "rm -rf /tmp/test"})).unwrap_or_default()),
+                    options: vec!["Deny".into(), "Allow once".into(), "Allow for session".into()],
+                    timeout_ms: None,
+                } } },
+            ],
+            "reset" => {
+                let u_id = format!("u-reset-{}", ts());
+                let mut s: Vec<ScriptStep> = vec![
+                    ScriptStep { wait_ms: 0, event: SessionDriverEvent::SessionReset { base: base() } },
+                    ScriptStep { wait_ms: 20, event: SessionDriverEvent::UserMessage { base: base(), id: u_id.clone(), text: "Replayed prompt after the reset.".into(), images: None, entry_id: Some(format!("e-{u_id}")) } },
+                ];
+                for chunk in deltas("Transcript rebuilt from daemon history after a reset.", 3) {
+                    s.push(ScriptStep { wait_ms: 28, event: SessionDriverEvent::AssistantDelta { base: base(), text: chunk, channel: Some(AssistantDeltaChannel::Text), entry_id: None } });
+                }
+                s.push(ScriptStep { wait_ms: 40, event: SessionDriverEvent::RunCompleted { base: base(), snapshot: mock_snapshot(SessionStatus::Idle), user_entry_id: Some(format!("e-{u_id}")), assistant_entry_id: Some(format!("e-a-{u_id}")) } });
+                s
+            }
+            "images" => {
+                let call_id = format!("img-{}", ts());
+                let mut s = vec![
+                    ScriptStep { wait_ms: 0, event: SessionDriverEvent::UserMessage { base: base(), id: format!("u-{}", ts()), text: "Here's the current screen — can you mock up a cleaner layout?".into(), images: Some(vec![ImageContent::Image { data: SHOT_PNG_B64.into(), mime_type: "image/png".into() }]), entry_id: None } },
+                    ScriptStep { wait_ms: 0, event: SessionDriverEvent::SessionUpdated { base: base(), snapshot: mock_snapshot(SessionStatus::Running) } },
+                ];
+                for chunk in deltas("Sure — let me render a quick mockup and show it to you.", 3) {
+                    s.push(ScriptStep { wait_ms: 28, event: SessionDriverEvent::AssistantDelta { base: base(), text: chunk, channel: Some(AssistantDeltaChannel::Text), entry_id: None } });
+                }
+                // Tool span with image output — built manually (tool_span doesn't support images).
+                s.push(ScriptStep { wait_ms: 140, event: SessionDriverEvent::ToolStarted {
+                    base: base(), call_id: call_id.clone(), tool_name: "render_mockup".into(),
+                    label: Some("Render mockup".into()),
+                    description: Some("Render a UI mockup to a PNG and return it".into()),
+                    input: Some(serde_json::json!({"spec": "two-column layout, sticky header"})),
+                } });
+                advance_ts(900);
+                s.push(ScriptStep { wait_ms: 320, event: SessionDriverEvent::ToolFinished {
+                    base: base(), call_id, success: true,
+                    output: Some(serde_json::json!({"content": [{"type": "text", "text": "Rendered mockup (160×100 PNG)."}]})),
+                    images: Some(vec![ImageContent::Image { data: MOCKUP_PNG_B64.into(), mime_type: "image/png".into() }]),
+                } });
+                for chunk in deltas("Here's the mockup — a two-column layout with a sticky header. Want me to wire it up?", 3) {
+                    s.push(ScriptStep { wait_ms: 28, event: SessionDriverEvent::AssistantDelta { base: base(), text: chunk, channel: Some(AssistantDeltaChannel::Text), entry_id: None } });
+                }
+                s.push(ScriptStep { wait_ms: 80, event: SessionDriverEvent::RunCompleted { base: base(), snapshot: mock_snapshot(SessionStatus::Idle), user_entry_id: None, assistant_entry_id: None } });
+                s
+            }
+            "longoutput" => {
+                let log: String = (1..=40).map(|i| format!("[{:02}] test/case-{}.spec.ts … ok ({}ms)", i, i, i * 3)).collect::<Vec<_>>().join("\n");
+                let mut s = vec![
+                    ScriptStep { wait_ms: 0, event: SessionDriverEvent::UserMessage { base: base(), id: format!("u-{}", ts()), text: "Run the test suite and show me the output.".into(), images: None, entry_id: None } },
+                    ScriptStep { wait_ms: 0, event: SessionDriverEvent::SessionUpdated { base: base(), snapshot: mock_snapshot(SessionStatus::Running) } },
+                ];
+                for chunk in deltas("Running the suite now.", 3) {
+                    s.push(ScriptStep { wait_ms: 28, event: SessionDriverEvent::AssistantDelta { base: base(), text: chunk, channel: Some(AssistantDeltaChannel::Text), entry_id: None } });
+                }
+                s.extend(tool_span("long-1", "bash", "Run shell command", Some("Execute a command in the workspace shell"),
+                    serde_json::json!({"command": "bun test --reporter=verbose"}),
+                    true, serde_json::json!(format!("{log}\n\n40 pass, 0 fail")),
+                    120, 200, 620));
+                for chunk in deltas("All 40 cases passed.", 3) {
+                    s.push(ScriptStep { wait_ms: 28, event: SessionDriverEvent::AssistantDelta { base: base(), text: chunk, channel: Some(AssistantDeltaChannel::Text), entry_id: None } });
+                }
+                s.push(ScriptStep { wait_ms: 80, event: SessionDriverEvent::RunCompleted { base: base(), snapshot: mock_snapshot(SessionStatus::Idle), user_entry_id: None, assistant_entry_id: None } });
+                s
+            }
+            "markdown" => {
+                let mut s = vec![
+                    ScriptStep { wait_ms: 0, event: SessionDriverEvent::UserMessage { base: base(), id: format!("u-{}", ts()), text: "Show me a markdown formatting sample.".into(), images: None, entry_id: None } },
+                    ScriptStep { wait_ms: 0, event: SessionDriverEvent::SessionUpdated { base: base(), snapshot: mock_snapshot(SessionStatus::Running) } },
+                ];
+                for chunk in deltas(MARKDOWN_SAMPLE, 3) {
+                    s.push(ScriptStep { wait_ms: 28, event: SessionDriverEvent::AssistantDelta { base: base(), text: chunk, channel: Some(AssistantDeltaChannel::Text), entry_id: None } });
+                }
+                s.push(ScriptStep { wait_ms: 60, event: SessionDriverEvent::RunCompleted { base: base(), snapshot: mock_snapshot(SessionStatus::Idle), user_entry_id: None, assistant_entry_id: None } });
+                s
+            }
+            "search" => {
+                let mut s = vec![
+                    ScriptStep { wait_ms: 0, event: SessionDriverEvent::UserMessage { base: base(), id: format!("u-{}", ts()), text: "Where is the WebSocket reconnect logic?".into(), images: None, entry_id: None } },
+                    ScriptStep { wait_ms: 0, event: SessionDriverEvent::SessionUpdated { base: base(), snapshot: mock_snapshot(SessionStatus::Running) } },
+                ];
+                for chunk in deltas("Let me poke around the codebase a few ways.", 3) {
+                    s.push(ScriptStep { wait_ms: 28, event: SessionDriverEvent::AssistantDelta { base: base(), text: chunk, channel: Some(AssistantDeltaChannel::Text), entry_id: None } });
+                }
+                for (cid, name, input, output) in [
+                    ("r1", "read", serde_json::json!({"path": "client/src/lib/store.svelte.ts"}), serde_json::json!("// store.svelte.ts\n  private reconnect() { /* WS singleton backoff */ }")),
+                    ("r2", "read", serde_json::json!({"path": "client/src/App.svelte"}), serde_json::json!("// App.svelte — mounts the store and the transcript")),
+                    ("g1", "grep", serde_json::json!({"pattern": "reconnect", "path": "client/src"}), serde_json::json!("client/src/lib/store.svelte.ts:88:  private reconnect() {")),
+                    ("g2", "grep", serde_json::json!({"pattern": "WebSocket", "path": "client/src"}), serde_json::json!("client/src/lib/store.svelte.ts:31:    this.ws = new WebSocket(url);")),
+                    ("f1", "find", serde_json::json!({"pattern": "*.svelte", "path": "client/src/components"}), serde_json::json!("client/src/components/Transcript.svelte\nclient/src/components/ToolCard.svelte")),
+                    ("b1", "bash", serde_json::json!({"command": "rg -n \"reconnect\" client/src/lib"}), serde_json::json!("client/src/lib/store.svelte.ts:88:  private reconnect() {")),
+                ] {
+                    s.extend(tool_span(cid, name, name, Some(&format!("Run {name}")), input, true, output, 40, 90, 180));
+                }
+                for chunk in deltas("Reconnect lives in the store's WS singleton.", 3) {
+                    s.push(ScriptStep { wait_ms: 28, event: SessionDriverEvent::AssistantDelta { base: base(), text: chunk, channel: Some(AssistantDeltaChannel::Text), entry_id: None } });
+                }
+                s.push(ScriptStep { wait_ms: 60, event: SessionDriverEvent::RunCompleted { base: base(), snapshot: mock_snapshot(SessionStatus::Idle), user_entry_id: None, assistant_entry_id: None } });
+                s
+            }
+            "thinkingtools" => {
+                let mut s = vec![
+                    ScriptStep { wait_ms: 0, event: SessionDriverEvent::UserMessage { base: base(), id: format!("u-{}", ts()), text: "Trace the reconnect path and check it end-to-end.".into(), images: None, entry_id: None } },
+                    ScriptStep { wait_ms: 0, event: SessionDriverEvent::SessionUpdated { base: base(), snapshot: mock_snapshot(SessionStatus::Running) } },
+                ];
+                let c1 = format!("tbt-1-{}", ts());
+                s.extend(tool_span(&c1, "bash", "bash", None, serde_json::json!({"command": "ls client/src/lib"}), true, serde_json::json!("store.svelte.ts\nws.ts"), 40, 90, 180));
+                for chunk in deltas("That lists the lib dir. The WS singleton is the likely home.", 3) {
+                    s.push(ScriptStep { wait_ms: 28, event: SessionDriverEvent::AssistantDelta { base: base(), text: chunk, channel: Some(AssistantDeltaChannel::Thinking), entry_id: None } });
+                }
+                let c2 = format!("tbt-2-{}", ts());
+                s.extend(tool_span(&c2, "bash", "bash", None, serde_json::json!({"command": "rg -n reconnect client/src"}), true, serde_json::json!("ws.ts:88: scheduleReconnect()"), 40, 90, 180));
+                for chunk in deltas("Found the scheduler. Let me read the file to confirm the backoff.", 3) {
+                    s.push(ScriptStep { wait_ms: 28, event: SessionDriverEvent::AssistantDelta { base: base(), text: chunk, channel: Some(AssistantDeltaChannel::Thinking), entry_id: None } });
+                }
+                let c3 = format!("tbt-3-{}", ts());
+                s.extend(tool_span(&c3, "read", "read", None, serde_json::json!({"path": "client/src/lib/ws.ts"}), true, serde_json::json!("// reconnecting WS singleton"), 40, 90, 180));
+                let c4 = format!("tbt-4-{}", ts());
+                s.extend(tool_span(&c4, "bash", "bash", None, serde_json::json!({"command": "rg -n scheduleReconnect client/src"}), true, serde_json::json!("ws.ts:88\nws.ts:142"), 40, 90, 180));
+                for chunk in deltas("Backoff looks right. One more check on the call site.", 3) {
+                    s.push(ScriptStep { wait_ms: 28, event: SessionDriverEvent::AssistantDelta { base: base(), text: chunk, channel: Some(AssistantDeltaChannel::Thinking), entry_id: None } });
+                }
+                for chunk in deltas("Reconnect is wired correctly — exponential backoff, capped, re-armed on close.", 3) {
+                    s.push(ScriptStep { wait_ms: 28, event: SessionDriverEvent::AssistantDelta { base: base(), text: chunk, channel: Some(AssistantDeltaChannel::Text), entry_id: None } });
+                }
+                s.push(ScriptStep { wait_ms: 60, event: SessionDriverEvent::RunCompleted { base: base(), snapshot: mock_snapshot(SessionStatus::Idle), user_entry_id: None, assistant_entry_id: None } });
+                s
+            }
+            "streamhold" => {
+                let mut s = vec![
+                    ScriptStep { wait_ms: 0, event: SessionDriverEvent::SessionUpdated { base: base(), snapshot: mock_snapshot(SessionStatus::Running) } },
+                ];
+                for chunk in deltas("Working on it — this turn stays open for the test.", 3) {
+                    s.push(ScriptStep { wait_ms: 28, event: SessionDriverEvent::AssistantDelta { base: base(), text: chunk, channel: Some(AssistantDeltaChannel::Text), entry_id: None } });
+                }
+                s
+            }
+            "contextfull" => vec![
+                ScriptStep { wait_ms: 0, event: SessionDriverEvent::UsageUpdated { base: base(), usage: mock_usage_full() } },
+            ],
+            // ── Non-script controls (return early, no play_script) ─────────
+            "failnewsession" | "failsession" | "queue" | "deliverqueue" => {
+                warn!("[mock] run_script: {name} (not yet implemented — non-script control)");
+                return;
             }
             _ => {
                 warn!("[mock] run_script: {name} (not yet implemented)");
