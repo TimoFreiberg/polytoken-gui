@@ -98,6 +98,9 @@ async fn main() {
         }
     };
 
+    // Clone the driver Arc before it's moved into the hub — we need it for subscribe below.
+    let driver_for_sub = driver.clone();
+
     let hub = SessionHub::new(
         driver,
         None, // notify — wired in Phase 6 (push)
@@ -116,6 +119,16 @@ async fn main() {
     };
 
     let app = build_router(state.clone());
+
+    // Wire the driver's event stream to the hub's on_event. The hub subscribes
+    // to the driver; each emitted SessionDriverEvent is folded + broadcast to WS clients.
+    {
+        let hub = state.hub.clone();
+        let _sub_id = driver_for_sub.subscribe(Box::new(move |ev: pilot_protocol::session_driver::SessionDriverEvent| {
+            let mut h = hub.lock();
+            h.on_event(ev);
+        }));
+    }
 
     let addr = format!("{}:{}", cfg.host, cfg.port);
     let addr: SocketAddr = addr
