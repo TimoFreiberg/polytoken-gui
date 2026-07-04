@@ -28,3 +28,4 @@ flate2 = { workspace = true }
 futures-util = { workspace = true }
 tokio-stream = { workspace = true }
 urlencoding = { workspace = true }
+web-push = { workspace = true }

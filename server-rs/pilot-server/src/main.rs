@@ -9,6 +9,7 @@ pub mod hub;
 pub mod journal;
 pub mod pidlock;
 pub mod polytoken;
+pub mod push;
 pub mod settings_store;
 pub mod static_serve;
 pub mod stub_driver;
