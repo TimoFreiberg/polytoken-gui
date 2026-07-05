@@ -84,20 +84,10 @@ const CORPUS_DIR = join(
 
 // ─── Canonicalization (mirrors server-rs/pilot-server/tests/corpus.rs) ────────
 
-/** A UUID-shaped string: 8-4-4-4-12 hex with dashes at 8/13/18/23. */
-function looksLikeUuid(s: string): boolean {
-  if (s.length !== 36) return false;
-  if (s[8] !== "-" || s[13] !== "-" || s[18] !== "-" || s[23] !== "-") {
-    return false;
-  }
-  return [...s].every(
-    (c, i) => i === 8 || i === 13 || i === 18 || i === 23 || /[0-9a-fA-F]/.test(c),
-  );
-}
 const isPromptPlaceholder = (s: string) => /^PROMPT_\d+$/.test(s);
 const isSessionPlaceholder = (s: string) => s === "SESSION";
 const isMonotonicEpoch = (s: string) =>
-  s.length === 24 && s.startsWith("1970-01-01T00:00:") && s.endsWith(".000Z");
+  s.length === 24 && s.startsWith("1970-01-01T") && s.endsWith(".000Z");
 
 class CanonState {
   private sessions = new Map<string, string>();
@@ -113,8 +103,11 @@ class CanonState {
 
   canonPrompt(raw: string): string {
     if (isPromptPlaceholder(raw)) return raw;
-    // Only UUID-shaped values are prompt ids; opaque ids (call_id, item_id) stay.
-    if (!looksLikeUuid(raw)) return raw;
+    // DEDUPED: the same raw prompt id recurs across message_start/content_block_*/
+    // message_complete + the PromptAccepted HTTP body and must map to ONE PROMPT_N.
+    // Caller must only pass values that ARE prompt ids (keyed prompt_id/_prompt_id/
+    // _prompt_ids) — we do NOT gate on UUID shape, since item_ids/call_id/
+    // interrogative_id can also be UUID-shaped and must be left as-is (review C3).
     if (!this.prompts.has(raw)) {
       this.prompts.set(raw, `PROMPT_${this.nextPrompt++}`);
     }
@@ -129,10 +122,10 @@ class CanonState {
 }
 
 /**
- * Recursively rewrite session ids, prompt ids, and bare-UUID array elements.
- * Mirrors corpus.rs::canonicalize_value EXACTLY, including the subtlety that a
- * scalar string under a NON-special key is left untouched (a bare UUID is only
- * mapped when it's an array element or under a `*_prompt_id` key).
+ * Recursively rewrite session ids and prompt ids in place. Mirrors
+ * corpus.rs::canonicalize_value EXACTLY. Mapping is KEY-driven (prompt_id /
+ * *_prompt_id / *_prompt_ids), never UUID-shape-driven: a UUID under a non-prompt
+ * key (call_id, item_id, interrogative_id) is left untouched (review C3).
  */
 function canonicalizeValue(v: unknown, state: CanonState): unknown {
   if (Array.isArray(v)) return v.map((child) => canonicalizeValue(child, state));
@@ -143,12 +136,22 @@ function canonicalizeValue(v: unknown, state: CanonState): unknown {
         out[key] = state.canonSession(child);
         continue;
       }
-      const isPromptField = key === "prompt_id" || key.endsWith("_prompt_id");
-      if (isPromptField && typeof child === "string") {
-        out[key] = state.canonPrompt(child);
+      // Prompt-id key → PROMPT_N (deduped). Matches BOTH singular (prompt_id,
+      // admission_prompt_id, final_prompt_id, to_prompt_id, …) AND plural
+      // (admission_prompt_ids, prompt_ids). Singular → string maps directly;
+      // plural → array recurses so each UUID element maps.
+      const isPromptField =
+        key === "prompt_id" || key.endsWith("_prompt_id") || key.endsWith("_prompt_ids");
+      if (isPromptField) {
+        out[key] =
+          child !== null && typeof child === "object"
+            ? canonicalizeValue(child, state)
+            : typeof child === "string"
+              ? state.canonPrompt(child)
+              : child;
         continue;
       }
-      // Non-special key: recurse into objects/arrays; leave scalars untouched.
+      // Other key: recurse into objects/arrays; leave scalars untouched.
       out[key] =
         child !== null && typeof child === "object"
           ? canonicalizeValue(child, state)
@@ -156,13 +159,20 @@ function canonicalizeValue(v: unknown, state: CanonState): unknown {
     }
     return out;
   }
-  if (typeof v === "string" && looksLikeUuid(v)) return state.canonPrompt(v);
+  // Bare scalar under a non-prompt key: untouched (no UUID-shape guessing).
   return v;
 }
 
-/** The Nth monotonic-epoch timestamp: `1970-01-01T00:00:0N.000Z` (secs capped 59). */
-const monotonicTimestamp = (frameIdx: number) =>
-  `1970-01-01T00:00:${String(Math.min(frameIdx, 59)).padStart(2, "0")}.000Z`;
+/** The Nth monotonic-epoch timestamp: `1970-01-01THH:MM:SS.000Z`, frame index as
+ *  elapsed seconds. Rolls into minutes/hours so ≥60-frame corpora stay valid
+ *  24-char stamps `isMonotonicEpoch` recognizes (review C2). */
+const monotonicTimestamp = (frameIdx: number) => {
+  const total = frameIdx;
+  const secs = total % 60;
+  const mins = Math.floor(total / 60) % 60;
+  const hours = Math.floor(total / 3600) % 24;
+  return `1970-01-01T${String(hours).padStart(2, "0")}:${String(mins).padStart(2, "0")}:${String(secs).padStart(2, "0")}.000Z`;
+};
 
 interface HttpEntry {
   method: string;
