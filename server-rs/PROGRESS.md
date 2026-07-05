@@ -21,23 +21,23 @@ validation legs are green plus a live-daemon smoke test.
 
 ## Where the port actually stands
 
-**Ground truth (2026-07-05, full suite, one machine, commit mzwoqyrt
-"Rust server: add CI gate + clippy-clean (Phase 0.2)"):**
+**Ground truth (2026-07-05, full suite, one machine, commit tkustwvm
+"Rust server: models cluster fix (Phase 1.2)" — models cluster green):**
 
 - `cargo test`: 143/143 pass (5 daemon-types, 64 protocol, 74 server).
 - `cargo clippy --all-targets -- -D warnings`: 0 warnings (Phase 0.2).
 - `bun test` (TS side): 760/760 pass.
 - e2e vs Bun server (control): **321/321 pass** (3.6 min).
-- e2e vs Rust server (`PILOT_SERVER_IMPL=rust`): **273 passed / 25 failed / 0
-  flaky** (6.0 min, `--project=desktop`). Was 288/33 at the 2026-07-04
-  baseline; Chunks B+C (sessions/drafts/branch/dir-picker parity) cut it to
-  25. The per-spec failure table is below (reproducible: `PILOT_SERVER_IMPL=rust
-  bunx playwright test --project=desktop --reporter=json`).
+- e2e vs Rust server (`PILOT_SERVER_IMPL=rust`): **277 passed / 21 failed / 0
+  flaky** (5.4 min, `--project=desktop`). Was 273/25 at the Phase-0.4 baseline;
+  the models cluster fix (Phase 1.2) cut it to 21. The per-spec failure table is
+  below (reproducible: `PILOT_SERVER_IMPL=rust bunx playwright test
+  --project=desktop --reporter=json`).
 - server-rs is now in CI (Phase 0.2): the `rust-server` job runs
   `cargo fmt --check` + `cargo clippy --locked --all-targets -- -D warnings` +
   `cargo test` on ubuntu-latest. `bun run check:rs` runs the same locally.
 
-### Rust-server e2e failure table (2026-07-05, 25 failures)
+### Rust-server e2e failure table (2026-07-05, 21 failures)
 
 | spec file | failing test | status |
 |-----------|--------------|--------|
@@ -48,10 +48,6 @@ validation legs are green plus a live-daemon smoke test.
 | images | pasting a screenshot attaches it and image-only send stays visible | failed |
 | lease-conflict | a lease conflict surfaces a sticky Retry toast; retrying opens the session | failed |
 | lease-conflict | a non-lease session-switch error does NOT get a Retry button | failed |
-| models | the model picker lists models and switches the active one | failed |
-| models | the thinking picker switches the level | failed |
-| models | ⌘⇧E focuses the thinking menu; arrow+enter selects and returns focus | failed |
-| models | ⌘⇧M focuses the model search; keyboard select returns focus to composer | failed |
 | new-session-failure | a failed new session offers a restore toast when another draft is in progress | failed |
 | new-session-failure | a failed new session overwrites an empty competing draft without a toast | failed |
 | notification-autodrain | notification autodrain toggle flips in Settings | failed |
@@ -67,15 +63,16 @@ validation legs are green plus a live-daemon smoke test.
 | update-card | clears when the update is no longer available | failed |
 | update-card | shows when an update is staged and reflects applying on click | failed |
 
-Cluster view: models (4), queue (3), new-session-failure (2), context-meter
-(2), lease-conflict (2), reload-session (2), update-card (2), abort-restore
-(1), file-mention (1), images (1), notification-autodrain (1), prompt-delivery
-(1), settings (1), sidebar-row (1), slash (1). The dir-picker / sessions /
-drafts / branch / archive clusters are now green (Chunks B+C).
+Cluster view: queue (3), new-session-failure (2), context-meter (2),
+lease-conflict (2), reload-session (2), update-card (2), abort-restore (1),
+file-mention (1), images (1), notification-autodrain (1), prompt-delivery (1),
+settings (1), sidebar-row (1), slash (1). The models (4), dir-picker,
+sessions, drafts, branch, archive clusters are now green (Chunks B+C + Phase
+1.2).
 
-Observed failure clusters: see the per-spec table above (2026-07-05, 25
-failures). The dir-picker / sessions / drafts / branch / archive clusters
-are green (Chunks B+C). Remaining clusters: models (4), queue (3),
+Observed failure clusters: see the per-spec table above (2026-07-05, 21
+failures). The models / dir-picker / sessions / drafts / branch / archive
+clusters are green (Chunks B+C + Phase 1.2). Remaining clusters: queue (3),
 new-session-failure (2), context-meter (2), lease-conflict (2),
 reload-session (2), update-card (2), plus 7 singletons.
 

@@ -2698,3 +2698,144 @@ impl HostUiRequestExt for HostUiRequest {
         }
     }
 }
+
+#[cfg(test)]
+mod hub_models_tests {
+    use super::*;
+    use crate::mock_driver::MockDriver;
+    use pilot_protocol::session_driver::SessionConfig;
+    use std::sync::Arc;
+    use tokio::time::{Duration, timeout};
+
+    fn test_hub() -> (Arc<MockDriver>, Arc<Mutex<SessionHub>>, HubOpReceiver) {
+        let driver = Arc::new(MockDriver::new());
+        let (tx, rx) = hub_op_channel();
+        let hub = SessionHub::new(
+            driver.clone(),
+            tx,
+            None,
+            250,
+            "test-server".into(),
+            None,
+            "test-sha".into(),
+            10,
+        );
+        let hub_for_events = hub.clone();
+        driver.subscribe(Box::new(move |ev| hub_for_events.lock().on_event(ev)));
+        (driver, hub, rx)
+    }
+
+    async fn drain_one(rx: &mut mpsc::Receiver<ServerMessage>) -> ServerMessage {
+        timeout(Duration::from_secs(1), rx.recv())
+            .await
+            .expect("timed out waiting for server message")
+            .expect("client channel closed")
+    }
+
+    async fn drain_until<F>(rx: &mut mpsc::Receiver<ServerMessage>, pred: F) -> ServerMessage
+    where
+        F: Fn(&ServerMessage) -> bool,
+    {
+        for _ in 0..32 {
+            let msg = drain_one(rx).await;
+            if pred(&msg) {
+                return msg;
+            }
+        }
+        panic!("did not receive expected server message");
+    }
+
+    async fn apply_one(hub: Arc<Mutex<SessionHub>>, receiver: &mut HubOpReceiver) {
+        let op = timeout(Duration::from_secs(1), receiver.rx.recv())
+            .await
+            .expect("timed out waiting for hub op")
+            .expect("hub op channel closed");
+        op(hub).await;
+    }
+
+    async fn receive_session_config(rx: &mut mpsc::Receiver<ServerMessage>) -> SessionConfig {
+        let msg = drain_until(rx, |msg| {
+            matches!(
+                msg,
+                ServerMessage::Event {
+                    event: SessionDriverEvent::SessionUpdated { .. },
+                    ..
+                }
+            )
+        })
+        .await;
+        match msg {
+            ServerMessage::Event {
+                event: SessionDriverEvent::SessionUpdated { snapshot, .. },
+                ..
+            } => snapshot.config.expect("sessionUpdated should carry config"),
+            other => panic!("expected sessionUpdated event, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn connecting_client_receives_model_list_and_defaults() {
+        // Ported from TS `server/src/hub.test.ts:1127` and the adjacent
+        // getModelDefaults fake at `server/src/hub.test.ts:226`.
+        let (_driver, hub, mut hub_ops) = test_hub();
+        let (client_key, _tx, mut rx) = hub.lock().add_client(None);
+        hub.lock().spawn_connect_lists(client_key);
+
+        // connect_session_list, connect_model_list, connect_command_list,
+        // connect_facet_list, connect_file_index, connect_model_defaults.
+        for _ in 0..6 {
+            apply_one(hub.clone(), &mut hub_ops).await;
+        }
+
+        let model_list = drain_until(&mut rx, |msg| matches!(msg, ServerMessage::ModelList { .. })).await;
+        match model_list {
+            ServerMessage::ModelList { models } => {
+                assert!(models.iter().any(|m| m.model_id == "deepseek-v4-flash"));
+            }
+            other => panic!("expected modelList, got {other:?}"),
+        }
+
+        let defaults = drain_until(&mut rx, |msg| matches!(msg, ServerMessage::ModelDefaults { .. })).await;
+        match defaults {
+            ServerMessage::ModelDefaults { defaults } => {
+                assert_eq!(defaults.provider.as_deref(), Some("anthropic"));
+                assert_eq!(defaults.model_id.as_deref(), Some("claude-opus-4-8"));
+                assert_eq!(defaults.thinking_level.as_deref(), Some("medium"));
+            }
+            other => panic!("expected modelDefaults, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn set_model_and_thinking_emit_config_snapshots() {
+        // Back-fills TS MockDriver semantics from `server/src/mock-driver.ts:810`:
+        // setModel/setThinking mutate current config and emit sessionUpdated.
+        let (_driver, hub, _hub_ops) = test_hub();
+        let (client_key, _tx, mut rx) = hub.lock().add_client(None);
+
+        hub.lock().handle_client(
+            client_key,
+            ClientMessage::SetModel {
+                provider: "deepseek".into(),
+                model_id: "deepseek-v4-flash".into(),
+                session_id: None,
+            },
+        );
+        let config = receive_session_config(&mut rx).await;
+        assert_eq!(config.provider.as_deref(), Some("deepseek"));
+        assert_eq!(config.model_id.as_deref(), Some("deepseek-v4-flash"));
+        assert_eq!(config.thinking_level.as_deref(), Some("medium"));
+
+        hub.lock().handle_client(
+            client_key,
+            ClientMessage::SetThinking {
+                level: "high".into(),
+                session_id: None,
+            },
+        );
+        let config = receive_session_config(&mut rx).await;
+        assert_eq!(config.provider.as_deref(), Some("deepseek"));
+        assert_eq!(config.model_id.as_deref(), Some("deepseek-v4-flash"));
+        assert_eq!(config.thinking_level.as_deref(), Some("high"));
+    }
+}

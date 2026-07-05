@@ -1308,6 +1308,9 @@ pub struct MockDriver {
     /// its parent project, but the live affordances + ownership gate drop it
     /// (mirrors TS `reapedWorktrees`).
     reaped_worktrees: Arc<Mutex<std::collections::HashSet<String>>>,
+    /// The mock's current model selection, mutated by set_model/set_thinking so
+    /// the picker reflects config changes. Mirrors TS MockDriver.config.
+    config: Arc<Mutex<SessionConfig>>,
 }
 
 /// Handle to a currently-running script, so the next `play_script` can flush it.
@@ -1368,6 +1371,7 @@ impl MockDriver {
             worktrees: Arc::new(Mutex::new(seed_worktrees(&mock_session_list()))),
             dirty_worktrees: Arc::new(Mutex::new(std::collections::HashSet::new())),
             reaped_worktrees: Arc::new(Mutex::new(std::collections::HashSet::new())),
+            config: Arc::new(Mutex::new(mock_default_config())),
         }
     }
 
@@ -1897,6 +1901,7 @@ impl PilotDriver for MockDriver {
                     .unwrap_or_else(|| default.available_thinking_levels.clone().unwrap()),
             ),
         };
+        *self.config.lock() = config.clone();
         let permission_monitor = permission_monitor.unwrap_or(PermissionMonitorMode::Standard);
         let (events, snapshot) = new_session_seed(&dir, config, facet, permission_monitor);
         let session_id = snapshot.r#ref.session_id.clone();
@@ -2047,13 +2052,29 @@ impl PilotDriver for MockDriver {
         }
     }
 
-    fn set_model(&self, _provider: String, _model_id: String, _session_id: Option<SessionId>) {
+    fn set_model(&self, provider: String, model_id: String, _session_id: Option<SessionId>) {
+        let mut config = self.config.lock();
+        config.provider = Some(provider);
+        config.model_id = Some(model_id);
+        let mut snapshot = snap(SessionStatus::Idle, None, None, None, None, None);
+        snapshot.config = Some(config.clone());
+        drop(config);
         self.emit(SessionDriverEvent::SessionUpdated {
             base: base(),
-            snapshot: snap(SessionStatus::Idle, None, None, None, None, None),
+            snapshot,
         });
     }
-    fn set_thinking(&self, _level: String, _session_id: Option<SessionId>) {}
+    fn set_thinking(&self, level: String, _session_id: Option<SessionId>) {
+        let mut config = self.config.lock();
+        config.thinking_level = Some(level);
+        let mut snapshot = snap(SessionStatus::Idle, None, None, None, None, None);
+        snapshot.config = Some(config.clone());
+        drop(config);
+        self.emit(SessionDriverEvent::SessionUpdated {
+            base: base(),
+            snapshot,
+        });
+    }
     fn set_facet(&self, facet: String, _session_id: Option<SessionId>) {
         self.emit(SessionDriverEvent::SessionUpdated {
             base: base(),
@@ -2698,6 +2719,7 @@ impl PilotDriver for MockDriver {
         // `/debug/reset` and leak into the next test's sidebar.
         *self.sessions.lock() = mock_session_list();
         *self.worktrees.lock() = seed_worktrees(&mock_session_list());
+        *self.config.lock() = mock_default_config();
         self.dirty_worktrees.lock().clear();
         self.reaped_worktrees.lock().clear();
     }
