@@ -4,7 +4,7 @@
 //! The mock emits SessionDriverEvent[] directly (no daemon, no wire protocol).
 //! This is what the e2e suite tests against.
 
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::Duration;
@@ -16,8 +16,8 @@ use tokio::sync::{mpsc, oneshot};
 use tracing::warn;
 
 use crate::driver::{
-    ArchiveResult, BranchResult, NewSessionOptsData, PilotDriver, WorktreeCleanupResult,
-    WorktreeRetained,
+    ArchiveResult, BranchResult, ClearQueueResult, NewSessionOptsData, PilotDriver,
+    WorktreeCleanupResult, WorktreeRetained,
 };
 use async_trait::async_trait;
 
@@ -1308,6 +1308,10 @@ pub struct MockDriver {
     /// its parent project, but the live affordances + ownership gate drop it
     /// (mirrors TS `reapedWorktrees`).
     reaped_worktrees: Arc<Mutex<std::collections::HashSet<String>>>,
+    /// Per-session queued input overlay. Mirrors TS MockDriver.queues: queueUpdated
+    /// events replace the client queue, and openSession overlays queuedMessages on
+    /// seed snapshots so reconnect/session refocus preserve queued rows.
+    queues: Arc<Mutex<HashMap<SessionId, Vec<SessionQueuedMessage>>>>,
     /// The mock's current model selection, mutated by set_model/set_thinking so
     /// the picker reflects config changes. Mirrors TS MockDriver.config.
     config: Arc<Mutex<SessionConfig>>,
@@ -1371,6 +1375,7 @@ impl MockDriver {
             worktrees: Arc::new(Mutex::new(seed_worktrees(&mock_session_list()))),
             dirty_worktrees: Arc::new(Mutex::new(std::collections::HashSet::new())),
             reaped_worktrees: Arc::new(Mutex::new(std::collections::HashSet::new())),
+            queues: Arc::new(Mutex::new(HashMap::new())),
             config: Arc::new(Mutex::new(mock_default_config())),
         }
     }
@@ -1380,6 +1385,23 @@ impl MockDriver {
         for (_, tx) in listeners.iter() {
             let _ = tx.try_send(ev.clone());
         }
+    }
+
+    fn emit_queue(&self, session_id: &str) {
+        let messages = self
+            .queues
+            .lock()
+            .get(session_id)
+            .cloned()
+            .unwrap_or_default();
+        self.emit(SessionDriverEvent::QueueUpdated {
+            base: SessionEventBase {
+                session_ref: session_ref_for(session_id),
+                timestamp: ts(),
+                run_id: None,
+            },
+            messages,
+        });
     }
 
     fn cancel_timers(&self) {
@@ -1637,6 +1659,30 @@ impl PilotDriver for MockDriver {
             assistant_entry_id: None,
         });
     }
+
+    async fn clear_queue(&self, session_id: Option<SessionId>) -> ClearQueueResult {
+        let sid = session_id.unwrap_or_else(|| SESSION_ID.into());
+        let queued = {
+            let mut queues = self.queues.lock();
+            let queued = queues.get(&sid).cloned().unwrap_or_default();
+            queues.insert(sid.clone(), Vec::new());
+            queued
+        };
+        self.emit_queue(&sid);
+        ClearQueueResult {
+            steering: queued
+                .iter()
+                .filter(|message| message.mode == SessionMessageDeliveryMode::Steer)
+                .map(|message| message.text.clone())
+                .collect(),
+            follow_up: queued
+                .iter()
+                .filter(|message| message.mode == SessionMessageDeliveryMode::FollowUp)
+                .map(|message| message.text.clone())
+                .collect(),
+        }
+    }
+
     fn respond_ui(&self, response: HostUiResponse, _session_id: Option<SessionId>) {
         let request_id = match &response {
             HostUiResponse::Value { request_id, .. } => request_id.clone(),
@@ -1755,6 +1801,18 @@ impl PilotDriver for MockDriver {
         let mut seed = mock_session_seed(&path);
         let session_id = seed.first().map(|e| e.session_ref().session_id.clone());
         if let Some(sid) = session_id {
+            let queued = self.queues.lock().get(&sid).cloned().unwrap_or_default();
+            for event in &mut seed {
+                match event {
+                    SessionDriverEvent::SessionOpened { snapshot, .. }
+                    | SessionDriverEvent::SessionUpdated { snapshot, .. }
+                    | SessionDriverEvent::RunCompleted { snapshot, .. } => {
+                        snapshot.queued_messages = Some(queued.clone());
+                    }
+                    _ => {}
+                }
+            }
+
             let pending = self.pending_dialogs.lock();
             for (_, p) in pending.iter() {
                 if p.session_ref.session_id == sid {
@@ -2693,7 +2751,49 @@ impl PilotDriver for MockDriver {
                 ScriptStep { wait_ms: 0, event: SessionDriverEvent::UsageUpdated { base: base(), usage: mock_usage_full() } },
             ],
             // ── Non-script controls (return early, no play_script) ─────────
-            "failnewsession" | "failsession" | "queue" | "deliverqueue" => {
+            "queue" => {
+                self.queues.lock().insert(
+                    SESSION_ID.into(),
+                    vec![
+                        SessionQueuedMessage {
+                            id: "queue-steer-fixture".into(),
+                            mode: SessionMessageDeliveryMode::Steer,
+                            text: "Please inspect the failing test first.".into(),
+                            created_at: "queue-1".into(),
+                            updated_at: "queue-1".into(),
+                        },
+                        SessionQueuedMessage {
+                            id: "queue-followup-fixture".into(),
+                            mode: SessionMessageDeliveryMode::FollowUp,
+                            text: "Then summarize the fix and remaining risks.".into(),
+                            created_at: "queue-2".into(),
+                            updated_at: "queue-2".into(),
+                        },
+                    ],
+                );
+                self.emit_queue(SESSION_ID);
+                return;
+            }
+            "deliverqueue" => {
+                let next = {
+                    let mut queues = self.queues.lock();
+                    let queued = queues.entry(SESSION_ID.into()).or_default();
+                    if queued.is_empty() {
+                        None
+                    } else {
+                        Some(queued.remove(0))
+                    }
+                };
+                if let Some(message) = next {
+                    self.emit(SessionDriverEvent::QueuedMessageStarted {
+                        base: base(),
+                        message,
+                    });
+                    self.emit_queue(SESSION_ID);
+                }
+                return;
+            }
+            "failnewsession" | "failsession" => {
                 warn!("[mock] run_script: {name} (not yet implemented — non-script control)");
                 return;
             }
@@ -2720,6 +2820,7 @@ impl PilotDriver for MockDriver {
         *self.sessions.lock() = mock_session_list();
         *self.worktrees.lock() = seed_worktrees(&mock_session_list());
         *self.config.lock() = mock_default_config();
+        self.queues.lock().clear();
         self.dirty_worktrees.lock().clear();
         self.reaped_worktrees.lock().clear();
     }

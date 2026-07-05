@@ -37,8 +37,8 @@
 //!
 use std::collections::{HashMap, HashSet};
 use std::future::Future;
-use std::path::PathBuf;
 use std::panic::AssertUnwindSafe;
+use std::path::PathBuf;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -2703,7 +2703,7 @@ impl HostUiRequestExt for HostUiRequest {
 mod hub_models_tests {
     use super::*;
     use crate::mock_driver::MockDriver;
-    use pilot_protocol::session_driver::SessionConfig;
+    use pilot_protocol::session_driver::{SessionConfig, SessionMessageDeliveryMode};
     use std::sync::Arc;
     use tokio::time::{Duration, timeout};
 
@@ -2773,6 +2773,167 @@ mod hub_models_tests {
         }
     }
 
+    async fn receive_queue_update(
+        rx: &mut mpsc::Receiver<ServerMessage>,
+    ) -> Vec<pilot_protocol::session_driver::SessionQueuedMessage> {
+        let msg = drain_until(rx, |msg| {
+            matches!(
+                msg,
+                ServerMessage::Event {
+                    event: SessionDriverEvent::QueueUpdated { .. },
+                    ..
+                }
+            )
+        })
+        .await;
+        match msg {
+            ServerMessage::Event {
+                event: SessionDriverEvent::QueueUpdated { messages, .. },
+                ..
+            } => messages,
+            other => panic!("expected queueUpdated event, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn restore_queue_clears_target_once_and_replies_only_to_requester() {
+        // Ported from TS `server/src/hub.test.ts:341`.
+        let (driver, hub, mut hub_ops) = test_hub();
+        driver.run_script("queue".into());
+
+        let (a_key, _a_tx, mut a_rx) = hub.lock().add_client(None);
+        let (_b_key, _b_tx, mut b_rx) = hub.lock().add_client(None);
+        let _ = receive_queue_update(&mut a_rx).await;
+        let _ = receive_queue_update(&mut b_rx).await;
+
+        hub.lock().handle_client(
+            a_key,
+            ClientMessage::RestoreQueue {
+                session_id: Some("demo-session".into()),
+            },
+        );
+        apply_one(hub.clone(), &mut hub_ops).await;
+
+        let restored = drain_until(&mut a_rx, |msg| {
+            matches!(msg, ServerMessage::QueueRestored { .. })
+        })
+        .await;
+        match restored {
+            ServerMessage::QueueRestored {
+                steering,
+                follow_up,
+            } => {
+                assert_eq!(steering, vec!["Please inspect the failing test first."]);
+                assert_eq!(
+                    follow_up,
+                    vec!["Then summarize the fix and remaining risks."]
+                );
+            }
+            other => panic!("expected queueRestored, got {other:?}"),
+        }
+        let cleared = receive_queue_update(&mut a_rx).await;
+        assert!(cleared.is_empty());
+        assert!(
+            timeout(Duration::from_millis(50), async {
+                while let Some(msg) = b_rx.recv().await {
+                    if matches!(msg, ServerMessage::QueueRestored { .. }) {
+                        return true;
+                    }
+                }
+                false
+            })
+            .await
+            .is_err()
+        );
+    }
+
+    #[tokio::test]
+    async fn restore_queue_returns_empty_result_without_changing_editor_contract() {
+        // Ported from TS `server/src/hub.test.ts:365`.
+        let (_driver, hub, mut hub_ops) = test_hub();
+        let (client_key, _tx, mut rx) = hub.lock().add_client(None);
+
+        hub.lock().handle_client(
+            client_key,
+            ClientMessage::RestoreQueue {
+                session_id: Some("demo-session".into()),
+            },
+        );
+        apply_one(hub.clone(), &mut hub_ops).await;
+
+        let restored = drain_until(&mut rx, |msg| {
+            matches!(msg, ServerMessage::QueueRestored { .. })
+        })
+        .await;
+        match restored {
+            ServerMessage::QueueRestored {
+                steering,
+                follow_up,
+            } => {
+                assert!(steering.is_empty());
+                assert!(follow_up.is_empty());
+            }
+            other => panic!("expected queueRestored, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn mock_queue_scripts_broadcast_deliver_and_overlay_open_session_seed() {
+        // Back-fills TS MockDriver queue semantics from
+        // `server/src/mock-driver.ts:270`, `:444`, `:622`, and `:987`.
+        let (driver, hub, _hub_ops) = test_hub();
+        let (_client_key, _tx, mut rx) = hub.lock().add_client(None);
+
+        driver.run_script("queue".into());
+        let queued = receive_queue_update(&mut rx).await;
+        assert_eq!(queued.len(), 2);
+        assert_eq!(queued[0].id, "queue-steer-fixture");
+        assert_eq!(queued[0].mode, SessionMessageDeliveryMode::Steer);
+        assert_eq!(queued[0].text, "Please inspect the failing test first.");
+        assert_eq!(queued[1].id, "queue-followup-fixture");
+        assert_eq!(queued[1].mode, SessionMessageDeliveryMode::FollowUp);
+        assert_eq!(
+            queued[1].text,
+            "Then summarize the fix and remaining risks."
+        );
+
+        let seed = driver
+            .open_session("/sessions/demo-session.jsonl".into())
+            .await;
+        let opened_queue = seed.iter().find_map(|event| match event {
+            SessionDriverEvent::SessionOpened { snapshot, .. } => snapshot.queued_messages.clone(),
+            _ => None,
+        });
+        assert_eq!(
+            opened_queue
+                .expect("sessionOpened should overlay queuedMessages")
+                .len(),
+            2
+        );
+
+        driver.run_script("deliverqueue".into());
+        let started = drain_until(&mut rx, |msg| {
+            matches!(
+                msg,
+                ServerMessage::Event {
+                    event: SessionDriverEvent::QueuedMessageStarted { .. },
+                    ..
+                }
+            )
+        })
+        .await;
+        match started {
+            ServerMessage::Event {
+                event: SessionDriverEvent::QueuedMessageStarted { message, .. },
+                ..
+            } => assert_eq!(message.id, "queue-steer-fixture"),
+            other => panic!("expected queuedMessageStarted, got {other:?}"),
+        }
+        let remaining = receive_queue_update(&mut rx).await;
+        assert_eq!(remaining.len(), 1);
+        assert_eq!(remaining[0].id, "queue-followup-fixture");
+    }
+
     #[tokio::test]
     async fn connecting_client_receives_model_list_and_defaults() {
         // Ported from TS `server/src/hub.test.ts:1127` and the adjacent
@@ -2787,7 +2948,10 @@ mod hub_models_tests {
             apply_one(hub.clone(), &mut hub_ops).await;
         }
 
-        let model_list = drain_until(&mut rx, |msg| matches!(msg, ServerMessage::ModelList { .. })).await;
+        let model_list = drain_until(&mut rx, |msg| {
+            matches!(msg, ServerMessage::ModelList { .. })
+        })
+        .await;
         match model_list {
             ServerMessage::ModelList { models } => {
                 assert!(models.iter().any(|m| m.model_id == "deepseek-v4-flash"));
@@ -2795,7 +2959,10 @@ mod hub_models_tests {
             other => panic!("expected modelList, got {other:?}"),
         }
 
-        let defaults = drain_until(&mut rx, |msg| matches!(msg, ServerMessage::ModelDefaults { .. })).await;
+        let defaults = drain_until(&mut rx, |msg| {
+            matches!(msg, ServerMessage::ModelDefaults { .. })
+        })
+        .await;
         match defaults {
             ServerMessage::ModelDefaults { defaults } => {
                 assert_eq!(defaults.provider.as_deref(), Some("anthropic"));

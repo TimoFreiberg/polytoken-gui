@@ -22,28 +22,36 @@ validation legs are green plus a live-daemon smoke test.
 ## Where the port actually stands
 
 **Ground truth (2026-07-05, full suite, one machine, commit tkustwvm
-"Rust server: models cluster fix (Phase 1.2)" — models cluster green):**
+"Rust server: mock queue model parity (queue cluster, Phase 1.3)" — queue
+cluster green):**
 
-- `cargo test`: 143/143 pass (5 daemon-types, 64 protocol, 74 server).
+- `cargo test`: 146/146 pass (5 daemon-types, 64 protocol, 77 server — +3
+  ported hub queue tests).
 - `cargo clippy --all-targets -- -D warnings`: 0 warnings (Phase 0.2).
 - `bun test` (TS side): 760/760 pass.
 - e2e vs Bun server (control): **321/321 pass** (3.6 min).
-- e2e vs Rust server (`PILOT_SERVER_IMPL=rust`): **277 passed / 21 failed / 0
-  flaky** (5.4 min, `--project=desktop`). Was 273/25 at the Phase-0.4 baseline;
-  the models cluster fix (Phase 1.2) cut it to 21. The per-spec failure table is
+- e2e vs Rust server (`PILOT_SERVER_IMPL=rust`): **279 passed / 19 failed / 0
+  flaky-flagged** (5.2 min, `--project=desktop`). Was 277/21 after the models
+  cluster; the queue cluster fix (Phase 1.3) cut 3 real failures → 18
+  deterministic failures. **Known flake:** `dir-picker :: the go-to-path input
+  jumps to a typed directory` failed once in the full-suite run but passes
+  9/9 in isolation — a timing-sensitive path-mode breadcrumb wait under
+  full-suite load (also seen transiently during the Phase 1.1 review). Track
+  it; not a regression from the queue work. The per-spec failure table is
   below (reproducible: `PILOT_SERVER_IMPL=rust bunx playwright test
   --project=desktop --reporter=json`).
 - server-rs is now in CI (Phase 0.2): the `rust-server` job runs
   `cargo fmt --check` + `cargo clippy --locked --all-targets -- -D warnings` +
   `cargo test` on ubuntu-latest. `bun run check:rs` runs the same locally.
 
-### Rust-server e2e failure table (2026-07-05, 21 failures)
+### Rust-server e2e failure table (2026-07-05, 18 deterministic + 1 flake)
 
 | spec file | failing test | status |
 |-----------|--------------|--------|
 | abort-restore | Escape aborts a pending turn and restores the sent prompt to the composer | failed |
 | context-meter | the Clear context button uses a click-twice confirm gate | failed |
 | context-meter | the Compact button uses a click-twice confirm gate | failed |
+| dir-picker | the go-to-path input jumps to a typed directory | **flake** (9/9 isolated) |
 | file-mention | a draft's @-mention searches the draft cwd via the server; a real session doesn't | failed |
 | images | pasting a screenshot attaches it and image-only send stays visible | failed |
 | lease-conflict | a lease conflict surfaces a sticky Retry toast; retrying opens the session | failed |
@@ -52,9 +60,6 @@ validation legs are green plus a live-daemon smoke test.
 | new-session-failure | a failed new session overwrites an empty competing draft without a toast | failed |
 | notification-autodrain | notification autodrain toggle flips in Settings | failed |
 | prompt-delivery | a rejected prompt stays visible and can be returned to the composer | failed |
-| queue | Alt+Up restores all text to one editor and clears every client | failed |
-| queue | delivery removes one queued row and starts its user turn | failed |
-| queue | queued modes survive reconnect and session refocus | failed |
 | reload-session | the L hotkey reloads the menu's targeted session | failed |
 | reload-session | the overflow menu reloads a session, reseeding its transcript | failed |
 | settings | the background-model spec round-trips and warns loud on a bad spec | failed |
@@ -63,18 +68,18 @@ validation legs are green plus a live-daemon smoke test.
 | update-card | clears when the update is no longer available | failed |
 | update-card | shows when an update is staged and reflects applying on click | failed |
 
-Cluster view: queue (3), new-session-failure (2), context-meter (2),
-lease-conflict (2), reload-session (2), update-card (2), abort-restore (1),
-file-mention (1), images (1), notification-autodrain (1), prompt-delivery (1),
-settings (1), sidebar-row (1), slash (1). The models (4), dir-picker,
-sessions, drafts, branch, archive clusters are now green (Chunks B+C + Phase
-1.2).
+Cluster view: new-session-failure (2), context-meter (2), lease-conflict (2),
+reload-session (2), update-card (2), abort-restore (1), file-mention (1),
+images (1), notification-autodrain (1), prompt-delivery (1), settings (1),
+sidebar-row (1), slash (1), + dir-picker flake (1). The queue (3), models
+(4), sessions, drafts, branch, archive clusters are now green (Chunks B+C +
+Phase 1.2 + Phase 1.3).
 
-Observed failure clusters: see the per-spec table above (2026-07-05, 21
-failures). The models / dir-picker / sessions / drafts / branch / archive
-clusters are green (Chunks B+C + Phase 1.2). Remaining clusters: queue (3),
-new-session-failure (2), context-meter (2), lease-conflict (2),
-reload-session (2), update-card (2), plus 7 singletons.
+Observed failure clusters: see the per-spec table above (2026-07-05, 18
+deterministic + 1 dir-picker flake). The queue / models / sessions / drafts /
+branch / archive clusters are green (Chunks B+C + Phase 1.2 + Phase 1.3).
+Remaining clusters: new-session-failure (2), context-meter (2),
+lease-conflict (2), reload-session (2), update-card (2), plus 7 singletons.
 
 **What is genuinely done and trustworthy:**
 
