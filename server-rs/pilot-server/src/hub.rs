@@ -2796,6 +2796,96 @@ mod hub_models_tests {
     }
 
     #[tokio::test]
+    async fn failed_new_session_with_first_prompt_sends_rejected_prompt_result() {
+        // Ports the TS create-and-prompt failure contract from
+        // `server/src/hub.ts:1703-1734` plus the `failnewsession` mock control from
+        // `server/src/mock-driver.ts:681-689,977-980`: a creation failure for a
+        // new-session first prompt must surface as `promptResult { accepted:false,
+        // sessionId: undefined }`, not as a silent successful creation. The client
+        // uses that rejected result to restore the submitted draft text.
+        let (driver, hub, mut hub_ops) = test_hub();
+        driver.run_script("failnewsession".into());
+
+        let (client_key, _tx, mut rx) = hub.lock().add_client(None);
+        hub.lock().handle_client(
+            client_key,
+            ClientMessage::NewSession {
+                cwd: Some("/workspace".into()),
+                worktree: None,
+                model: None,
+                thinking: None,
+                facet: None,
+                permission_monitor: None,
+                prompt: Some("the doomed session".into()),
+                images: None,
+                prompt_id: Some("client-new-fails".into()),
+            },
+        );
+        apply_one(hub.clone(), &mut hub_ops).await;
+
+        let result = drain_until(&mut rx, |msg| {
+            matches!(
+                msg,
+                ServerMessage::PromptResult {
+                    prompt_id,
+                    accepted: false,
+                    session_id: None,
+                    ..
+                } if prompt_id == "client-new-fails"
+            )
+        })
+        .await;
+        match result {
+            ServerMessage::PromptResult {
+                prompt_id,
+                accepted,
+                session_id,
+                error,
+            } => {
+                assert_eq!(prompt_id, "client-new-fails");
+                assert!(!accepted);
+                assert_eq!(session_id, None);
+                assert_eq!(error.as_deref(), Some("Could not create the new session"));
+            }
+            other => panic!("expected rejected promptResult, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn failnewsession_is_one_shot_and_does_not_mutate_before_failure() {
+        // Ports TS `MockDriver.failNextNewSession`: the first creation after
+        // `runScript("failnewsession")` fails before adding a session row; the next
+        // creation succeeds normally.
+        let driver = MockDriver::new();
+        let before = driver.list_sessions().await;
+        driver.run_script("failnewsession".into());
+
+        let failed = driver
+            .new_session(NewSessionOptsData {
+                cwd: Some("/first".into()),
+                ..Default::default()
+            })
+            .await;
+        assert!(failed.is_empty());
+        assert_eq!(driver.list_sessions().await.len(), before.len());
+
+        let succeeded = driver
+            .new_session(NewSessionOptsData {
+                cwd: Some("/second".into()),
+                ..Default::default()
+            })
+            .await;
+        assert!(!succeeded.is_empty());
+        assert!(
+            driver
+                .list_sessions()
+                .await
+                .iter()
+                .any(|entry| entry.session_id == "new-/second")
+        );
+    }
+
+    #[tokio::test]
     async fn restore_queue_clears_target_once_and_replies_only_to_requester() {
         // Ported from TS `server/src/hub.test.ts:341`.
         let (driver, hub, mut hub_ops) = test_hub();

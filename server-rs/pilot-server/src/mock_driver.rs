@@ -1268,6 +1268,9 @@ pub struct MockDriver {
     /// own ref instead of the demo session's. Consumed (cleared) by that first prompt.
     /// Mirrors the TS MockDriver's `lastCreated`.
     last_created: Mutex<Option<LastCreated>>,
+    /// One-shot: when set, the next `new_session()` returns no seed events then clears
+    /// (armed via `run_script("failnewsession")`). Mirrors TS `failNextNewSession`.
+    fail_next_new_session: Arc<AtomicBool>,
     /// Pending host-UI dialogs (keyed by requestId), so respondUi can look up the
     /// original request (e.g. a Q&A's questions) when forming the tool result.
     /// Mirrors the TS MockDriver's `pendingDialogs`.
@@ -1367,6 +1370,7 @@ impl MockDriver {
             next_id: Mutex::new(0),
             generation: Arc::new(AtomicU64::new(0)),
             last_created: Mutex::new(None),
+            fail_next_new_session: Arc::new(AtomicBool::new(false)),
             pending_dialogs: Arc::new(Mutex::new(std::collections::HashMap::new())),
             adventurous_handoff: Arc::new(std::sync::Mutex::new(false)),
             in_flight: Arc::new(Mutex::new(None)),
@@ -1859,6 +1863,11 @@ impl PilotDriver for MockDriver {
     }
 
     async fn new_session(&self, opts: NewSessionOptsData) -> Vec<SessionDriverEvent> {
+        // One-shot failure injection (armed via run_script("failnewsession")): fail before
+        // any state mutation, mirroring TS `MockDriver.failNextNewSession`.
+        if self.fail_next_new_session.swap(false, Ordering::SeqCst) {
+            return Vec::new();
+        }
         // Faithful port of TS `newSession()`: resolve the cwd (applying a
         // `-worktree` suffix when the draft asked for an isolated worktree) and
         // build a config carrying the chosen model's availableThinkingLevels +
@@ -2793,7 +2802,11 @@ impl PilotDriver for MockDriver {
                 }
                 return;
             }
-            "failnewsession" | "failsession" => {
+            "failnewsession" => {
+                self.fail_next_new_session.store(true, Ordering::SeqCst);
+                return;
+            }
+            "failsession" => {
                 warn!("[mock] run_script: {name} (not yet implemented — non-script control)");
                 return;
             }
@@ -2811,6 +2824,7 @@ impl PilotDriver for MockDriver {
         self.cancel_timers();
         reset_ts();
         *self.last_created.lock() = None;
+        self.fail_next_new_session.store(false, Ordering::SeqCst);
         *self.adventurous_handoff.lock().unwrap() = false;
         // Restore the mutable session/worktree state to the fixture baseline —
         // faithful port of TS `reset()`: `this.sessions = SESSION_LIST.map(...)`,
