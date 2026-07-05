@@ -891,11 +891,18 @@ export async function createPolytokenDriver(
         throw new Error("no warm polytoken session to prompt");
       }
       focus(ws.ref.sessionId);
-      // Mid-turn (a turn is in flight): queue as input the agent reads between
-      // steps via POST /turn/input. Otherwise start a new turn via POST /prompt.
-      // deliverAs is pilot-side UX only — the daemon's queue API has no
-      // steer/follow-up discriminator (every drained queued message is "steer").
-      // The param stays on the signature to avoid a wire/seam change.
+      // Always POST /prompt. As of daemon 0.4.0-unstable.6 (BREAKING), the daemon
+      // auto-queues a prompt sent while a turn holds the turn slot (202 with
+      // PromptAccepted.queued_item, a PendingTurnInputItem — the SAME queue POST
+      // /turn/input feeds) instead of rejecting with 409. So we no longer branch on the
+      // cached `turn_in_flight`: that was a TOCTOU (the cache can go stale between the
+      // check and the POST), and the daemon now resolves start-vs-queue authoritatively.
+      // The auto-queue delivers the message when the turn slot frees — "follow_up"
+      // semantics, the agreed pilot behavior (steer = send + cancel the turn; see
+      // docs/polytoken-upstream-feature-asks.md #3/#6). The resulting queue event drives
+      // refetchQueue → queueUpdated (foldEvent), so the tray still updates. deliverAs
+      // stays pilot-side UX only (the daemon's queue has no steer/follow-up
+      // discriminator) — kept on the signature to avoid a wire/seam change.
       //
       // The POST comes FIRST, the transcript echo after: an echo emitted before
       // the POST becomes a ghost row when the POST fails — an authoritative-
@@ -903,11 +910,7 @@ export async function createPolytokenDriver(
       // client's rejected-prompt Retry/Edit affordance (its optimistic pending
       // row reconciles against this echo). The client's own pending row covers
       // the instant render; the echo is confirmation, not the first paint.
-      if (ws.lastState?.turn_in_flight) {
-        await ws.client.queueTurnInput(text);
-      } else {
-        await ws.client.prompt(text);
-      }
+      await ws.client.prompt(text);
       emit({
         sessionRef: ws.ref,
         timestamp: now(),
