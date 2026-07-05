@@ -8,8 +8,9 @@
 //! Design notes:
 //! - The lease is pid-bound and EXCLUSIVE (a second claim → 409). Pilot is the sole
 //!   attacher; the local TUI detaches while pilot drives.
-//! - SSE is push-only with no periodic heartbeats on an idle daemon — liveness must
-//!   be time-based (frame gap), not expect periodic `heartbeat` events.
+//! - SSE emits `heartbeat` events (~10s cadence) since daemon 0.4.0-unstable.5, so an
+//!   idle daemon is NOT silent — liveness is a heartbeat timeout: no frame (heartbeat
+//!   or real event) within `heartbeat_timeout_ms` means the daemon is dead → reconnect.
 //! - `Last-Event-ID` resume is supported by the `id:` field (== `seq`); not yet wired.
 //! - All endpoints are flat (no `/session/{id}/…`) — the daemon IS the session.
 
@@ -711,10 +712,11 @@ pub struct DaemonClient {
     lease: Mutex<Option<AttachmentLease>>,
     sse_cancel: Mutex<Option<CancelHandle>>,
     http: Client,
-    /// SSE liveness knobs (see subscribe()). Public + mutable so tests can shrink
-    /// the windows to milliseconds; production code leaves the defaults.
-    pub liveness_interval_ms: u64,
-    pub liveness_probe_timeout_ms: u64,
+    /// SSE heartbeat-timeout window (see subscribe()). The daemon emits `heartbeat`
+    /// frames ~10s (unstable.5+); if no frame arrives within this window the daemon is
+    /// dead → reconnect. Public + mutable so tests can shrink it to milliseconds;
+    /// production code leaves the default.
+    pub heartbeat_timeout_ms: u64,
 }
 
 type ErrorForStatus<T> = dyn Fn(Option<&T>, &str) -> Option<String>;
@@ -734,8 +736,9 @@ impl DaemonClient {
             http: Client::builder()
                 .build()
                 .expect("failed to build reqwest client"),
-            liveness_interval_ms: 60_000,
-            liveness_probe_timeout_ms: 5_000,
+            // 3x the ~10s heartbeat cadence — tolerates a couple of missed beats
+            // (GC pause, brief scheduler stall) before declaring the daemon dead.
+            heartbeat_timeout_ms: 30_000,
         }
     }
 
@@ -955,22 +958,6 @@ impl DaemonClient {
             }
         }
         result
-    }
-
-    /// Bounded `GET /health` for the SSE liveness watcher: true iff the daemon
-    /// answers OK within `timeout_ms`. Never throws — a hung or refused probe is
-    /// simply `false` (that's the signal to reconnect).
-    async fn probe_health(&self, timeout_ms: u64) -> bool {
-        let url = format!("{}/health", self.base_url);
-        match tokio::time::timeout(
-            Duration::from_millis(timeout_ms),
-            self.http.get(&url).send(),
-        )
-        .await
-        {
-            Ok(Ok(res)) => res.status().is_success(),
-            _ => false,
-        }
     }
 
     /// `POST /terminate` — graceful drain + exit.
@@ -1699,14 +1686,15 @@ impl DaemonClient {
     /// The `type` discriminator lives at `event.type` (not the envelope root).
     ///
     /// Returns an unsubscribe handle whose `stop()` method stops the stream + retry
-    /// loop. The stream is push-only — an idle daemon emits nothing, so liveness is
-    /// time-based (frame gap), not periodic `heartbeat` events.
+    /// loop. The daemon emits `heartbeat` frames ~10s (unstable.5+), so liveness is a
+    /// heartbeat timeout: each `stream.next()` is bounded by `heartbeat_timeout_ms`, and
+    /// a lapse (no heartbeat or event within the window) drops the stream and forces a
+    /// reconnect — no separate watcher task, no `/health` probe.
     ///
-    /// On error or stream end, the connection retries with exponential backoff
-    /// (1s → 2s → 4s → … → 30s cap). On reconnect, a synthetic `stream_discontinuity`
-    /// envelope is emitted so the driver re-seeds (the event-map maps this to a reseed).
-    /// A liveness watcher aborts the current fetch if no frame arrives for
-    /// `liveness_interval_ms` (60s), forcing a reconnect.
+    /// On error, stream end, or heartbeat timeout, the connection retries with
+    /// exponential backoff (1s → 2s → 4s → … → 30s cap). On reconnect, a synthetic
+    /// `stream_discontinuity` envelope is emitted so the driver re-seeds (the event-map
+    /// maps this to a reseed).
     ///
     /// `Last-Event-ID` is sent on reconnect if the daemon emitted `id:` lines — daemon
     /// support is UNCONFIRMED (untested; upstream feature ask still open).
@@ -1738,19 +1726,12 @@ impl DaemonClient {
         });
 
         let client = self.clone();
-        let liveness_interval = self.liveness_interval_ms;
-        let liveness_probe_timeout = self.liveness_probe_timeout_ms;
+        let heartbeat_timeout = self.heartbeat_timeout_ms;
 
         let notify_for_loop = notify.clone();
         let join_handle = tokio::spawn(async move {
             client
-                .sse_loop(
-                    on_event,
-                    notify_for_loop,
-                    cancel_rx,
-                    liveness_interval,
-                    liveness_probe_timeout,
-                )
+                .sse_loop(on_event, notify_for_loop, cancel_rx, heartbeat_timeout)
                 .await;
         });
 
@@ -1763,15 +1744,14 @@ impl DaemonClient {
 
     #[expect(
         unused_assignments,
-        reason = "SSE cancellation branches assign stopped immediately before breaking; simplify liveness/cancellation in Phase 2 after daemon heartbeat update"
+        reason = "SSE cancellation branches assign `stopped` immediately before breaking; the value is read by the outer `while !stopped` / post-stream backoff guards"
     )]
     async fn sse_loop<F>(
         self: Arc<Self>,
         on_event: F,
         stop_notify: Arc<tokio::sync::Notify>,
         mut cancel_rx: oneshot::Receiver<()>,
-        liveness_interval: u64,
-        liveness_probe_timeout: u64,
+        heartbeat_timeout: u64,
     ) where
         F: Fn(SseEnvelope) + Send + Sync + 'static,
     {
@@ -1781,49 +1761,11 @@ impl DaemonClient {
         let mut had_connected_once = false;
         let mut stopped = false;
 
-        // Shared liveness state between the main loop and the watcher.
-        let last_frame_at_arc = Arc::new(Mutex::new(Instant::now()));
-        let liveness_stop = Arc::new(Mutex::new(false));
-
-        // Spawn the liveness watcher task.
-        let liveness_stop_clone = liveness_stop.clone();
-        let client_liveness = self.clone();
-        let last_frame_for_watcher = last_frame_at_arc.clone();
-        let liveness_handle = tokio::spawn(async move {
-            let mut interval = tokio::time::interval(Duration::from_millis(liveness_interval));
-            interval.tick().await;
-            loop {
-                if *liveness_stop_clone.lock().await {
-                    break;
-                }
-                tokio::select! {
-                    _ = interval.tick() => {
-                        let elapsed = last_frame_for_watcher.lock().await.elapsed();
-                        if elapsed <= Duration::from_millis(liveness_interval) {
-                            continue;
-                        }
-                        // Probe GET /health: an answer means alive-and-idle → reset
-                        // the clock and leave the stream alone; only a failed/hung probe
-                        // forces the reconnect.
-                        let alive = client_liveness.probe_health(liveness_probe_timeout).await;
-                        if *liveness_stop_clone.lock().await {
-                            break;
-                        }
-                        if alive {
-                            // alive-and-idle: quiet is fine
-                            *last_frame_for_watcher.lock().await = Instant::now();
-                        } else {
-                            warn!("[polytoken] SSE silent and /health probe failed — forcing reconnect");
-                            // The liveness watcher can't abort the current reqwest stream
-                            // from here (no handle to it). We rely on the stream eventually
-                            // erroring, or the daemon closing it. A true abort would need a
-                            // per-attempt CancellationToken; for now the probe failure is logged
-                            // and the next stream error will trigger reconnect.
-                        }
-                    }
-                }
-            }
-        });
+        // Liveness is a heartbeat timeout folded into the stream read below (the
+        // `tokio::time::timeout` around `stream.next()`): the daemon emits `heartbeat`
+        // frames ~10s, so every arriving frame resets the window and a lapse of
+        // `heartbeat_timeout` ms means the daemon is dead → drop the stream + reconnect.
+        // No separate watcher task and no `/health` probe (unstable.5+).
 
         // Main SSE loop.
         while !stopped {
@@ -1896,7 +1838,6 @@ impl DaemonClient {
             }
             had_connected_once = true;
             backoff = 1000; // reset backoff on successful connect
-            *last_frame_at_arc.lock().await = Instant::now();
 
             // Stream the body and parse SSE frames.
             use futures_util::StreamExt;
@@ -1914,7 +1855,25 @@ impl DaemonClient {
                         stopped = true;
                         break;
                     }
-                    chunk = stream.next() => {
+                    result = tokio::time::timeout(
+                        Duration::from_millis(heartbeat_timeout),
+                        stream.next(),
+                    ) => {
+                        // Heartbeat timeout: no frame (heartbeat or event) arrived within
+                        // the window, so the daemon is presumed dead — a -9'd daemon leaves
+                        // the TCP connection half-open and `stream.next()` would otherwise
+                        // block forever. Recover via the same backoff-reconnect path as a
+                        // stream error.
+                        let chunk = match result {
+                            Err(_) => {
+                                if !stopped {
+                                    warn!("[polytoken] SSE heartbeat timeout ({heartbeat_timeout}ms); reconnecting…");
+                                }
+                                stream_error = true;
+                                break;
+                            }
+                            Ok(chunk) => chunk,
+                        };
                         match chunk {
                             None => {
                                 // Stream ended normally (daemon closed it) — reconnect with backoff.
@@ -1956,7 +1915,6 @@ impl DaemonClient {
                                     if json.is_empty() {
                                         continue;
                                     }
-                                    *last_frame_at_arc.lock().await = Instant::now();
                                     match serde_json::from_str::<SseEnvelope>(json) {
                                         Ok(envelope) => on_event(envelope),
                                         Err(e) => {
@@ -1987,10 +1945,6 @@ impl DaemonClient {
                 backoff = (backoff * 2).min(max_backoff);
             }
         }
-
-        // Stop the liveness watcher.
-        *liveness_stop.lock().await = true;
-        liveness_handle.abort();
     }
 
     // --- Shutdown ---
