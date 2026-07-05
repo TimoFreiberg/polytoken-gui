@@ -184,7 +184,7 @@ fn canonicalize_value(v: &mut Value, state: &mut CanonState) {
                     // (`prompt_id`, `admission_prompt_id`, `final_prompt_id`,
                     // `to_prompt_id`, …) AND plural (`admission_prompt_ids`,
                     // `prompt_ids`). Singular → the string maps directly; plural →
-                    // the array recurses so each UUID element maps. We map on the KEY,
+                    // each STRING element of the array maps directly. We map on the KEY,
                     // never on UUID shape alone, so a UUID-shaped `item_ids`/`call_id`
                     // is left untouched (review C3: shape-based mapping corrupted
                     // non-prompt ids + inflated the counter).
@@ -194,7 +194,21 @@ fn canonicalize_value(v: &mut Value, state: &mut CanonState) {
                     if is_prompt_field {
                         match child {
                             Value::String(s) => *s = state.canon_prompt(s),
-                            Value::Array(_) | Value::Object(_) => canonicalize_value(child, state),
+                            // Plural `*_prompt_ids`: map each string element in place.
+                            // Recursing via canonicalize_value here would DROP the key
+                            // context (array elements aren't "under a prompt key"), so the
+                            // UUIDs would fall through to the bare-scalar arm and stay raw —
+                            // a real capture's `admission_prompt_ids` leaked un-canonicalized
+                            // exactly this way.
+                            Value::Array(arr) => {
+                                for elem in arr.iter_mut() {
+                                    match elem {
+                                        Value::String(s) => *s = state.canon_prompt(s),
+                                        _ => canonicalize_value(elem, state),
+                                    }
+                                }
+                            }
+                            Value::Object(_) => canonicalize_value(child, state),
                             _ => {}
                         }
                         continue;
@@ -582,4 +596,63 @@ fn canon_leaves_uuid_shaped_non_prompt_ids_untouched() {
     assert_eq!(item_ids[0].as_str().unwrap(), RAW_CALL_ID);
     // Only ONE prompt placeholder was allocated (for RAW_PROMPT), not two.
     assert_eq!(scenario.canonicalization.prompt_ids.len(), 1);
+}
+
+#[test]
+fn canon_maps_plural_prompt_id_arrays() {
+    // Plural `*_prompt_ids` arrays (e.g. `admission_prompt_ids` on
+    // pending_turn_input_drained) must have EACH string element mapped to a
+    // placeholder. A real capture exposed the regression: recursing into the array
+    // dropped the key context, so the UUIDs leaked raw while the singular field for
+    // the SAME id showed PROMPT_N — an inconsistent, non-deterministic corpus.
+    const RAW_PROMPT_2: &str = "cccccccc-cccc-cccc-cccc-cccccccccccc";
+    let mut scenario = ScenarioFile {
+        scenario: "plural-probe".to_string(),
+        version: "0.4.0-unstable.7".to_string(),
+        description: "synthetic".to_string(),
+        canonicalization: CanonicalizationManifest {
+            session_id: "SESSION".to_string(),
+            prompt_ids: std::collections::BTreeMap::new(),
+            timestamps: "monotonic-from-T0".to_string(),
+        },
+        http: vec![],
+        sse: vec![SseFrame {
+            seq: Some(0),
+            emitted_at: "2026-07-06T10:00:00.000Z".to_string(),
+            session_id: "real-session-uuid".to_string(),
+            event: serde_json::json!({
+                "type": "pending_turn_input_drained",
+                // Singular field registers RAW_PROMPT; the plural array must REUSE that
+                // placeholder for the same id and allocate a fresh one for RAW_PROMPT_2.
+                "admission_prompt_id": RAW_PROMPT,
+                "admission_prompt_ids": [RAW_PROMPT, RAW_PROMPT_2],
+                // A UUID-shaped NON-prompt array stays raw (item_ids ≠ *_prompt_ids).
+                "item_ids": [RAW_CALL_ID],
+            }),
+        }],
+        expected_driver_events: None,
+    };
+    canonicalize_scenario(&mut scenario);
+
+    let ev = &scenario.sse[0].event;
+    assert_eq!(
+        ev.get("admission_prompt_id").unwrap().as_str().unwrap(),
+        "PROMPT_0"
+    );
+    let arr = ev.get("admission_prompt_ids").unwrap().as_array().unwrap();
+    assert_eq!(
+        arr[0].as_str().unwrap(),
+        "PROMPT_0",
+        "plural array element leaked raw (the pre-fix regression)"
+    );
+    assert_eq!(
+        arr[1].as_str().unwrap(),
+        "PROMPT_1",
+        "second plural array element not mapped"
+    );
+    // item_ids (non-prompt) left raw.
+    let items = ev.get("item_ids").unwrap().as_array().unwrap();
+    assert_eq!(items[0].as_str().unwrap(), RAW_CALL_ID);
+    // Exactly two prompt placeholders allocated (RAW_PROMPT, RAW_PROMPT_2).
+    assert_eq!(scenario.canonicalization.prompt_ids.len(), 2);
 }
