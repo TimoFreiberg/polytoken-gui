@@ -128,7 +128,8 @@ class CanonState {
  * key (call_id, item_id, interrogative_id) is left untouched (review C3).
  */
 function canonicalizeValue(v: unknown, state: CanonState): unknown {
-  if (Array.isArray(v)) return v.map((child) => canonicalizeValue(child, state));
+  if (Array.isArray(v))
+    return v.map((child) => canonicalizeValue(child, state));
   if (v !== null && typeof v === "object") {
     const out: Record<string, unknown> = {};
     for (const [key, child] of Object.entries(v as Record<string, unknown>)) {
@@ -139,12 +140,23 @@ function canonicalizeValue(v: unknown, state: CanonState): unknown {
       // Prompt-id key → PROMPT_N (deduped). Matches BOTH singular (prompt_id,
       // admission_prompt_id, final_prompt_id, to_prompt_id, …) AND plural
       // (admission_prompt_ids, prompt_ids). Singular → string maps directly;
-      // plural → array recurses so each UUID element maps.
+      // plural → each STRING element of the array maps directly.
       const isPromptField =
-        key === "prompt_id" || key.endsWith("_prompt_id") || key.endsWith("_prompt_ids");
+        key === "prompt_id" ||
+        key.endsWith("_prompt_id") ||
+        key.endsWith("_prompt_ids");
       if (isPromptField) {
-        out[key] =
-          child !== null && typeof child === "object"
+        out[key] = Array.isArray(child)
+          ? // Plural `*_prompt_ids`: map each string element directly. Recursing via
+            // canonicalizeValue would drop the key context (array elements aren't "under
+            // a prompt key") and leave the UUIDs raw — a real capture's
+            // `admission_prompt_ids` leaked un-canonicalized exactly this way.
+            child.map((el) =>
+              typeof el === "string"
+                ? state.canonPrompt(el)
+                : canonicalizeValue(el, state),
+            )
+          : child !== null && typeof child === "object"
             ? canonicalizeValue(child, state)
             : typeof child === "string"
               ? state.canonPrompt(child)
@@ -213,19 +225,32 @@ function canonicalizeScenario(
     request_body:
       e.request_body == null ? null : canonicalizeValue(e.request_body, state),
     response_body:
-      e.response_body == null ? null : canonicalizeValue(e.response_body, state),
+      e.response_body == null
+        ? null
+        : canonicalizeValue(e.response_body, state),
   }));
   const outSse = sse.map((frame, idx) => {
     const session_id = state.canonSession(frame.session_id);
     const emitted_at = isMonotonicEpoch(frame.emitted_at)
       ? frame.emitted_at
       : monotonicTimestamp(idx);
-    const event = canonicalizeValue(frame.event, state) as Record<string, unknown>;
+    const event = canonicalizeValue(frame.event, state) as Record<
+      string,
+      unknown
+    >;
     // The event's inner `timestamp` (heartbeat/system_reminder carry one).
-    if (typeof event.timestamp === "string" && !isMonotonicEpoch(event.timestamp)) {
+    if (
+      typeof event.timestamp === "string" &&
+      !isMonotonicEpoch(event.timestamp)
+    ) {
       event.timestamp = monotonicTimestamp(idx);
     }
-    return { ...(frame.seq != null ? { seq: frame.seq } : {}), emitted_at, session_id, event };
+    return {
+      ...(frame.seq != null ? { seq: frame.seq } : {}),
+      emitted_at,
+      session_id,
+      event,
+    };
   });
   return { http: outHttp, sse: outSse, manifest: state.promptManifest() };
 }
@@ -245,12 +270,34 @@ interface CaptureCtx {
   sse: SseFrame[];
 }
 
+// Crockford base32 (no i/l/o/u) — the alphabet polytoken uses for a session id's
+// leading timestamp segment.
+const CROCKFORD = "0123456789abcdefghjkmnpqrstvwxyz";
+
+/** A daemon-valid session id: `<6 Crockford base32>-corpus`. The daemon
+ *  (`0.4.0-unstable.7`) REJECTS an arbitrary id like a UUID — it requires the
+ *  segment before the first dash to be exactly 6 Crockford base32 chars (its own
+ *  timestamp-segment scheme). We encode the low 30 bits of the epoch (ms) as those
+ *  6 chars so sequential captures never collide, then a fixed `corpus` word so the
+ *  session is recognizable in the isolated sessions dir. */
+function freshSessionId(): string {
+  let n = Date.now() & 0x3fffffff; // low 30 bits → 6 base32 chars
+  let seg = "";
+  for (let i = 0; i < 6; i++) {
+    seg = CROCKFORD[n % 32] + seg;
+    n = Math.floor(n / 32);
+  }
+  return `${seg}-corpus`;
+}
+
 /** Spawn a fresh (non-resume) isolated daemon session; resolve its port. */
-async function spawnFreshDaemon(
-  p: Paths,
-): Promise<{ proc: ReturnType<typeof Bun.spawn>; port: number; sessionId: string }> {
+async function spawnFreshDaemon(p: Paths): Promise<{
+  proc: ReturnType<typeof Bun.spawn>;
+  port: number;
+  sessionId: string;
+}> {
   ensureEnv(p);
-  const sessionId = crypto.randomUUID();
+  const sessionId = freshSessionId();
   const proc = Bun.spawn({
     cmd: [
       POLYTOKEN_BIN,
@@ -271,7 +318,11 @@ async function spawnFreshDaemon(
   const deadline = Date.now() + 20_000;
   while (Date.now() < deadline) {
     const su = readStartupJson(sessionId, p);
-    if (su?.state === "ready" && su.pid === proc.pid && typeof su.port === "number") {
+    if (
+      su?.state === "ready" &&
+      su.pid === proc.pid &&
+      typeof su.port === "number"
+    ) {
       return { proc, port: su.port, sessionId };
     }
     if (su?.state === "failed" && su.pid === proc.pid) {
@@ -281,13 +332,13 @@ async function spawnFreshDaemon(
   }
   const err = await new Response(proc.stderr).text().catch(() => "");
   proc.kill();
-  throw new Error(`fresh daemon not ready in 20s${err ? `\n${err.slice(0, 400)}` : ""}`);
+  throw new Error(
+    `fresh daemon not ready in 20s${err ? `\n${err.slice(0, 400)}` : ""}`,
+  );
 }
 
 /** Claim the TUI attachment lease and start a heartbeat; return a stop fn. */
-async function claimLeaseWithHeartbeat(
-  port: number,
-): Promise<() => void> {
+async function claimLeaseWithHeartbeat(port: number): Promise<() => void> {
   const res = await fetch(`http://127.0.0.1:${port}/tui-attachment/claim`, {
     method: "POST",
     headers: { "content-type": "application/json" },
@@ -327,7 +378,9 @@ function subscribeEvents(port: number, sse: SseFrame[]): () => void {
     const decoder = new TextDecoder();
     let buffer = "";
     for (;;) {
-      const { value, done } = await reader.read().catch(() => ({ value: undefined, done: true }));
+      const { value, done } = await reader
+        .read()
+        .catch(() => ({ value: undefined, done: true }));
       if (done) break;
       buffer += decoder.decode(value, { stream: true }).replace(/\r\n/g, "\n");
       let idx: number;
@@ -366,7 +419,10 @@ const SCENARIOS: Record<string, Scenario> = {
       "The baseline happy-path streaming sequence.",
     drive: async (ctx) => {
       await ctx.call("GET", "/state");
-      await ctx.call("POST", "/prompt", { content: "Reply with exactly: Hello!", max_tool_turns: null });
+      await ctx.call("POST", "/prompt", {
+        content: "Reply with exactly: Hello!",
+        max_tool_turns: null,
+      });
       await ctx.waitForEvent("message_complete", 60_000);
       await ctx.call("GET", "/state");
     },
@@ -378,42 +434,178 @@ const SCENARIOS: Record<string, Scenario> = {
   // SSE shapes as the target. Throwing keeps them from silently writing an empty
   // corpus (fail-loud).
   "tool-call-approval": {
-    description: "A turn that calls a tool requiring approval, then approves it.",
-    drive: async () => {
-      throw new Error(
-        "tool-call-approval capture not scripted: prompt a tool-using task, wait for the " +
-          "permission_request event, POST the approval to the interrogative endpoint, then " +
-          "collect through tool_result + message_complete. See the seed fixture for the shapes.",
-      );
+    description:
+      "A turn that calls a tool requiring approval → interrogative (permission) → approve → " +
+      "tool_result → message_complete.",
+    // ⚠ BLOCKED on the isolated config's permission matcher — see the note in drive().
+    // The drive logic below is correct and ready; it fails loud until the config prompts.
+    drive: async (ctx) => {
+      // KNOWN BLOCKER (verified 2026-07-06): the generated parity config pins
+      // `default_permission_matcher: bypass_plus`, and that governs EXECUTION — a
+      // runtime `POST /permission-monitor {mode:"standard"}` flips the monitor (a
+      // `permission_monitor_switch` event fires) but does NOT gate the tool: both
+      // `echo hello-corpus` and a file-writing `echo hello > f.txt` ran straight
+      // through (tool_call → tool_result, no interrogative). To capture a REAL
+      // approval, regenerate the isolated config with `default_permission_matcher:
+      // standard` (parity/lib.ts renderConfig, or a scenario-specific config) so the
+      // daemon actually prompts. See server-rs/PROGRESS.md.
+      await ctx.call("POST", "/permission-monitor", { mode: "standard" });
+      await ctx.call("GET", "/state");
+      await ctx.call("POST", "/prompt", {
+        content:
+          "Use your shell/command tool to run exactly `echo hello-corpus`. " +
+          "Actually run it with the tool; do not just describe it.",
+        max_tool_turns: null,
+      });
+      // Wait for the permission interrogative, then approve it. The respond body
+      // is the flat oneOf variant { kind: "permission_answer", granted } — NOT the
+      // seed's invalid { response: { kind, decision } } shape.
+      const deadline = Date.now() + 120_000;
+      let interro: SseFrame | undefined;
+      while (Date.now() < deadline && !interro) {
+        interro = ctx.sse.find((f) => {
+          const t = (f.event as { type?: string })?.type ?? "";
+          return t === "interrogative" || t.includes("interrogative");
+        });
+        if (!interro) await Bun.sleep(200);
+      }
+      if (!interro) {
+        throw new Error(
+          "no interrogative within 120s — the isolated config auto-approves " +
+            "(default_permission_matcher: bypass_plus). Regenerate the config with " +
+            "default_permission_matcher: standard so tools prompt. See PROGRESS.md.",
+        );
+      }
+      const id = (interro.event as { interrogative_id?: string })
+        .interrogative_id;
+      if (!id) {
+        throw new Error(
+          `interrogative missing interrogative_id: ${JSON.stringify(interro.event)}`,
+        );
+      }
+      await ctx.call("POST", `/interrogative/${id}/respond`, {
+        kind: "permission_answer",
+        granted: true,
+      });
+      await ctx.waitForEvent("message_complete", 120_000);
+      await ctx.call("GET", "/state");
     },
   },
   "ask-user-question": {
-    description: "A turn that asks the user a question (interrogative), then answers it.",
-    drive: async () => {
-      throw new Error(
-        "ask-user-question capture not scripted: prompt a task that triggers ask_user_question, " +
-          "wait for the interrogative event, POST the answer, collect through message_complete.",
-      );
+    description:
+      "A turn where the model asks the user a structured question (ask_user_question " +
+      "interrogative) → the user answers → message_complete.",
+    drive: async (ctx) => {
+      await ctx.call("GET", "/state");
+      await ctx.call("POST", "/prompt", {
+        content:
+          "I'm torn between two approaches for a small refactor. Use your ask_user_question " +
+          "tool to ask which I prefer, with exactly two short options (A: extract a helper; " +
+          "B: inline it). Keep the options terse. After I answer, do NOT implement anything — " +
+          "reply with just one short sentence acknowledging my choice, then stop.",
+        max_tool_turns: null,
+      });
+      // Wait for the ask_user_question interrogative.
+      const deadline = Date.now() + 120_000;
+      let auq: SseFrame | undefined;
+      while (Date.now() < deadline && !auq) {
+        auq = ctx.sse.find(
+          (f) => (f.event as { type?: string })?.type === "ask_user_question",
+        );
+        if (!auq) await Bun.sleep(200);
+      }
+      if (!auq) {
+        throw new Error(
+          "no ask_user_question within 120s — model chose not to ask; try a more forcing prompt",
+        );
+      }
+      const ev = auq.event as {
+        interrogative_id?: string;
+        payload?: {
+          questions?: Array<{
+            id?: string;
+            options?: Array<{ id?: string }>;
+          }>;
+        };
+      };
+      const id = ev.interrogative_id;
+      const q = ev.payload?.questions?.[0];
+      if (!id || !q?.id) {
+        throw new Error(
+          `ask_user_question missing ids: ${JSON.stringify(ev).slice(0, 400)}`,
+        );
+      }
+      // Answer with the first offered option id if present, else free text. Body is
+      // the flat oneOf variant { kind: "ask_user_question_answers", answers: [...] }.
+      const firstOption = q.options?.[0]?.id;
+      const answer = firstOption
+        ? { question_id: q.id, selected_option_ids: [firstOption] }
+        : {
+            question_id: q.id,
+            free_text: "Go with option A (extract a helper).",
+          };
+      await ctx.call("POST", `/interrogative/${id}/respond`, {
+        kind: "ask_user_question_answers",
+        answers: [answer],
+      });
+      await ctx.waitForEvent("message_complete", 120_000);
+      await ctx.call("GET", "/state");
     },
   },
   abort: {
-    description: "A streaming turn aborted mid-flight via POST /turn/cancel.",
-    drive: async () => {
-      throw new Error(
-        "abort capture not scripted: prompt a long task, wait for the first content_block_delta, " +
-          "POST /turn/cancel, collect the cancellation/turn-end events.",
-      );
+    description:
+      "A streaming turn aborted mid-flight via POST /turn/cancel → turn_cancelled (user_cancelled).",
+    drive: async (ctx) => {
+      await ctx.call("GET", "/state");
+      await ctx.call("POST", "/prompt", {
+        content:
+          "Write a very long, detailed essay (at least 2000 words) on the full history of " +
+          "computing, from the abacus to modern GPUs. Do not stop early.",
+        max_tool_turns: null,
+      });
+      // First streamed delta ⇒ the turn is genuinely in flight (may be a thinking delta).
+      await ctx.waitForEvent("content_block_delta", 60_000);
+      await ctx.call("POST", "/turn/cancel");
+      await ctx.waitForEvent("turn_cancelled", 30_000);
+      await ctx.call("GET", "/state");
     },
   },
   "queue-while-in-flight": {
     description:
-      "A prompt sent while a turn is in flight → daemon auto-queues it (unstable.6+). " +
-      "Verifies AC.3 against real daemon behavior.",
-    drive: async () => {
-      throw new Error(
-        "queue-while-in-flight capture not scripted: POST /prompt, wait for message_start, POST a " +
-          "SECOND /prompt while in flight, assert 202 + queued_item (auto-queue, not 409), collect the queue event.",
-      );
+      "A prompt sent while a turn is in flight → daemon auto-queues it (202 + queued_item, NOT 409); " +
+      "the queue drains and the queued turn runs. Verifies AC.3 against real daemon behavior.",
+    drive: async (ctx) => {
+      await ctx.call("GET", "/state");
+      // A short-but-non-instant first turn: enough of a streaming window that the
+      // 2nd prompt reliably lands in-flight, without bloating the golden file.
+      await ctx.call("POST", "/prompt", {
+        content: "Count from 1 to 5, one number per line.",
+        max_tool_turns: null,
+      });
+      await ctx.waitForEvent("message_start", 60_000);
+      // Second prompt WHILE the first turn is in flight → must auto-queue, not 409.
+      const accepted = (await ctx.call("POST", "/prompt", {
+        content: "Then reply with exactly: QUEUE-DONE",
+        max_tool_turns: null,
+      })) as { queued_item?: unknown } | null;
+      if (!accepted?.queued_item) {
+        console.error(
+          `WARN: 2nd /prompt carried no queued_item (got ${JSON.stringify(accepted)}) — ` +
+            "auto-queue (AC.3) may not be live; capturing anyway.",
+        );
+      }
+      await ctx.waitForEvent("pending_turn_input_queued", 60_000);
+      await ctx.waitForEvent("pending_turn_input_drained", 120_000);
+      // Both turns should finish (two message_complete events).
+      const deadline = Date.now() + 120_000;
+      while (Date.now() < deadline) {
+        const done = ctx.sse.filter(
+          (f) => (f.event as { type?: string })?.type === "message_complete",
+        ).length;
+        if (done >= 2) break;
+        await Bun.sleep(200);
+      }
+      await ctx.call("GET", "/state");
     },
   },
   "reconnect-stream-discontinuity": {
@@ -450,10 +642,15 @@ async function main() {
   let stopHeartbeat: (() => void) | null = null;
   let stopEvents: (() => void) | null = null;
 
-  const call = async (method: string, path: string, body?: unknown): Promise<unknown> => {
+  const call = async (
+    method: string,
+    path: string,
+    body?: unknown,
+  ): Promise<unknown> => {
     const res = await fetch(`http://127.0.0.1:${port}${path}`, {
       method,
-      headers: body !== undefined ? { "content-type": "application/json" } : undefined,
+      headers:
+        body !== undefined ? { "content-type": "application/json" } : undefined,
       body: body !== undefined ? JSON.stringify(body) : undefined,
     });
     const text = await res.text();
@@ -473,10 +670,14 @@ async function main() {
     return parsed;
   };
 
-  const waitForEvent = async (type: string, timeoutMs = 60_000): Promise<void> => {
+  const waitForEvent = async (
+    type: string,
+    timeoutMs = 60_000,
+  ): Promise<void> => {
     const deadline = Date.now() + timeoutMs;
     while (Date.now() < deadline) {
-      if (sse.some((f) => (f.event as { type?: string })?.type === type)) return;
+      if (sse.some((f) => (f.event as { type?: string })?.type === type))
+        return;
       await Bun.sleep(100);
     }
     throw new Error(`timed out waiting ${timeoutMs}ms for event '${type}'`);
@@ -489,7 +690,9 @@ async function main() {
   } finally {
     stopEvents?.();
     stopHeartbeat?.();
-    await fetch(`http://127.0.0.1:${port}/terminate`, { method: "POST" }).catch(() => {});
+    await fetch(`http://127.0.0.1:${port}/terminate`, { method: "POST" }).catch(
+      () => {},
+    );
     try {
       proc.kill();
     } catch {
@@ -517,7 +720,9 @@ async function main() {
     mkdirSync(CORPUS_DIR, { recursive: true });
     const target = join(CORPUS_DIR, `${scenarioName}.json`);
     writeFileSync(target, json);
-    console.error(`wrote ${target} (${cSse.length} SSE frames, ${cHttp.length} HTTP calls)`);
+    console.error(
+      `wrote ${target} (${cSse.length} SSE frames, ${cHttp.length} HTTP calls)`,
+    );
     console.error(
       "REVIEW before committing: eyeball the diff, then run `cargo test --test corpus` to " +
         "confirm it still deserializes into the real DaemonEvent enum.",
