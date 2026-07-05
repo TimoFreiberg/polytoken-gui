@@ -1,0 +1,125 @@
+{
+  "scenario": "streaming-turn",
+  "version": "0.4.0-unstable.7",
+  "description": "A complete assistant turn: heartbeat → message_start → a text content block streamed via content_block_start + text deltas + content_block_stop → message_complete. The baseline happy-path streaming sequence the accumulator turns into a run bubble + transcript deltas.",
+  "canonicalization": {
+    "session_id": "SESSION",
+    "prompt_ids": { "11111111-1111-1111-1111-111111111111": "PROMPT_0" },
+    "timestamps": "monotonic-from-T0"
+  },
+  "http": [
+    {
+      "method": "GET",
+      "path": "/state",
+      "request_body": null,
+      "status": 200,
+      "response_body": {
+        "active_facet": "default",
+        "env": {},
+        "flags": [],
+        "plugin_config": {},
+        "todos": [],
+        "turn_in_flight": true,
+        "session_id": "SESSION"
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/prompt",
+      "request_body": { "content": "say hello", "max_tool_turns": null },
+      "status": 202,
+      "response_body": {
+        "prompt_id": "PROMPT_0",
+        "session_id": "SESSION"
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/state",
+      "request_body": null,
+      "status": 200,
+      "response_body": {
+        "active_facet": "default",
+        "env": {},
+        "flags": [],
+        "plugin_config": {},
+        "todos": [],
+        "turn_in_flight": false,
+        "session_id": "SESSION"
+      }
+    }
+  ],
+  "sse": [
+    {
+      "seq": 0,
+      "emitted_at": "1970-01-01T00:00:00.000Z",
+      "session_id": "SESSION",
+      "event": { "type": "heartbeat", "timestamp": "1970-01-01T00:00:00.000Z" }
+    },
+    {
+      "seq": 1,
+      "emitted_at": "1970-01-01T00:00:01.000Z",
+      "session_id": "SESSION",
+      "event": { "type": "message_start", "prompt_id": "PROMPT_0" }
+    },
+    {
+      "seq": 2,
+      "emitted_at": "1970-01-01T00:00:02.000Z",
+      "session_id": "SESSION",
+      "event": {
+        "type": "content_block_start",
+        "block_index": 0,
+        "block_type": { "type": "text" },
+        "prompt_id": "PROMPT_0"
+      }
+    },
+    {
+      "seq": 3,
+      "emitted_at": "1970-01-01T00:00:03.000Z",
+      "session_id": "SESSION",
+      "event": {
+        "type": "content_block_delta",
+        "block_index": 0,
+        "delta": { "type": "text", "text": "Hello" },
+        "prompt_id": "PROMPT_0"
+      }
+    },
+    {
+      "seq": 4,
+      "emitted_at": "1970-01-01T00:00:04.000Z",
+      "session_id": "SESSION",
+      "event": {
+        "type": "content_block_delta",
+        "block_index": 0,
+        "delta": { "type": "text", "text": "!" },
+        "prompt_id": "PROMPT_0"
+      }
+    },
+    {
+      "seq": 5,
+      "emitted_at": "1970-01-01T00:00:05.000Z",
+      "session_id": "SESSION",
+      "event": {
+        "type": "content_block_stop",
+        "block_index": 0,
+        "prompt_id": "PROMPT_0"
+      }
+    },
+    {
+      "seq": 6,
+      "emitted_at": "1970-01-01T00:00:06.000Z",
+      "session_id": "SESSION",
+      "event": { "type": "message_complete", "prompt_id": "PROMPT_0" }
+    },
+    {
+      "seq": 7,
+      "emitted_at": "1970-01-01T00:00:07.000Z",
+      "session_id": "SESSION",
+      "event": {
+        "type": "session_state_changed",
+        "domains": ["todos", "flags"]
+      }
+    }
+  ],
+  "expected_driver_events": null
+}

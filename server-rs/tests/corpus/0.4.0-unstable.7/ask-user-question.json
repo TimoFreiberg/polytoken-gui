@@ -1,0 +1,117 @@
+{
+  "scenario": "ask-user-question",
+  "version": "0.4.0-unstable.7",
+  "description": "A model-originated ask_user_question event: the agent emits a structured multi-question batch (single-select + free-text) and pauses awaiting a UI response. Exercises the AskUserQuestionPayload shape and the RegisterInterrogative effect path (the accumulator turns it into a hostUiRequest card).",
+  "canonicalization": {
+    "session_id": "SESSION",
+    "prompt_ids": { "33333333-3333-3333-3333-333333333333": "PROMPT_0" },
+    "timestamps": "monotonic-from-T0"
+  },
+  "http": [
+    {
+      "method": "GET",
+      "path": "/state",
+      "request_body": null,
+      "status": 200,
+      "response_body": {
+        "active_facet": "default",
+        "env": {},
+        "flags": [],
+        "plugin_config": {},
+        "todos": [],
+        "turn_in_flight": true,
+        "session_id": "SESSION"
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/prompt",
+      "request_body": { "content": "which approach should I take?", "max_tool_turns": null },
+      "status": 202,
+      "response_body": {
+        "prompt_id": "PROMPT_0",
+        "session_id": "SESSION"
+      }
+    }
+  ],
+  "sse": [
+    {
+      "seq": 0,
+      "emitted_at": "1970-01-01T00:00:00.000Z",
+      "session_id": "SESSION",
+      "event": { "type": "message_start", "prompt_id": "PROMPT_0" }
+    },
+    {
+      "seq": 1,
+      "emitted_at": "1970-01-01T00:00:01.000Z",
+      "session_id": "SESSION",
+      "event": {
+        "type": "content_block_start",
+        "block_index": 0,
+        "block_type": { "type": "text" },
+        "prompt_id": "PROMPT_0"
+      }
+    },
+    {
+      "seq": 2,
+      "emitted_at": "1970-01-01T00:00:02.000Z",
+      "session_id": "SESSION",
+      "event": {
+        "type": "content_block_delta",
+        "block_index": 0,
+        "delta": { "type": "text", "text": "I need a decision." },
+        "prompt_id": "PROMPT_0"
+      }
+    },
+    {
+      "seq": 3,
+      "emitted_at": "1970-01-01T00:00:03.000Z",
+      "session_id": "SESSION",
+      "event": {
+        "type": "content_block_stop",
+        "block_index": 0,
+        "prompt_id": "PROMPT_0"
+      }
+    },
+    {
+      "seq": 4,
+      "emitted_at": "1970-01-01T00:00:04.000Z",
+      "session_id": "SESSION",
+      "event": {
+        "type": "ask_user_question",
+        "interrogative_id": "INTERROGATIVE_0",
+        "prompt_id": "PROMPT_0",
+        "payload": {
+          "questions": [
+            {
+              "id": "q_approach",
+              "context": "Two viable strategies for the refactor.",
+              "question": "Which implementation approach should I take?",
+              "mode": "single_select",
+              "allow_free_text": true,
+              "options": [
+                {
+                  "id": "minimal",
+                  "label": "Minimal",
+                  "description": "Make the smallest safe change."
+                },
+                {
+                  "id": "broader",
+                  "label": "Broader",
+                  "description": "Address nearby related behavior too."
+                }
+              ]
+            },
+            {
+              "id": "q_name",
+              "question": "What should the new function be called?",
+              "mode": "text",
+              "allow_free_text": true
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "expected_driver_events": null
+}

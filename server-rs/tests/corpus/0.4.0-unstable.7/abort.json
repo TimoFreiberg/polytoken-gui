@@ -1,0 +1,100 @@
+{
+  "scenario": "abort",
+  "version": "0.4.0-unstable.7",
+  "description": "An in-flight turn is aborted by the user: POST /turn/cancel returns 202, then a turn_cancelled event (reason: user_cancelled) arrives on the SSE stream, followed by a state fetch showing turn_in_flight cleared. Exercises the TurnCancelled mapping + the FetchState(sessionUpdated) effect on the cancel path.",
+  "canonicalization": {
+    "session_id": "SESSION",
+    "prompt_ids": { "44444444-4444-4444-4444-444444444444": "PROMPT_0" },
+    "timestamps": "monotonic-from-T0"
+  },
+  "http": [
+    {
+      "method": "GET",
+      "path": "/state",
+      "request_body": null,
+      "status": 200,
+      "response_body": {
+        "active_facet": "default",
+        "env": {},
+        "flags": [],
+        "plugin_config": {},
+        "todos": [],
+        "turn_in_flight": true,
+        "session_id": "SESSION"
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/prompt",
+      "request_body": { "content": "write a long essay", "max_tool_turns": null },
+      "status": 202,
+      "response_body": {
+        "prompt_id": "PROMPT_0",
+        "session_id": "SESSION"
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/turn/cancel",
+      "request_body": null,
+      "status": 202,
+      "response_body": {}
+    },
+    {
+      "method": "GET",
+      "path": "/state",
+      "request_body": null,
+      "status": 200,
+      "response_body": {
+        "active_facet": "default",
+        "env": {},
+        "flags": [],
+        "plugin_config": {},
+        "todos": [],
+        "turn_in_flight": false,
+        "session_id": "SESSION"
+      }
+    }
+  ],
+  "sse": [
+    {
+      "seq": 0,
+      "emitted_at": "1970-01-01T00:00:00.000Z",
+      "session_id": "SESSION",
+      "event": { "type": "message_start", "prompt_id": "PROMPT_0" }
+    },
+    {
+      "seq": 1,
+      "emitted_at": "1970-01-01T00:00:01.000Z",
+      "session_id": "SESSION",
+      "event": {
+        "type": "content_block_start",
+        "block_index": 0,
+        "block_type": { "type": "text" },
+        "prompt_id": "PROMPT_0"
+      }
+    },
+    {
+      "seq": 2,
+      "emitted_at": "1970-01-01T00:00:02.000Z",
+      "session_id": "SESSION",
+      "event": {
+        "type": "content_block_delta",
+        "block_index": 0,
+        "delta": { "type": "text", "text": "Once upon" },
+        "prompt_id": "PROMPT_0"
+      }
+    },
+    {
+      "seq": 3,
+      "emitted_at": "1970-01-01T00:00:03.000Z",
+      "session_id": "SESSION",
+      "event": {
+        "type": "turn_cancelled",
+        "prompt_id": "PROMPT_0",
+        "reason": "user_cancelled"
+      }
+    }
+  ],
+  "expected_driver_events": null
+}

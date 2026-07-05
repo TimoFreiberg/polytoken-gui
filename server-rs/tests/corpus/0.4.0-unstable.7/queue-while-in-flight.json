@@ -1,0 +1,198 @@
+{
+  "scenario": "queue-while-in-flight",
+  "version": "0.4.0-unstable.7",
+  "description": "Exercises .7 auto-queue: a POST /prompt while a turn is already in flight is AUTO-QUEUED (202, PromptAccepted.queued_item set), NOT rejected. The first turn completes (message_complete), then the queued input is drained (pending_turn_input_drained) and a second turn begins. This is the .7 behavior — older daemons rejected a busy /prompt with a 409/422.",
+  "canonicalization": {
+    "session_id": "SESSION",
+    "prompt_ids": {
+      "55555555-5555-5555-5555-555555555555": "PROMPT_0",
+      "66666666-6666-6666-6666-666666666666": "PROMPT_1"
+    },
+    "timestamps": "monotonic-from-T0"
+  },
+  "http": [
+    {
+      "method": "GET",
+      "path": "/state",
+      "request_body": null,
+      "status": 200,
+      "response_body": {
+        "active_facet": "default",
+        "env": {},
+        "flags": [],
+        "plugin_config": {},
+        "todos": [],
+        "turn_in_flight": true,
+        "session_id": "SESSION"
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/prompt",
+      "request_body": { "content": "first prompt", "max_tool_turns": null },
+      "status": 202,
+      "response_body": {
+        "prompt_id": "PROMPT_0",
+        "session_id": "SESSION"
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/prompt",
+      "request_body": { "content": "second prompt while first in flight", "max_tool_turns": null },
+      "status": 202,
+      "response_body": {
+        "prompt_id": "PROMPT_1",
+        "queued_item": {
+          "admission_prompt_id": "PROMPT_1",
+          "content": "second prompt while first in flight",
+          "id": "ITEM_0"
+        },
+        "session_id": "SESSION"
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/turn/input",
+      "request_body": null,
+      "status": 200,
+      "response_body": {
+        "items": [
+          {
+            "admission_prompt_id": "PROMPT_1",
+            "content": "second prompt while first in flight",
+            "id": "ITEM_0"
+          }
+        ],
+        "queue_revision": 1
+      }
+    }
+  ],
+  "sse": [
+    {
+      "seq": 0,
+      "emitted_at": "1970-01-01T00:00:00.000Z",
+      "session_id": "SESSION",
+      "event": { "type": "message_start", "prompt_id": "PROMPT_0" }
+    },
+    {
+      "seq": 1,
+      "emitted_at": "1970-01-01T00:00:01.000Z",
+      "session_id": "SESSION",
+      "event": {
+        "type": "content_block_start",
+        "block_index": 0,
+        "block_type": { "type": "text" },
+        "prompt_id": "PROMPT_0"
+      }
+    },
+    {
+      "seq": 2,
+      "emitted_at": "1970-01-01T00:00:02.000Z",
+      "session_id": "SESSION",
+      "event": {
+        "type": "content_block_delta",
+        "block_index": 0,
+        "delta": { "type": "text", "text": "first reply" },
+        "prompt_id": "PROMPT_0"
+      }
+    },
+    {
+      "seq": 3,
+      "emitted_at": "1970-01-01T00:00:03.000Z",
+      "session_id": "SESSION",
+      "event": {
+        "type": "content_block_stop",
+        "block_index": 0,
+        "prompt_id": "PROMPT_0"
+      }
+    },
+    {
+      "seq": 4,
+      "emitted_at": "1970-01-01T00:00:04.000Z",
+      "session_id": "SESSION",
+      "event": { "type": "message_complete", "prompt_id": "PROMPT_0" }
+    },
+    {
+      "seq": 5,
+      "emitted_at": "1970-01-01T00:00:05.000Z",
+      "session_id": "SESSION",
+      "event": {
+        "type": "pending_turn_input_queued",
+        "admission_prompt_id": "PROMPT_1",
+        "content": "second prompt while first in flight",
+        "item_id": "ITEM_0",
+        "queue_revision": 1
+      }
+    },
+    {
+      "seq": 6,
+      "emitted_at": "1970-01-01T00:00:06.000Z",
+      "session_id": "SESSION",
+      "event": {
+        "type": "pending_turn_input_dequeued",
+        "item_id": "ITEM_0",
+        "queue_revision": 2
+      }
+    },
+    {
+      "seq": 7,
+      "emitted_at": "1970-01-01T00:00:07.000Z",
+      "session_id": "SESSION",
+      "event": {
+        "type": "pending_turn_input_drained",
+        "admission_prompt_ids": ["PROMPT_1"],
+        "content": "second prompt while first in flight",
+        "final_prompt_id": "PROMPT_1",
+        "item_ids": ["ITEM_0"],
+        "queue_revision": 3,
+        "raw_history_index": 4
+      }
+    },
+    {
+      "seq": 8,
+      "emitted_at": "1970-01-01T00:00:08.000Z",
+      "session_id": "SESSION",
+      "event": { "type": "message_start", "prompt_id": "PROMPT_1" }
+    },
+    {
+      "seq": 9,
+      "emitted_at": "1970-01-01T00:00:09.000Z",
+      "session_id": "SESSION",
+      "event": {
+        "type": "content_block_start",
+        "block_index": 0,
+        "block_type": { "type": "text" },
+        "prompt_id": "PROMPT_1"
+      }
+    },
+    {
+      "seq": 10,
+      "emitted_at": "1970-01-01T00:00:10.000Z",
+      "session_id": "SESSION",
+      "event": {
+        "type": "content_block_delta",
+        "block_index": 0,
+        "delta": { "type": "text", "text": "second reply" },
+        "prompt_id": "PROMPT_1"
+      }
+    },
+    {
+      "seq": 11,
+      "emitted_at": "1970-01-01T00:00:11.000Z",
+      "session_id": "SESSION",
+      "event": {
+        "type": "content_block_stop",
+        "block_index": 0,
+        "prompt_id": "PROMPT_1"
+      }
+    },
+    {
+      "seq": 12,
+      "emitted_at": "1970-01-01T00:00:12.000Z",
+      "session_id": "SESSION",
+      "event": { "type": "message_complete", "prompt_id": "PROMPT_1" }
+    }
+  ],
+  "expected_driver_events": null
+}
