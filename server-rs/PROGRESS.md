@@ -25,8 +25,7 @@ validation legs are green plus a live-daemon smoke test.
 "Rust server: mock failnewsession parity (new-session-failure cluster, Phase
 1.4)" — new-session-failure cluster green):**
 
-- `cargo test`: 148/148 pass (5 daemon-types, 64 protocol, 79 server — +2
-  ported hub new-session-failure tests).
+- `cargo test`: 150/150 pass (5 daemon-types, 64 protocol, 81 server).
 - `cargo clippy --all-targets -- -D warnings`: 0 warnings (Phase 0.2).
 - `bun test` (TS side): 760/760 pass.
 - e2e vs Bun server (control): **321/321 pass** (3.6 min).
@@ -435,7 +434,7 @@ fail-loud philosophy applied to tests — not noise to be waited away.
 ## How to verify current state
 
 ```bash
-cd server-rs && cargo test                      # 148 tests, green
+cd server-rs && cargo test                      # 150 tests, green
 cd server-rs && cargo clippy --all-targets -- -D warnings   # 0 warnings (Phase 0.2)
 bun run check:rs                                # fmt + clippy + test locally (CI gate)
 bun test                                        # 760 tests, green

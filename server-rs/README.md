@@ -46,7 +46,7 @@ server-rs/
 
 ```bash
 cargo build       # build the server
-cargo test        # run all tests (148 tests)
+cargo test        # run all tests (150 tests)
 cargo run         # run the server (reads PILOT_PORT, PILOT_DATA_DIR, etc.)
 ```
 

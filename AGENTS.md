@@ -57,7 +57,7 @@ bun run --cwd client check                    # svelte-check
 bun run --cwd client build                    # prod bundle
 # Rust server (in progress — port to parity, then cut over):
 cd server-rs && cargo build       # build the Rust server
-cd server-rs && cargo test        # run all Rust tests (148 tests)
+cd server-rs && cargo test        # run all Rust tests (150 tests)
 cd server-rs && cargo run         # run the Rust server (reads PILOT_PORT, PILOT_DATA_DIR, etc.)
 PILOT_SERVER_IMPL=rust bun run dev   # launch the Rust server instead of Bun
 ```
