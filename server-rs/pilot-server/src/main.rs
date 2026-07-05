@@ -379,12 +379,33 @@ async fn push_test(State(state): State<AppState>, Query(q): Query<PushQuery>) ->
 
 // ── /update/state ────────────────────────────────────────────────────────
 
-async fn update_state(State(state): State<AppState>, Query(q): Query<PushQuery>) -> Response {
+/// Body of POST /update/state — the shell updater's staged-update report.
+/// Mirrors the TS handler (server/src/index.ts:303): `available` gates whether
+/// `sha` is honored; `applyFailed` resets a stuck "applying" card.
+#[derive(Deserialize)]
+struct UpdateStateBody {
+    available: Option<bool>,
+    sha: Option<String>,
+    #[serde(rename = "applyFailed")]
+    apply_failed: Option<bool>,
+}
+
+async fn update_state(
+    State(state): State<AppState>,
+    Query(q): Query<PushQuery>,
+    Json(body): Json<UpdateStateBody>,
+) -> Response {
     if !check_token(&state, &HeaderMap::new(), &q) {
         return (StatusCode::UNAUTHORIZED, "unauthorized").into_response();
     }
+    let sha = if body.available.unwrap_or(false) {
+        body.sha
+    } else {
+        None
+    };
+    let apply_failed = body.apply_failed.unwrap_or(false);
     let mut hub = state.hub.lock();
-    let result = hub.report_update(None, false, None);
+    let result = hub.report_update(sha, apply_failed, None);
     Json(result).into_response()
 }
 

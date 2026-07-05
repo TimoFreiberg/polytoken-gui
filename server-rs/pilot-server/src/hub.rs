@@ -929,15 +929,37 @@ impl SessionHub {
         apply_failed: bool,
         desktop_stale: Option<bool>,
     ) -> serde_json::Value {
-        self.update_sha = sha;
-        if apply_failed {
-            self.applying = false;
+        // Ports TS `reportUpdate` (server/src/hub.ts:1929). Broadcasts
+        // `updateStatus` only when something actually changed, and hands back
+        // `{applying, force}` so the shell updater learns on this same poll
+        // whether the user clicked "update now" / "force-update". `force` is
+        // read-once — handed to this caller and cleared — so a force triggers
+        // exactly one check-and-apply.
+        let mut changed = false;
+        if sha != self.update_sha {
+            self.update_sha = sha;
+            if self.update_sha.is_none() {
+                self.applying = false; // applied/gone — drop any apply flag
+            }
+            changed = true;
         }
+        if apply_failed && self.applying {
+            self.applying = false;
+            changed = true;
+        }
+        if apply_failed {
+            self.force_requested = false; // a failed force shouldn't re-fire
+        }
+        // `desktop_stale` is a Rust-only knob (TS has no equivalent); apply it
+        // without affecting `changed` so it never spuriously broadcasts.
         if let Some(stale) = desktop_stale {
             self.desktop_stale = stale;
         }
+        if changed {
+            self.broadcast(self.update_status_msg());
+        }
         let force = self.force_requested;
-        self.force_requested = false;
+        self.force_requested = false; // read-once: this poll owns the force
         serde_json::json!({
             "applying": self.applying,
             "force": force,
@@ -3320,6 +3342,205 @@ mod hub_models_tests {
                 );
             }
             other => panic!("expected an Error for an unsupported reload, got {other:?}"),
+        }
+    }
+
+    // ── desktop update relay ───────────────────────────────────────────────
+    // Ports TS `server/src/hub.test.ts:1773` ("desktop update relay"). The hub
+    // relays the shell updater's staged-update report to clients via
+    // `updateStatus`, and hands back `{applying, force}` so the updater learns
+    // on the same poll whether the user clicked "update now" / "force-update".
+
+    /// Drain `rx` and return the last `UpdateStatus` message seen (mirrors the
+    /// TS `lastUpdate` helper, which scans `c.received` for the most recent
+    /// `updateStatus`). Panics if none arrived within the drain window.
+    async fn last_update(rx: &mut mpsc::Receiver<ServerMessage>) -> ServerMessage {
+        let mut last: Option<ServerMessage> = None;
+        for _ in 0..64 {
+            match timeout(Duration::from_millis(50), rx.recv()).await {
+                Ok(Some(msg)) => {
+                    if matches!(msg, ServerMessage::UpdateStatus { .. }) {
+                        last = Some(msg);
+                    }
+                }
+                _ => break,
+            }
+        }
+        last.expect("expected at least one updateStatus message")
+    }
+
+    #[tokio::test]
+    async fn report_update_broadcasts_availability_to_clients() {
+        // Ports TS "reportUpdate broadcasts availability to clients".
+        let (_driver, hub, _hub_ops) = test_hub();
+        let (_a_key, _a_tx, mut a_rx) = hub.lock().add_client(None);
+        // Connect sends a baseline updateStatus (nothing staged).
+        let baseline = last_update(&mut a_rx).await;
+        match baseline {
+            ServerMessage::UpdateStatus {
+                available,
+                applying,
+                ..
+            } => {
+                assert!(!available, "nothing staged on a fresh connect");
+                assert!(!applying);
+            }
+            other => panic!("expected UpdateStatus on connect, got {other:?}"),
+        }
+
+        hub.lock().report_update(Some("abc123".into()), false, None);
+        let upd = last_update(&mut a_rx).await;
+        match upd {
+            ServerMessage::UpdateStatus {
+                available,
+                sha,
+                applying,
+                ..
+            } => {
+                assert!(available, "update should be available after report");
+                assert_eq!(sha.as_deref(), Some("abc123"));
+                assert!(!applying);
+            }
+            other => panic!("expected UpdateStatus after report, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn late_client_sees_staged_update_immediately() {
+        // Ports TS "a client connecting after an update is staged sees the card
+        // immediately". Stage the update BEFORE the client connects; the connect
+        // seed must include the staged updateStatus.
+        let (_driver, hub, _hub_ops) = test_hub();
+        hub.lock().report_update(Some("def456".into()), false, None);
+        let (_late_key, _late_tx, mut late_rx) = hub.lock().add_client(None);
+        let upd = last_update(&mut late_rx).await;
+        match upd {
+            ServerMessage::UpdateStatus { available, sha, .. } => {
+                assert!(available, "late client should see the staged update");
+                assert_eq!(sha.as_deref(), Some("def456"));
+            }
+            other => panic!("expected UpdateStatus in connect seed, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn apply_update_flips_applying_and_updater_learns_it() {
+        // Ports TS "applyUpdate flips applying + the updater learns it on its next
+        // report". After applyUpdate, the next reportUpdate returns applying=true.
+        let (_driver, hub, _hub_ops) = test_hub();
+        let (a_key, _a_tx, mut a_rx) = hub.lock().add_client(None);
+        let _ = last_update(&mut a_rx).await; // drain baseline
+        hub.lock().report_update(Some("abc123".into()), false, None);
+        let _ = last_update(&mut a_rx).await; // drain the staged broadcast
+
+        hub.lock().handle_client(a_key, ClientMessage::ApplyUpdate);
+        let upd = last_update(&mut a_rx).await;
+        match upd {
+            ServerMessage::UpdateStatus {
+                available,
+                applying,
+                ..
+            } => {
+                assert!(available);
+                assert!(applying, "applyUpdate should flip applying to true");
+            }
+            other => panic!("expected UpdateStatus after apply, got {other:?}"),
+        }
+
+        // The updater's next poll (any sha report) returns applying=true.
+        let result = hub.lock().report_update(Some("abc123".into()), false, None);
+        assert_eq!(
+            result["applying"], true,
+            "updater should learn applying=true"
+        );
+        assert_eq!(result["force"], false);
+    }
+
+    #[tokio::test]
+    async fn apply_update_is_a_noop_when_nothing_staged() {
+        // Ports TS "applyUpdate is a no-op when nothing is staged". With no update
+        // staged, applyUpdate must not change the updateStatus.
+        let (_driver, hub, _hub_ops) = test_hub();
+        let (a_key, _a_tx, mut a_rx) = hub.lock().add_client(None);
+        let baseline = last_update(&mut a_rx).await;
+        let (base_available, base_applying) = match baseline {
+            ServerMessage::UpdateStatus {
+                available,
+                applying,
+                ..
+            } => (available, applying),
+            other => panic!("expected UpdateStatus on connect, got {other:?}"),
+        };
+
+        hub.lock().handle_client(a_key, ClientMessage::ApplyUpdate);
+        // No new updateStatus should be broadcast — the channel stays empty.
+        if let Ok(Some(msg)) = timeout(Duration::from_millis(50), a_rx.recv()).await {
+            panic!("applyUpdate with nothing staged should not broadcast, got {msg:?}");
+        }
+        assert!(!base_available);
+        assert!(!base_applying);
+    }
+
+    #[tokio::test]
+    async fn report_update_null_clears_availability_and_applying_flag() {
+        // Ports TS "reportUpdate(null) clears availability and any applying flag".
+        let (_driver, hub, _hub_ops) = test_hub();
+        let (a_key, _a_tx, mut a_rx) = hub.lock().add_client(None);
+        let _ = last_update(&mut a_rx).await; // drain baseline
+        hub.lock().report_update(Some("abc123".into()), false, None);
+        let _ = last_update(&mut a_rx).await; // drain staged broadcast
+        hub.lock().handle_client(a_key, ClientMessage::ApplyUpdate);
+        let _ = last_update(&mut a_rx).await; // drain applying broadcast
+
+        let result = hub.lock().report_update(None, false, None);
+        assert_eq!(result["applying"], false, "null report clears applying");
+        assert_eq!(result["force"], false);
+
+        let upd = last_update(&mut a_rx).await;
+        match upd {
+            ServerMessage::UpdateStatus {
+                available,
+                applying,
+                ..
+            } => {
+                assert!(!available, "null report clears availability");
+                assert!(!applying);
+            }
+            other => panic!("expected UpdateStatus after null report, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn apply_failed_unsticks_a_stuck_applying_card() {
+        // Ports TS "applyFailed un-sticks a stuck applying card (offer retry)".
+        let (_driver, hub, _hub_ops) = test_hub();
+        let (a_key, _a_tx, mut a_rx) = hub.lock().add_client(None);
+        let _ = last_update(&mut a_rx).await; // drain baseline
+        hub.lock().report_update(Some("abc123".into()), false, None);
+        let _ = last_update(&mut a_rx).await; // drain staged broadcast
+        hub.lock().handle_client(a_key, ClientMessage::ApplyUpdate);
+        let applying = last_update(&mut a_rx).await;
+        match applying {
+            ServerMessage::UpdateStatus { applying, .. } => assert!(applying),
+            other => panic!("expected applying UpdateStatus, got {other:?}"),
+        }
+
+        // A failed apply reports back applyFailed → card returns to "update now".
+        let result = hub.lock().report_update(Some("abc123".into()), true, None);
+        assert_eq!(result["applying"], false, "applyFailed clears applying");
+        assert_eq!(result["force"], false);
+
+        let upd = last_update(&mut a_rx).await;
+        match upd {
+            ServerMessage::UpdateStatus {
+                available,
+                applying,
+                ..
+            } => {
+                assert!(available, "update still staged after a failed apply");
+                assert!(!applying, "applying cleared after applyFailed");
+            }
+            other => panic!("expected UpdateStatus after applyFailed, got {other:?}"),
         }
     }
 }

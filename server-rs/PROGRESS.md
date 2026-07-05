@@ -65,6 +65,22 @@ reverted, proven empirically — fixed by wedging synchronously via `on_event` a
 asserting on the post-reload seed; re-review clean, no critical/high). 153 Rust
 tests, both reload-session e2e green.
 
+update-card cluster cleared (Phase 1.7): two compounding bugs. (1) The Rust
+`/update/state` handler (`main.rs`) never parsed the POST body — it hardcoded
+`hub.report_update(None, false, None)`, always reporting "no update available"
+and clearing the pending sha. (2) `hub.rs` `report_update` never broadcast an
+`updateStatus` message (it just set `update_sha` and returned), so even with the
+body parsed the card wouldn't appear client-side; it also diverged from TS
+`reportUpdate` (`server/src/hub.ts:1929-1948`) which tracks `changed` and
+broadcasts only on change. Ported both: `UpdateStateBody` struct +
+`sha = available ? sha : None` in the handler; `changed`-tracking + broadcast +
+`sha===null → applying=false` in `report_update`. +6 ported hub unit tests (the
+"desktop update relay" block from `hub.test.ts:1773-1846`). Reviewer-approved
+(Opus + gpt-5.5, no critical/high; the medium finding was a pre-existing
+codebase-wide auth-ordering pattern at 6 handler sites — out of scope for this
+cluster, noted for a future auth-parity pass). 159 Rust tests, both update-card
+e2e green.
+
 Note on the 2026-07-05 full-suite re-run after Phase 1.5: raw capture was
 **284 passed / 14 failed** — the 13 deterministic failures below plus the
 known `dir-picker` flake ("the go-to-path input jumps to a typed directory"),
@@ -83,15 +99,12 @@ count: 15 → 13.
 | settings | the background-model spec round-trips and warns loud on a bad spec | failed |
 | sidebar-row | an unread session marks the left gutter and keeps its timestamp on the right | failed |
 | slash | clicking a command inserts it | timedOut |
-| update-card | clears when the update is no longer available | failed |
-| update-card | shows when an update is staged and reflects applying on click | failed |
 
-Cluster view: update-card (2),
-abort-restore (1), file-mention (1), images (1), lease-conflict (1),
+Cluster view: abort-restore (1), file-mention (1), images (1), lease-conflict (1),
 notification-autodrain (1), prompt-delivery (1), settings (1), sidebar-row (1),
 slash (1). The context-meter (2), new-session-failure (2), queue (3), models (4),
-reload-session (2), sessions, drafts, branch, archive clusters are now green
-(Chunks B+C + Phase 1.2/1.3/1.4/1.5/1.6).
+reload-session (2), update-card (2), sessions, drafts, branch, archive clusters
+are now green (Chunks B+C + Phase 1.2/1.3/1.4/1.5/1.6/1.7).
 Note: `abort-restore` has TWO failing tests in isolation ("Escape aborts a
 pending turn…" and "Escape while typing a follow-up…"); the full-suite run
 records one per spec — both are pre-existing, not a regression from Phase 1.4.
@@ -332,13 +345,14 @@ minutes. (Down from 33 at phase start; see the per-spec failure table above.)
       each cluster, port the relevant `hub.test.ts` / `hub-journal.test.ts`
       cases *before* fixing, so hub coverage back-fills as the burn-down
       proceeds (target: all 64+14 cases ported by the end of this phase).
-      **IN PROGRESS (2026-07-05):** 5 clusters done, test-first, each
+      **IN PROGRESS (2026-07-05):** 6 clusters done, test-first, each
       review-clean (Opus) + committed: models (Phase 1.2, 4→0, +2 tests),
       queue (Phase 1.3, 3→0, +3 tests), new-session-failure (Phase 1.4, 2→0,
       +2 tests), context-meter (Phase 1.5, 2→0, +1 test), reload-session
-      (Phase 1.6, 2→0, +2 tests). Failures 33 → 11.
-      Next: update-card (2), then the singletons.
-      ~14 ported hub tests added so far (target 64+14 by phase end). The
+      (Phase 1.6, 2→0, +2 tests), update-card (Phase 1.7, 2→0, +6 tests).
+      Failures 33 → 9.
+      Next: the singletons (Phase 1.8, 9 across 8 specs).
+      ~20 ported hub tests added so far (target 64+14 by phase end). The
       standing rule is "fix by porting TS semantics, never by teaching the
       mock" — held across all 5.
 - [ ] Restore error-message parity: audit all TS `{type:"error"}` sends
@@ -463,10 +477,10 @@ fail-loud philosophy applied to tests — not noise to be waited away.
 ## How to verify current state
 
 ```bash
-cd server-rs && cargo test                      # 153 tests, green
+cd server-rs && cargo test                      # 159 tests, green
 cd server-rs && cargo clippy --all-targets -- -D warnings   # 0 warnings (Phase 0.2)
 bun run check:rs                                # fmt + clippy + test locally (CI gate)
 bun test                                        # 760 tests, green
 bun run test:e2e                                # control vs Bun server: green
-PILOT_SERVER_IMPL=rust bun run test:e2e         # vs Rust server: 11 det failures + 1 known flake (post-Phase-1.6)
+PILOT_SERVER_IMPL=rust bun run test:e2e         # vs Rust server: 9 det failures + 1 known flake (post-Phase-1.7)
 ```
