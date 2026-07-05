@@ -44,7 +44,7 @@ validation legs are green plus a live-daemon smoke test.
   `cargo fmt --check` + `cargo clippy --locked --all-targets -- -D warnings` +
   `cargo test` on ubuntu-latest. `bun run check:rs` runs the same locally.
 
-### Rust-server e2e failure table (2026-07-05, 13 failures)
+### Rust-server e2e failure table (2026-07-05, 11 failures)
 
 context-meter cluster cleared (Phase 1.5): the Rust `MockDriver` did not override
 `compact`/`clear_context` (inherited no-op trait defaults), so the click-twice
@@ -52,6 +52,18 @@ confirm-gate tests stalled at 91%. Ported the TS overrides
 (`server/src/mock-driver.ts:860-911`) — `usageUpdated` (compact→4%, clear→0%)
 plus a `notify` hostUiRequest — +1 hub routing unit test. Reviewer-approved
 (Opus + gpt-5.5, no critical/high). 151 Rust tests, all context-meter e2e green.
+
+reload-session cluster cleared (Phase 1.6): the Rust `MockDriver` did not override
+`reload_session` (inherited the trait default returning `Vec::new()`), so a reload
+hit `finish_switch`'s empty-seed branch and sent `Error { "session switch returned
+no session" }` instead of reseeding the transcript — both reload-session e2e tests
+timed out waiting for the reseeded transcript text. Ported the TS override
+(`server/src/mock-driver.ts:649-651`, `reloadSession` → `openSession`) + 2 ported
+hub unit tests (reseed-every-viewer, empty-seed→Error). Reviewer-approved (Opus +
+gpt-5.5; the first pass found a high — the reseed test passed with the fix
+reverted, proven empirically — fixed by wedging synchronously via `on_event` and
+asserting on the post-reload seed; re-review clean, no critical/high). 153 Rust
+tests, both reload-session e2e green.
 
 Note on the 2026-07-05 full-suite re-run after Phase 1.5: raw capture was
 **284 passed / 14 failed** — the 13 deterministic failures below plus the
@@ -68,28 +80,26 @@ count: 15 → 13.
 | lease-conflict | a lease conflict surfaces a sticky Retry toast; retrying opens the session | failed |
 | notification-autodrain | notification autodrain toggle flips in Settings | failed |
 | prompt-delivery | a rejected prompt stays visible and can be returned to the composer | failed |
-| reload-session | the L hotkey reloads the menu's targeted session | failed |
-| reload-session | the overflow menu reloads a session, reseeding its transcript | failed |
 | settings | the background-model spec round-trips and warns loud on a bad spec | failed |
 | sidebar-row | an unread session marks the left gutter and keeps its timestamp on the right | failed |
 | slash | clicking a command inserts it | timedOut |
 | update-card | clears when the update is no longer available | failed |
 | update-card | shows when an update is staged and reflects applying on click | failed |
 
-Cluster view: reload-session (2), update-card (2),
+Cluster view: update-card (2),
 abort-restore (1), file-mention (1), images (1), lease-conflict (1),
 notification-autodrain (1), prompt-delivery (1), settings (1), sidebar-row (1),
 slash (1). The context-meter (2), new-session-failure (2), queue (3), models (4),
-sessions, drafts, branch, archive clusters are now green
-(Chunks B+C + Phase 1.2/1.3/1.4/1.5).
+reload-session (2), sessions, drafts, branch, archive clusters are now green
+(Chunks B+C + Phase 1.2/1.3/1.4/1.5/1.6).
 Note: `abort-restore` has TWO failing tests in isolation ("Escape aborts a
 pending turn…" and "Escape while typing a follow-up…"); the full-suite run
 records one per spec — both are pre-existing, not a regression from Phase 1.4.
 
-Observed failure clusters: see the per-spec table above (2026-07-05, 13
-failures). The context-meter, new-session-failure / queue / models / sessions /
-drafts / branch / archive clusters are green (Chunks B+C + Phase 1.2/1.3/1.4/1.5).
-Remaining clusters: reload-session (2), update-card (2),
+Observed failure clusters: see the per-spec table above (2026-07-05, 11
+failures). The context-meter, new-session-failure / queue / models / reload-session
+/ sessions / drafts / branch / archive clusters are green
+(Chunks B+C + Phase 1.2/1.3/1.4/1.5/1.6). Remaining clusters: update-card (2),
 plus 9 singletons.
 
 **What is genuinely done and trustworthy:**
@@ -322,12 +332,13 @@ minutes. (Down from 33 at phase start; see the per-spec failure table above.)
       each cluster, port the relevant `hub.test.ts` / `hub-journal.test.ts`
       cases *before* fixing, so hub coverage back-fills as the burn-down
       proceeds (target: all 64+14 cases ported by the end of this phase).
-      **IN PROGRESS (2026-07-05):** 4 clusters done, test-first, each
+      **IN PROGRESS (2026-07-05):** 5 clusters done, test-first, each
       review-clean (Opus) + committed: models (Phase 1.2, 4→0, +2 tests),
       queue (Phase 1.3, 3→0, +3 tests), new-session-failure (Phase 1.4, 2→0,
-      +2 tests), context-meter (Phase 1.5, 2→0, +1 test). Failures 33 → 13.
-      Next: reload-session (2), update-card (2), then the singletons.
-      ~12 ported hub tests added so far (target 64+14 by phase end). The
+      +2 tests), context-meter (Phase 1.5, 2→0, +1 test), reload-session
+      (Phase 1.6, 2→0, +2 tests). Failures 33 → 11.
+      Next: update-card (2), then the singletons.
+      ~14 ported hub tests added so far (target 64+14 by phase end). The
       standing rule is "fix by porting TS semantics, never by teaching the
       mock" — held across all 5.
 - [ ] Restore error-message parity: audit all TS `{type:"error"}` sends
@@ -452,10 +463,10 @@ fail-loud philosophy applied to tests — not noise to be waited away.
 ## How to verify current state
 
 ```bash
-cd server-rs && cargo test                      # 150 tests, green
+cd server-rs && cargo test                      # 153 tests, green
 cd server-rs && cargo clippy --all-targets -- -D warnings   # 0 warnings (Phase 0.2)
 bun run check:rs                                # fmt + clippy + test locally (CI gate)
 bun test                                        # 760 tests, green
 bun run test:e2e                                # control vs Bun server: green
-PILOT_SERVER_IMPL=rust bun run test:e2e         # vs Rust server: 13 det failures + 1 known flake (post-Phase-1.5)
+PILOT_SERVER_IMPL=rust bun run test:e2e         # vs Rust server: 11 det failures + 1 known flake (post-Phase-1.6)
 ```

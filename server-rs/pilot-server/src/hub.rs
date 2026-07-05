@@ -2702,8 +2702,11 @@ impl HostUiRequestExt for HostUiRequest {
 #[cfg(test)]
 mod hub_models_tests {
     use super::*;
-    use crate::mock_driver::MockDriver;
-    use pilot_protocol::session_driver::{SessionConfig, SessionMessageDeliveryMode};
+    use crate::mock_driver::{GREETING_PROMPT, MockDriver, session_ref_for, ts};
+    use pilot_protocol::session_driver::{
+        SessionConfig, SessionEventBase, SessionMessageDeliveryMode,
+    };
+    use pilot_protocol::state::TranscriptItem;
     use std::sync::Arc;
     use tokio::time::{Duration, timeout};
 
@@ -3167,6 +3170,156 @@ mod hub_models_tests {
                 assert_eq!(usage.percent, Some(0.0));
             }
             other => panic!("expected usageUpdated from clearContext, got {other:?}"),
+        }
+    }
+
+    // ── reload-session cluster (Phase 1.6) ─────────────────────────────────
+    // Ported from TS `server/src/hub.test.ts:544` ("reloadSession rebuilds a
+    // wedged session from a fresh seed for every viewer") and `:569` ("reloadSession
+    // reports an error when the driver doesn't support it"). The mock has no warm
+    // session to throw away, so its reloadSession reseeds the same transcript
+    // openSession would — enough to prove the menu → WS → reseed round-trip and
+    // that a reseed re-snapshots EVERY viewer, not just the requester.
+
+    /// Fold the events carried by a `Seed` message into a `SessionState`, mirroring
+    /// the TS `seedState(received)` test helper.
+    fn seed_state_of(msg: &ServerMessage) -> Option<SessionState> {
+        match msg {
+            ServerMessage::Seed { events, .. } => Some(fold_all(events)),
+            _ => None,
+        }
+    }
+
+    #[tokio::test]
+    async fn reload_session_reseeds_a_wedged_session_for_every_viewer() {
+        // Ports TS `server/src/hub.test.ts:544`. The default focus both clients
+        // adopt is the greeting session ("demo-session"); wedge it with a stale
+        // userMessage, then reload it. The reloaded seed is authoritative for
+        // EVERY viewer focused on it, so a second client also recovers.
+        let (driver, hub, mut hub_ops) = test_hub();
+
+        // Wedge the greeting session SYNCHRONOUSLY before anyone connects, so the
+        // connect seeds actually carry the stale transcript (mirrors TS
+        // `d.emit(ev({ type: "userMessage", ... }))`, which is synchronous). We call
+        // on_event directly rather than `driver.emit` because `emit` forwards through
+        // a spawned task that can't run before the synchronous `add_client` calls.
+        let wedge = SessionDriverEvent::UserMessage {
+            base: SessionEventBase {
+                session_ref: session_ref_for("demo-session"),
+                timestamp: ts(),
+                run_id: None,
+            },
+            id: "u-wedge".into(),
+            text: "wedged msg".into(),
+            images: None,
+            entry_id: None,
+        };
+        hub.lock().on_event(wedge);
+
+        let (a_key, _a_tx, mut a_rx) = hub.lock().add_client(None);
+        let (_b_key, _b_tx, mut b_rx) = hub.lock().add_client(None);
+
+        // Sanity: the connect seeds carry the wedge (proves it landed in the
+        // journal before the reload). If this fails, the assertions below would be
+        // vacuous — exactly the bug the first review pass caught.
+        for rx in [&mut a_rx, &mut b_rx] {
+            let connect_seed =
+                drain_until(rx, |msg| matches!(msg, ServerMessage::Seed { .. })).await;
+            let st = seed_state_of(&connect_seed).expect("connect seed should fold");
+            assert!(
+                st.items.iter().any(|i| match i {
+                    TranscriptItem::User(u) => u.text.contains("wedged msg"),
+                    _ => false,
+                }),
+                "connect seed must carry the wedge before reload"
+            );
+        }
+
+        hub.lock().handle_client(
+            a_key,
+            ClientMessage::ReloadSession {
+                path: "/sessions/demo-session.jsonl".into(),
+            },
+        );
+        apply_one(hub.clone(), &mut hub_ops).await;
+
+        // Both clients receive a FRESH post-reload seed (the reseed broadcasts to
+        // every viewer, not just the requester) whose transcript does NOT contain
+        // the wedged message but DOES contain the greeting prompt — proving the
+        // reload ran openSession's seed, not an empty one.
+        for rx in [&mut a_rx, &mut b_rx] {
+            let reloaded = drain_until(rx, |msg| matches!(msg, ServerMessage::Seed { .. })).await;
+            let st = seed_state_of(&reloaded).expect("reloaded seed should fold into a state");
+            assert!(
+                !st.items.iter().any(|i| match i {
+                    TranscriptItem::User(u) => u.text.contains("wedged msg"),
+                    _ => false,
+                }),
+                "reloaded seed must not carry the wedged transcript"
+            );
+            assert!(
+                st.items.iter().any(|i| match i {
+                    TranscriptItem::User(u) => u.text == GREETING_PROMPT,
+                    _ => false,
+                }),
+                "reloaded seed should carry the greeting prompt"
+            );
+        }
+
+        // The reload actually delegated to open_session (not the trait default that
+        // returns an empty Vec): an empty seed would have surfaced as an Error, not
+        // a reseed. Drain confirms no error was sent to either viewer.
+        for rx in [&mut a_rx, &mut b_rx] {
+            assert!(
+                timeout(Duration::from_millis(50), async {
+                    while let Some(msg) = rx.recv().await {
+                        if matches!(msg, ServerMessage::Error { .. }) {
+                            return true;
+                        }
+                    }
+                    false
+                })
+                .await
+                .is_err(),
+                "reload must not surface an error"
+            );
+        }
+        let _ = driver;
+    }
+
+    #[tokio::test]
+    async fn reload_session_with_empty_seed_reports_an_error() {
+        // Ports the contract behind TS `server/src/hub.test.ts:569` ("reloadSession
+        // reports an error when the driver doesn't support it"). The Rust
+        // `PilotDriver` trait gives `reload_session` a default impl returning an
+        // empty Vec (there is no `Option<fn>` analogue to TS's optional method), so
+        // "unsupported" is expressed as an empty seed. An empty seed must surface as
+        // a client-visible `Error` rather than silently no-op'ing — the reload
+        // affordance must not appear to succeed when nothing was reseeded.
+        //
+        // We exercise the empty-seed path directly via `finish_switch` (the
+        // post-fetch half of switch_to): an empty seed must send an Error and
+        // resolve to no session, which is exactly what a driver that doesn't
+        // override reload_session produces.
+        let (_driver, hub, _hub_ops) = test_hub();
+        let (client_key, _tx, mut rx) = hub.lock().add_client(None);
+        let _ = drain_until(&mut rx, |msg| matches!(msg, ServerMessage::Seed { .. })).await;
+
+        let result = finish_switch(&hub, client_key, Vec::new(), true, true).await;
+        assert!(
+            result.is_none(),
+            "an empty seed must not resolve to a session"
+        );
+
+        let err = drain_until(&mut rx, |msg| matches!(msg, ServerMessage::Error { .. })).await;
+        match err {
+            ServerMessage::Error { message, .. } => {
+                assert_eq!(
+                    message, "session switch returned no session",
+                    "an empty reload seed must surface the no-session error"
+                );
+            }
+            other => panic!("expected an Error for an unsupported reload, got {other:?}"),
         }
     }
 }

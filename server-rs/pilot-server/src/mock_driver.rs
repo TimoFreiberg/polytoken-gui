@@ -58,7 +58,8 @@ fn request_id_of(r: &HostUiRequest) -> &str {
 
 // ── Fixture constants (ported from fixtures.ts) ─────────────────────────
 
-const GREETING_PROMPT: &str = "Add a /health route to the server and a smoke test for it.";
+pub(crate) const GREETING_PROMPT: &str =
+    "Add a /health route to the server and a smoke test for it.";
 const WORKSPACE_ID: &str = "ws-demo";
 const WORKSPACE_PATH: &str = "/Users/timo/src/pilot";
 const SESSION_ID: &str = "demo-session";
@@ -84,7 +85,7 @@ const SHOT_PNG_B64: &str = "iVBORw0KGgoAAAANSUhEUgAAAHgAAABQCAIAAABd+SbeAAAAqElE
 const TS_STEP_MS: u64 = 5;
 static MOCK_TS: AtomicU64 = AtomicU64::new(0);
 
-fn ts() -> String {
+pub(crate) fn ts() -> String {
     let v = MOCK_TS.fetch_add(TS_STEP_MS, Ordering::Relaxed) + TS_STEP_MS;
     format!("{:0>10}", v)
 }
@@ -293,7 +294,7 @@ fn mock_usage_full() -> SessionUsage {
     }
 }
 
-fn session_ref_for(session_id: &str) -> SessionRef {
+pub(crate) fn session_ref_for(session_id: &str) -> SessionRef {
     SessionRef {
         workspace_id: WORKSPACE_ID.into(),
         session_id: session_id.into(),
@@ -1832,6 +1833,14 @@ impl PilotDriver for MockDriver {
             }
         }
         seed
+    }
+
+    /// Deterministic stand-in for the driver's dispose-and-re-warm. The mock has no
+    /// warm AgentSession to throw away, so a reload is just a fresh seed of the same
+    /// session — enough to exercise the hub's reseed path and the client wiring.
+    /// (Faithful port of TS `MockDriver.reloadSession`, mock-driver.ts:649-651.)
+    async fn reload_session(&self, path: String) -> Vec<SessionDriverEvent> {
+        self.open_session(path).await
     }
 
     async fn branch_from(
