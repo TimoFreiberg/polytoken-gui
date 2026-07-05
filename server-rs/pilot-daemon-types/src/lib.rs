@@ -1056,6 +1056,8 @@ pub struct JobSnapshot {
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub parent: Option<ParentRef>,
     #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub reasoning_effort: Option<ReasoningEffort>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
     pub started_at: Option<String>,
     pub status: JobStatus,
     #[serde(skip_serializing_if = "Option::is_none", default)]
@@ -1109,13 +1111,19 @@ pub enum Message {
     },
     User {
         content: String,
+        #[serde(skip_serializing_if = "Option::is_none", default)]
+        emitted_at: Option<String>,
         prompt_id: PromptId,
     },
     Assistant {
         blocks: Vec<ContentBlock>,
+        #[serde(skip_serializing_if = "Option::is_none", default)]
+        emitted_at: Option<String>,
         prompt_id: PromptId,
     },
     ToolResult {
+        #[serde(skip_serializing_if = "Option::is_none", default)]
+        emitted_at: Option<String>,
         prompt_id: PromptId,
         results: Vec<ToolResult>,
     },
@@ -1125,6 +1133,8 @@ pub enum Message {
         emitted_at: Option<String>,
     },
     FacetSwitch {
+        #[serde(skip_serializing_if = "Option::is_none", default)]
+        emitted_at: Option<String>,
         from_facet: String,
         prompt_id: PromptId,
         to_facet: String,
@@ -1369,6 +1379,8 @@ pub struct PreUserPromptDenied {
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct PromptAccepted {
     pub prompt_id: PromptId,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub queued_item: Option<PendingTurnInputItem>,
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub resolved_references: Option<Vec<ResolvedPromptReference>>,
     pub session_id: SessionId,
@@ -1855,6 +1867,8 @@ pub struct ToolResult {
     pub content: ToolResultContent,
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub is_error: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub live_display: Option<ToolLiveDisplayContent>,
     pub tool_use_id: String,
 }
 
