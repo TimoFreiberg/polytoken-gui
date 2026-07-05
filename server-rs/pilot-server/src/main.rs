@@ -31,7 +31,7 @@ use serde_json::json;
 use tracing::{error, info, warn};
 
 use crate::driver::PilotDriver;
-use crate::hub::SessionHub;
+use crate::hub::{SessionHub, hub_op_channel, run_hub_op_applier};
 
 /// Shared app state.
 #[derive(Clone)]
@@ -102,8 +102,11 @@ async fn main() {
     // Clone the driver Arc before it's moved into the hub — we need it for subscribe below.
     let driver_for_sub = driver.clone();
 
+    let (hub_ops, hub_op_rx) = hub_op_channel();
+
     let hub = SessionHub::new(
         driver,
+        hub_ops,
         None, // notify — wired in Phase 6 (push)
         cfg.live_refresh_ms,
         server_id.clone(),
@@ -111,6 +114,8 @@ async fn main() {
         String::new(), // build_sha — read from dist marker
         cfg.delta_flush_ms,
     );
+
+    tokio::spawn(run_hub_op_applier(hub.clone(), hub_op_rx));
 
     let static_server = Arc::new(static_serve::StaticServer::new(cfg.client_dist.clone()));
     let state = AppState {
@@ -256,7 +261,7 @@ async fn handle_ws_connection(ws: WebSocket, state: AppState) {
                     let result = hub.add_client(resume);
                     // Spawn the async follow-up lists (sessionList, modelList,
                     // commandList, facetList, fileIndex) — mirrors TS addClient.
-                    hub.spawn_connect_lists(result.0, state.hub.clone());
+                    hub.spawn_connect_lists(result.0);
                     result
                 };
 
@@ -314,7 +319,7 @@ async fn handle_ws_connection(ws: WebSocket, state: AppState) {
                 // driver calls are spawned as separate tasks)
                 {
                     let mut hub = state.hub.lock();
-                    hub.handle_client(client_key, client_msg, state.hub.clone());
+                    hub.handle_client(client_key, client_msg);
                 }
             }
             Ok(Message::Close(_)) | Err(_) => break,

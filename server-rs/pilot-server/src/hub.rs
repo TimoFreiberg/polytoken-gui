@@ -8,11 +8,42 @@
 //!
 //! Port of `server/src/hub.ts` (1967 lines).
 //!
+//! ## Async driver completion queue
+//!
+//! The TypeScript hub starts fire-and-forget driver promises from synchronous
+//! handlers; those driver calls run concurrently and their continuations mutate
+//! the hub in completion order. Rust deliberately uses a stricter model: every
+//! async driver completion that needs to affect hub state is funneled through one
+//! bounded `mpsc` queue. Synchronous WS handling still locks the hub directly for
+//! immediate work (hello/seed/local state), but it enqueues a `HubOp` for async
+//! driver work. A single long-lived applier task owns the receiver, awaits each
+//! op's driver future, then briefly locks the hub to apply the result and send
+//! any `ServerMessage`s. This serializes async driver I/O in dispatch order, so
+//! six concurrent TS connect-time calls become six sequential Rust daemon
+//! round-trips, and each session swap adds four more queued refreshes.
+//!
+//! That throughput/latency tradeoff is intentional for this single-user local
+//! tool: daemon RTT is low, `driver.prompt().await` resolves at daemon acceptance
+//! rather than turn completion, abort/set_model control-plane calls bypass the
+//! queue and remain responsive, and the client fold reducer is order-independent
+//! across message types. The queue gives deterministic hub mutation without
+//! relying on racy task re-locking; it is a documented divergence from TS rather
+//! than an exact ordering match.
+//!
+//! The queue is bounded (256). Enqueue uses `try_send` because the hub dispatch
+//! path is deliberately synchronous; a full queue is treated as a fail-loud
+//! canary instead of silently dropping a completion. Phase 2 reuses this same
+//! queue-over-bare-mutex idiom for sequential SSE event folding.
+//!
 use std::collections::{HashMap, HashSet};
+use std::future::Future;
 use std::path::PathBuf;
+use std::panic::AssertUnwindSafe;
+use std::pin::Pin;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use futures_util::FutureExt;
 use parking_lot::Mutex;
 use pilot_protocol::session_driver::{
     HostUiRequest, HostUiResponse, ModelOption, SessionDriverEvent, SessionDriverEvent as E,
@@ -31,9 +62,70 @@ use crate::journal::{
     tail_covers, try_merge,
 };
 
+pub const HUB_COMPLETION_QUEUE_CAPACITY: usize = 256;
+
+type HubApplyFuture = Pin<Box<dyn Future<Output = ()> + Send + 'static>>;
+
+type HubOp = Box<dyn FnOnce(Arc<Mutex<SessionHub>>) -> HubApplyFuture + Send + 'static>;
+
+#[derive(Clone)]
+pub struct HubOpSender {
+    tx: mpsc::Sender<HubOp>,
+}
+
+pub struct HubOpReceiver {
+    rx: mpsc::Receiver<HubOp>,
+}
+
+pub fn hub_op_channel() -> (HubOpSender, HubOpReceiver) {
+    let (tx, rx) = mpsc::channel(HUB_COMPLETION_QUEUE_CAPACITY);
+    (HubOpSender { tx }, HubOpReceiver { rx })
+}
+
+impl HubOpSender {
+    fn enqueue(&self, label: &'static str, op: HubOp) {
+        // `Full` is intentionally process-fatal: overflowing the single hub
+        // completion queue would otherwise silently corrupt all clients, not just
+        // the connection that happened to enqueue. Do not "fix" this by changing
+        // to blocking `send().await`: the applier is the sole receiver and some
+        // ops enqueue more work re-entrantly (for example, `finish_switch` queues
+        // four refreshes), so waiting for capacity from inside the applier would
+        // self-deadlock on a full channel. If `Full` is ever observed in practice,
+        // use an unbounded channel or a much larger bound instead. For this
+        // single-user tool, 256 requires roughly 43 simultaneous reconnects (or a
+        // wedged applier), so panic-as-canary is reasonable today.
+        match self.tx.try_send(op) {
+            Ok(()) => {}
+            Err(mpsc::error::TrySendError::Full(_)) => {
+                panic!("hub completion queue is full while enqueuing {label}");
+            }
+            Err(mpsc::error::TrySendError::Closed(_)) => {
+                tracing::debug!(
+                    "hub completion queue is closed while enqueuing {label}; dropping op during shutdown"
+                );
+            }
+        }
+    }
+}
+
+pub async fn run_hub_op_applier(hub: Arc<Mutex<SessionHub>>, mut receiver: HubOpReceiver) {
+    while let Some(op) = receiver.rx.recv().await {
+        // Catch panics while polling the async op so one bad daemon response or
+        // unwrap cannot kill the sole drain loop and wedge every later enqueue.
+        // `AssertUnwindSafe` is acceptable here: the captured hub is an
+        // `Arc<parking_lot::Mutex<SessionHub>>` (`Send + Sync`), and the remaining
+        // risk is only a partially-applied hub mutation. `parking_lot::Mutex` does
+        // not poison; continuing after logging is strictly better than wedging the
+        // queue, which was already the failure mode without containment.
+        if let Err(panic) = AssertUnwindSafe(op(hub.clone())).catch_unwind().await {
+            error!("hub op panicked: {panic:?}");
+        }
+    }
+    error!("hub completion queue applier exited because all senders were dropped");
+}
+
 /// A boxed, pinned, Send future — the return type of swap closures.
-type SwapFuture =
-    std::pin::Pin<Box<dyn std::future::Future<Output = Vec<SessionDriverEvent>> + Send + 'static>>;
+type SwapFuture = Pin<Box<dyn Future<Output = Vec<SessionDriverEvent>> + Send + 'static>>;
 
 /// What the hub hands to a notifier (e.g. the Web Push sender) for notable events.
 #[derive(Debug, Clone)]
@@ -118,6 +210,7 @@ const SWAP_BUFFER_TTL_MS: u128 = 5000;
 /// and orchestrates the driver.
 pub struct SessionHub {
     driver: Arc<dyn PilotDriver>,
+    hub_ops: HubOpSender,
     notify: Option<Arc<dyn Fn(HubNotification) + Send + Sync>>,
     #[expect(
         dead_code,
@@ -170,8 +263,13 @@ pub struct SessionHub {
 }
 
 impl SessionHub {
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "constructor mirrors the TS hub dependencies; Phase 1 only adds the completion queue"
+    )]
     pub fn new(
         driver: Arc<dyn PilotDriver>,
+        hub_ops: HubOpSender,
         notify: Option<Arc<dyn Fn(HubNotification) + Send + Sync>>,
         live_refresh_ms: u64,
         server_id: String,
@@ -181,6 +279,7 @@ impl SessionHub {
     ) -> Arc<Mutex<Self>> {
         let hub = Arc::new(Mutex::new(Self {
             driver,
+            hub_ops,
             notify,
             live_refresh_ms,
             server_id,
@@ -1020,15 +1119,9 @@ impl SessionHub {
     // ── handleClient dispatch ──────────────────────────────────────────────
 
     /// Handle a client message. This is the main WS dispatch — the ~35 case
-    /// switch from hub.ts. Synchronous (no await) — driver calls are spawned
-    /// as tokio tasks with a clone of the Arc<dyn PilotDriver> and the hub
-    /// handle, so the hub lock is never held across an await point.
-    pub fn handle_client(
-        &mut self,
-        client_key: u64,
-        msg: ClientMessage,
-        hub: Arc<Mutex<SessionHub>>,
-    ) {
+    /// switch from hub.ts. Synchronous (no await) — async driver completions are
+    /// enqueued as `HubOp`s, so the hub lock is never held across an await point.
+    pub fn handle_client(&mut self, client_key: u64, msg: ClientMessage) {
         // Get the focused session id for this connection
         let focused_id = self
             .clients
@@ -1057,39 +1150,49 @@ impl SessionHub {
                 let deliver_as = *deliver_as;
                 let images = images.clone().unwrap_or_default();
                 let prompt_id_clone = prompt_id.clone();
-                let hub_clone = hub.clone();
                 let client_key_clone = client_key;
                 let pid = prompt_id.clone();
-                tokio::spawn(async move {
-                    let result = async {
-                        driver
-                            .prompt(text, deliver_as, target.clone(), images, prompt_id_clone)
+                self.hub_ops.enqueue(
+                    "prompt",
+                    Box::new(move |hub| {
+                        Box::pin(async move {
+                            let result = async {
+                                driver
+                                    .prompt(
+                                        text,
+                                        deliver_as,
+                                        target.clone(),
+                                        images,
+                                        prompt_id_clone,
+                                    )
+                                    .await;
+                                target
+                            }
                             .await;
-                        target
-                    }
-                    .await;
 
-                    let msg = match &result {
-                        Some(sid) => ServerMessage::PromptResult {
-                            prompt_id: pid.clone().unwrap_or_default(),
-                            accepted: true,
-                            session_id: Some(sid.clone()),
-                            error: None,
-                        },
-                        None => ServerMessage::PromptResult {
-                            prompt_id: pid.clone().unwrap_or_default(),
-                            accepted: false,
-                            session_id: None,
-                            error: Some("prompt failed".into()),
-                        },
-                    };
-                    let mut h = hub_clone.lock();
-                    // Cache the result for idempotent replay
-                    if let Some(ref pid_str) = pid {
-                        h.cache_prompt_result(pid_str.clone(), msg.clone());
-                    }
-                    h.send_to_client(client_key_clone, msg);
-                });
+                            let msg = match &result {
+                                Some(sid) => ServerMessage::PromptResult {
+                                    prompt_id: pid.clone().unwrap_or_default(),
+                                    accepted: true,
+                                    session_id: Some(sid.clone()),
+                                    error: None,
+                                },
+                                None => ServerMessage::PromptResult {
+                                    prompt_id: pid.clone().unwrap_or_default(),
+                                    accepted: false,
+                                    session_id: None,
+                                    error: Some("prompt failed".into()),
+                                },
+                            };
+                            let mut h = hub.lock();
+                            // Cache the result for idempotent replay
+                            if let Some(ref pid_str) = pid {
+                                h.cache_prompt_result(pid_str.clone(), msg.clone());
+                            }
+                            h.send_to_client(client_key_clone, msg);
+                        })
+                    }),
+                );
             }
             ClientMessage::Abort { session_id } => {
                 let target = session_id.clone().or(focused_id);
@@ -1119,9 +1222,12 @@ impl SessionHub {
             ClientMessage::ToggleAdventurousHandoff { session_id } => {
                 let target = session_id.clone().or(focused_id);
                 let driver = self.driver.clone();
-                tokio::spawn(async move {
-                    driver.toggle_adventurous_handoff(target).await;
-                });
+                self.hub_ops.enqueue(
+                    "toggle_adventurous_handoff",
+                    Box::new(move |_hub| {
+                        Box::pin(async move { driver.toggle_adventurous_handoff(target).await })
+                    }),
+                );
             }
             ClientMessage::SetNotificationAutodrain {
                 enabled,
@@ -1130,23 +1236,32 @@ impl SessionHub {
                 let target = session_id.clone().or(focused_id);
                 let driver = self.driver.clone();
                 let enabled = *enabled;
-                tokio::spawn(async move {
-                    driver.set_notification_autodrain(enabled, target).await;
-                });
+                self.hub_ops.enqueue(
+                    "set_notification_autodrain",
+                    Box::new(move |_hub| {
+                        Box::pin(
+                            async move { driver.set_notification_autodrain(enabled, target).await },
+                        )
+                    }),
+                );
             }
             ClientMessage::Compact { session_id } => {
                 let target = session_id.clone().or(focused_id);
                 let driver = self.driver.clone();
-                tokio::spawn(async move {
-                    driver.compact(target).await;
-                });
+                self.hub_ops.enqueue(
+                    "compact",
+                    Box::new(move |_hub| Box::pin(async move { driver.compact(target).await })),
+                );
             }
             ClientMessage::ClearContext { session_id } => {
                 let target = session_id.clone().or(focused_id);
                 let driver = self.driver.clone();
-                tokio::spawn(async move {
-                    driver.clear_context(target).await;
-                });
+                self.hub_ops.enqueue(
+                    "clear_context",
+                    Box::new(move |_hub| {
+                        Box::pin(async move { driver.clear_context(target).await })
+                    }),
+                );
             }
             ClientMessage::SetMcpServer {
                 server_name,
@@ -1157,19 +1272,28 @@ impl SessionHub {
                 let driver = self.driver.clone();
                 let server_name = server_name.clone();
                 let action = *action;
-                tokio::spawn(async move {
-                    driver.set_mcp_server(server_name, action, target).await;
-                });
+                self.hub_ops.enqueue(
+                    "set_mcp_server",
+                    Box::new(move |_hub| {
+                        Box::pin(
+                            async move { driver.set_mcp_server(server_name, action, target).await },
+                        )
+                    }),
+                );
             }
             ClientMessage::ListSessions => {
                 let driver = self.driver.clone();
-                let hub_clone = hub.clone();
-                tokio::spawn(async move {
-                    let sessions = driver.list_sessions().await;
-                    let default_cwd = std::env::var("HOME").unwrap_or_default();
-                    let mut h = hub_clone.lock();
-                    h.broadcast_session_list_with(sessions, default_cwd);
-                });
+                self.hub_ops.enqueue(
+                    "list_sessions",
+                    Box::new(move |hub| {
+                        Box::pin(async move {
+                            let sessions = driver.list_sessions().await;
+                            let default_cwd = std::env::var("HOME").unwrap_or_default();
+                            let mut h = hub.lock();
+                            h.broadcast_session_list_with(sessions, default_cwd);
+                        })
+                    }),
+                );
             }
             ClientMessage::RequestSeed { session_id } => {
                 let target = session_id.clone().or(focused_id);
@@ -1181,29 +1305,39 @@ impl SessionHub {
             }
             ClientMessage::OpenSession { path } => {
                 let driver = self.driver.clone();
-                let hub_clone = hub.clone();
                 let path = path.clone();
-                tokio::spawn(async move {
-                    let swap = Box::new(move |_hub: Arc<Mutex<SessionHub>>| {
-                        let driver = driver.clone();
-                        let path = path.clone();
-                        Box::pin(async move { driver.open_session(path).await }) as SwapFuture
-                    });
-                    switch_to(hub_clone, client_key, swap, false, true).await;
-                });
+                self.hub_ops.enqueue(
+                    "open_session",
+                    Box::new(move |hub| {
+                        Box::pin(async move {
+                            let swap = Box::new(move |_hub: Arc<Mutex<SessionHub>>| {
+                                let driver = driver.clone();
+                                let path = path.clone();
+                                Box::pin(async move { driver.open_session(path).await })
+                                    as SwapFuture
+                            });
+                            switch_to(hub, client_key, swap, false, true).await;
+                        })
+                    }),
+                );
             }
             ClientMessage::ReloadSession { path } => {
                 let driver = self.driver.clone();
-                let hub_clone = hub.clone();
                 let path = path.clone();
-                tokio::spawn(async move {
-                    let swap = Box::new(move |_hub: Arc<Mutex<SessionHub>>| {
-                        let driver = driver.clone();
-                        let path = path.clone();
-                        Box::pin(async move { driver.reload_session(path).await }) as SwapFuture
-                    });
-                    switch_to(hub_clone, client_key, swap, true, true).await;
-                });
+                self.hub_ops.enqueue(
+                    "reload_session",
+                    Box::new(move |hub| {
+                        Box::pin(async move {
+                            let swap = Box::new(move |_hub: Arc<Mutex<SessionHub>>| {
+                                let driver = driver.clone();
+                                let path = path.clone();
+                                Box::pin(async move { driver.reload_session(path).await })
+                                    as SwapFuture
+                            });
+                            switch_to(hub, client_key, swap, true, true).await;
+                        })
+                    }),
+                );
             }
             ClientMessage::RespondUi {
                 response,
@@ -1228,18 +1362,22 @@ impl SessionHub {
             ClientMessage::RestoreQueue { session_id } => {
                 let target = session_id.clone().or(focused_id);
                 let driver = self.driver.clone();
-                let hub_clone = hub.clone();
-                tokio::spawn(async move {
-                    let restored = driver.clear_queue(target).await;
-                    let h = hub_clone.lock();
-                    h.send_to_client(
-                        client_key,
-                        ServerMessage::QueueRestored {
-                            steering: restored.steering,
-                            follow_up: restored.follow_up,
-                        },
-                    );
-                });
+                self.hub_ops.enqueue(
+                    "restore_queue",
+                    Box::new(move |hub| {
+                        Box::pin(async move {
+                            let restored = driver.clear_queue(target).await;
+                            let h = hub.lock();
+                            h.send_to_client(
+                                client_key,
+                                ServerMessage::QueueRestored {
+                                    steering: restored.steering,
+                                    follow_up: restored.follow_up,
+                                },
+                            );
+                        })
+                    }),
+                );
             }
             ClientMessage::Branch {
                 entry_id,
@@ -1268,36 +1406,47 @@ impl SessionHub {
                     return;
                 }
                 let driver = self.driver.clone();
-                let hub_clone = hub.clone();
                 let entry_id = entry_id.clone();
                 let summarize = *summarize;
-                tokio::spawn(async move {
-                    // The editorText (a user-prompt branch's re-editable text) is
-                    // per-client, so it goes ONLY to the requester after the swap lands.
-                    let prefill: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
-                    let prefill_clone = prefill.clone();
-                    let swap = Box::new(move |_hub: Arc<Mutex<SessionHub>>| {
-                        let driver = driver.clone();
-                        let entry_id = entry_id.clone();
-                        let prefill_clone = prefill_clone.clone();
+                self.hub_ops.enqueue(
+                    "branch",
+                    Box::new(move |hub| {
                         Box::pin(async move {
-                            let result = driver
-                                .branch_from(entry_id, summarize.unwrap_or(false), target_id)
-                                .await;
-                            if let Some(text) = result.editor_text {
-                                *prefill_clone.lock() = Some(text);
+                            // The editorText (a user-prompt branch's re-editable text) is
+                            // per-client, so it goes ONLY to the requester after the swap lands.
+                            let prefill: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
+                            let prefill_clone = prefill.clone();
+                            let swap = Box::new(move |_hub: Arc<Mutex<SessionHub>>| {
+                                let driver = driver.clone();
+                                let entry_id = entry_id.clone();
+                                let prefill_clone = prefill_clone.clone();
+                                Box::pin(async move {
+                                    let result = driver
+                                        .branch_from(
+                                            entry_id,
+                                            summarize.unwrap_or(false),
+                                            target_id,
+                                        )
+                                        .await;
+                                    if let Some(text) = result.editor_text {
+                                        *prefill_clone.lock() = Some(text);
+                                    }
+                                    result.seed
+                                }) as SwapFuture
+                            });
+                            let sid = switch_to(hub.clone(), client_key, swap, true, false).await;
+                            if sid.is_some() {
+                                if let Some(text) = prefill.lock().take() {
+                                    let h = hub.lock();
+                                    h.send_to_client(
+                                        client_key,
+                                        ServerMessage::EditorPrefill { text },
+                                    );
+                                }
                             }
-                            result.seed
-                        }) as SwapFuture
-                    });
-                    let sid = switch_to(hub_clone.clone(), client_key, swap, true, false).await;
-                    if sid.is_some() {
-                        if let Some(text) = prefill.lock().take() {
-                            let h = hub_clone.lock();
-                            h.send_to_client(client_key, ServerMessage::EditorPrefill { text });
-                        }
-                    }
-                });
+                        })
+                    }),
+                );
             }
             ClientMessage::NewSession {
                 cwd,
@@ -1320,7 +1469,6 @@ impl SessionHub {
                 let has_images = images.as_ref().map(|i| !i.is_empty()).unwrap_or(false);
                 let has_first_prompt = first_prompt.is_some() || has_images;
                 let driver = self.driver.clone();
-                let hub_clone = hub.clone();
                 let opts = NewSessionOptsData {
                     cwd: cwd.clone(),
                     worktree: *worktree,
@@ -1335,198 +1483,230 @@ impl SessionHub {
                 let prompt_text = first_prompt.map(|s| s.to_string());
                 let first_images = images.clone().unwrap_or_default();
                 let prompt_id_clone = prompt_id.clone();
-                tokio::spawn(async move {
-                    let driver_for_prompt = driver.clone();
-                    let swap = Box::new(move |_hub: Arc<Mutex<SessionHub>>| {
-                        let driver = driver.clone();
-                        let opts = opts.clone();
-                        Box::pin(async move { driver.new_session(opts).await }) as SwapFuture
-                    });
-                    let sid = switch_to(hub_clone.clone(), client_key, swap, false, false).await;
-                    if let Some(sid) = sid {
-                        if has_first_prompt {
-                            let pid = prompt_id_clone.clone();
-                            let pid_for_cache = prompt_id_clone.clone();
-                            let driver_clone = driver_for_prompt.clone();
-                            let prompt_text = prompt_text.clone();
-                            let images_clone = first_images.clone();
-                            let hub_clone2 = hub_clone.clone();
-                            tokio::spawn(async move {
-                                driver_clone
-                                    .prompt(
-                                        prompt_text.unwrap_or_default(),
-                                        None,
-                                        Some(sid.clone()),
-                                        images_clone,
-                                        pid.clone(),
-                                    )
-                                    .await;
-                                let msg = ServerMessage::PromptResult {
-                                    prompt_id: pid.unwrap_or_default(),
-                                    accepted: true,
-                                    session_id: Some(sid),
-                                    error: None,
-                                };
-                                let mut h = hub_clone2.lock();
-                                // C3: cache the result for idempotent replay
-                                if let Some(ref pid_str) = pid_for_cache {
-                                    h.cache_prompt_result(pid_str.clone(), msg.clone());
-                                }
-                                h.send_to_client(client_key, msg);
+                self.hub_ops.enqueue(
+                    "new_session",
+                    Box::new(move |hub| {
+                        Box::pin(async move {
+                            let driver_for_prompt = driver.clone();
+                            let swap = Box::new(move |_hub: Arc<Mutex<SessionHub>>| {
+                                let driver = driver.clone();
+                                let opts = opts.clone();
+                                Box::pin(async move { driver.new_session(opts).await })
+                                    as SwapFuture
                             });
-                        }
-                    } else {
-                        // C5 fix: when create fails and the client is awaiting a prompt ACK
-                        // by promptId, send PromptResult (not just Error) so the client
-                        // unblocks. Mirrors TS createAndPrompt throwing inside acceptPrompt.
-                        let mut h = hub_clone.lock();
-                        if has_first_prompt {
-                            let msg = ServerMessage::PromptResult {
-                                prompt_id: prompt_id_clone.clone().unwrap_or_default(),
-                                accepted: false,
-                                session_id: None,
-                                error: Some("Could not create the new session".into()),
-                            };
-                            // C3: cache the failure for idempotent replay
-                            if let Some(ref pid_str) = prompt_id_clone {
-                                h.cache_prompt_result(pid_str.clone(), msg.clone());
+                            let sid = switch_to(hub.clone(), client_key, swap, false, false).await;
+                            if let Some(sid) = sid {
+                                if has_first_prompt {
+                                    let pid = prompt_id_clone.clone();
+                                    let pid_for_cache = prompt_id_clone.clone();
+                                    driver_for_prompt
+                                        .prompt(
+                                            prompt_text.unwrap_or_default(),
+                                            None,
+                                            Some(sid.clone()),
+                                            first_images,
+                                            pid.clone(),
+                                        )
+                                        .await;
+                                    let msg = ServerMessage::PromptResult {
+                                        prompt_id: pid.unwrap_or_default(),
+                                        accepted: true,
+                                        session_id: Some(sid),
+                                        error: None,
+                                    };
+                                    let mut h = hub.lock();
+                                    // C3: cache the result for idempotent replay
+                                    if let Some(ref pid_str) = pid_for_cache {
+                                        h.cache_prompt_result(pid_str.clone(), msg.clone());
+                                    }
+                                    h.send_to_client(client_key, msg);
+                                }
+                            } else {
+                                // C5 fix: when create fails and the client is awaiting a prompt ACK
+                                // by promptId, send PromptResult (not just Error) so the client
+                                // unblocks. Mirrors TS createAndPrompt throwing inside acceptPrompt.
+                                let mut h = hub.lock();
+                                if has_first_prompt {
+                                    let msg = ServerMessage::PromptResult {
+                                        prompt_id: prompt_id_clone.clone().unwrap_or_default(),
+                                        accepted: false,
+                                        session_id: None,
+                                        error: Some("Could not create the new session".into()),
+                                    };
+                                    // C3: cache the failure for idempotent replay
+                                    if let Some(ref pid_str) = prompt_id_clone {
+                                        h.cache_prompt_result(pid_str.clone(), msg.clone());
+                                    }
+                                    h.send_to_client(client_key, msg);
+                                } else {
+                                    h.send_to_client(
+                                        client_key,
+                                        ServerMessage::Error {
+                                            message: "Could not create the new session".into(),
+                                            kind: None,
+                                        },
+                                    );
+                                }
                             }
-                            h.send_to_client(client_key, msg);
-                        } else {
-                            h.send_to_client(
-                                client_key,
-                                ServerMessage::Error {
-                                    message: "Could not create the new session".into(),
-                                    kind: None,
-                                },
-                            );
-                        }
-                    }
-                });
+                        })
+                    }),
+                );
             }
             ClientMessage::SetArchived { path, archived } => {
                 let driver = self.driver.clone();
-                let hub_clone = hub.clone();
                 let path = path.clone();
                 let archived = *archived;
-                tokio::spawn(async move {
-                    match driver.set_archived(path, archived).await {
-                        result if result.worktree_retained.is_some() => {
-                            let wr = result.worktree_retained.unwrap();
-                            let h = hub_clone.lock();
-                            h.send_to_client(
-                                client_key,
-                                ServerMessage::WorktreeRetained {
-                                    path: wr.path,
-                                    reason: wr.reason,
-                                },
-                            );
-                        }
-                        _ => {
-                            // Re-broadcast the session list
-                            let sessions = driver.list_sessions().await;
-                            let default_cwd = std::env::var("HOME").unwrap_or_default();
-                            let mut h = hub_clone.lock();
-                            h.broadcast_session_list_with(sessions, default_cwd);
-                        }
-                    }
-                });
+                self.hub_ops.enqueue(
+                    "set_archived",
+                    Box::new(move |hub| {
+                        Box::pin(async move {
+                            match driver.set_archived(path, archived).await {
+                                result if result.worktree_retained.is_some() => {
+                                    let wr = result.worktree_retained.unwrap();
+                                    let h = hub.lock();
+                                    h.send_to_client(
+                                        client_key,
+                                        ServerMessage::WorktreeRetained {
+                                            path: wr.path,
+                                            reason: wr.reason,
+                                        },
+                                    );
+                                }
+                                _ => {
+                                    // Re-broadcast the session list
+                                    let sessions = driver.list_sessions().await;
+                                    let default_cwd = std::env::var("HOME").unwrap_or_default();
+                                    let mut h = hub.lock();
+                                    h.broadcast_session_list_with(sessions, default_cwd);
+                                }
+                            }
+                        })
+                    }),
+                );
             }
             ClientMessage::RenameSession { path, name } => {
                 if name.trim().is_empty() {
                     return;
                 }
                 let driver = self.driver.clone();
-                let hub_clone = hub.clone();
                 let path = path.clone();
                 let name = name.trim().to_string();
-                tokio::spawn(async move {
-                    driver.rename_session(path, name).await;
-                    // Re-broadcast the session list
-                    let sessions = driver.list_sessions().await;
-                    let default_cwd = std::env::var("HOME").unwrap_or_default();
-                    let mut h = hub_clone.lock();
-                    h.broadcast_session_list_with(sessions, default_cwd);
-                });
+                self.hub_ops.enqueue(
+                    "rename_session",
+                    Box::new(move |hub| {
+                        Box::pin(async move {
+                            driver.rename_session(path, name).await;
+                            // Re-broadcast the session list
+                            let sessions = driver.list_sessions().await;
+                            let default_cwd = std::env::var("HOME").unwrap_or_default();
+                            let mut h = hub.lock();
+                            h.broadcast_session_list_with(sessions, default_cwd);
+                        })
+                    }),
+                );
             }
             ClientMessage::CleanupWorktree { path, force } => {
                 let driver = self.driver.clone();
-                let hub_clone = hub.clone();
                 let path = path.clone();
                 let force = force.unwrap_or(false);
-                tokio::spawn(async move {
-                    let result = driver.cleanup_worktree(path, force).await;
-                    if !result.removed {
-                        let h = hub_clone.lock();
-                        h.send_to_client(
-                            client_key,
-                            ServerMessage::Error {
-                                message: format!(
-                                    "worktree not removed: {}",
-                                    result.reason.unwrap_or("unknown reason".into())
-                                ),
-                                kind: None,
-                            },
-                        );
-                    }
-                    // Re-broadcast the session list either way
-                    let sessions = driver.list_sessions().await;
-                    let default_cwd = std::env::var("HOME").unwrap_or_default();
-                    let mut h = hub_clone.lock();
-                    h.broadcast_session_list_with(sessions, default_cwd);
-                });
+                self.hub_ops.enqueue(
+                    "cleanup_worktree",
+                    Box::new(move |hub| {
+                        Box::pin(async move {
+                            let result = driver.cleanup_worktree(path, force).await;
+                            if !result.removed {
+                                let h = hub.lock();
+                                h.send_to_client(
+                                    client_key,
+                                    ServerMessage::Error {
+                                        message: format!(
+                                            "worktree not removed: {}",
+                                            result.reason.unwrap_or("unknown reason".into())
+                                        ),
+                                        kind: None,
+                                    },
+                                );
+                            }
+                            // Re-broadcast the session list either way
+                            let sessions = driver.list_sessions().await;
+                            let default_cwd = std::env::var("HOME").unwrap_or_default();
+                            let mut h = hub.lock();
+                            h.broadcast_session_list_with(sessions, default_cwd);
+                        })
+                    }),
+                );
             }
             ClientMessage::ListCommands => {
                 let driver = self.driver.clone();
-                let hub_clone = hub.clone();
                 let focused = focused_id.clone();
-                tokio::spawn(async move {
-                    let commands = driver.list_commands(focused).await;
-                    let h = hub_clone.lock();
-                    h.send_to_client(client_key, ServerMessage::CommandList { commands });
-                });
+                self.hub_ops.enqueue(
+                    "list_commands",
+                    Box::new(move |hub| {
+                        Box::pin(async move {
+                            let commands = driver.list_commands(focused).await;
+                            let h = hub.lock();
+                            h.send_to_client(client_key, ServerMessage::CommandList { commands });
+                        })
+                    }),
+                );
             }
             ClientMessage::ListFacets => {
                 let driver = self.driver.clone();
-                let hub_clone = hub.clone();
                 let focused = focused_id.clone();
-                tokio::spawn(async move {
-                    let facets = driver.list_facets(focused).await;
-                    let h = hub_clone.lock();
-                    h.send_to_client(client_key, ServerMessage::FacetList { facets });
-                });
+                self.hub_ops.enqueue(
+                    "list_facets",
+                    Box::new(move |hub| {
+                        Box::pin(async move {
+                            let facets = driver.list_facets(focused).await;
+                            let h = hub.lock();
+                            h.send_to_client(client_key, ServerMessage::FacetList { facets });
+                        })
+                    }),
+                );
             }
             ClientMessage::QueryFiles { query, cwd } => {
                 let driver = self.driver.clone();
-                let hub_clone = hub.clone();
                 let focused = focused_id.clone();
                 let query = query.clone();
                 let cwd = cwd.clone();
-                tokio::spawn(async move {
-                    let files = driver.list_files(query.clone(), focused, cwd).await;
-                    let h = hub_clone.lock();
-                    h.send_to_client(client_key, ServerMessage::FileList { query, files });
-                });
+                self.hub_ops.enqueue(
+                    "query_files",
+                    Box::new(move |hub| {
+                        Box::pin(async move {
+                            let files = driver.list_files(query.clone(), focused, cwd).await;
+                            let h = hub.lock();
+                            h.send_to_client(client_key, ServerMessage::FileList { query, files });
+                        })
+                    }),
+                );
             }
             ClientMessage::QueryDir { path } => {
                 let driver = self.driver.clone();
-                let hub_clone = hub.clone();
                 let path = path.clone();
-                tokio::spawn(async move {
-                    let listing = driver.list_dir(path.clone()).await;
-                    let h = hub_clone.lock();
-                    h.send_to_client(client_key, ServerMessage::DirListing { listing });
-                });
+                self.hub_ops.enqueue(
+                    "query_dir",
+                    Box::new(move |hub| {
+                        Box::pin(async move {
+                            let listing = driver.list_dir(path.clone()).await;
+                            let h = hub.lock();
+                            h.send_to_client(client_key, ServerMessage::DirListing { listing });
+                        })
+                    }),
+                );
             }
             ClientMessage::StatPath { path } => {
                 let driver = self.driver.clone();
-                let hub_clone = hub.clone();
                 let path = path.clone();
-                tokio::spawn(async move {
-                    let stat = driver.stat_path(path.clone()).await;
-                    let h = hub_clone.lock();
-                    h.send_to_client(client_key, ServerMessage::PathStat { stat });
-                });
+                self.hub_ops.enqueue(
+                    "stat_path",
+                    Box::new(move |hub| {
+                        Box::pin(async move {
+                            let stat = driver.stat_path(path.clone()).await;
+                            let h = hub.lock();
+                            h.send_to_client(client_key, ServerMessage::PathStat { stat });
+                        })
+                    }),
+                );
             }
             ClientMessage::SetLoginShell { path } => {
                 let shell = path
@@ -1736,83 +1916,100 @@ impl SessionHub {
         !self.running.is_empty() && !self.clients.is_empty()
     }
 
-    /// Spawn the async follow-up list sends that the TS addClient fires after
-    /// hello+seed: sessionList, modelList, commandList, facetList, fileIndex.
-    /// Each is a driver call (disk/registry read) that must not block the WS
-    /// handshake. Mirrors `void this.broadcastSessionList()` etc. in hub.ts.
-    pub fn spawn_connect_lists(&self, client_key: u64, hub: Arc<Mutex<Self>>) {
-        let driver = self.driver.clone();
-        let hub_clone = hub.clone();
+    /// Enqueue the async follow-up list sends that the TS addClient fires after
+    /// hello+seed: sessionList, modelList, commandList, facetList, fileIndex,
+    /// modelDefaults. Mirrors the source order of the `void this.*()` calls in
+    /// hub.ts; the single applier awaits and applies them FIFO.
+    pub fn spawn_connect_lists(&self, client_key: u64) {
         let focused = self
             .clients
             .get(&client_key)
             .and_then(|c| c.focused_id.clone());
-        tokio::spawn(async move {
-            let sessions = driver.list_sessions().await;
-            let default_new_session_cwd = std::env::var("HOME").unwrap_or_default();
-            let h = hub_clone.lock();
-            h.send_to_client(
-                client_key,
-                ServerMessage::SessionList {
-                    sessions,
-                    active_session_id: focused.clone(),
-                    default_new_session_cwd,
-                },
-            );
-        });
 
         let driver = self.driver.clone();
-        let hub_clone = hub.clone();
-        tokio::spawn(async move {
-            let models = driver.list_models().await;
-            let mut h = hub_clone.lock();
-            h.available_models = models.clone();
-            h.broadcast(ServerMessage::ModelList { models });
-        });
+        let active_session_id = focused.clone();
+        self.hub_ops.enqueue(
+            "connect_session_list",
+            Box::new(move |hub| {
+                Box::pin(async move {
+                    let sessions = driver.list_sessions().await;
+                    let default_new_session_cwd = std::env::var("HOME").unwrap_or_default();
+                    let h = hub.lock();
+                    h.send_to_client(
+                        client_key,
+                        ServerMessage::SessionList {
+                            sessions,
+                            active_session_id,
+                            default_new_session_cwd,
+                        },
+                    );
+                })
+            }),
+        );
 
         let driver = self.driver.clone();
-        let hub_clone = hub.clone();
-        tokio::spawn(async move {
-            let defaults = driver.get_model_defaults().await;
-            let h = hub_clone.lock();
-            h.broadcast(ServerMessage::ModelDefaults { defaults });
-        });
+        self.hub_ops.enqueue(
+            "connect_model_list",
+            Box::new(move |hub| {
+                Box::pin(async move {
+                    let models = driver.list_models().await;
+                    let mut h = hub.lock();
+                    h.available_models = models.clone();
+                    h.broadcast(ServerMessage::ModelList { models });
+                })
+            }),
+        );
 
         let driver = self.driver.clone();
-        let hub_clone = hub.clone();
-        let focused = self
-            .clients
-            .get(&client_key)
-            .and_then(|c| c.focused_id.clone());
-        tokio::spawn(async move {
-            let commands = driver.list_commands(focused).await;
-            let h = hub_clone.lock();
-            h.send_to_client(client_key, ServerMessage::CommandList { commands });
-        });
+        let focused_for_commands = focused.clone();
+        self.hub_ops.enqueue(
+            "connect_command_list",
+            Box::new(move |hub| {
+                Box::pin(async move {
+                    let commands = driver.list_commands(focused_for_commands).await;
+                    let h = hub.lock();
+                    h.send_to_client(client_key, ServerMessage::CommandList { commands });
+                })
+            }),
+        );
 
         let driver = self.driver.clone();
-        let hub_clone = hub.clone();
-        let focused = self
-            .clients
-            .get(&client_key)
-            .and_then(|c| c.focused_id.clone());
-        tokio::spawn(async move {
-            let facets = driver.list_facets(focused).await;
-            let h = hub_clone.lock();
-            h.send_to_client(client_key, ServerMessage::FacetList { facets });
-        });
+        let focused_for_facets = focused.clone();
+        self.hub_ops.enqueue(
+            "connect_facet_list",
+            Box::new(move |hub| {
+                Box::pin(async move {
+                    let facets = driver.list_facets(focused_for_facets).await;
+                    let h = hub.lock();
+                    h.send_to_client(client_key, ServerMessage::FacetList { facets });
+                })
+            }),
+        );
 
         let driver = self.driver.clone();
-        let hub_clone = hub.clone();
-        let focused = self
-            .clients
-            .get(&client_key)
-            .and_then(|c| c.focused_id.clone());
-        tokio::spawn(async move {
-            let (files, truncated) = driver.list_file_index(focused).await;
-            let h = hub_clone.lock();
-            h.send_to_client(client_key, ServerMessage::FileIndex { files, truncated });
-        });
+        let focused_for_files = focused.clone();
+        self.hub_ops.enqueue(
+            "connect_file_index",
+            Box::new(move |hub| {
+                Box::pin(async move {
+                    let (files, truncated) = driver.list_file_index(focused_for_files).await;
+                    let h = hub.lock();
+                    h.send_to_client(client_key, ServerMessage::FileIndex { files, truncated });
+                })
+            }),
+        );
+
+        let driver = self.driver.clone();
+        self.hub_ops.enqueue(
+            "connect_model_defaults",
+            Box::new(move |hub| {
+                Box::pin(async move {
+                    let defaults = driver.get_model_defaults().await;
+                    let h = hub.lock();
+                    h.broadcast(ServerMessage::ModelDefaults { defaults });
+                })
+            }),
+        );
     }
 
     /// One live-refresh pass: fresh session list + context usage.
@@ -1963,6 +2160,8 @@ fn switch_to(
         // ── Single-flight check: if a swap is already in-flight on this connection,
         // coalesce this one as the latest pending (depth 1, latest wins). Resolve
         // any previously-queued request with None so its awaiter unblocks.
+        // Dormant under the single-applier model: switch calls are serialized, so
+        // this TS-mirroring insurance should not be load-bearing (or deadlocking).
         let mut swap = Some(swap);
         let pending_rx: Option<tokio::sync::oneshot::Receiver<Option<SessionId>>> = {
             let mut h = hub.lock();
@@ -2024,18 +2223,8 @@ fn switch_to(
                 retry_on_raced_events,
                 resolve,
             } = next;
-            let hub_clone = hub.clone();
-            tokio::spawn(async move {
-                let sid = switch_to(
-                    hub_clone.clone(),
-                    client_key,
-                    swap,
-                    reseed,
-                    retry_on_raced_events,
-                )
-                .await;
-                let _ = resolve.send(sid);
-            });
+            let sid = switch_to(hub.clone(), client_key, swap, reseed, retry_on_raced_events).await;
+            let _ = resolve.send(sid);
         }
 
         sid
@@ -2137,54 +2326,65 @@ async fn finish_switch(
         }
     }
 
-    // Spawn async work: session list, commands, facets, file index
-    // C7 fix: also send facet list + file index (TS sends all four after a swap)
-    {
-        let h = hub.lock();
-        let driver = h.driver.clone();
-        let hub_clone = hub.clone();
-        tokio::spawn(async move {
-            let sessions = driver.list_sessions().await;
-            let default_cwd = std::env::var("HOME").unwrap_or_default();
-            let mut h = hub_clone.lock();
-            h.broadcast_session_list_with(sessions, default_cwd);
-        });
-    }
-    {
-        let h = hub.lock();
-        let driver = h.driver.clone();
-        let hub_clone = hub.clone();
-        let focused = Some(sid.clone());
-        tokio::spawn(async move {
-            let commands = driver.list_commands(focused).await;
-            let h = hub_clone.lock();
-            h.send_to_client(client_key, ServerMessage::CommandList { commands });
-        });
-    }
+    // Enqueue async work: session list, commands, facets, file index.
+    // C7 fix: also send facet list + file index (TS sends all four after a swap).
+    let hub_ops = { hub.lock().hub_ops.clone() };
+    let driver = { hub.lock().driver.clone() };
+    hub_ops.enqueue(
+        "switch_session_list",
+        Box::new(move |hub| {
+            Box::pin(async move {
+                let sessions = driver.list_sessions().await;
+                let default_cwd = std::env::var("HOME").unwrap_or_default();
+                let mut h = hub.lock();
+                h.broadcast_session_list_with(sessions, default_cwd);
+            })
+        }),
+    );
+
+    let hub_ops = { hub.lock().hub_ops.clone() };
+    let driver = { hub.lock().driver.clone() };
+    let focused = Some(sid.clone());
+    hub_ops.enqueue(
+        "switch_command_list",
+        Box::new(move |hub| {
+            Box::pin(async move {
+                let commands = driver.list_commands(focused).await;
+                let h = hub.lock();
+                h.send_to_client(client_key, ServerMessage::CommandList { commands });
+            })
+        }),
+    );
+
     // C7: facet list
-    {
-        let h = hub.lock();
-        let driver = h.driver.clone();
-        let hub_clone = hub.clone();
-        let focused = Some(sid.clone());
-        tokio::spawn(async move {
-            let facets = driver.list_facets(focused).await;
-            let h = hub_clone.lock();
-            h.send_to_client(client_key, ServerMessage::FacetList { facets });
-        });
-    }
+    let hub_ops = { hub.lock().hub_ops.clone() };
+    let driver = { hub.lock().driver.clone() };
+    let focused = Some(sid.clone());
+    hub_ops.enqueue(
+        "switch_facet_list",
+        Box::new(move |hub| {
+            Box::pin(async move {
+                let facets = driver.list_facets(focused).await;
+                let h = hub.lock();
+                h.send_to_client(client_key, ServerMessage::FacetList { facets });
+            })
+        }),
+    );
+
     // C7: file index (session-scoped file tree, NOT the search variant)
-    {
-        let h = hub.lock();
-        let driver = h.driver.clone();
-        let hub_clone = hub.clone();
-        let focused = Some(sid.clone());
-        tokio::spawn(async move {
-            let (files, truncated) = driver.list_file_index(focused).await;
-            let h = hub_clone.lock();
-            h.send_to_client(client_key, ServerMessage::FileIndex { files, truncated });
-        });
-    }
+    let hub_ops = { hub.lock().hub_ops.clone() };
+    let driver = { hub.lock().driver.clone() };
+    let focused = Some(sid.clone());
+    hub_ops.enqueue(
+        "switch_file_index",
+        Box::new(move |hub| {
+            Box::pin(async move {
+                let (files, truncated) = driver.list_file_index(focused).await;
+                let h = hub.lock();
+                h.send_to_client(client_key, ServerMessage::FileIndex { files, truncated });
+            })
+        }),
+    );
 
     Some(sid)
 }

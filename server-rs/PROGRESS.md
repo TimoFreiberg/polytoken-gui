@@ -282,14 +282,29 @@ Stay on `MockDriver` for this phase — the thin deterministic stack plus the
 Bun control is what makes each of the 33 remaining failures attributable in
 minutes.
 
-- [ ] **Land the hub completion queue first** (decided, not wait-for-pain):
+- [x] **Land the hub completion queue first** (decided, not wait-for-pain):
       all fire-and-forget `tokio::spawn` driver completions funnel through
       one `mpsc` consumed by a single applier task that locks the hub and
       applies results in FIFO order. Keeps the Mutex; restores TS's
       deterministic ordering; kills the connect-time fan-out races
       (sessionList/modelList/commandList/facetList/fileIndex). The same
-      queue-over-bare-mutex idiom is reused for SSE in Phase 2 — one
-      concurrency pattern everywhere, documented in the hub.rs header.
+      queue-over-mutex idiom is reused for SSE in Phase 2 — one
+      concurrency pattern everywhere, documented in the hub.rs header. **DONE
+      (2026-07-05):** bounded `mpsc` (256) + single long-lived applier
+      (`run_hub_op_applier`), `try_send` with `panic!` on `Full` (fail-loud
+      canary) and benign debug-log on `Closed` (shutdown). 30 spawn sites
+      converted (20 handleClient completions + 6 connect follow-ups + 4
+      post-switch refreshes). Applier awaits driver future *before* locking
+      (no lock-across-await); per-op `catch_unwind` contains panics so one
+      bad op can't wedge the queue. **Documented divergence from TS:** the
+      queue serializes async driver I/O in *dispatch order* — stricter than
+      TS, which fires connect follow-ups concurrently (`void this.foo()`) and
+      applies in completion order. Acceptable for this single-user tool (local
+      daemon, low RTT, prompt resolves at acceptance, control-plane bypasses
+      the queue). Reviewer (Opus) verified no deadlock + FIFO holds + no
+      behavior change (e2e stayed 273/25). Note: the single-flight/pending-
+      switch coalescing machinery is now dormant under the single applier
+      (cheap TS-mirroring insurance; noted in `switch_to`).
 - [ ] Work the failure clusters largest-first (see ground truth above). For
       each cluster, port the relevant `hub.test.ts` / `hub-journal.test.ts`
       cases *before* fixing, so hub coverage back-fills as the burn-down
