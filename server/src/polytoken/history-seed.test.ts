@@ -5,9 +5,10 @@ import { historyToSeedEvents, type HistoryItem } from "./history-seed.js";
 const ref: SessionRef = { workspaceId: "w", sessionId: "s" };
 
 // Helpers to build history items with only the fields the fold reads.
-// NOTE: per the wire schema, user/assistant/tool_result items do NOT carry
-// `emitted_at` (only HistoryItemMeta: item_id + projected_index). The test helpers
-// omit it to match the real daemon — the fold's ISO fallback must handle this.
+// NOTE: as of daemon 0.4.0-unstable.6+, user/assistant/tool_result carry an OPTIONAL
+// `emitted_at` (nullable in the .7 schema). These helpers omit it to exercise the
+// pre-.6 / unstamped-item replay path — the fold's deterministic ISO fallback. Tests
+// that assert real-timestamp adoption pass `emitted_at` explicitly.
 const user = (content: string, promptId = "p1"): HistoryItem =>
   ({ type: "user", content, prompt_id: promptId } as unknown as HistoryItem);
 
@@ -258,22 +259,32 @@ describe("historyToSeedEvents", () => {
     for (const id of ids) expect(id).toMatch(/^u-/);
   });
 
-  test("fallback timestamp is a valid ISO string (not h-N) when emitted_at absent", () => {
-    // user/assistant/tool_result items carry NO emitted_at in the wire schema —
-    // the fold must produce a valid ISO timestamp so the client's Date parse works.
-    const out = historyToSeedEvents([user("hello")], { ref });
-    const ts = (out[0] as { timestamp: string }).timestamp;
-    expect(() => new Date(ts).getTime()).not.toThrow();
-    expect(Number.isNaN(new Date(ts).getTime())).toBe(false);
+  test("retains deterministic fallback for kinds without emitted_at", () => {
+    // The optional kinds (user/assistant/tool_result/facet_switch) can arrive without
+    // emitted_at when replaying a pre-.6 session. The fold must fall back to the
+    // deterministic epoch-anchored stamp (index * 1000 ms) — a valid ISO, not "h-N".
+    const out = historyToSeedEvents(
+      [user("a"), toolResult("c1", { text: "ok" })],
+      { ref },
+    );
+    expect((out[0] as { timestamp: string }).timestamp).toBe(new Date(0).toISOString());
+    expect((out[1] as { timestamp: string }).timestamp).toBe(new Date(1000).toISOString());
   });
 
-  test("emitted_at is used when present (state_update etc. carry it)", () => {
+  test("uses emitted_at for schema-supported kinds when present", () => {
+    // .7 schema: user/assistant/tool_result carry emitted_at. When present, the real
+    // value flows into the seed timestamp, never the synthetic epoch fallback.
+    const real = "2026-06-28T12:00:00Z";
     const out = historyToSeedEvents(
       [
-        { type: "user", content: "x", prompt_id: "p", emitted_at: "2026-06-28T12:00:00Z" } as unknown as HistoryItem,
+        { type: "user", content: "x", prompt_id: "p", emitted_at: real } as unknown as HistoryItem,
+        { type: "assistant", prompt_id: "p", blocks: [{ type: "text", text: "y" }], emitted_at: real } as unknown as HistoryItem,
+        { type: "tool_result", call_id: "c1", content: { text: "ok" }, is_error: false, emitted_at: real } as unknown as HistoryItem,
       ],
       { ref },
     );
-    expect((out[0] as { timestamp: string }).timestamp).toBe("2026-06-28T12:00:00Z");
+    for (const ev of out) {
+      expect((ev as { timestamp: string }).timestamp).toBe(real);
+    }
   });
 });

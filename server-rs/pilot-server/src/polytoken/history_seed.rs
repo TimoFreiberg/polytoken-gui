@@ -169,15 +169,23 @@ pub fn history_to_seed_events(
     let mut out: Vec<SessionDriverEvent> = Vec::new();
     let mut seq: usize = 0;
 
-    // Per-item timestamp. NOTE: only session_lifecycle/state_update/model_switch/
-    // compaction_fencepost/system_reminder/classifier_decision/context_cleared history
-    // items carry `emitted_at` (per the wire schema). The transcript-rendering kinds
-    // (user/assistant/tool_result) do NOT — they carry only HistoryItemMeta
-    // (item_id + projected_index). So emitted_at is undefined for those, and we fall
-    // back to a monotonic synthetic ISO timestamp (epoch-anchored, advancing per item)
-    // so the client's relative-time display gets a valid Date instead of an Invalid
-    // Date from "h-N". The absolute value is wrong (epoch), but it's never shown as
-    // wall-clock — only as ordering within the replayed transcript, which seq preserves.
+    // Per-item timestamp. As of daemon 0.4.0-unstable.6+, ALL 12 history kinds carry
+    // `emitted_at` on the wire — but with a required/optional split (confirmed against
+    // the .7 OpenAPI dump, KnownSessionHistoryItem):
+    //   * REQUIRED (always present): session_lifecycle, state_update, model_switch,
+    //     compaction_fencepost, system_reminder, classifier_decision, context_cleared,
+    //     image_reference.
+    //   * OPTIONAL (nullable): user, assistant, tool_result, facet_switch — these
+    //     gained `emitted_at` in unstable.6 but the schema marks it optional, so a
+    //     session recorded before .6 (or any item the daemon leaves unstamped) can
+    //     still arrive without it.
+    // We therefore always prefer the real `emitted_at` (schema-agnostic read below);
+    // the synthetic fallback only fires for an optional-kind item that genuinely lacks
+    // one (pre-.6 replay). It is a deterministic monotonic ISO stamp (epoch-anchored,
+    // advancing per item) so the client's relative-time display gets a valid Date
+    // instead of an Invalid Date. The absolute value is wrong (epoch), but it's never
+    // shown as wall-clock — only as ordering within the replayed transcript, which seq
+    // preserves. Do NOT delete the fallback: the 4 optional kinds keep it reachable.
     //
     // `new Date(i * 1000).toISOString()` → seconds-since-epoch → ISO 8601 UTC.
     // We format manually to avoid pulling in chrono just for this synthetic stamp.
@@ -949,5 +957,60 @@ mod tests {
             format_synthetic_iso(730 * 86_400_000),
             "1972-01-01T00:00:00.000Z"
         );
+    }
+
+    // --- emitted_at adoption (daemon 0.4.0-unstable.6+, AC.2) ---
+
+    /// Pull the seed event's timestamp regardless of variant.
+    fn stamp(ev: &SessionDriverEvent) -> &str {
+        match ev {
+            SessionDriverEvent::UserMessage { base, .. }
+            | SessionDriverEvent::AssistantDelta { base, .. }
+            | SessionDriverEvent::ToolStarted { base, .. }
+            | SessionDriverEvent::ToolFinished { base, .. }
+            | SessionDriverEvent::CustomMessage { base, .. }
+            | SessionDriverEvent::SessionUpdated { base, .. } => &base.timestamp,
+            other => panic!("unexpected event variant: {:?}", other),
+        }
+    }
+
+    #[test]
+    fn uses_emitted_at_for_schema_supported_kinds() {
+        // .7 schema: user/assistant/tool_result carry `emitted_at`. When present, the
+        // real value must flow into the seed event timestamp, never the synthetic
+        // epoch fallback.
+        let real = "2025-03-14T09:26:53.000Z";
+        let items = vec![
+            json!({ "type": "user", "content": "hi", "prompt_id": "p1", "emitted_at": real }),
+            json!({ "type": "assistant", "prompt_id": "p1",
+                    "blocks": [ { "type": "text", "text": "yo" } ], "emitted_at": real }),
+            json!({ "type": "tool_result", "call_id": "c1",
+                    "content": { "text": "ok" }, "is_error": false, "emitted_at": real }),
+        ];
+        let out = history_to_seed_events(&items, &ctx());
+        assert_eq!(out.len(), 3);
+        for ev in &out {
+            assert_eq!(
+                stamp(ev),
+                real,
+                "expected real emitted_at, got synthetic fallback"
+            );
+        }
+    }
+
+    #[test]
+    fn retains_deterministic_fallback_for_kinds_without_emitted_at() {
+        // The optional kinds (user/assistant/tool_result/facet_switch) can arrive
+        // without `emitted_at` when replaying a pre-.6 session. The seed must fall
+        // back to the deterministic epoch-anchored stamp (index * 1000 ms), not crash
+        // or emit an invalid date.
+        let items = vec![
+            json!({ "type": "user", "content": "a", "prompt_id": "p1" }), // i=0 → epoch
+            json!({ "type": "tool_result", "call_id": "c1", "content": { "text": "ok" } }), // i=1 → +1s
+        ];
+        let out = history_to_seed_events(&items, &ctx());
+        assert_eq!(out.len(), 2);
+        assert_eq!(stamp(&out[0]), format_synthetic_iso(0).as_str());
+        assert_eq!(stamp(&out[1]), format_synthetic_iso(1000).as_str());
     }
 }

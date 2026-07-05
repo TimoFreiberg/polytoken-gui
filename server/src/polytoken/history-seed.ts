@@ -103,15 +103,23 @@ export function historyToSeedEvents(
   const { ref } = ctx;
   const out: SessionDriverEvent[] = [];
   let seq = 0;
-  // Per-item timestamp. NOTE: only session_lifecycle/state_update/model_switch/
-  // compaction_fencepost/system_reminder/classifier_decision/context_cleared history
-  // items carry `emitted_at` (per the wire schema). The transcript-rendering kinds
-  // (user/assistant/tool_result) do NOT — they carry only HistoryItemMeta
-  // (item_id + projected_index). So emitted_at is undefined for those, and we fall
-  // back to a monotonic synthetic ISO timestamp (epoch-anchored, advancing per item)
-  // so the client's relative-time display gets a valid Date instead of an Invalid
-  // Date from "h-N". The absolute value is wrong (epoch), but it's never shown as
-  // wall-clock — only as ordering within the replayed transcript, which seq preserves.
+  // Per-item timestamp. As of daemon 0.4.0-unstable.6+, ALL 12 history kinds carry
+  // `emitted_at` on the wire — but with a required/optional split (confirmed against
+  // the .7 OpenAPI dump, KnownSessionHistoryItem):
+  //   * REQUIRED (always present): session_lifecycle, state_update, model_switch,
+  //     compaction_fencepost, system_reminder, classifier_decision, context_cleared,
+  //     image_reference.
+  //   * OPTIONAL (nullable): user, assistant, tool_result, facet_switch — these gained
+  //     `emitted_at` in unstable.6 but the schema marks it optional, so a session
+  //     recorded before .6 (or any item the daemon leaves unstamped) can still arrive
+  //     without it.
+  // We always prefer the real `emitted_at`; the synthetic fallback only fires for an
+  // optional-kind item that genuinely lacks one (pre-.6 replay). It is a deterministic
+  // monotonic ISO stamp (epoch-anchored, advancing per item) so the client's
+  // relative-time display gets a valid Date instead of an Invalid Date. The absolute
+  // value is wrong (epoch), but it's never shown as wall-clock — only as ordering
+  // within the replayed transcript, which seq preserves. Do NOT delete the fallback:
+  // the 4 optional kinds keep it reachable.
   const ts = (item: { emitted_at?: string }, i: number) =>
     item.emitted_at ?? new Date(i * 1000).toISOString();
 
