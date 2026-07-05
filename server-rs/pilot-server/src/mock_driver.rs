@@ -1684,7 +1684,14 @@ impl PilotDriver for MockDriver {
         session_id: Option<SessionId>,
         images: Vec<ImageContent>,
         prompt_id: Option<String>,
-    ) {
+    ) -> Result<(), String> {
+        // Faithful port of TS `MockDriver.prompt()` (`server/src/mock-driver.ts:381`):
+        // the `__pilot_reject_prompt__` sentinel rejects (surfaces as a
+        // `promptResult { accepted: false }` so the client shows "Not sent — …"),
+        // then the deferred-creation first turn + normal demo-session reply.
+        if text == "__pilot_reject_prompt__" {
+            return Err("Mock prompt rejected before acceptance".into());
+        }
         // Deferred-creation first turn: this prompt targets the session we JUST
         // created, so stream it under that session's own ref (not the demo
         // session's) and consume the one-shot marker. Subsequent prompts fall
@@ -1706,11 +1713,12 @@ impl PilotDriver for MockDriver {
             if let Some(created) = taken {
                 let steps = new_session_reply(&created.snapshot, &text, &pid, &images);
                 self.play_script(steps);
-                return;
+                return Ok(());
             }
         }
         let steps = prompt_reply_script(&text, Some(&pid));
         self.play_script(steps);
+        Ok(())
     }
 
     fn abort(&self, _session_id: Option<SessionId>) {

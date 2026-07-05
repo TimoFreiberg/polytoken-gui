@@ -81,7 +81,11 @@ pub trait PilotDriver: Send + Sync {
     /// Unsubscribe by ID (returned by `subscribe`).
     fn unsubscribe(&self, id: usize);
 
-    /// Send a prompt to the session.
+    /// Send a prompt to the session. Returns `Err(message)` when the driver
+    /// rejects the prompt (e.g. the mock's `__pilot_reject_prompt__` sentinel, or
+    /// the polytoken driver's no-warm-session / POST failures) so the hub can
+    /// surface a `promptResult { accepted: false }` to the client. Ports the TS
+    /// `Promise<void>` that rejects by throwing.
     async fn prompt(
         &self,
         text: String,
@@ -89,7 +93,7 @@ pub trait PilotDriver: Send + Sync {
         session_id: Option<SessionId>,
         images: Vec<ImageContent>,
         prompt_id: Option<String>,
-    );
+    ) -> Result<(), String>;
 
     /// Abort the current turn.
     fn abort(&self, session_id: Option<SessionId>);

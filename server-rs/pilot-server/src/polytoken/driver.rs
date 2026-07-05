@@ -359,14 +359,20 @@ impl PilotDriver for PolytokenDriver {
         session_id: Option<SessionId>,
         images: Vec<ImageContent>,
         prompt_id: Option<String>,
-    ) {
-        let Some(sid) = session_id else { return };
-        if let Some(ws) = self.get_warm(&sid) {
-            match ws.client.prompt(&text, None).await {
-                Ok(_) => {}
-                Err(e) => error!("prompt failed: {e}"),
-            }
+    ) -> Result<(), String> {
+        // Ports TS `polytoken-driver.ts:882` which throws on no warm session /
+        // POST failure. Returns `Err` so the hub surfaces `promptResult { accepted:
+        // false }` to the client rather than silently dropping the prompt.
+        let Some(sid) = session_id else {
+            return Err("no session to prompt".into());
+        };
+        let Some(ws) = self.get_warm(&sid) else {
+            return Err("no warm polytoken session to prompt".into());
+        };
+        if let Err(e) = ws.client.prompt(&text, None).await {
+            return Err(format!("prompt failed: {e}"));
         }
+        Ok(())
     }
 
     fn abort(&self, session_id: Option<SessionId>) {

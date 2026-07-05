@@ -64,7 +64,8 @@ impl PilotDriver for StubDriver {
         _session_id: Option<SessionId>,
         _images: Vec<pilot_protocol::session_driver::ImageContent>,
         _prompt_id: Option<String>,
-    ) {
+    ) -> Result<(), String> {
+        Ok(())
     }
 
     fn abort(&self, _session_id: Option<SessionId>) {}

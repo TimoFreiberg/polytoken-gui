@@ -1178,32 +1178,33 @@ impl SessionHub {
                     "prompt",
                     Box::new(move |hub| {
                         Box::pin(async move {
-                            let result = async {
-                                driver
-                                    .prompt(
-                                        text,
-                                        deliver_as,
-                                        target.clone(),
-                                        images,
-                                        prompt_id_clone,
-                                    )
-                                    .await;
-                                target
-                            }
-                            .await;
+                            // Run the prompt; an Err (driver rejection, e.g. the
+                            // mock `__pilot_reject_prompt__` sentinel) surfaces as
+                            // `promptResult { accepted: false }` so the client shows
+                            // the rejected/delivery-error state. Ports TS
+                            // `acceptPrompt`'s `.catch` (hub.ts:1026).
+                            let prompt_outcome = driver
+                                .prompt(text, deliver_as, target.clone(), images, prompt_id_clone)
+                                .await;
 
-                            let msg = match &result {
-                                Some(sid) => ServerMessage::PromptResult {
+                            let msg = match (prompt_outcome, &target) {
+                                (Ok(()), Some(sid)) => ServerMessage::PromptResult {
                                     prompt_id: pid.clone().unwrap_or_default(),
                                     accepted: true,
                                     session_id: Some(sid.clone()),
                                     error: None,
                                 },
-                                None => ServerMessage::PromptResult {
+                                (Ok(()), None) => ServerMessage::PromptResult {
+                                    prompt_id: pid.clone().unwrap_or_default(),
+                                    accepted: true,
+                                    session_id: None,
+                                    error: None,
+                                },
+                                (Err(e), _) => ServerMessage::PromptResult {
                                     prompt_id: pid.clone().unwrap_or_default(),
                                     accepted: false,
                                     session_id: None,
-                                    error: Some("prompt failed".into()),
+                                    error: Some(e),
                                 },
                             };
                             let mut h = hub.lock();
@@ -1521,7 +1522,7 @@ impl SessionHub {
                                 if has_first_prompt {
                                     let pid = prompt_id_clone.clone();
                                     let pid_for_cache = prompt_id_clone.clone();
-                                    driver_for_prompt
+                                    let prompt_outcome = driver_for_prompt
                                         .prompt(
                                             prompt_text.unwrap_or_default(),
                                             None,
@@ -1530,11 +1531,23 @@ impl SessionHub {
                                             pid.clone(),
                                         )
                                         .await;
-                                    let msg = ServerMessage::PromptResult {
-                                        prompt_id: pid.unwrap_or_default(),
-                                        accepted: true,
-                                        session_id: Some(sid),
-                                        error: None,
+                                    // A rejected first prompt (e.g. the mock's
+                                    // `__pilot_reject_prompt__` sentinel) surfaces as
+                                    // `promptResult { accepted: false }` — ports TS
+                                    // `createAndPrompt` throwing inside `acceptPrompt`.
+                                    let msg = match prompt_outcome {
+                                        Ok(()) => ServerMessage::PromptResult {
+                                            prompt_id: pid.unwrap_or_default(),
+                                            accepted: true,
+                                            session_id: Some(sid),
+                                            error: None,
+                                        },
+                                        Err(e) => ServerMessage::PromptResult {
+                                            prompt_id: pid.unwrap_or_default(),
+                                            accepted: false,
+                                            session_id: None,
+                                            error: Some(e),
+                                        },
                                     };
                                     let mut h = hub.lock();
                                     // C3: cache the result for idempotent replay
