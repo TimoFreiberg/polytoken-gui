@@ -1722,9 +1722,14 @@ impl PilotDriver for MockDriver {
     }
 
     fn abort(&self, _session_id: Option<SessionId>) {
-        // Clear pending scheduled events + settle open tools + emit runCompleted.
-        // The TS mock tracks openTools and scheduled timers; our simplified version
-        // just emits a runCompleted to settle the turn.
+        // Faithful port of TS `MockDriver.abort()` (`server/src/mock-driver.ts:411`):
+        // clear pending scheduled events FIRST (so a `pendinghold` thinking-delta
+        // timer can't fire after abort and re-open the turn), then settle any open
+        // tool the aborted turn left running (the real driver emits a
+        // tool_execution_end on abort), then emit runCompleted to end the turn.
+        // Without cancel_timers the Stop pill never clears — a scheduled delta
+        // fires after the abort's runCompleted and the turn re-activates.
+        self.cancel_timers();
         let b = base();
         self.emit(SessionDriverEvent::RunCompleted {
             base: b,

@@ -1018,6 +1018,25 @@ impl SessionHub {
             let msg = self.seed_msg(default_focus.as_ref());
             self.send_to_client(ck, msg);
         }
+
+        // Broadcast the cleared running/attention state + refreshed session list.
+        // Mirrors TS `reset()` tail (hub.ts:1888-1892): `broadcastSessionStatus()`
+        // + `broadcastSessionList()`. Without the session-status broadcast, a
+        // client's stale "done" attention never clears after reset (the
+        // sidebar-row unread test fails here — `data-state` stays "done").
+        self.broadcast_session_status();
+        let driver = self.driver.clone();
+        self.hub_ops.enqueue(
+            "reset_session_list",
+            Box::new(move |hub| {
+                Box::pin(async move {
+                    let sessions = driver.list_sessions().await;
+                    let default_cwd = std::env::var("HOME").unwrap_or_default();
+                    hub.lock()
+                        .broadcast_session_list_with(sessions, default_cwd);
+                })
+            }),
+        );
     }
 
     // ── Client management ──────────────────────────────────────────────────
