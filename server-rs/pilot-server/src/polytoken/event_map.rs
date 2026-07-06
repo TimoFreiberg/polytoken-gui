@@ -2775,4 +2775,203 @@ mod tests {
             "Subagent context compacted"
         );
     }
+
+    // ===== Chunk 2b: notifications, system reminders, subagent routing, v1-ignored, permissions =====
+    // TS event-map.test.ts L672–L890. Oracle-derived assertions (AC.7).
+
+    #[test]
+    fn notification_queued_notify_with_summary() {
+        let out = fold_fresh(
+            json!({ "type": "notification_queued", "notification": { "id": "n1", "notification_type": { "type": "job_complete", "exit_code": 0 }, "source": "background", "summary": "Job finished", "timestamp": "2026-06-28T10:00:00Z" } }),
+        );
+        let ev = event_json(&out.events[0]);
+        assert_eq!(ev["type"], "hostUiRequest");
+        assert_eq!(ev["request"]["kind"], "notify");
+        assert_eq!(ev["request"]["message"], "Job finished");
+    }
+
+    #[test]
+    fn tool_exposure_changed_eager_fallback_warning_notify() {
+        // The TS oracle (L690) passes provider_capability_mode {type:"full_schema"},
+        // but the live ToolLoading enum is eager|native_deferred|no_tools (oracle is
+        // stale). Use a schema-valid value; the assertion target (eager_fallback
+        // reason → warning notify containing "fallback") is unchanged.
+        let out = fold_fresh(
+            json!({ "type": "tool_exposure_changed", "exposed_count": 10, "revealed_count": 5, "provider_capability_mode": "native_deferred", "reason": { "type": "eager_fallback_activated" } }),
+        );
+        let ev = event_json(&out.events[0]);
+        assert_eq!(ev["type"], "hostUiRequest");
+        assert_eq!(ev["request"]["kind"], "notify");
+        assert_eq!(ev["request"]["level"], "warning");
+        let msg = ev["request"]["message"].as_str().unwrap();
+        assert!(
+            msg.contains("fallback"),
+            "notify message {msg} should contain 'fallback'"
+        );
+    }
+
+    #[test]
+    fn tool_exposure_changed_other_reason_empty() {
+        // Same stale provider_capability_mode as above; use a schema-valid value.
+        let out = fold_fresh(
+            json!({ "type": "tool_exposure_changed", "exposed_count": 10, "revealed_count": 5, "provider_capability_mode": "native_deferred", "reason": { "type": "model_changed" } }),
+        );
+        assert_eq!(out.events.len(), 0);
+    }
+
+    #[test]
+    fn agent_block_violation_warning_notify_naming_the_tool() {
+        // The TS oracle (L719) passes only tool_name, but the live schema's
+        // AgentBlockViolation also requires `path` (oracle is stale). Add a path so
+        // the event deserializes; the assertion target (notify names the tool) is
+        // unchanged.
+        let out = fold_fresh(
+            json!({ "type": "agent_block_violation", "tool_name": "shell_exec", "path": "/w/secret" }),
+        );
+        let ev = event_json(&out.events[0]);
+        assert_eq!(ev["type"], "hostUiRequest");
+        assert_eq!(ev["request"]["kind"], "notify");
+        assert_eq!(ev["request"]["level"], "warning");
+        let msg = ev["request"]["message"].as_str().unwrap();
+        assert!(
+            msg.contains("shell_exec"),
+            "notify message {msg} should name 'shell_exec'"
+        );
+    }
+
+    #[test]
+    fn system_reminder_non_plan_review_reason_custom_message_display_false() {
+        let out = fold_fresh(
+            json!({ "type": "system_reminder", "body": "Don't forget the tests", "display_name": "Reminder", "emitted_at": "2026-06-28T10:00:00Z", "reason": { "type": "session_start" }, "slug": "test-reminder" }),
+        );
+        let ev = event_json(&out.events[0]);
+        assert_eq!(ev["type"], "customMessage");
+        assert_eq!(ev["customType"], "test-reminder");
+        assert_eq!(ev["text"], "Don't forget the tests");
+        assert_eq!(ev["display"], false);
+    }
+
+    #[test]
+    fn system_reminder_plan_review_required_visible_custom_message() {
+        let out = fold_fresh(
+            json!({ "type": "system_reminder", "body": "The plan reviewer flagged a missing error-handling path.", "display_name": "Reminder", "emitted_at": "2026-06-28T10:00:00Z", "reason": { "type": "plan_review_required" }, "slug": "plan-review-1" }),
+        );
+        let ev = event_json(&out.events[0]);
+        assert_eq!(ev["type"], "customMessage");
+        assert_eq!(ev["customType"], "Plan review required");
+        assert_eq!(
+            ev["text"],
+            "The plan reviewer flagged a missing error-handling path."
+        );
+        assert_eq!(ev["display"], true);
+    }
+
+    #[test]
+    fn system_reminder_plan_mode_reinforcement_visible_custom_message() {
+        let out = fold_fresh(
+            json!({ "type": "system_reminder", "body": "Stay in plan mode until the design is settled.", "display_name": "Reminder", "emitted_at": "2026-06-28T10:00:00Z", "reason": { "type": "plan_mode_reinforcement" }, "slug": "plan-reinforce-1" }),
+        );
+        let ev = event_json(&out.events[0]);
+        assert_eq!(ev["type"], "customMessage");
+        assert_eq!(ev["customType"], "Plan mode reminder");
+        assert_eq!(ev["display"], true);
+    }
+
+    #[test]
+    fn system_reminder_plan_verification_visible_custom_message() {
+        let out = fold_fresh(
+            json!({ "type": "system_reminder", "body": "Verify the implementation matches the approved plan.", "display_name": "Reminder", "emitted_at": "2026-06-28T10:00:00Z", "reason": { "type": "plan_verification" }, "slug": "plan-verify-1" }),
+        );
+        let ev = event_json(&out.events[0]);
+        assert_eq!(ev["type"], "customMessage");
+        assert_eq!(ev["customType"], "Plan verification");
+        assert_eq!(ev["display"], true);
+    }
+
+    #[test]
+    #[ignore = "reason: phase 4/openapi enum gap — the generated SystemReminderReason enum rejects unknown reason values before map_daemon_event, so the TS 'unknown reason (forward-compat)' case ({type:'some_future_reason'}) cannot be constructed without a codegen/type edit"]
+    fn system_reminder_unknown_reason_custom_message_display_false_forward_compat() {
+        // TS L802: reason { type:"some_future_reason" } → customMessage(customType=slug,
+        // display:false). The TS source has a forward-compat default arm; the generated
+        // Rust enum has no default, so an unknown reason fails to deserialize here.
+        let out = fold_fresh(
+            json!({ "type": "system_reminder", "body": "Some future reason not yet in the enum.", "display_name": "Reminder", "emitted_at": "2026-06-28T10:00:00Z", "reason": { "type": "some_future_reason" }, "slug": "future-reminder" }),
+        );
+        let ev = event_json(&out.events[0]);
+        assert_eq!(ev["type"], "customMessage");
+        assert_eq!(ev["customType"], "future-reminder");
+        assert_eq!(ev["text"], "Some future reason not yet in the enum.");
+        assert_eq!(ev["display"], false);
+    }
+
+    #[test]
+    fn events_with_subagent_handle_are_skipped_not_top_level_transcript() {
+        let out = fold_fresh(
+            json!({ "type": "content_block_delta", "block_index": 0, "delta": { "type": "text", "text": "subagent text" }, "prompt_id": "p1", "subagent_handle": "sub1" }),
+        );
+        assert!(out.events.is_empty());
+        assert!(out.effects.is_empty());
+    }
+
+    #[test]
+    fn message_start_with_subagent_handle_is_skipped() {
+        let out = fold_fresh(
+            json!({ "type": "message_start", "prompt_id": "p1", "subagent_handle": "sub1" }),
+        );
+        assert!(out.events.is_empty());
+    }
+
+    #[test]
+    fn heartbeat_empty() {
+        let out = fold_fresh(json!({ "type": "heartbeat", "timestamp": "t" }));
+        assert!(out.events.is_empty());
+        assert!(out.effects.is_empty());
+    }
+
+    #[test]
+    fn notification_autodrain_switch_session_updated_and_set_autodrain_enabled_regression() {
+        let out = fold_fresh(json!({ "type": "notification_autodrain_switch", "enabled": true }));
+        let ev = event_json(&out.events[0]);
+        assert_eq!(ev["type"], "sessionUpdated");
+        assert_eq!(ev["snapshot"]["notificationAutodrain"], true);
+        assert_eq!(
+            effects_json(&out),
+            vec![json!({ "type": "setAutodrainEnabled", "enabled": true })]
+        );
+    }
+
+    #[test]
+    fn notifications_drained_empty() {
+        let out = fold_fresh(json!({ "type": "notifications_drained", "count": 3 }));
+        assert!(out.events.is_empty());
+        assert!(out.effects.is_empty());
+    }
+
+    #[test]
+    fn permission_monitor_switch_session_updated_carries_new_mode_and_set_monitor_mode_effect() {
+        let out = fold_fresh(
+            json!({ "type": "permission_monitor_switch", "from_monitor": { "type": "standard" }, "to_monitor": { "type": "bypass" } }),
+        );
+        assert_eq!(out.events.len(), 1);
+        let ev = event_json(&out.events[0]);
+        assert_eq!(ev["type"], "sessionUpdated");
+        assert_eq!(ev["snapshot"]["permissionMonitor"], "bypass");
+        assert_eq!(
+            effects_json(&out),
+            vec![json!({ "type": "setMonitorMode", "mode": "bypass" })]
+        );
+    }
+
+    #[test]
+    fn notification_autodrain_switch_session_updated_and_set_autodrain_enabled_effect() {
+        let out = fold_fresh(json!({ "type": "notification_autodrain_switch", "enabled": true }));
+        assert_eq!(out.events.len(), 1);
+        let ev = event_json(&out.events[0]);
+        assert_eq!(ev["type"], "sessionUpdated");
+        assert_eq!(ev["snapshot"]["notificationAutodrain"], true);
+        assert_eq!(
+            effects_json(&out),
+            vec![json!({ "type": "setAutodrainEnabled", "enabled": true })]
+        );
+    }
 }
