@@ -15,8 +15,10 @@
 //! - All endpoints are flat (no `/session/{id}/…`) — the daemon IS the session.
 
 use std::collections::HashMap;
+use std::future::Future;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::pin::Pin;
+use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
 
 use pilot_daemon_types::*;
@@ -382,10 +384,61 @@ async fn spawn_resume_daemon(
 /// does not accept `--resume`/`--session-id`, and `daemon` doesn't print to stdout.
 ///
 /// On resume, also returns the Child handle so the caller can keep it alive.
+/// A boxed future returned by a spawn-override function.
+pub type SpawnOverrideFuture =
+    Pin<Box<dyn Future<Output = Result<SpawnedDaemon, String>> + Send + 'static>>;
+
+/// The signature of a spawn-override: given the polytoken binary path + spawn
+/// options, return a `SpawnedDaemon` (the fake daemon's ephemeral port + a
+/// session id) WITHOUT launching a real process. Used by the fake-daemon
+/// integration harness to swap the process launch for an in-process axum router.
+pub type SpawnOverrideFn = Arc<dyn Fn(&str, SpawnDaemonOpts) -> SpawnOverrideFuture + Send + Sync>;
+
+/// Process-global spawn override (test seam). `OnceLock` holds an inner
+/// `std::sync::Mutex<Option<…>>` so the harness can set AND clear it per
+/// scenario (a bare `OnceLock` is set-once). `spawn_daemon` consults this
+/// BEFORE any arg validation so the fake can answer both new and resume spawns.
+/// A std (not tokio) Mutex is correct here: the override lookup is instant and
+/// never held across an `.await` (we clone the `Arc<…>` and drop the guard
+/// immediately), and a std guard is safe to acquire from async code — it never
+/// suspends, so it can't deadlock the runtime. Production code never sets it,
+/// so the real launch path is untouched.
+static SPAWN_OVERRIDE: OnceLock<std::sync::Mutex<Option<SpawnOverrideFn>>> = OnceLock::new();
+
+fn spawn_override() -> Option<SpawnOverrideFn> {
+    let cell = SPAWN_OVERRIDE.get_or_init(|| std::sync::Mutex::new(None));
+    let guard = cell.lock().expect("spawn_override mutex poisoned");
+    guard.clone()
+}
+
+/// Install a spawn-override (test seam). MUST be paired with
+/// `clear_spawn_override()` in the same test to avoid cross-test bleed under
+/// `cargo test` parallelism — the override is process-global. Serializing the
+/// injecting tests (e.g. a shared mutex) is the caller's responsibility.
+pub fn set_spawn_override(f: SpawnOverrideFn) {
+    let cell = SPAWN_OVERRIDE.get_or_init(|| std::sync::Mutex::new(None));
+    *cell.lock().expect("set_spawn_override mutex poisoned") = Some(f);
+}
+
+/// Remove the installed spawn-override. Pair with `set_spawn_override`.
+pub fn clear_spawn_override() {
+    let cell = SPAWN_OVERRIDE.get_or_init(|| std::sync::Mutex::new(None));
+    *cell.lock().expect("clear_spawn_override mutex poisoned") = None;
+}
+
 pub async fn spawn_daemon(
     polytoken_bin: &str,
     opts: SpawnDaemonOpts,
 ) -> Result<(SpawnedDaemon, Option<tokio::process::Child>), String> {
+    // Test seam: if a spawn-override is installed, the fake daemon answers
+    // both new and resume spawns WITHOUT launching a process. Checked FIRST,
+    // before resume-path arg validation, so the harness can answer resume
+    // spawns without supplying cwd/sessions_dir/global_config_dir.
+    if let Some(override_fn) = spawn_override() {
+        let spawned = override_fn(polytoken_bin, opts).await?;
+        return Ok((spawned, None));
+    }
+
     if opts.session_id.is_some() {
         // Resume path — needs cwd + sessions_dir + global_config_dir.
         if opts.cwd.is_none() {
@@ -2035,9 +2088,11 @@ fn epoch_to_civil(secs: u64) -> (i32, u32, u32, u32, u32, u32) {
 // Module-level configuration / test seam
 // ---------------------------------------------------------------------------
 
-/// A global mutable spawn function override for testing (mirrors the TS
-/// `_setSpawnForTesting`). In Rust we don't override the real spawn, so this is
-/// a no-op placeholder for API parity.
+/// Deprecated no-op retained for API parity with the TS `_setSpawnForTesting`.
+/// The real spawn-override seam is `set_spawn_override` / `clear_spawn_override`
+/// above (the TS seam was a boolean; the Rust seam carries a closure so the
+/// fake daemon can answer spawns without a real process).
+#[deprecated(note = "use set_spawn_override / clear_spawn_override instead")]
 pub fn _set_spawn_for_testing(_enabled: bool) {
-    // No-op: the Rust port uses tokio::process::Command directly.
+    // No-op: superseded by the real spawn-override seam.
 }

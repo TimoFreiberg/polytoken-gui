@@ -2,20 +2,6 @@
 //!
 //! Axum-based WS bridge + HTTP routes + static serving.
 
-pub mod background_model;
-pub mod config;
-pub mod driver;
-pub mod hub;
-pub mod journal;
-pub mod mock_driver;
-pub mod pidlock;
-pub mod polytoken;
-pub mod push;
-pub mod settings_store;
-pub mod static_serve;
-pub mod stub_driver;
-pub mod ws_send;
-
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
@@ -31,14 +17,20 @@ use serde::Deserialize;
 use serde_json::json;
 use tracing::{error, info, warn};
 
-use crate::driver::PilotDriver;
-use crate::hub::{SessionHub, hub_op_channel, run_hub_op_applier};
+// The module tree lives in `lib.rs` (so integration tests can reach the driver
+// stack as `pilot_server::…`). Re-import it here for the route handlers.
+use pilot_server::{
+    config, hub::SessionHub, hub::hub_op_channel, hub::run_hub_op_applier, pidlock,
+    polytoken::driver::PolytokenDriver, static_serve,
+};
+
+use pilot_server::driver::PilotDriver;
 
 /// Shared app state.
 #[derive(Clone)]
 pub struct AppState {
     pub config: Arc<config::Config>,
-    pub static_server: Arc<static_serve::StaticServer>,
+    pub static_server: Arc<pilot_server::static_serve::StaticServer>,
     pub hub: Arc<Mutex<SessionHub>>,
     pub is_mock_driver: bool,
 }
@@ -88,10 +80,10 @@ async fn main() {
             "mock" => {
                 // Use the MockDriver directly — it serves fixture data as SessionDriverEvent[],
                 // matching the TS MockDriver for e2e parity.
-                Arc::new(crate::mock_driver::MockDriver::new())
+                Arc::new(pilot_server::mock_driver::MockDriver::new())
             }
             _ => {
-                Arc::new(crate::polytoken::driver::PolytokenDriver::new(
+                Arc::new(PolytokenDriver::new(
                     cfg.data_dir.join("sessions"),
                     std::env::var("PILOT_POLYTOKEN_BIN").unwrap_or_else(|_| "polytoken".into()),
                     false, // not fake — real daemon

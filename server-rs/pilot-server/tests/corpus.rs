@@ -15,60 +15,17 @@ use std::fs;
 use std::path::PathBuf;
 
 use pilot_daemon_types::SseEnvelope;
-use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-/// Resolve the corpus root: `<crate>/../tests/corpus` (i.e. `server-rs/tests/corpus`).
-const CORPUS_DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../tests/corpus");
-
-// ---------------------------------------------------------------------------
-// Scenario file structs (mirror the JSON shape documented in the README)
-// ---------------------------------------------------------------------------
-
-/// The `canonicalization` manifest block of a scenario file.
-///
-/// `prompt_ids` is a `BTreeMap` (not `HashMap`) so serialization is deterministic
-/// — the idempotency test compares pretty-printed JSON, and a `HashMap`'s
-/// arbitrary iteration order would make two identical maps serialize differently.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct CanonicalizationManifest {
-    session_id: String,
-    prompt_ids: std::collections::BTreeMap<String, String>,
-    timestamps: String,
-}
-
-/// One recorded HTTP request/response pair.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct HttpEntry {
-    method: String,
-    path: String,
-    request_body: Option<Value>,
-    status: i64,
-    response_body: Option<Value>,
-}
-
-/// One SSE frame — the wire shape of a daemon `/events` `data:` payload.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct SseFrame {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    seq: Option<i64>,
-    emitted_at: String,
-    session_id: String,
-    event: Value,
-}
-
-/// A full scenario file.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct ScenarioFile {
-    scenario: String,
-    version: String,
-    #[allow(dead_code)]
-    description: String,
-    canonicalization: CanonicalizationManifest,
-    http: Vec<HttpEntry>,
-    sse: Vec<SseFrame>,
-    expected_driver_events: Option<Value>,
-}
+mod support;
+// The loader structs (`ScenarioFile`/`HttpEntry`/`SseFrame`/`CanonicalizationManifest`)
+// + helpers (`load_scenario`/`scenario_files`/`version_dirs`/`CORPUS_DIR`) live in
+// `support::corpus` and are shared with the fake-daemon harness. The
+// canonicalization machinery below is corpus-test-only.
+use support::corpus::{
+    CORPUS_DIR, CanonicalizationManifest, HttpEntry, ScenarioFile, SseFrame, load_scenario,
+    scenario_files, version_dirs,
+};
 
 // ---------------------------------------------------------------------------
 // Canonicalization
@@ -362,55 +319,10 @@ fn canonicalize_scenario(scenario: &mut ScenarioFile) {
 }
 
 // ---------------------------------------------------------------------------
-// Corpus loading helpers
+// Corpus loading helpers — re-exported from `support::corpus` (shared with the
+// fake-daemon harness). The canonicalization functions above are the only
+// corpus-test-private code.
 // ---------------------------------------------------------------------------
-
-/// Enumerate every `.json` scenario file under `<corpus>/<version>/`, sorted for
-/// deterministic test ordering. Fails loud if the version dir is missing.
-fn scenario_files(version: &str) -> Vec<PathBuf> {
-    let dir: PathBuf = PathBuf::from(CORPUS_DIR).join(version);
-    assert!(
-        dir.exists(),
-        "corpus version dir missing: {}",
-        dir.display()
-    );
-    let mut files: Vec<PathBuf> = fs::read_dir(&dir)
-        .unwrap_or_else(|e| panic!("read corpus dir {}: {}", dir.display(), e))
-        .filter_map(Result::ok)
-        .map(|e| e.path())
-        .filter(|p| p.extension().is_some_and(|ext| ext == "json"))
-        .collect();
-    files.sort();
-    files
-}
-
-/// Load + parse one scenario file. Fails loud on read/parse errors.
-fn load_scenario(path: &PathBuf) -> ScenarioFile {
-    let text =
-        fs::read_to_string(path).unwrap_or_else(|e| panic!("read {}: {}", path.display(), e));
-    serde_json::from_str::<ScenarioFile>(&text)
-        .unwrap_or_else(|e| panic!("parse {}: {}", path.display(), e))
-}
-
-/// The version dir(s) to test. New seed corpora ship under a versioned subdir;
-/// this picks up every subdir under the corpus root.
-fn version_dirs() -> Vec<String> {
-    let root = PathBuf::from(CORPUS_DIR);
-    assert!(root.exists(), "corpus root missing: {}", root.display());
-    let mut dirs: Vec<String> = fs::read_dir(&root)
-        .unwrap_or_else(|e| panic!("read corpus root {}: {}", root.display(), e))
-        .filter_map(Result::ok)
-        .map(|e| e.path())
-        .filter(|p| p.is_dir())
-        .filter_map(|p| {
-            p.file_name()
-                .and_then(|n| n.to_str())
-                .map(|s| s.to_string())
-        })
-        .collect();
-    dirs.sort();
-    dirs
-}
 
 // ---------------------------------------------------------------------------
 // Tests
