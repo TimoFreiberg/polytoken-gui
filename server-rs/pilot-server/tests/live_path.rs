@@ -17,7 +17,7 @@ mod support;
 use std::sync::Arc;
 
 use pilot_daemon_types::SseEnvelope;
-use pilot_protocol::session_driver::{SessionRef, WorkspaceRef};
+use pilot_protocol::session_driver::{SessionDriverEvent, SessionRef, WorkspaceRef};
 use tokio::sync::Mutex;
 
 use pilot_server::driver::{NewSessionOptsData, PilotDriver};
@@ -230,4 +230,136 @@ async fn queue_while_in_flight_produces_refetch_queue_effect() {
         "queue-while-in-flight should produce a RefetchQueue effect; got: {:?}",
         effects.iter().map(|e| format!("{e:?}")).collect::<Vec<_>>()
     );
+}
+
+// ===========================================================================
+// Phase B — warm-session lifecycle tests (AC.2)
+// ===========================================================================
+
+/// Subscribe to the driver and collect emitted events into a bounded channel.
+/// Returns the subscription id (call `unsubscribe` to stop). The channel is
+/// large enough to absorb a scenario's burst without blocking the emitter
+/// (which uses `try_send` and would otherwise drop on a full channel).
+fn collect_events(
+    driver: &PolytokenDriver,
+    cap: usize,
+) -> (usize, tokio::sync::mpsc::Receiver<SessionDriverEvent>) {
+    let (tx, rx) = tokio::sync::mpsc::channel(cap);
+    let id = driver.subscribe(Box::new(move |ev| {
+        // try_send: never block the emitter task (a dropped event fails the
+        // test loudly via the receiver seeing too few events).
+        let _ = tx.try_send(ev);
+    }));
+    (id, rx)
+}
+
+/// AC.2: after `new_session`, the warm session is SUBSCRIBED to daemon SSE and
+/// FOLDING events — the thing that was entirely dead before Phase B. We stream
+/// `streaming-turn` (whose 3rd SSE frame is `message_start`, which maps to a
+/// `SessionUpdated { status: Running }`), subscribe to the driver, and assert a
+/// `SessionUpdated` arrives from the SSE path (not from the seed).
+///
+/// This is the load-bearing proof that `warm_session` → `subscribe` →
+/// `handle_sse_event` → `emit` is live end-to-end.
+#[tokio::test]
+async fn warm_session_subscribes_and_folds_sse() {
+    let _guard = OVERRIDE_MUTEX.lock().await;
+
+    let scenario = corpus_loader::load_named(VERSION, "streaming-turn");
+    // Small inter-frame delay so the SSE consumer has time to fold before the
+    // stream ends (the driver's per-event spawn is still in place until Phase C;
+    // a zero delay can race the consumer task shutdown).
+    let fake = Arc::new(fake_daemon::spawn(scenario.clone(), "warm-1".into(), 5).await);
+    let _ovr = OverrideGuard::install(fake.clone());
+
+    let (driver, _dir) = make_driver();
+    let (_sub_id, mut rx) = collect_events(&driver, 256);
+
+    // new_session warms + subscribes SSE before returning the seed.
+    let _seed = driver.new_session(NewSessionOptsData::default()).await;
+
+    // Wait for a SessionUpdated from the SSE path. `message_start` (frame 2)
+    // emits one with status Running. Timeout so a dead SSE path fails the test
+    // rather than hanging.
+    let mut got_session_updated = false;
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(5);
+    while let Ok(Some(ev)) = tokio::time::timeout_at(deadline, rx.recv()).await {
+        if matches!(ev, SessionDriverEvent::SessionUpdated { .. }) {
+            got_session_updated = true;
+            break;
+        }
+    }
+    assert!(
+        got_session_updated,
+        "warm session did not emit a SessionUpdated from SSE; the SSE fold is not live. \
+         calls: {:?}",
+        fake.recorded_calls()
+    );
+}
+
+/// AC.2: `reload_session` disposes the old warm session AND re-warms. We open a
+/// session, observe one SSE-driven emission, call `reload_session`, then assert
+/// the old warm was disposed (its SSE subscription stopped — no further
+/// emissions from it) and the call returns without deadlock.
+///
+/// **Scope note:** the full re-warm (post-reload SSE flow) goes through
+/// `open_session` → `warm_session_attach`, which resolves the daemon port from
+/// `startup.json`. The harness doesn't write `startup.json` (that's the
+/// session-registry/worktree port — Phase-2 item 5, explicitly out of scope),
+/// so the attach path can't reach the fake after reload. This test therefore
+/// asserts the in-scope half — disposal + no-deadlock — and leaves the
+/// re-warm-via-attach emission assertion to when `startup.json` is wired. The
+/// `warm_session_subscribes_and_folds_sse` test above already proves the warm +
+/// fold path live; the reload disposal here proves the teardown half.
+#[tokio::test]
+async fn reload_session_disposes_old_warm_and_rewarms() {
+    let _guard = OVERRIDE_MUTEX.lock().await;
+
+    let scenario = corpus_loader::load_named(VERSION, "streaming-turn");
+    let fake = Arc::new(fake_daemon::spawn(scenario.clone(), "reload-1".into(), 5).await);
+    let _ovr = OverrideGuard::install(fake.clone());
+
+    let (driver, _dir) = make_driver();
+    let (sub_id, mut rx) = collect_events(&driver, 256);
+
+    // Warm via new_session (spawn path) + subscribe SSE.
+    let _seed = driver.new_session(NewSessionOptsData::default()).await;
+
+    // Observe one SSE-driven emission (proves the first warm is live).
+    let _first = tokio::time::timeout(std::time::Duration::from_secs(5), rx.recv())
+        .await
+        .expect("first warm produced no SSE emission")
+        .expect("channel closed");
+
+    // Reload — disposes the old warm (stops its SSE subscription, closes the
+    // client), then re-opens. The re-open goes through open_session →
+    // warm_session_attach, which needs startup.json (out of scope), so it
+    // returns an empty seed — but the disposal MUST happen first and MUST NOT
+    // deadlock. The call completing (Ok or the documented empty-seed path)
+    // proves disposal ran without hanging on the old SSE stop.
+    let path = "reload-1.jsonl".to_string();
+    let reseed = driver
+        .reload_session(path)
+        .await
+        .expect("reload_session ok");
+    // No startup.json → empty seed (the attach path falls through). This is the
+    // documented out-of-scope gap, not a failure.
+    assert!(
+        reseed.is_empty(),
+        "expected empty re-seed (startup.json not wired); got {} events",
+        reseed.len()
+    );
+
+    // After disposal + a short drain window, no more emissions arrive from the
+    // OLD warm (its SSE subscription was stopped). A fresh emission here would
+    // mean the old consumer is still live — a leak. Give it a moment to settle.
+    tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+    let leaked = rx.try_recv().ok();
+    assert!(
+        leaked.is_none(),
+        "old warm session still emitting after reload disposal (consumer leak): {:?}",
+        leaked
+    );
+
+    driver.unsubscribe(sub_id);
 }

@@ -4,6 +4,17 @@
 //!
 //! Port of `server/src/polytoken/polytoken-driver.ts` (1953 LOC).
 //!
+//! ## Shape: `PolytokenDriver { inner: Arc<PolytokenInner> }`
+//!
+//! The driver owns background SSE tasks that must outlive any single trait
+//! method call, so the hub's `Box<dyn PilotDriver>` holds a thin wrapper around
+//! an `Arc<PolytokenInner>`. Trait methods clone the `Arc` (cheap) and delegate
+//! to the inner impl. This is the standard "shared owner with background tasks"
+//! Rust shape — `warm_session`/`handle_sse_event`/`execute_effect` take
+//! `self: &Arc<Self>` so they can be cloned into spawned SSE tasks, and
+//! `open_session`/`new_session` can reach them from a plain `&self` by going
+//! through `self.inner`.
+//
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -48,22 +59,13 @@ struct WarmSession {
     owned_process: Mutex<Option<tokio::process::Child>>,
 }
 
-impl WarmSession {
-    /// Check if the daemon is healthy.
-    #[expect(
-        dead_code,
-        reason = "warm-session health checks are unused until warm_cap/lifecycle enforcement is wired in Phase 2"
-    )]
-    async fn is_healthy(&self) -> bool {
-        let res = self.client.health().await;
-        res.status == 200
-    }
-}
-
 type SessionViewed = dyn Fn(SessionId) -> bool + Send + Sync;
 
-/// The polytoken daemon driver.
-pub struct PolytokenDriver {
+/// The shared inner driver state. All fields that were on `PolytokenDriver`
+/// live here; `PolytokenDriver` is a thin `Arc<PolytokenInner>` wrapper so the
+/// trait methods (which take `&self`) can reach the `self: &Arc<Self>` methods
+/// that spawn background SSE tasks.
+struct PolytokenInner {
     sessions_dir: PathBuf,
     bin_path: String,
     is_fake: bool,
@@ -72,6 +74,32 @@ pub struct PolytokenDriver {
     next_sub_id: Mutex<usize>,
     is_viewed: RwLock<Option<Box<SessionViewed>>>,
     command_cache: Mutex<HashMap<String, Vec<CommandInfo>>>,
+}
+
+/// The polytoken daemon driver.
+///
+/// A thin wrapper around `Arc<PolytokenInner>`. The hub owns this as
+/// `Box<dyn PilotDriver>`; each trait method delegates to the inner impl,
+/// cloning the `Arc` where a spawned task needs its own handle.
+pub struct PolytokenDriver {
+    inner: Arc<PolytokenInner>,
+}
+
+impl PolytokenDriver {
+    pub fn new(sessions_dir: PathBuf, bin_path: String, is_fake: bool) -> Self {
+        Self {
+            inner: Arc::new(PolytokenInner {
+                sessions_dir,
+                bin_path,
+                is_fake,
+                warm: RwLock::new(HashMap::new()),
+                subscribers: Mutex::new(Vec::new()),
+                next_sub_id: Mutex::new(0),
+                is_viewed: RwLock::new(None),
+                command_cache: Mutex::new(HashMap::new()),
+            }),
+        }
+    }
 }
 
 /// A MapCtx implementation backed by a WarmSession's cached state.
@@ -125,20 +153,7 @@ impl MapCtx for DriverMapCtx {
     }
 }
 
-impl PolytokenDriver {
-    pub fn new(sessions_dir: PathBuf, bin_path: String, is_fake: bool) -> Self {
-        Self {
-            sessions_dir,
-            bin_path,
-            is_fake,
-            warm: RwLock::new(HashMap::new()),
-            subscribers: Mutex::new(Vec::new()),
-            next_sub_id: Mutex::new(0),
-            is_viewed: RwLock::new(None),
-            command_cache: Mutex::new(HashMap::new()),
-        }
-    }
-
+impl PolytokenInner {
     fn emit(&self, ev: SessionDriverEvent) {
         let subs = self.subscribers.lock();
         for (_, tx) in subs.iter() {
@@ -150,44 +165,17 @@ impl PolytokenDriver {
         self.warm.read().get(session_id).cloned()
     }
 
-    /// Warm up a session by spawning/resuming the daemon and subscribing to SSE.
-    #[expect(
-        dead_code,
-        reason = "BUG: live sessions bypass warm_session today; warm_cap/lifecycle/SSE wiring lands in Phase 2"
-    )]
-    async fn warm_session(
+    /// Build a `WarmSession` from an already-connected client: claim the lease,
+    /// fetch initial state, subscribe to SSE, and insert into `self.warm`.
+    /// Shared by `warm_session` (spawn path) and `warm_session_attach`
+    /// (resume-with-known-port path). Returns the warm `Arc<WarmSession>`.
+    async fn install_warm(
         self: &Arc<Self>,
+        client: Arc<DaemonClient>,
         session_id: SessionId,
         session_ref: SessionRef,
         workspace: WorkspaceRef,
     ) -> Result<Arc<WarmSession>, String> {
-        if let Some(ws) = self.get_warm(&session_id) {
-            return Ok(ws);
-        }
-
-        // Real daemon: spawn or resume
-        let opts = SpawnDaemonOpts {
-            cwd: Some(workspace.path.clone()),
-            session_id: Some(session_id.clone()),
-            sessions_dir: Some(self.sessions_dir.to_string_lossy().to_string()),
-            global_config_dir: Some(
-                crate::polytoken::daemon_client::default_global_config_dir()
-                    .to_string_lossy()
-                    .to_string(),
-            ),
-            login_env: None,
-        };
-
-        let (spawned, _child) =
-            crate::polytoken::daemon_client::spawn_daemon(&self.bin_path, opts).await?;
-
-        let port = spawned.port;
-        let client = Arc::new(DaemonClient::new(
-            session_id.clone(),
-            port,
-            std::process::id() as i32,
-        ));
-
         // Wait for health (poll up to 10s)
         let healthy = tokio::time::timeout(std::time::Duration::from_secs(10), async {
             loop {
@@ -226,7 +214,7 @@ impl PolytokenDriver {
             sse_subscription: Mutex::new(None),
             monitor_mode: Mutex::new(None),
             autodrain_enabled: Mutex::new(None),
-            owned_process: Mutex::new(None), // set below for real daemon path
+            owned_process: Mutex::new(None),
         });
 
         // Subscribe to SSE events
@@ -247,6 +235,83 @@ impl PolytokenDriver {
 
         self.warm.write().insert(session_id, warm.clone());
         Ok(warm)
+    }
+
+    /// Warm up a NEW session by spawning the daemon (`polytoken new --no-attach`),
+    /// then installing it (health → lease → state → SSE → insert). Used by
+    /// `new_session`. Mirrors TS `warmSession(cwd)` (no sessionId).
+    async fn warm_session(
+        self: &Arc<Self>,
+        session_id: SessionId,
+        session_ref: SessionRef,
+        workspace: WorkspaceRef,
+        cwd: String,
+    ) -> Result<Arc<WarmSession>, String> {
+        if let Some(ws) = self.get_warm(&session_id) {
+            return Ok(ws);
+        }
+
+        let opts = SpawnDaemonOpts {
+            cwd: Some(cwd),
+            session_id: None,
+            sessions_dir: None,
+            global_config_dir: None,
+            login_env: {
+                #[expect(
+                    unused_variables,
+                    reason = "BUG: login_env forced None; login-env module unported until Phase 2"
+                )]
+                let ignored_login_env = ();
+                None
+            },
+        };
+
+        let (spawned, _child) =
+            crate::polytoken::daemon_client::spawn_daemon(&self.bin_path, opts).await?;
+
+        // The spawn reports the real session id; use it for the client + warm map.
+        let session_id = spawned.session_id;
+        let port = spawned.port;
+        // The session_ref's session_id was provisional (unknown pre-spawn);
+        // fix it to the real id so SSE-mapped events carry the correct ref.
+        let session_ref = SessionRef {
+            workspace_id: session_ref.workspace_id,
+            session_id: session_id.clone(),
+        };
+        let client = Arc::new(DaemonClient::new(
+            session_id.clone(),
+            port,
+            std::process::id() as i32,
+        ));
+
+        self.install_warm(client, session_id, session_ref, workspace)
+            .await
+    }
+
+    /// Warm up a session by ATTACHING to an already-running daemon on a known
+    /// port (the resume path — the daemon was spawned by a prior `polytoken
+    /// daemon --resume` and wrote its port to `startup.json`). Used by
+    /// `open_session`. Mirrors TS `warmSession(cwd, sessionId)` for the resume
+    /// case where the port is already known.
+    async fn warm_session_attach(
+        self: &Arc<Self>,
+        session_id: SessionId,
+        session_ref: SessionRef,
+        workspace: WorkspaceRef,
+        port: u16,
+    ) -> Result<Arc<WarmSession>, String> {
+        if let Some(ws) = self.get_warm(&session_id) {
+            return Ok(ws);
+        }
+
+        let client = Arc::new(DaemonClient::new(
+            session_id.clone(),
+            port,
+            std::process::id() as i32,
+        ));
+
+        self.install_warm(client, session_id, session_ref, workspace)
+            .await
     }
 
     /// Process an SSE event: map through event_map, emit results, execute effects.
@@ -328,14 +393,15 @@ impl PolytokenDriver {
 #[async_trait]
 impl PilotDriver for PolytokenDriver {
     fn subscribe(&self, listener: Box<dyn Fn(SessionDriverEvent) + Send + Sync>) -> usize {
+        let inner = self.inner.clone();
         let id = {
-            let mut next = self.next_sub_id.lock();
+            let mut next = inner.next_sub_id.lock();
             let id = *next;
             *next += 1;
             id
         };
         let (tx, mut rx) = mpsc::channel(256);
-        self.subscribers.lock().push((id, tx));
+        inner.subscribers.lock().push((id, tx));
         tokio::spawn(async move {
             while let Some(ev) = rx.recv().await {
                 listener(ev);
@@ -345,7 +411,7 @@ impl PilotDriver for PolytokenDriver {
     }
 
     fn unsubscribe(&self, id: usize) {
-        self.subscribers.lock().retain(|(sid, _)| *sid != id);
+        self.inner.subscribers.lock().retain(|(sid, _)| *sid != id);
     }
 
     #[expect(
@@ -366,7 +432,7 @@ impl PilotDriver for PolytokenDriver {
         let Some(sid) = session_id else {
             return Err("no session to prompt".into());
         };
-        let Some(ws) = self.get_warm(&sid) else {
+        let Some(ws) = self.inner.get_warm(&sid) else {
             return Err("no warm polytoken session to prompt".into());
         };
         if let Err(e) = ws.client.prompt(&text, None).await {
@@ -377,7 +443,7 @@ impl PilotDriver for PolytokenDriver {
 
     fn abort(&self, session_id: Option<SessionId>) {
         if let Some(sid) = session_id {
-            if let Some(ws) = self.get_warm(&sid) {
+            if let Some(ws) = self.inner.get_warm(&sid) {
                 let ws = ws.clone();
                 tokio::spawn(async move {
                     if let Err(e) = ws.client.cancel_turn().await {
@@ -390,7 +456,7 @@ impl PilotDriver for PolytokenDriver {
 
     async fn clear_queue(&self, session_id: Option<SessionId>) -> ClearQueueResult {
         if let Some(sid) = session_id {
-            if let Some(ws) = self.get_warm(&sid) {
+            if let Some(ws) = self.inner.get_warm(&sid) {
                 let _ = ws.client.turn_input_snapshot().await;
                 let _ = ws.client.dequeue_newest_input().await;
             }
@@ -400,7 +466,7 @@ impl PilotDriver for PolytokenDriver {
 
     fn respond_ui(&self, response: HostUiResponse, session_id: Option<SessionId>) {
         let Some(sid) = session_id else { return };
-        if let Some(ws) = self.get_warm(&sid) {
+        if let Some(ws) = self.inner.get_warm(&sid) {
             // Extract request_id from the HostUiResponse
             let request_id = match &response {
                 pilot_protocol::session_driver::HostUiResponse::Value { request_id, .. } => {
@@ -430,8 +496,9 @@ impl PilotDriver for PolytokenDriver {
     }
 
     async fn list_sessions(&self) -> Vec<SessionListEntry> {
+        let sessions_dir = self.inner.sessions_dir.clone();
         sessions_registry::list_cold_sessions(
-            &self.sessions_dir,
+            &sessions_dir,
             sessions_registry::ListColdSessionsOpts {
                 archived_for: Box::new(
                     #[expect(
@@ -461,10 +528,8 @@ impl PilotDriver for PolytokenDriver {
             workspace_id: WorkspaceId::default(),
             session_id: session_id.clone(),
         };
-        #[expect(
-            unused_variables,
-            reason = "BUG: open_session workspace still fabricated from HOME until session-registry/worktree path is ported in Phase 2"
-        )]
+        // BUG: open_session workspace is still fabricated from HOME until
+        // session-registry/worktree path is ported in Phase 2.
         let workspace = {
             #[expect(
                 unused_variables,
@@ -479,22 +544,10 @@ impl PilotDriver for PolytokenDriver {
             }
         };
 
-        // Try to warm the session
-        #[expect(
-            unused_variables,
-            reason = "BUG: spawned daemon child is not retained/enforced until warm-session lifecycle is ported in Phase 2"
-        )]
-        let self_arc = Arc::new(PolytokenDriver::new(
-            self.sessions_dir.clone(),
-            self.bin_path.clone(),
-            self.is_fake,
-        ));
-        // For now, use a simpler approach: just fetch history directly
-        // The full warm_session needs Arc<Self> which we can't easily get from &self
-        // TODO: restructure to hold Arc<Self> or use a different pattern
-
-        // Try to find the port from startup.json
-        let session_dir = self.sessions_dir.join(&session_id);
+        // Resolve the daemon port from startup.json (the daemon is ALREADY running
+        // on that port — we just attach, we don't re-spawn). This mirrors the TS
+        // resume path where warmSession reuses the existing port.
+        let session_dir = self.inner.sessions_dir.join(&session_id);
         let startup_path = session_dir.join("startup.json");
         let port = if startup_path.exists() {
             if let Ok(raw) = std::fs::read_to_string(&startup_path) {
@@ -511,13 +564,29 @@ impl PilotDriver for PolytokenDriver {
         };
 
         if let Some(port) = port {
-            let client = DaemonClient::new(session_id.clone(), port, std::process::id() as i32);
-            let history_res = client.history(None, None).await;
-            if let Some(history) = history_res.data {
-                return Ok(history_seed::history_to_seed_events(
-                    &history.items,
-                    &HistoryMapCtx { r#ref: session_ref },
-                ));
+            // Attach to the running daemon: claim lease, fetch state, subscribe SSE,
+            // insert into the warm pool. If attach fails, fall through to an empty
+            // seed rather than a hard error (the TS path throws, but the hub expects
+            // open_session to surface a seed; an empty seed keeps the session
+            // visible while the daemon is unreachable).
+            match self
+                .inner
+                .warm_session_attach(session_id.clone(), session_ref.clone(), workspace, port)
+                .await
+            {
+                Ok(ws) => {
+                    // Build the seed from the warm client's /history.
+                    let history_res = ws.client.history(None, None).await;
+                    if let Some(history) = history_res.data {
+                        return Ok(history_seed::history_to_seed_events(
+                            &history.items,
+                            &HistoryMapCtx { r#ref: session_ref },
+                        ));
+                    }
+                }
+                Err(e) => {
+                    warn!("open_session: warm attach failed for {session_id}: {e}");
+                }
             }
         }
 
@@ -531,7 +600,7 @@ impl PilotDriver for PolytokenDriver {
             .unwrap_or("unknown")
             .to_string();
         // Dispose existing warm session (extract before await to avoid holding the lock)
-        let removed = self.warm.write().remove(&session_id);
+        let removed = self.inner.warm.write().remove(&session_id);
         if let Some(ws) = removed {
             let sub = ws.sse_subscription.lock().take();
             if let Some(sub) = sub {
@@ -553,90 +622,65 @@ impl PilotDriver for PolytokenDriver {
             .clone()
             .unwrap_or_else(|| std::env::var("HOME").unwrap_or_default());
 
-        // Spawn a new daemon
-        let spawn_opts = SpawnDaemonOpts {
-            cwd: Some(cwd.clone()),
-            session_id: None,
-            sessions_dir: None,
-            global_config_dir: None,
-            login_env: {
-                #[expect(
-                    unused_variables,
-                    reason = "BUG: login_env forced None; login-env module unported until Phase 2"
-                )]
-                let ignored_login_env = ();
-                None
-            },
+        // Spawn + health + lease + state + SSE subscribe + insert into the warm
+        // pool, all via warm_session. The session id comes back from the spawn.
+        let session_ref = SessionRef {
+            workspace_id: WorkspaceId::default(),
+            session_id: String::new(), // filled from the spawn below
+        };
+        let workspace = WorkspaceRef {
+            workspace_id: WorkspaceId::default(),
+            path: cwd.clone(),
+            display_name: None,
         };
 
-        match crate::polytoken::daemon_client::spawn_daemon(&self.bin_path, spawn_opts).await {
-            Ok((spawned, _child)) => {
-                let session_id = spawned.session_id;
-                let port = spawned.port;
-                let client = Arc::new(DaemonClient::new(
-                    session_id.clone(),
-                    port,
-                    std::process::id() as i32,
-                ));
-
-                // Wait for health
-                let healthy = tokio::time::timeout(std::time::Duration::from_secs(10), async {
-                    loop {
-                        if client.health().await.status == 200 {
-                            return true;
-                        }
-                        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-                    }
-                })
-                .await
-                .unwrap_or(false);
-
-                if !healthy {
-                    error!("new_session: daemon health probe timed out");
-                    return Vec::new();
-                }
-
-                // Claim lease
-                let _ = client.claim_lease("pilot").await;
-
-                // Apply model/thinking/facet if specified
-                if let Some(model) = &opts.model {
-                    let model_str = format!("{}/{}", model.provider, model.model_id);
-                    let _ = client.set_model(&model_str, opts.thinking.as_deref()).await;
-                }
-                if let Some(facet) = &opts.facet {
-                    let _ = client.set_facet(facet).await;
-                }
-                if let Some(mode) = opts.permission_monitor {
-                    let daemon_mode = match mode {
-                        pilot_protocol::session_driver::PermissionMonitorMode::Standard => {
-                            pilot_daemon_types::PermissionMonitorMode::Standard
-                        }
-                        pilot_protocol::session_driver::PermissionMonitorMode::Bypass => {
-                            pilot_daemon_types::PermissionMonitorMode::Bypass
-                        }
-                        pilot_protocol::session_driver::PermissionMonitorMode::BypassPlus => {
-                            pilot_daemon_types::PermissionMonitorMode::BypassPlus
-                        }
-                        pilot_protocol::session_driver::PermissionMonitorMode::Autonomous => {
-                            pilot_daemon_types::PermissionMonitorMode::Autonomous
-                        }
-                    };
-                    let _ = client.set_permission_mode(daemon_mode).await;
-                }
-
-                // Build seed from history
-                let history_res = client.history(None, None).await;
+        // warm_session needs a provisional session id to key the warm map; the
+        // real id is returned by the spawn and overrides it inside warm_session.
+        let provisional_id = "__new__".to_string();
+        match self
+            .inner
+            .warm_session(provisional_id, session_ref, workspace, cwd)
+            .await
+        {
+            Ok(ws) => {
+                let session_id = ws.client.session_id.clone();
                 let session_ref = SessionRef {
                     workspace_id: WorkspaceId::default(),
                     session_id: session_id.clone(),
                 };
-                let _workspace = WorkspaceRef {
-                    workspace_id: WorkspaceId::default(),
-                    path: cwd,
-                    display_name: None,
-                };
 
+                // Apply model/thinking if specified (on the warm client, before seeding)
+                if let Some(model) = &opts.model {
+                    let model_str = format!("{}/{}", model.provider, model.model_id);
+                    let _ = ws
+                        .client
+                        .set_model(&model_str, opts.thinking.as_deref())
+                        .await;
+                }
+                if let Some(facet) = &opts.facet {
+                    let _ = ws.client.set_facet(facet).await;
+                }
+                if let Some(mode) = opts.permission_monitor {
+                    let daemon_mode = match mode {
+                        PermissionMonitorMode::Standard => {
+                            pilot_daemon_types::PermissionMonitorMode::Standard
+                        }
+                        PermissionMonitorMode::Bypass => {
+                            pilot_daemon_types::PermissionMonitorMode::Bypass
+                        }
+                        PermissionMonitorMode::BypassPlus => {
+                            pilot_daemon_types::PermissionMonitorMode::BypassPlus
+                        }
+                        PermissionMonitorMode::Autonomous => {
+                            pilot_daemon_types::PermissionMonitorMode::Autonomous
+                        }
+                    };
+                    let _ = ws.client.set_permission_mode(daemon_mode).await;
+                    *ws.monitor_mode.lock() = Some(mode);
+                }
+
+                // Build seed from history
+                let history_res = ws.client.history(None, None).await;
                 if let Some(history) = history_res.data {
                     return history_seed::history_to_seed_events(
                         &history.items,
@@ -646,7 +690,7 @@ impl PilotDriver for PolytokenDriver {
                 Vec::new()
             }
             Err(e) => {
-                error!("new_session spawn failed: {e}");
+                error!("new_session warm failed: {e}");
                 Vec::new()
             }
         }
@@ -663,7 +707,7 @@ impl PilotDriver for PolytokenDriver {
         session_id: Option<SessionId>,
     ) -> BranchResult {
         if let Some(sid) = &session_id {
-            if let Some(ws) = self.get_warm(sid) {
+            if let Some(ws) = self.inner.get_warm(sid) {
                 let req = RewindRequest {
                     domains: Vec::new(),
                     to_message_index: None,
@@ -693,7 +737,8 @@ impl PilotDriver for PolytokenDriver {
     }
 
     async fn list_models(&self) -> Vec<ModelOption> {
-        let output = tokio::process::Command::new(&self.bin_path)
+        let bin_path = self.inner.bin_path.clone();
+        let output = tokio::process::Command::new(&bin_path)
             .arg("models")
             .output()
             .await;
@@ -710,7 +755,8 @@ impl PilotDriver for PolytokenDriver {
     }
 
     async fn get_model_defaults(&self) -> ModelDefaults {
-        let output = tokio::process::Command::new(&self.bin_path)
+        let bin_path = self.inner.bin_path.clone();
+        let output = tokio::process::Command::new(&bin_path)
             .arg("models")
             .output()
             .await;
@@ -738,10 +784,11 @@ impl PilotDriver for PolytokenDriver {
     )]
     async fn list_commands(&self, session_id: Option<SessionId>) -> Vec<CommandInfo> {
         let cache_key = std::env::var("HOME").unwrap_or_default();
-        if let Some(cached) = self.command_cache.lock().get(&cache_key) {
+        if let Some(cached) = self.inner.command_cache.lock().get(&cache_key) {
             return cached.clone();
         }
-        let output = tokio::process::Command::new(&self.bin_path)
+        let bin_path = self.inner.bin_path.clone();
+        let output = tokio::process::Command::new(&bin_path)
             .args(["print-slash-commands", "--format", "json"])
             .output()
             .await;
@@ -749,7 +796,8 @@ impl PilotDriver for PolytokenDriver {
             Ok(out) => {
                 let stdout = String::from_utf8_lossy(&out.stdout).to_string();
                 let commands = crate::polytoken::commands::parse_slash_commands(&stdout);
-                self.command_cache
+                self.inner
+                    .command_cache
                     .lock()
                     .insert(cache_key, commands.clone());
                 commands
@@ -766,7 +814,8 @@ impl PilotDriver for PolytokenDriver {
         reason = "BUG: session-scoped facet discovery ignored; live facet parity is Phase 2"
     )]
     async fn list_facets(&self, session_id: Option<SessionId>) -> Vec<String> {
-        let output = tokio::process::Command::new(&self.bin_path)
+        let bin_path = self.inner.bin_path.clone();
+        let output = tokio::process::Command::new(&bin_path)
             .args(["vfs", "ls", "polytoken://facets"])
             .output()
             .await;
@@ -790,7 +839,7 @@ impl PilotDriver for PolytokenDriver {
 
     async fn list_file_index(&self, session_id: Option<SessionId>) -> (Vec<FileInfo>, bool) {
         if let Some(sid) = &session_id {
-            if let Some(ws) = self.get_warm(sid) {
+            if let Some(ws) = self.inner.get_warm(sid) {
                 let res = ws.client.file_catalog().await;
                 if let Some(resp) = res.data {
                     let paths: Vec<String> = resp.files.clone();
@@ -812,7 +861,8 @@ impl PilotDriver for PolytokenDriver {
         session_id: Option<SessionId>,
         cwd: Option<String>,
     ) -> Vec<FileInfo> {
-        let mut cmd = tokio::process::Command::new(&self.bin_path);
+        let bin_path = self.inner.bin_path.clone();
+        let mut cmd = tokio::process::Command::new(&bin_path);
         cmd.args(["files", "--format", "json"]);
         if !query.is_empty() {
             cmd.args(["--query", &query]);
@@ -867,7 +917,7 @@ impl PilotDriver for PolytokenDriver {
 
     fn set_model(&self, provider: String, model_id: String, session_id: Option<SessionId>) {
         if let Some(sid) = &session_id {
-            if let Some(ws) = self.get_warm(sid) {
+            if let Some(ws) = self.inner.get_warm(sid) {
                 let ws = ws.clone();
                 let model = format!("{provider}/{model_id}");
                 tokio::spawn(async move {
@@ -879,7 +929,7 @@ impl PilotDriver for PolytokenDriver {
 
     fn set_thinking(&self, level: String, session_id: Option<SessionId>) {
         if let Some(sid) = &session_id {
-            if let Some(ws) = self.get_warm(sid) {
+            if let Some(ws) = self.inner.get_warm(sid) {
                 let ws = ws.clone();
                 let state = ws.last_state.read().clone();
                 if let Some(state) = state {
@@ -895,7 +945,7 @@ impl PilotDriver for PolytokenDriver {
 
     fn set_facet(&self, facet: String, session_id: Option<SessionId>) {
         if let Some(sid) = &session_id {
-            if let Some(ws) = self.get_warm(sid) {
+            if let Some(ws) = self.inner.get_warm(sid) {
                 let ws = ws.clone();
                 tokio::spawn(async move {
                     let _ = ws.client.set_facet(&facet).await;
@@ -906,7 +956,7 @@ impl PilotDriver for PolytokenDriver {
 
     fn set_permission_monitor(&self, mode: PermissionMonitorMode, session_id: Option<SessionId>) {
         if let Some(sid) = &session_id {
-            if let Some(ws) = self.get_warm(sid) {
+            if let Some(ws) = self.inner.get_warm(sid) {
                 let ws = ws.clone();
                 let daemon_mode = match mode {
                     PermissionMonitorMode::Standard => {
@@ -931,7 +981,7 @@ impl PilotDriver for PolytokenDriver {
 
     async fn toggle_adventurous_handoff(&self, session_id: Option<SessionId>) {
         if let Some(sid) = &session_id {
-            if let Some(ws) = self.get_warm(sid) {
+            if let Some(ws) = self.inner.get_warm(sid) {
                 let _ = ws.client.toggle_adventurous_handoff().await;
             }
         }
@@ -939,7 +989,7 @@ impl PilotDriver for PolytokenDriver {
 
     async fn set_notification_autodrain(&self, enabled: bool, session_id: Option<SessionId>) {
         if let Some(sid) = &session_id {
-            if let Some(ws) = self.get_warm(sid) {
+            if let Some(ws) = self.inner.get_warm(sid) {
                 let _ = ws.client.set_notification_autodrain(enabled).await;
             }
         }
@@ -947,7 +997,7 @@ impl PilotDriver for PolytokenDriver {
 
     async fn compact(&self, session_id: Option<SessionId>) {
         if let Some(sid) = &session_id {
-            if let Some(ws) = self.get_warm(sid) {
+            if let Some(ws) = self.inner.get_warm(sid) {
                 let _ = ws.client.compact(None).await;
             }
         }
@@ -955,7 +1005,7 @@ impl PilotDriver for PolytokenDriver {
 
     async fn clear_context(&self, session_id: Option<SessionId>) {
         if let Some(sid) = &session_id {
-            if let Some(ws) = self.get_warm(sid) {
+            if let Some(ws) = self.inner.get_warm(sid) {
                 let _ = ws.client.clear().await;
             }
         }
@@ -968,7 +1018,7 @@ impl PilotDriver for PolytokenDriver {
         session_id: Option<SessionId>,
     ) {
         if let Some(sid) = &session_id {
-            if let Some(ws) = self.get_warm(sid) {
+            if let Some(ws) = self.inner.get_warm(sid) {
                 let daemon_action = match action {
                     McpAction::Enable => crate::polytoken::daemon_client::McpServerAction::Enable,
                     McpAction::Disable => crate::polytoken::daemon_client::McpServerAction::Disable,
@@ -988,12 +1038,12 @@ impl PilotDriver for PolytokenDriver {
     }
 
     fn set_session_viewers(&self, is_viewed: Box<dyn Fn(SessionId) -> bool + Send + Sync>) {
-        *self.is_viewed.write() = Some(is_viewed);
+        *self.inner.is_viewed.write() = Some(is_viewed);
     }
 
     async fn shutdown(&self) {
         // Extract all warm sessions before awaiting (avoid holding the lock across .await)
-        let warm: Vec<Arc<WarmSession>> = self.warm.write().drain().map(|(_, v)| v).collect();
+        let warm: Vec<Arc<WarmSession>> = self.inner.warm.write().drain().map(|(_, v)| v).collect();
         for ws in warm {
             let sub = ws.sse_subscription.lock().take();
             if let Some(sub) = sub {
@@ -1004,13 +1054,13 @@ impl PilotDriver for PolytokenDriver {
     }
 
     fn run_script(&self, name: String) {
-        if self.is_fake {
+        if self.inner.is_fake {
             warn!("run_script({name}) on fake daemon — not yet wired");
         }
     }
 
     fn reset(&self, bootstrap: bool) {
-        if self.is_fake {
+        if self.inner.is_fake {
             warn!("reset({bootstrap}) on fake daemon — not yet wired");
         }
     }
