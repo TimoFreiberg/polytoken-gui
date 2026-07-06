@@ -8,8 +8,14 @@ a heartbeat timeout (health-probe machinery deleted); golden corpus + Rust loade
 (2 tests, AC.5) + capture harness added. Phase-2 vocabulary gate resolved as A′
 (accumulator stays server-side Rust; DECISIONS.md D19); version discipline now
 "pin the corpus, not the binary" (D20, supersedes standing invariant #3). 180
-Rust tests green, fmt+clippy clean. NEXT: Phase 2.1 (port event_map/ui_bridge +
-their unit tests, shrunk). LIVE CORPUS CAPTURE DONE (2026-07-06, 5/6 scenarios,
+Rust tests green, fmt+clippy clean. Phase 2.1 (event_map/ui_bridge unit-test
+port) COMPLETE 2026-07-06 — event-map 124 active + 5 `#[ignore]` = 129/129,
+ui-bridge 38/38, dual-reviewed (Opus); surfaced + fixed a real live-path bug
+(`goal_driver_update{transition:"proposed"}` was blanking the goal badge).
+NEXT: the rest of Phase 2 — the **fake-daemon integration harness** (axum router
+driven by the frozen corpus) and the two driver.rs live-path bugs it can finally
+test (SSE per-event `tokio::spawn` ordering; `FetchState` emit / `RefetchQueue`
+being ignored). LIVE CORPUS CAPTURE DONE (2026-07-06, 5/6 scenarios,
 deepseek): found+fixed a canonicalization bug (+regression test), 2 seed/reality
 mismatches, and RESOLVED the tool-call-approval permission gating (needs the
 `standard` matcher PLUS a version-2 `ask` permissions rule — `standard` alone
@@ -558,9 +564,14 @@ wants.
       state (`emitted_at`, `/prompt` auto-queue) shrinks the accumulator but
       doesn't change where it lives. So: proceed with the two porting items
       below (Phase 2.1), shrinking first against daemon-owned state.
-- [ ] Port `event-map.test.ts` (129 cases; pure functions, mechanical,
-      highest bug-yield per hour) and `ui-bridge.test.ts` (38).
-      **(Behind the gate above — do not start before the vocabulary call.)**
+- [x] Port `event-map.test.ts` (129 cases; pure functions, mechanical,
+      highest bug-yield per hour) and `ui-bridge.test.ts` (38). **DONE
+      (2026-07-06):** event-map 124 active + 5 `#[ignore]` (generated-type gaps +
+      1 daemon-collapse, all phase-named) = 129/129; ui-bridge 38/38. Dual-reviewed
+      (Opus): fixed the `goal_driver_update` proposed-blank source bug (gate the
+      emit on `transition`, not goal-presence) and strengthened the permission
+      tests to assert choice content. See the `event_map.rs`/`ui_bridge.rs` bullet
+      under "What is genuinely done and trustworthy".
 - [ ] Fix the SSE ordering bug with the Phase-1 idiom: per-warm-session
       `mpsc` + one consumer task. Never per-event `tokio::spawn` — that's the
       current bug (two streaming deltas can fold out of order).
