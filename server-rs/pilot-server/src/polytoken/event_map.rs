@@ -1966,3 +1966,621 @@ pub fn map_daemon_event(
           // catching mechanism, not a runtime warn).
     }
 }
+
+#[cfg(test)]
+mod tests {
+    #![allow(dead_code, unused_imports)]
+    use super::*;
+    use pilot_daemon_types::{
+        ContextUsageSnapshot, FlagEntry, FlagMode, GoalFileReference, TodoSnapshot,
+    };
+    use pilot_protocol::session_driver::{
+        PermissionMonitorMode, SessionRef, TodoStatus, WorkspaceRef,
+    };
+    use serde_json::{Value, json};
+
+    struct TestCtx {
+        r#ref: SessionRef,
+        workspace: WorkspaceRef,
+        live_status: SessionStatus,
+    }
+
+    impl Default for TestCtx {
+        fn default() -> Self {
+            Self {
+                r#ref: test_ref(),
+                workspace: test_workspace(),
+                live_status: SessionStatus::Idle,
+            }
+        }
+    }
+
+    impl MapCtx for TestCtx {
+        fn r#ref(&self) -> &SessionRef {
+            &self.r#ref
+        }
+
+        fn workspace(&self) -> &WorkspaceRef {
+            &self.workspace
+        }
+
+        fn now(&self) -> String {
+            "t".to_string()
+        }
+
+        fn snapshot(&self, status: SessionStatus) -> SessionSnapshot {
+            SessionSnapshot {
+                r#ref: self.r#ref.clone(),
+                workspace: self.workspace.clone(),
+                title: "Test Session".to_string(),
+                status,
+                updated_at: "t".to_string(),
+                archived_at: None,
+                preview: None,
+                config: Some(SessionConfig {
+                    provider: Some("anthropic".to_string()),
+                    model_id: Some("anthropic/claude-sonnet-4".to_string()),
+                    thinking_level: Some("medium".to_string()),
+                    available_thinking_levels: None,
+                }),
+                usage: Some(SessionUsage {
+                    tokens: Some(50_000),
+                    context_window: 200_000,
+                    percent: Some(25.0),
+                }),
+                running_run_id: None,
+                queued_messages: None,
+                facet: None,
+                permission_monitor: None,
+                adventurous_handoff: None,
+                notification_autodrain: None,
+                active_plan: None,
+                goal: None,
+                flags: None,
+                todos: None,
+                mcp_servers: None,
+            }
+        }
+
+        fn live_status(&self) -> SessionStatus {
+            self.live_status
+        }
+    }
+
+    fn test_ref() -> SessionRef {
+        SessionRef {
+            workspace_id: "w".to_string(),
+            session_id: "s".to_string(),
+        }
+    }
+
+    fn test_workspace() -> WorkspaceRef {
+        WorkspaceRef {
+            workspace_id: "w".to_string(),
+            path: "/w".to_string(),
+            display_name: None,
+        }
+    }
+
+    fn base_state() -> SessionStateSnapshot {
+        SessionStateSnapshot {
+            active_facet: "execute".to_string(),
+            active_model: Some("anthropic/claude-sonnet-4".to_string()),
+            active_plan: None,
+            active_reasoning_effort: Some("medium".to_string()),
+            adventurous_handoff_active: None,
+            available_models: None,
+            available_skills: None,
+            available_subagents: None,
+            context_usage: Some(ContextUsageSnapshot {
+                limit_tokens: 200_000,
+                used_tokens: 50_000,
+            }),
+            current_goal: None,
+            cwd: None,
+            cwd_stack_depth: None,
+            env: Default::default(),
+            flags: vec![],
+            latest_compaction_summary: None,
+            mcp_servers: None,
+            most_recent_assistant_text: None,
+            pending_interrogatives: None,
+            plugin_config: Value::Null,
+            project_cwd: None,
+            session_title: Some("Test Session".to_string()),
+            source_control: None,
+            symlink_warnings: None,
+            todos: vec![],
+            turn_in_flight: Some(false),
+        }
+    }
+
+    fn make_goal(summary: &str, lifecycle: &str) -> CurrentGoal {
+        CurrentGoal {
+            activated_at: "2026-01-01T00:00:00Z".to_string(),
+            blocked_at: None,
+            completed_at: None,
+            continuation_count: 0,
+            created_at: "2026-01-01T00:00:00Z".to_string(),
+            file: GoalFileReference {
+                display_path: "goal.md".to_string(),
+                path: "/goal.md".to_string(),
+            },
+            id: "g1".to_string(),
+            last_reiterated_at: None,
+            lifecycle: lifecycle.to_string(),
+            source: "operator".to_string(),
+            summary: summary.to_string(),
+            terminal_reason: None,
+            updated_at: "2026-01-01T00:00:00Z".to_string(),
+        }
+    }
+
+    fn daemon_event(value: Value) -> DaemonEvent {
+        serde_json::from_value(value).expect("valid daemon event literal")
+    }
+
+    fn fold(value: Value, acc: &mut FoldAccumulator) -> FoldResult {
+        let ctx = TestCtx::default();
+        let ev = daemon_event(value);
+        map_daemon_event(&ev, acc, &ctx)
+    }
+
+    fn fold_fresh(value: Value) -> FoldResult {
+        fold(value, &mut create_accumulator())
+    }
+
+    fn event_json(ev: &SessionDriverEvent) -> Value {
+        serde_json::to_value(ev).unwrap()
+    }
+
+    fn effect_json(effect: &DaemonEffect) -> Value {
+        match effect {
+            DaemonEffect::FetchState { emit, prompt_id } => json!({
+                "type": "fetchState",
+                "emit": match emit {
+                    FetchEmit::RunCompleted => "runCompleted",
+                    FetchEmit::SessionUpdated => "sessionUpdated",
+                },
+                "promptId": prompt_id,
+            }),
+            DaemonEffect::Reseed => json!({ "type": "reseed" }),
+            DaemonEffect::RefetchQueue => json!({ "type": "refetchQueue" }),
+            DaemonEffect::SetMonitorMode { mode } => json!({
+                "type": "setMonitorMode",
+                "mode": match mode {
+                    PermissionMonitorMode::Standard => "standard",
+                    PermissionMonitorMode::Bypass => "bypass",
+                    PermissionMonitorMode::BypassPlus => "bypass_plus",
+                    PermissionMonitorMode::Autonomous => "autonomous",
+                },
+            }),
+            DaemonEffect::SetAutodrainEnabled { enabled } => {
+                json!({ "type": "setAutodrainEnabled", "enabled": enabled })
+            }
+            DaemonEffect::RegisterInterrogative { pending } => json!({
+                "type": "registerInterrogative",
+                "pending": {
+                    "interrogativeId": pending.interrogative_id,
+                    "interrogativeType": format!("{:?}", pending.interrogative_type),
+                    "clarificationLabels": pending.clarification_labels,
+                    "clarificationOptionKeys": pending.clarification_option_keys,
+                    "planHandoffLabels": pending.plan_handoff_labels,
+                    "questionCount": pending.questions.as_ref().map(Vec::len),
+                    "permissionChoiceCount": pending.permission_choices.as_ref().map(Vec::len),
+                },
+            }),
+        }
+    }
+
+    fn effects_json(out: &FoldResult) -> Vec<Value> {
+        out.effects.iter().map(effect_json).collect()
+    }
+
+    /// The full sessionUpdated snapshot the TestCtx emits for a given status, as
+    /// serialized JSON — so per-case tests can assert the whole event equals the
+    /// oracle's `ctx.snapshot(status)` (mirrors TS `toEqual([ctx.snapshot(...)])`).
+    fn snapshot_event(status: &str) -> Value {
+        let s = match status {
+            "running" => SessionStatus::Running,
+            "idle" => SessionStatus::Idle,
+            _ => panic!("test helper: unknown status {status}"),
+        };
+        let ctx = TestCtx::default();
+        event_json(&SessionDriverEvent::SessionUpdated {
+            base: SessionEventBase {
+                session_ref: ctx.r#ref().clone(),
+                timestamp: "t".to_string(),
+                run_id: None,
+            },
+            snapshot: ctx.snapshot(s),
+        })
+    }
+
+    // ===== Chunk 1: turn boundaries, content-block streaming, tool plumbing, queue =====
+    // One Rust #[test] per TS test(...) in event-map.test.ts L81–L465. Assertions
+    // derive from the TS ORACLE's expected values, not from current Rust behavior;
+    // any mismatch is a source bug fixed in place (AC.7).
+
+    #[test]
+    fn message_start_session_updated_running_and_clears_turn_error() {
+        let mut acc = create_accumulator();
+        acc.turn_error = Some(TurnError {
+            message: "old error".to_string(),
+        });
+        let out = fold(
+            json!({ "type": "message_start", "prompt_id": "p1" }),
+            &mut acc,
+        );
+        assert_eq!(out.events.len(), 1);
+        assert_eq!(event_json(&out.events[0]), snapshot_event("running"));
+        assert!(acc.turn_error.is_none());
+    }
+
+    #[test]
+    fn message_complete_no_error_fetch_state_run_completed_with_prompt_id() {
+        let out = fold_fresh(json!({ "type": "message_complete", "prompt_id": "p1" }));
+        assert!(out.events.is_empty());
+        assert_eq!(
+            effects_json(&out),
+            vec![json!({ "type": "fetchState", "emit": "runCompleted", "promptId": "p1" })]
+        );
+    }
+
+    #[test]
+    fn message_complete_with_turn_error_run_failed_and_clears_error() {
+        let mut acc = create_accumulator();
+        acc.turn_error = Some(TurnError {
+            message: "529 overloaded".to_string(),
+        });
+        let out = fold(
+            json!({ "type": "message_complete", "prompt_id": "p1" }),
+            &mut acc,
+        );
+        assert_eq!(out.events.len(), 1);
+        assert_eq!(
+            event_json(&out.events[0]),
+            json!({
+                "sessionRef": { "workspaceId": "w", "sessionId": "s" },
+                "timestamp": "t",
+                "type": "runFailed",
+                "error": { "message": "529 overloaded" },
+            })
+        );
+        assert!(acc.turn_error.is_none());
+    }
+
+    #[test]
+    fn message_complete_after_retry_error_cleared_by_message_start_run_completed_effect() {
+        let mut acc = create_accumulator();
+        acc.turn_error = Some(TurnError {
+            message: "transient".to_string(),
+        });
+        fold(
+            json!({ "type": "message_start", "prompt_id": "p2" }),
+            &mut acc,
+        );
+        let out = fold(
+            json!({ "type": "message_complete", "prompt_id": "p2" }),
+            &mut acc,
+        );
+        assert_eq!(
+            effects_json(&out),
+            vec![json!({ "type": "fetchState", "emit": "runCompleted", "promptId": "p2" })]
+        );
+    }
+
+    #[test]
+    fn turn_cancelled_fetch_state_session_updated() {
+        let out = fold_fresh(
+            json!({ "type": "turn_cancelled", "prompt_id": "p1", "reason": "user_cancelled" }),
+        );
+        assert!(out.events.is_empty());
+        assert_eq!(
+            effects_json(&out),
+            vec![json!({ "type": "fetchState", "emit": "sessionUpdated", "promptId": null })]
+        );
+    }
+
+    #[test]
+    fn content_block_start_text_sets_block_kind_no_events() {
+        let mut acc = create_accumulator();
+        let out = fold(
+            json!({ "type": "content_block_start", "block_index": 0, "block_type": { "type": "text" }, "prompt_id": "p1" }),
+            &mut acc,
+        );
+        assert!(out.events.is_empty());
+        assert_eq!(acc.block_kind, Some(BlockKind::Text));
+    }
+
+    #[test]
+    fn content_block_start_tool_use_sets_block_kind_and_tool_use_block() {
+        let mut acc = create_accumulator();
+        let out = fold(
+            json!({ "type": "content_block_start", "block_index": 1, "block_type": { "type": "tool_use", "id": "tu1", "name": "bash" }, "prompt_id": "p1" }),
+            &mut acc,
+        );
+        assert!(out.events.is_empty());
+        assert_eq!(acc.block_kind, Some(BlockKind::ToolUse));
+        assert_eq!(acc.tool_use_block.as_ref().unwrap().id, "tu1");
+        assert_eq!(acc.tool_use_block.as_ref().unwrap().name, "bash");
+    }
+
+    #[test]
+    fn content_block_delta_text_assistant_delta_text_channel() {
+        let mut acc = create_accumulator();
+        acc.block_kind = Some(BlockKind::Text);
+        let out = fold(
+            json!({ "type": "content_block_delta", "block_index": 0, "delta": { "type": "text", "text": "hello" }, "prompt_id": "p1" }),
+            &mut acc,
+        );
+        assert_eq!(out.events.len(), 1);
+        assert_eq!(
+            event_json(&out.events[0]),
+            json!({
+                "sessionRef": { "workspaceId": "w", "sessionId": "s" },
+                "timestamp": "t",
+                "type": "assistantDelta",
+                "text": "hello",
+                "channel": "text",
+            })
+        );
+    }
+
+    #[test]
+    fn content_block_delta_thinking_assistant_delta_thinking_channel() {
+        let mut acc = create_accumulator();
+        acc.block_kind = Some(BlockKind::Thinking);
+        let out = fold(
+            json!({ "type": "content_block_delta", "block_index": 0, "delta": { "type": "thinking", "text": "hmm" }, "prompt_id": "p1" }),
+            &mut acc,
+        );
+        let ev = event_json(&out.events[0]);
+        assert_eq!(ev["type"], "assistantDelta");
+        assert_eq!(ev["channel"], "thinking");
+        assert_eq!(ev["text"], "hmm");
+    }
+
+    #[test]
+    fn content_block_delta_redacted_thinking_assistant_delta_thinking() {
+        let mut acc = create_accumulator();
+        acc.block_kind = Some(BlockKind::RedactedThinking);
+        let out = fold(
+            json!({ "type": "content_block_delta", "block_index": 0, "delta": { "type": "redacted_thinking", "data": "[redacted]" }, "prompt_id": "p1" }),
+            &mut acc,
+        );
+        let ev = event_json(&out.events[0]);
+        assert_eq!(ev["type"], "assistantDelta");
+        assert_eq!(ev["channel"], "thinking");
+        assert_eq!(ev["text"], "[redacted]");
+    }
+
+    #[test]
+    fn content_block_delta_open_ai_reasoning_opaque_assistant_delta_thinking() {
+        let mut acc = create_accumulator();
+        acc.block_kind = Some(BlockKind::OpenAiReasoningOpaque);
+        let out = fold(
+            json!({ "type": "content_block_delta", "block_index": 0, "delta": { "type": "open_ai_reasoning_opaque", "data": "opaque", "id": "rs_123" }, "prompt_id": "p1" }),
+            &mut acc,
+        );
+        let ev = event_json(&out.events[0]);
+        assert_eq!(ev["type"], "assistantDelta");
+        assert_eq!(ev["channel"], "thinking");
+        assert_eq!(ev["text"], "opaque");
+    }
+
+    #[test]
+    fn content_block_delta_tool_use_input_accumulates_no_events() {
+        let mut acc = create_accumulator();
+        acc.block_kind = Some(BlockKind::ToolUse);
+        fold(
+            json!({ "type": "content_block_delta", "block_index": 1, "delta": { "type": "tool_use_input", "partial_json": "{\"command\":\"ls" }, "prompt_id": "p1" }),
+            &mut acc,
+        );
+        let out = fold(
+            json!({ "type": "content_block_delta", "block_index": 1, "delta": { "type": "tool_use_input", "partial_json": "\"}" }, "prompt_id": "p1" }),
+            &mut acc,
+        );
+        assert!(out.events.is_empty());
+        assert_eq!(acc.tool_input_buffer, "{\"command\":\"ls\"}");
+    }
+
+    #[test]
+    fn content_block_delta_signature_delta_no_events_pass_through() {
+        let mut acc = create_accumulator();
+        acc.block_kind = Some(BlockKind::Thinking);
+        let out = fold(
+            json!({ "type": "content_block_delta", "block_index": 0, "delta": { "type": "signature_delta", "signature": "sig" }, "prompt_id": "p1" }),
+            &mut acc,
+        );
+        assert!(out.events.is_empty());
+    }
+
+    #[test]
+    fn content_block_delta_text_when_block_kind_null_no_events_stale_misordered() {
+        let out = fold_fresh(
+            json!({ "type": "content_block_delta", "block_index": 0, "delta": { "type": "text", "text": "orphan" }, "prompt_id": "p1" }),
+        );
+        assert!(out.events.is_empty());
+    }
+
+    #[test]
+    fn content_block_stop_clears_block_kind() {
+        let mut acc = create_accumulator();
+        acc.block_kind = Some(BlockKind::Text);
+        let out = fold(
+            json!({ "type": "content_block_stop", "block_index": 0, "prompt_id": "p1" }),
+            &mut acc,
+        );
+        assert!(out.events.is_empty());
+        assert!(acc.block_kind.is_none());
+    }
+
+    #[test]
+    fn tool_call_tool_started_with_parsed_input_from_accumulator() {
+        let mut acc = create_accumulator();
+        acc.block_kind = Some(BlockKind::ToolUse);
+        acc.tool_use_block = Some(ToolUseBlockMeta {
+            id: "tu1".to_string(),
+            name: "bash".to_string(),
+        });
+        acc.tool_input_buffer = "{\"command\":\"ls -la\"}".to_string();
+        let out = fold(
+            json!({ "type": "tool_call", "call_id": "call1", "name": "bash", "prompt_id": "p1" }),
+            &mut acc,
+        );
+        let ev = event_json(&out.events[0]);
+        assert_eq!(ev["type"], "toolStarted");
+        assert_eq!(ev["toolName"], "bash");
+        assert_eq!(ev["callId"], "call1");
+        assert_eq!(ev["input"], json!({ "command": "ls -la" }));
+    }
+
+    #[test]
+    fn tool_call_with_explicit_input_field_uses_it_over_accumulator() {
+        let mut acc = create_accumulator();
+        acc.tool_input_buffer = "{\"old\":\"stale\"}".to_string();
+        let out = fold(
+            json!({ "type": "tool_call", "call_id": "call1", "input": { "command": "echo hi" }, "name": "bash", "prompt_id": "p1" }),
+            &mut acc,
+        );
+        assert_eq!(
+            event_json(&out.events[0])["input"],
+            json!({ "command": "echo hi" })
+        );
+    }
+
+    #[test]
+    fn tool_call_with_no_input_and_no_buffer_undefined_input() {
+        let out = fold_fresh(
+            json!({ "type": "tool_call", "call_id": "call1", "name": "bash", "prompt_id": "p1" }),
+        );
+        let ev = event_json(&out.events[0]);
+        assert_eq!(ev["type"], "toolStarted");
+        // TS oracle: input === undefined (absent). Rust serializes None as absent
+        // (skip_serializing_if), so the key is missing.
+        assert!(ev.get("input").is_none() || ev["input"].is_null());
+    }
+
+    #[test]
+    fn tool_call_with_invalid_json_buffer_falls_back_to_raw_string() {
+        let mut acc = create_accumulator();
+        acc.tool_input_buffer = "not json".to_string();
+        let out = fold(
+            json!({ "type": "tool_call", "call_id": "call1", "name": "bash", "prompt_id": "p1" }),
+            &mut acc,
+        );
+        assert_eq!(event_json(&out.events[0])["input"], json!("not json"));
+    }
+
+    #[test]
+    fn tool_result_success_content_string_tool_finished() {
+        let out = fold_fresh(
+            json!({ "type": "tool_result", "call_id": "call1", "content": "done", "is_error": false, "prompt_id": "p1" }),
+        );
+        let ev = event_json(&out.events[0]);
+        assert_eq!(ev["type"], "toolFinished");
+        assert_eq!(ev["callId"], "call1");
+        assert_eq!(ev["success"], true);
+        assert_eq!(ev["output"], "done");
+    }
+
+    #[test]
+    fn tool_result_error_tool_finished_with_success_false() {
+        let out = fold_fresh(
+            json!({ "type": "tool_result", "call_id": "call1", "content": "boom", "is_error": true, "prompt_id": "p1" }),
+        );
+        let ev = event_json(&out.events[0]);
+        assert_eq!(ev["success"], false);
+        assert_eq!(ev["output"], "boom");
+    }
+
+    #[test]
+    fn tool_result_with_content_full_image_lifts_image_into_images_field() {
+        let out = fold_fresh(
+            json!({ "type": "tool_result", "call_id": "call1", "content": "Rendered.", "content_full": { "image": { "data": "QUJD", "media_type": "image/png", "text_fallback": "img" } }, "is_error": false, "prompt_id": "p1" }),
+        );
+        let ev = event_json(&out.events[0]);
+        assert_eq!(ev["type"], "toolFinished");
+        assert_eq!(ev["output"], "Rendered.");
+        assert_eq!(
+            ev["images"],
+            json!([{ "type": "image", "data": "QUJD", "mimeType": "image/png" }])
+        );
+    }
+
+    #[test]
+    fn tool_result_with_content_full_text_variant_uses_text_from_content() {
+        let out = fold_fresh(
+            json!({ "type": "tool_result", "call_id": "call1", "content": "short", "content_full": { "text": "longer text" }, "prompt_id": "p1" }),
+        );
+        assert_eq!(event_json(&out.events[0])["output"], "short");
+    }
+
+    #[test]
+    fn tool_result_with_content_full_blocks_variant_extracts_text() {
+        let out = fold_fresh(
+            json!({ "type": "tool_result", "call_id": "call1", "content_full": { "blocks": [{ "type": "text", "text": "line1 " }, { "type": "text", "text": "line2" }] }, "prompt_id": "p1" }),
+        );
+        assert_eq!(event_json(&out.events[0])["output"], "line1 line2");
+    }
+
+    #[test]
+    fn tool_result_with_null_content_and_null_content_full_undefined_output() {
+        let out = fold_fresh(
+            json!({ "type": "tool_result", "call_id": "call1", "content": null, "prompt_id": "p1" }),
+        );
+        let ev = event_json(&out.events[0]);
+        assert!(ev.get("output").is_none() || ev["output"].is_null());
+    }
+
+    #[test]
+    fn pending_turn_input_queued_refetch_queue_effect_no_events() {
+        let out = fold_fresh(
+            json!({ "type": "pending_turn_input_queued", "admission_prompt_id": "p1", "content": "steer this", "item_id": "item1", "queue_revision": 1 }),
+        );
+        assert!(out.events.is_empty());
+        assert_eq!(effects_json(&out), vec![json!({ "type": "refetchQueue" })]);
+    }
+
+    #[test]
+    fn pending_turn_input_dequeued_refetch_queue_effect() {
+        let out = fold_fresh(
+            json!({ "type": "pending_turn_input_dequeued", "item_id": "item1", "queue_revision": 2 }),
+        );
+        assert_eq!(effects_json(&out), vec![json!({ "type": "refetchQueue" })]);
+    }
+
+    #[test]
+    fn pending_turn_input_discarded_refetch_queue_effect() {
+        let out = fold_fresh(
+            json!({ "type": "pending_turn_input_discarded", "item_ids": ["item1"], "queue_revision": 3, "reason": "superseded" }),
+        );
+        assert_eq!(effects_json(&out), vec![json!({ "type": "refetchQueue" })]);
+    }
+
+    #[test]
+    fn pending_turn_input_drained_queued_message_started_and_queue_updated_empty() {
+        let out = fold_fresh(
+            json!({ "type": "pending_turn_input_drained", "admission_prompt_ids": ["p1"], "content": "steer this", "final_prompt_id": "p2", "item_ids": ["item1"], "queue_revision": 0, "raw_history_index": 5 }),
+        );
+        assert_eq!(out.events.len(), 2);
+        let ev0 = event_json(&out.events[0]);
+        assert_eq!(ev0["type"], "queuedMessageStarted");
+        assert_eq!(ev0["message"]["mode"], "steer");
+        assert_eq!(ev0["message"]["text"], "steer this");
+        let ev1 = event_json(&out.events[1]);
+        assert_eq!(ev1["type"], "queueUpdated");
+        assert_eq!(ev1["messages"], json!([]));
+    }
+
+    #[test]
+    fn pending_turn_input_drained_multi_item_queued_message_started_and_refetch_queue_effect() {
+        let out = fold_fresh(
+            json!({ "type": "pending_turn_input_drained", "admission_prompt_ids": ["p1", "p2"], "content": "steer this", "final_prompt_id": "p3", "item_ids": ["item1", "item2"], "queue_revision": 0, "raw_history_index": 5 }),
+        );
+        assert_eq!(out.events.len(), 1);
+        assert_eq!(event_json(&out.events[0])["type"], "queuedMessageStarted");
+        assert_eq!(effects_json(&out), vec![json!({ "type": "refetchQueue" })]);
+    }
+}
