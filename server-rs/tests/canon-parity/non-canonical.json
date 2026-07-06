@@ -1,0 +1,65 @@
+{
+  "scenario": "canon-parity",
+  "version": "0.4.0-unstable.7",
+  "description": "Synthetic non-canonical fixture for Rust/TS canonicalization parity.",
+  "canonicalization": {
+    "session_id": "raw-session-123",
+    "prompt_ids": {},
+    "timestamps": "raw-wall-clock"
+  },
+  "http": [
+    {
+      "method": "GET",
+      "path": "/state",
+      "request_body": null,
+      "status": 200,
+      "response_body": {
+        "env": {
+          "HOME": "/Users/timo",
+          "PATH": "/Users/timo/bin:/usr/bin"
+        },
+        "context_usage": {
+          "used_tokens": 12345,
+          "limit_tokens": 1000000
+        },
+        "most_recent_assistant_text": "some real model text",
+        "project_cwd": "/Users/timo/whatever",
+        "source_control": {
+          "kind": "git",
+          "label": "feature-x",
+          "dirty": true,
+          "commit": "abc123",
+          "sha": "def456",
+          "revision": "ghi789",
+          "head": "jkl012",
+          "upstream": "origin/feature-x"
+        }
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/prompt",
+      "request_body": {
+        "content": "hello"
+      },
+      "status": 202,
+      "response_body": {
+        "prompt_id": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+        "session_id": "raw-session-123"
+      }
+    }
+  ],
+  "sse": [
+    {
+      "seq": 0,
+      "emitted_at": "2026-07-05T22:52:08Z",
+      "session_id": "raw-session-123",
+      "event": {
+        "type": "system_reminder",
+        "emitted_at": "2026-07-05T22:52:08Z",
+        "prompt_id": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+      }
+    }
+  ],
+  "expected_driver_events": null
+}

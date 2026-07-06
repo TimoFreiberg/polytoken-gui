@@ -73,11 +73,16 @@ placeholder scheme and records it here:
   `item_id` / `interrogative_id` / `call_id` style ids are left as opaque
   placeholder strings (they don't break replay determinism and aren't
   cross-referenced by the accumulator).
-- **`timestamps`** → `"monotonic-from-T0"`. Every `emitted_at` and every
-  in-event `timestamp` is rewritten to a monotonic epoch starting at
-  `1970-01-01T00:00:00.000Z` and incrementing one second per frame
-  (`…00.000Z`, `…01.000Z`, `…02.000Z`, …). The original ordering is preserved;
-  only the absolute instant is normalized.
+- **`timestamps`** → `"monotonic-from-T0"`. Every SSE envelope `emitted_at`,
+  every in-event `timestamp`, and every in-event `emitted_at` is rewritten to a
+  monotonic epoch starting at `1970-01-01T00:00:00.000Z` and incrementing one
+  second per frame (`…00.000Z`, `…01.000Z`, `…02.000Z`, …). The original
+  ordering is preserved; only the absolute instant is normalized.
+- **`/state` machine-specific data** is redacted with type-preserving
+  placeholders: `env` becomes `{}`, `most_recent_assistant_text` becomes `""`,
+  `context_usage.used_tokens` becomes `0`, `project_cwd` becomes `"/PROJECT"`,
+  and `source_control` keeps its object shape while normalizing branch/dirty and
+  commit-like string leaves.
 
 Canonicalization is **idempotent**: running it on already-canonicalized data
 yields identical output. The loader test asserts this (replay determinism).
@@ -93,7 +98,10 @@ When the daemon version bumps and a fresh capture is needed:
    a prod daemon's sessions/config). **This spends provider money** — it drives
    real model turns. It is the deliberate, separate, operator-run step.
 3. The script writes one `<scenario>.json` per scenario into the version dir,
-   already canonicalized.
+   already canonicalized. To re-apply canonicalization to committed files without
+   re-capturing or spending model tokens, run
+   `bun run scripts/capture-daemon-corpus.ts --recanon` (or pass explicit file
+   paths after `--recanon`).
 4. Run `cd server-rs && cargo test corpus` — the loader test confirms every seed
    event still deserializes into the real `SseEnvelope`/`DaemonEvent` and that
    canonicalization is still idempotent. If a daemon event shape changed, this

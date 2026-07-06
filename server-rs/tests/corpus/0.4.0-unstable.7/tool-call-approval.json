@@ -4,7 +4,9 @@
   "description": "A tool call mid-turn that surfaces as a permission interrogative. The agent emits message_start + a tool_use content block, then an interrogative (permission) requesting approval. The user approves via POST /interrogative/{id}/respond, the turn resumes, and a tool_result + message_complete follow. Exercises the RegisterInterrogative effect path.",
   "canonicalization": {
     "session_id": "SESSION",
-    "prompt_ids": { "22222222-2222-2222-2222-222222222222": "PROMPT_0" },
+    "prompt_ids": {
+      "22222222-2222-2222-2222-222222222222": "PROMPT_0"
+    },
     "timestamps": "monotonic-from-T0"
   },
   "http": [
@@ -26,7 +28,10 @@
     {
       "method": "POST",
       "path": "/prompt",
-      "request_body": { "content": "read the file foo.txt", "max_tool_turns": null },
+      "request_body": {
+        "content": "read the file foo.txt",
+        "max_tool_turns": null
+      },
       "status": 202,
       "response_body": {
         "prompt_id": "PROMPT_0",
@@ -36,7 +41,12 @@
     {
       "method": "POST",
       "path": "/interrogative/INTERROGATIVE_0/respond",
-      "request_body": { "response": { "kind": "permission", "decision": "allow" } },
+      "request_body": {
+        "response": {
+          "kind": "permission",
+          "decision": "allow"
+        }
+      },
       "status": 202,
       "response_body": {}
     },
@@ -61,7 +71,10 @@
       "seq": 0,
       "emitted_at": "1970-01-01T00:00:00.000Z",
       "session_id": "SESSION",
-      "event": { "type": "message_start", "prompt_id": "PROMPT_0" }
+      "event": {
+        "type": "message_start",
+        "prompt_id": "PROMPT_0"
+      }
     },
     {
       "seq": 1,
@@ -70,7 +83,11 @@
       "event": {
         "type": "content_block_start",
         "block_index": 0,
-        "block_type": { "type": "tool_use", "id": "CALL_0", "name": "read_file" },
+        "block_type": {
+          "type": "tool_use",
+          "id": "CALL_0",
+          "name": "read_file"
+        },
         "prompt_id": "PROMPT_0"
       }
     },
@@ -81,7 +98,10 @@
       "event": {
         "type": "content_block_delta",
         "block_index": 0,
-        "delta": { "type": "tool_use_input", "partial_json": "{\"path\":\"foo.txt\"}" },
+        "delta": {
+          "type": "tool_use_input",
+          "partial_json": "{\"path\":\"foo.txt\"}"
+        },
         "prompt_id": "PROMPT_0"
       }
     },
@@ -103,7 +123,9 @@
         "type": "tool_call",
         "call_id": "CALL_0",
         "name": "read_file",
-        "input": { "path": "foo.txt" },
+        "input": {
+          "path": "foo.txt"
+        },
         "prompt_id": "PROMPT_0"
       }
     },
@@ -118,7 +140,9 @@
         "question": "Allow read_file on foo.txt?",
         "prompt_id": "PROMPT_0",
         "permission_tool_call": {
-          "input": { "path": "foo.txt" },
+          "input": {
+            "path": "foo.txt"
+          },
           "tool_name": "read_file",
           "tool_use_id": "CALL_0"
         }
@@ -143,7 +167,9 @@
       "event": {
         "type": "content_block_start",
         "block_index": 1,
-        "block_type": { "type": "text" },
+        "block_type": {
+          "type": "text"
+        },
         "prompt_id": "PROMPT_0"
       }
     },
@@ -154,7 +180,10 @@
       "event": {
         "type": "content_block_delta",
         "block_index": 1,
-        "delta": { "type": "text", "text": "Done." },
+        "delta": {
+          "type": "text",
+          "text": "Done."
+        },
         "prompt_id": "PROMPT_0"
       }
     },
@@ -172,7 +201,10 @@
       "seq": 10,
       "emitted_at": "1970-01-01T00:00:10.000Z",
       "session_id": "SESSION",
-      "event": { "type": "message_complete", "prompt_id": "PROMPT_0" }
+      "event": {
+        "type": "message_complete",
+        "prompt_id": "PROMPT_0"
+      }
     }
   ],
   "expected_driver_events": null

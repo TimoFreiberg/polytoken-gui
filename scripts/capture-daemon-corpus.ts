@@ -37,17 +37,24 @@
 //
 // ─── DETERMINISM ─────────────────────────────────────────────────────────────
 // Real output carries non-deterministic session/prompt ids and wall-clock
-// timestamps. `canonicalizeScenario` rewrites them to stable placeholders,
-// MIRRORING server-rs/pilot-server/tests/corpus.rs EXACTLY (session_id→SESSION,
-// UUID prompt ids→PROMPT_N in first-seen order with HTTP walked before SSE,
-// emitted_at→monotonic epoch). KNOWN LIMITATION (shared with the Rust loader):
+// timestamps, and /state machine-specific data. `canonicalizeScenario` rewrites
+// them to stable placeholders, MIRRORING server-rs/pilot-server/tests/corpus.rs
+// EXACTLY (session_id→SESSION, UUID prompt ids→PROMPT_N in first-seen order with
+// HTTP walked before SSE, emitted_at/timestamp→monotonic epoch, /state leak fields
+// → type-preserving placeholders). KNOWN LIMITATION (shared with the Rust loader):
 // wall-clock timestamps INSIDE HTTP response bodies (e.g. state `updated_at`) are
 // NOT rewritten — the seed HTTP bodies carry none. If a real capture's HTTP bodies
 // carry timestamps, extend canonicalizeValue (here AND in corpus.rs together) to
 // null/normalize them before freezing, or the corpus will be non-deterministic.
 
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import {
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  writeFileSync,
+} from "node:fs";
+import { isAbsolute, join, resolve } from "node:path";
 import {
   POLYTOKEN_BIN,
   type Paths,
@@ -137,6 +144,40 @@ function canonicalizeValue(v: unknown, state: CanonState): unknown {
         out[key] = state.canonSession(child);
         continue;
       }
+      // /state leak redactions are KEY-driven and type-preserving. These keys
+      // appear only in HTTP /state bodies in the golden corpus, but the recursive
+      // canonicalizer handles them wherever they are nested so a future capture
+      // cannot leak machine paths, model output, or counters.
+      if (key === "env") {
+        out[key] = child !== null && typeof child === "object" && !Array.isArray(child) ? {} : child;
+        continue;
+      }
+      if (key === "most_recent_assistant_text") {
+        out[key] = typeof child === "string" ? "" : child;
+        continue;
+      }
+      if (key === "used_tokens") {
+        out[key] = typeof child === "number" ? 0 : child;
+        continue;
+      }
+      if (key === "project_cwd") {
+        out[key] = typeof child === "string" ? "/PROJECT" : child;
+        continue;
+      }
+      if (key === "source_control") {
+        if (child !== null && typeof child === "object" && !Array.isArray(child)) {
+          const sourceControl = { ...(child as Record<string, unknown>) };
+          if (typeof sourceControl.label === "string") sourceControl.label = "BRANCH";
+          if (typeof sourceControl.dirty === "boolean") sourceControl.dirty = false;
+          for (const leaf of ["commit", "sha", "revision", "head", "upstream"]) {
+            if (typeof sourceControl[leaf] === "string") sourceControl[leaf] = "COMMIT";
+          }
+          out[key] = sourceControl;
+        } else {
+          out[key] = child;
+        }
+        continue;
+      }
       // Prompt-id key → PROMPT_N (deduped). Matches BOTH singular (prompt_id,
       // admission_prompt_id, final_prompt_id, to_prompt_id, …) AND plural
       // (admission_prompt_ids, prompt_ids). Singular → string maps directly;
@@ -215,7 +256,7 @@ interface ScenarioFile {
 
 /** Canonicalize a full recording in place. HTTP is walked BEFORE SSE so prompt-id
  *  numbering (PROMPT_0, PROMPT_1, …) matches the Rust loader's first-seen order. */
-function canonicalizeScenario(
+export function canonicalizeScenario(
   http: HttpEntry[],
   sse: SseFrame[],
 ): { http: HttpEntry[]; sse: SseFrame[]; manifest: Record<string, string> } {
@@ -245,6 +286,13 @@ function canonicalizeScenario(
     ) {
       event.timestamp = monotonicTimestamp(idx);
     }
+    // The event's inner `emitted_at` (some daemon events carry one).
+    if (
+      typeof event.emitted_at === "string" &&
+      !isMonotonicEpoch(event.emitted_at)
+    ) {
+      event.emitted_at = monotonicTimestamp(idx);
+    }
     return {
       ...(frame.seq != null ? { seq: frame.seq } : {}),
       emitted_at,
@@ -253,6 +301,68 @@ function canonicalizeScenario(
     };
   });
   return { http: outHttp, sse: outSse, manifest: state.promptManifest() };
+}
+
+function assertScenarioFile(value: unknown, file: string): asserts value is ScenarioFile {
+  if (value === null || typeof value !== "object") {
+    throw new Error(`${file}: expected ScenarioFile object`);
+  }
+  const scenario = value as Partial<ScenarioFile>;
+  if (
+    typeof scenario.scenario !== "string" ||
+    typeof scenario.version !== "string" ||
+    typeof scenario.description !== "string" ||
+    scenario.canonicalization === null ||
+    typeof scenario.canonicalization !== "object" ||
+    !Array.isArray(scenario.http) ||
+    !Array.isArray(scenario.sse) ||
+    !("expected_driver_events" in scenario)
+  ) {
+    throw new Error(`${file}: invalid ScenarioFile shape`);
+  }
+}
+
+function recanonPath(arg: string): string {
+  return isAbsolute(arg) ? arg : resolve(import.meta.dir, "..", arg);
+}
+
+function recanonFile(file: string): void {
+  const text = readFileSync(file, "utf8");
+  const parsed: unknown = JSON.parse(text);
+  assertScenarioFile(parsed, file);
+  const { http, sse, manifest } = canonicalizeScenario(parsed.http, parsed.sse);
+  const out: ScenarioFile = {
+    scenario: parsed.scenario,
+    version: parsed.version,
+    description: parsed.description,
+    canonicalization: {
+      session_id: "SESSION",
+      prompt_ids:
+        Object.keys(manifest).length === 0
+          ? parsed.canonicalization.prompt_ids
+          : manifest,
+      timestamps: "monotonic-from-T0",
+    },
+    http,
+    sse,
+    expected_driver_events: parsed.expected_driver_events,
+  };
+  writeFileSync(file, `${JSON.stringify(out, null, 2)}\n`);
+  console.error(`recanonicalized ${file}`);
+}
+
+function recanonCorpus(args: string[]): void {
+  const files =
+    args.length === 0
+      ? readdirSync(CORPUS_DIR)
+          .filter((name) => name.endsWith(".json"))
+          .sort()
+          .map((name) => join(CORPUS_DIR, name))
+      : args.map(recanonPath);
+  if (files.length === 0) {
+    throw new Error(`no .json files to recanonicalize in ${CORPUS_DIR}`);
+  }
+  for (const file of files) recanonFile(file);
 }
 
 // ─── Daemon driving ──────────────────────────────────────────────────────────
@@ -625,10 +735,15 @@ const SCENARIOS: Record<string, Scenario> = {
 
 async function main() {
   const [scenarioName, ...rest] = process.argv.slice(2);
+  if (scenarioName === "--recanon") {
+    recanonCorpus(rest);
+    return;
+  }
   const write = rest.includes("--write");
   if (!scenarioName || !(scenarioName in SCENARIOS)) {
     console.error(
       `usage: bun run scripts/capture-daemon-corpus.ts <scenario> [--write]\n` +
+        `       bun run scripts/capture-daemon-corpus.ts --recanon [file...]\n` +
         `scenarios: ${Object.keys(SCENARIOS).join(", ")}`,
     );
     process.exit(1);
@@ -733,7 +848,12 @@ async function main() {
   }
 }
 
-main().catch((e) => {
-  console.error(`capture failed: ${e instanceof Error ? e.message : e}`);
-  process.exit(1);
-});
+// Only auto-run the capture CLI when invoked directly. Guarding on
+// `import.meta.main` lets the cross-language parity test import
+// `canonicalizeScenario` without spawning a daemon on import.
+if (import.meta.main) {
+  main().catch((e) => {
+    console.error(`capture failed: ${e instanceof Error ? e.message : e}`);
+    process.exit(1);
+  });
+}

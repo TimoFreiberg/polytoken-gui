@@ -80,10 +80,11 @@ struct ScenarioFile {
 //   session_id     → "SESSION"
 //   prompt_id (UUID-like, not already a placeholder) → "PROMPT_0", "PROMPT_1", … (first-seen order)
 //   timestamps     → monotonic epoch starting 1970-01-01T00:00:00.000Z, +1s per frame
+//   /state leaks   → type-preserving placeholders for env/token/text/cwd/source_control
 //
 // Idempotency: a value already matching a placeholder (`SESSION`, `PROMPT_\d+`,
-// or the monotonic epoch) is left untouched, so re-running on canonicalized
-// data is a no-op. The test asserts this.
+// the monotonic epoch, or a /state redaction placeholder) is left untouched, so
+// re-running on canonicalized data is a no-op. The test asserts this.
 // ---------------------------------------------------------------------------
 
 /// True if `s` is already a canonical prompt placeholder (`PROMPT_N`).
@@ -180,6 +181,53 @@ fn canonicalize_value(v: &mut Value, state: &mut CanonState) {
                         }
                         continue;
                     }
+                    // /state leak redactions are KEY-driven and type-preserving. These
+                    // keys appear only in HTTP /state bodies in the golden corpus, but the
+                    // recursive canonicalizer handles them wherever they are nested so a
+                    // future capture cannot leak machine paths, model output, or counters.
+                    if key == "env" {
+                        if matches!(child, Value::Object(_)) {
+                            *child = Value::Object(serde_json::Map::new());
+                        }
+                        continue;
+                    }
+                    if key == "most_recent_assistant_text" {
+                        if let Value::String(s) = child {
+                            s.clear();
+                        }
+                        continue;
+                    }
+                    if key == "used_tokens" {
+                        if let Value::Number(_) = child {
+                            *child = Value::Number(0.into());
+                        }
+                        continue;
+                    }
+                    if key == "project_cwd" {
+                        if let Value::String(s) = child {
+                            *s = "/PROJECT".to_string();
+                        }
+                        continue;
+                    }
+                    if key == "source_control" {
+                        if let Value::Object(sc) = child {
+                            if matches!(sc.get("label"), Some(Value::String(_))) {
+                                sc.insert("label".to_string(), Value::String("BRANCH".to_string()));
+                            }
+                            if matches!(sc.get("dirty"), Some(Value::Bool(_))) {
+                                sc.insert("dirty".to_string(), Value::Bool(false));
+                            }
+                            for leaf in ["commit", "sha", "revision", "head", "upstream"] {
+                                if matches!(sc.get(leaf), Some(Value::String(_))) {
+                                    sc.insert(
+                                        leaf.to_string(),
+                                        Value::String("COMMIT".to_string()),
+                                    );
+                                }
+                            }
+                        }
+                        continue;
+                    }
                     // Prompt-id key → PROMPT_N (deduped). Matches BOTH singular
                     // (`prompt_id`, `admission_prompt_id`, `final_prompt_id`,
                     // `to_prompt_id`, …) AND plural (`admission_prompt_ids`,
@@ -257,6 +305,13 @@ fn canonicalize_frame(frame: &mut SseFrame, frame_idx: usize, state: &mut CanonS
                 *ts = monotonic_timestamp(frame_idx);
             }
         }
+        // The event's inner `emitted_at` field (some daemon events carry one) —
+        // rewrite to match the frame's emitted_at if not already canonical.
+        if let Some(Value::String(ts)) = map.get_mut("emitted_at") {
+            if !is_monotonic_epoch(ts) {
+                *ts = monotonic_timestamp(frame_idx);
+            }
+        }
     }
 }
 
@@ -299,9 +354,11 @@ fn canonicalize_scenario(scenario: &mut ScenarioFile) {
     for (idx, frame) in scenario.sse.iter_mut().enumerate() {
         canonicalize_frame(frame, idx, &mut state);
     }
-    // Reflect the prompt-id map into the manifest (sorted for determinism —
+    // Reflect the canonicalization scheme into the manifest (sorted for determinism —
     // BTreeMap serializes in key order).
+    scenario.canonicalization.session_id = "SESSION".to_string();
     scenario.canonicalization.prompt_ids = state.prompt_manifest();
+    scenario.canonicalization.timestamps = "monotonic-from-T0".to_string();
 }
 
 // ---------------------------------------------------------------------------
@@ -655,4 +712,165 @@ fn canon_maps_plural_prompt_id_arrays() {
     assert_eq!(items[0].as_str().unwrap(), RAW_CALL_ID);
     // Exactly two prompt placeholders allocated (RAW_PROMPT, RAW_PROMPT_2).
     assert_eq!(scenario.canonicalization.prompt_ids.len(), 2);
+}
+
+#[test]
+fn canon_rewrites_inner_emitted_at() {
+    let mut state = CanonState::default();
+    let mut frame = SseFrame {
+        seq: Some(3),
+        emitted_at: "2026-07-05T22:52:08Z".to_string(),
+        session_id: "real-session-uuid".to_string(),
+        event: serde_json::json!({
+            "type": "system_reminder",
+            "emitted_at": "2026-07-05T22:52:08Z",
+        }),
+    };
+
+    canonicalize_frame(&mut frame, 3, &mut state);
+    let first = frame.event["emitted_at"].as_str().unwrap().to_string();
+    assert!(is_monotonic_epoch(&first));
+    assert_eq!(first, monotonic_timestamp(3));
+
+    canonicalize_frame(&mut frame, 3, &mut state);
+    assert_eq!(frame.event["emitted_at"].as_str().unwrap(), first);
+}
+
+fn assert_state_redactions(path: &PathBuf, value: &Value) {
+    let Some(http) = value.get("http").and_then(Value::as_array) else {
+        panic!("{}: http[] missing or not an array", path.display());
+    };
+    for (idx, entry) in http.iter().enumerate() {
+        if entry.get("path").and_then(Value::as_str) != Some("/state") {
+            continue;
+        }
+        let Some(body) = entry.get("response_body") else {
+            panic!(
+                "{}: http[{idx}] /state missing response_body",
+                path.display()
+            );
+        };
+        assert_state_body_redactions(path, idx, body, "response_body");
+    }
+}
+
+fn assert_state_body_redactions(path: &PathBuf, http_idx: usize, value: &Value, field_path: &str) {
+    match value {
+        Value::Object(map) => {
+            for (key, child) in map {
+                let child_path = format!("{field_path}.{key}");
+                match key.as_str() {
+                    "env" => assert!(
+                        child.as_object().is_some_and(|obj| obj.is_empty()),
+                        "{}: http[{http_idx}] {child_path} must be empty object",
+                        path.display()
+                    ),
+                    "used_tokens" => assert_eq!(
+                        child.as_i64(),
+                        Some(0),
+                        "{}: http[{http_idx}] {child_path} must be 0",
+                        path.display()
+                    ),
+                    "most_recent_assistant_text" => assert_eq!(
+                        child.as_str(),
+                        Some(""),
+                        "{}: http[{http_idx}] {child_path} must be empty string",
+                        path.display()
+                    ),
+                    "project_cwd" => assert_eq!(
+                        child.as_str(),
+                        Some("/PROJECT"),
+                        "{}: http[{http_idx}] {child_path} must be /PROJECT",
+                        path.display()
+                    ),
+                    // source_control keeps its shape + `kind`, but every
+                    // run-varying leaf must be redacted to a fixed placeholder
+                    // (mirrors the redactor in canonicalize_value).
+                    "source_control" => {
+                        if let Value::Object(sc) = child {
+                            if let Some(label) = sc.get("label") {
+                                assert_eq!(
+                                    label.as_str(),
+                                    Some("BRANCH"),
+                                    "{}: http[{http_idx}] {child_path}.label must be redacted to BRANCH",
+                                    path.display()
+                                );
+                            }
+                            if let Some(dirty) = sc.get("dirty") {
+                                assert_eq!(
+                                    dirty.as_bool(),
+                                    Some(false),
+                                    "{}: http[{http_idx}] {child_path}.dirty must be redacted to false",
+                                    path.display()
+                                );
+                            }
+                            for leaf in ["commit", "sha", "revision", "head", "upstream"] {
+                                if let Some(v) = sc.get(leaf) {
+                                    if v.is_string() {
+                                        assert_eq!(
+                                            v.as_str(),
+                                            Some("COMMIT"),
+                                            "{}: http[{http_idx}] {child_path}.{leaf} must be redacted to COMMIT",
+                                            path.display()
+                                        );
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    _ => assert_state_body_redactions(path, http_idx, child, &child_path),
+                }
+            }
+        }
+        Value::Array(arr) => {
+            for (idx, child) in arr.iter().enumerate() {
+                assert_state_body_redactions(
+                    path,
+                    http_idx,
+                    child,
+                    &format!("{field_path}[{idx}]"),
+                );
+            }
+        }
+        _ => {}
+    }
+}
+
+#[test]
+fn corpus_has_no_machine_specific_data() {
+    for version in version_dirs() {
+        for path in scenario_files(&version) {
+            let text = fs::read_to_string(&path)
+                .unwrap_or_else(|e| panic!("read {}: {}", path.display(), e));
+            // Absolute home-dir prefixes for both capture platforms (macOS
+            // `/Users/`, Linux `/home/`) are the machine-specific leak vector.
+            for needle in ["/Users/", "/home/"] {
+                assert!(
+                    !text.contains(needle),
+                    "{}: raw file contains {needle}",
+                    path.display()
+                );
+            }
+            let value: Value = serde_json::from_str(&text)
+                .unwrap_or_else(|e| panic!("parse {}: {}", path.display(), e));
+            assert_state_redactions(&path, &value);
+        }
+    }
+}
+
+#[test]
+fn canon_matches_ts_golden() {
+    let dir: PathBuf = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../tests/canon-parity");
+    let non_canonical_path = dir.join("non-canonical.json");
+    let golden_path = dir.join("ts-canonical.golden.json");
+
+    let mut canonicalized = load_scenario(&non_canonical_path);
+    canonicalize_scenario(&mut canonicalized);
+    let golden = load_scenario(&golden_path);
+
+    assert_eq!(
+        serde_json::to_string_pretty(&canonicalized).unwrap(),
+        serde_json::to_string_pretty(&golden).unwrap(),
+        "Rust canonicalization drifted from TS golden"
+    );
 }

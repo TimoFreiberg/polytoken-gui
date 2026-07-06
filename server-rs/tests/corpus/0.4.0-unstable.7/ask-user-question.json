@@ -19,17 +19,7 @@
         "session_title": "main",
         "todos": [],
         "flags": [],
-        "env": {
-          "HOME": "/Users/timo",
-          "LOGNAME": "timo",
-          "PATH": "/Users/timo/src/pilot-polytoken/node_modules/.bin:/Users/timo/src/pilot-polytoken/node_modules/.bin:/Users/timo/src/node_modules/.bin:/Users/timo/node_modules/.bin:/Users/node_modules/.bin:/node_modules/.bin:/usr/local/bin:/System/Cryptexes/App/usr/bin:/usr/bin:/bin:/usr/sbin:/sbin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/local/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/appleinternal/bin:/pkg/env/global/bin:/Users/timo/dotfiles/bin:/Users/timo/.bun/bin:/Users/timo/.local/bin:/Users/timo/.cargo/bin:/opt/homebrew/bin:/Users/timo/bin:/Users/timo/.orbstack/bin:/Users/timo/Library/pnpm:/Users/timo/Library/Application Support/Claude/local-agent-mode-sessions/skills-plugin/a8f458e5-e9fc-4c72-8abc-0677eabc1fbd/40da3e81-612b-485a-8344-6fda9b414659/bin",
-          "SHELL": "/bin/zsh",
-          "TMPDIR": "/var/folders/0f/p0vjgtr15693rxhyw1ljybvr0000gn/T/",
-          "USER": "timo",
-          "XDG_CACHE_HOME": "/Users/timo/.local/state/pilot-parity/xdg-cache",
-          "XDG_CONFIG_HOME": "/Users/timo/.local/state/pilot-parity/xdg-config",
-          "XDG_DATA_HOME": "/Users/timo/.local/state/pilot-parity/xdg-data"
-        },
+        "env": {},
         "available_subagents": [
           "general-purpose",
           "general-purpose-mini",
@@ -44,11 +34,11 @@
         "active_facet": "execute",
         "active_model": "deepseek/deepseek-v4-pro",
         "active_reasoning_effort": "high",
-        "project_cwd": "/Users/timo/.local/state/pilot-parity/project",
+        "project_cwd": "/PROJECT",
         "source_control": {
           "kind": "git",
-          "label": "main",
-          "dirty": true
+          "label": "BRANCH",
+          "dirty": false
         },
         "adventurous_handoff_active": false,
         "available_models": [
@@ -123,17 +113,7 @@
         "session_title": "main",
         "todos": [],
         "flags": [],
-        "env": {
-          "HOME": "/Users/timo",
-          "LOGNAME": "timo",
-          "PATH": "/Users/timo/src/pilot-polytoken/node_modules/.bin:/Users/timo/src/pilot-polytoken/node_modules/.bin:/Users/timo/src/node_modules/.bin:/Users/timo/node_modules/.bin:/Users/node_modules/.bin:/node_modules/.bin:/usr/local/bin:/System/Cryptexes/App/usr/bin:/usr/bin:/bin:/usr/sbin:/sbin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/local/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/appleinternal/bin:/pkg/env/global/bin:/Users/timo/dotfiles/bin:/Users/timo/.bun/bin:/Users/timo/.local/bin:/Users/timo/.cargo/bin:/opt/homebrew/bin:/Users/timo/bin:/Users/timo/.orbstack/bin:/Users/timo/Library/pnpm:/Users/timo/Library/Application Support/Claude/local-agent-mode-sessions/skills-plugin/a8f458e5-e9fc-4c72-8abc-0677eabc1fbd/40da3e81-612b-485a-8344-6fda9b414659/bin",
-          "SHELL": "/bin/zsh",
-          "TMPDIR": "/var/folders/0f/p0vjgtr15693rxhyw1ljybvr0000gn/T/",
-          "USER": "timo",
-          "XDG_CACHE_HOME": "/Users/timo/.local/state/pilot-parity/xdg-cache",
-          "XDG_CONFIG_HOME": "/Users/timo/.local/state/pilot-parity/xdg-config",
-          "XDG_DATA_HOME": "/Users/timo/.local/state/pilot-parity/xdg-data"
-        },
+        "env": {},
         "available_subagents": [
           "general-purpose",
           "general-purpose-mini",
@@ -148,17 +128,17 @@
         "active_facet": "execute",
         "active_model": "deepseek/deepseek-v4-pro",
         "active_reasoning_effort": "high",
-        "project_cwd": "/Users/timo/.local/state/pilot-parity/project",
+        "project_cwd": "/PROJECT",
         "source_control": {
           "kind": "git",
-          "label": "main",
-          "dirty": true
+          "label": "BRANCH",
+          "dirty": false
         },
         "context_usage": {
-          "used_tokens": 11052,
+          "used_tokens": 0,
           "limit_tokens": 1000000
         },
-        "most_recent_assistant_text": "Got it — extract a helper it is.",
+        "most_recent_assistant_text": "",
         "adventurous_handoff_active": false,
         "available_models": [
           {
@@ -227,7 +207,7 @@
         "reason": {
           "type": "session_start"
         },
-        "emitted_at": "2026-07-05T23:19:09.121273Z"
+        "emitted_at": "1970-01-01T00:00:02.000Z"
       }
     },
     {
