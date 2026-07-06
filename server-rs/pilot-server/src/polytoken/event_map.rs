@@ -2158,18 +2158,58 @@ mod tests {
             DaemonEffect::SetAutodrainEnabled { enabled } => {
                 json!({ "type": "setAutodrainEnabled", "enabled": enabled })
             }
-            DaemonEffect::RegisterInterrogative { pending } => json!({
-                "type": "registerInterrogative",
-                "pending": {
-                    "interrogativeId": pending.interrogative_id,
-                    "interrogativeType": format!("{:?}", pending.interrogative_type),
-                    "clarificationLabels": pending.clarification_labels,
-                    "clarificationOptionKeys": pending.clarification_option_keys,
-                    "planHandoffLabels": pending.plan_handoff_labels,
-                    "questionCount": pending.questions.as_ref().map(Vec::len),
-                    "permissionChoiceCount": pending.permission_choices.as_ref().map(Vec::len),
-                },
-            }),
+            DaemonEffect::RegisterInterrogative { pending } => {
+                // Mirror the TS `registerInterrogative` pending object EXACTLY.
+                // Two divergences from a naive projection: (1) interrogativeType
+                // is the RAW daemon string (TS stores `ev.interrogative_type`),
+                // not Rust's PascalCase `{:?}` Debug rendering; (2) TS builds a
+                // minimal object and only adds the keys relevant to each kind,
+                // whereas the Rust struct carries every field as `Option`, so we
+                // omit the `None` ones here rather than emitting them as `null`.
+                use crate::polytoken::ui_bridge::PendingInterrogativeType as Pit;
+                let type_str = match pending.interrogative_type {
+                    Pit::Permission => "permission",
+                    Pit::Confirmation => "confirmation",
+                    Pit::Clarification => "clarification",
+                    Pit::Capability => "capability",
+                    Pit::PlanHandoff => "plan_handoff",
+                    Pit::GoalProposal => "goal_proposal",
+                    Pit::AskUserQuestion => "ask_user_question",
+                    Pit::Unknown => "unknown",
+                };
+                let mut p = serde_json::Map::new();
+                p.insert("interrogativeId".into(), json!(pending.interrogative_id));
+                p.insert("interrogativeType".into(), json!(type_str));
+                if let Some(v) = &pending.clarification_labels {
+                    p.insert("clarificationLabels".into(), json!(v));
+                }
+                if let Some(v) = &pending.clarification_option_keys {
+                    p.insert("clarificationOptionKeys".into(), json!(v));
+                }
+                if let Some(v) = &pending.plan_handoff_labels {
+                    p.insert("planHandoffLabels".into(), json!(v));
+                }
+                if let Some(qs) = &pending.questions {
+                    // TS pending.questions is the full array of
+                    // {questionId, optionIds, optionLabels} the reverse builder
+                    // reads back by index — project it whole, not as a count.
+                    let arr: Vec<Value> = qs
+                        .iter()
+                        .map(|q| {
+                            json!({
+                                "questionId": q.question_id,
+                                "optionIds": q.option_ids,
+                                "optionLabels": q.option_labels.clone().unwrap_or_default(),
+                            })
+                        })
+                        .collect();
+                    p.insert("questions".into(), json!(arr));
+                }
+                if let Some(v) = &pending.permission_choices {
+                    p.insert("permissionChoiceCount".into(), json!(v.len()));
+                }
+                json!({ "type": "registerInterrogative", "pending": Value::Object(p) })
+            }
         }
     }
 
@@ -2973,5 +3013,276 @@ mod tests {
             effects_json(&out),
             vec![json!({ "type": "setAutodrainEnabled", "enabled": true })]
         );
+    }
+
+    // ===== Chunk 3a: interrogatives (all variants) =====
+    // TS event-map.test.ts L891–L1284. Oracle-derived assertions (AC.7).
+
+    #[test]
+    fn interrogative_confirmation_confirm_card_and_register_interrogative() {
+        let out = fold_fresh(
+            json!({ "type": "interrogative", "interrogative_id": "i1", "interrogative_type": "confirmation", "question": "Continue?", "prompt_id": "p1" }),
+        );
+        assert_eq!(out.events.len(), 1);
+        let ev = event_json(&out.events[0]);
+        assert_eq!(ev["type"], "hostUiRequest");
+        assert_eq!(ev["request"]["kind"], "confirm");
+        assert_eq!(ev["request"]["requestId"], "i1");
+        assert_eq!(ev["request"]["message"], "Continue?");
+        assert_eq!(
+            effects_json(&out),
+            vec![
+                json!({ "type": "registerInterrogative", "pending": { "interrogativeId": "i1", "interrogativeType": "confirmation" } })
+            ]
+        );
+    }
+
+    #[test]
+    fn interrogative_clarification_select_card_and_option_keys_captured() {
+        let out = fold_fresh(
+            json!({ "type": "interrogative", "clarification_options": [{ "key": "yes", "label": "Yes" }, { "key": "no", "label": "No" }], "interrogative_id": "i2", "interrogative_type": "clarification", "prompt_id": "p1", "question": "Which?" }),
+        );
+        let ev = event_json(&out.events[0]);
+        assert_eq!(ev["type"], "hostUiRequest");
+        assert_eq!(ev["request"]["kind"], "select");
+        assert_eq!(ev["request"]["requestId"], "i2");
+        assert_eq!(ev["request"]["options"], json!(["Yes", "No"]));
+        let eff = &effects_json(&out)[0];
+        assert_eq!(eff["type"], "registerInterrogative");
+        assert_eq!(eff["pending"]["interrogativeId"], "i2");
+        assert_eq!(eff["pending"]["interrogativeType"], "clarification");
+        assert_eq!(eff["pending"]["clarificationLabels"], json!(["Yes", "No"]));
+        assert_eq!(
+            eff["pending"]["clarificationOptionKeys"],
+            json!(["yes", "no"])
+        );
+    }
+
+    #[test]
+    fn interrogative_capability_confirm_card() {
+        let out = fold_fresh(
+            json!({ "type": "interrogative", "interrogative_id": "i3", "interrogative_type": "capability", "prompt_id": "p1", "question": "Grant network access?" }),
+        );
+        let ev = event_json(&out.events[0]);
+        assert_eq!(ev["type"], "hostUiRequest");
+        assert_eq!(ev["request"]["kind"], "confirm");
+        assert_eq!(ev["request"]["requestId"], "i3");
+        assert_eq!(ev["request"]["message"], "Grant network access?");
+    }
+
+    #[test]
+    fn interrogative_plan_handoff_plan_card_with_markdown_and_action_labels() {
+        let out = fold_fresh(
+            json!({ "type": "interrogative", "interrogative_id": "i4", "interrogative_type": "plan_handoff", "plan_handoff": { "action_labels": { "cancel": "Cancel", "implement_current_context": "Implement here", "implement_new_context": "Implement fresh" }, "display_path": "/plan.md", "plan_path": "/plan.md", "plan_text": "the plan", "target_facet": "execute", "title": "Review plan" }, "prompt_id": "p1", "question": "Approve plan?" }),
+        );
+        let ev = event_json(&out.events[0]);
+        assert_eq!(ev["type"], "hostUiRequest");
+        let req = &ev["request"];
+        assert_eq!(req["kind"], "plan");
+        assert_eq!(req["requestId"], "i4");
+        assert_eq!(req["title"], "Review plan");
+        assert_eq!(req["planText"], "the plan");
+        assert_eq!(req["displayPath"], "/plan.md");
+        assert_eq!(req["targetFacet"], "execute");
+        assert_eq!(
+            req["actionLabels"],
+            json!(["Implement fresh", "Implement here", "Cancel"])
+        );
+    }
+
+    #[test]
+    fn interrogative_plan_handoff_null_fallback_labels_and_empty_body() {
+        let out = fold_fresh(
+            json!({ "type": "interrogative", "interrogative_id": "i4", "interrogative_type": "plan_handoff", "plan_handoff": null, "prompt_id": "p1", "question": "Approve plan?" }),
+        );
+        let req = &event_json(&out.events[0])["request"];
+        assert_eq!(req["kind"], "plan");
+        assert_eq!(req["planText"], "");
+        assert_eq!(
+            req["actionLabels"],
+            json!([
+                "Implement (new context)",
+                "Implement (current context)",
+                "Cancel"
+            ])
+        );
+    }
+
+    #[test]
+    fn interrogative_permission_null_context_all_7_options() {
+        let out = fold_fresh(
+            json!({ "type": "interrogative", "interrogative_id": "i5", "interrogative_type": "permission", "prompt_id": "p1", "question": "Run bash?" }),
+        );
+        let req = &event_json(&out.events[0])["request"];
+        assert_eq!(req["kind"], "permission");
+        assert_eq!(req["requestId"], "i5");
+        assert_eq!(req["title"], "Run bash?");
+        assert_eq!(req["toolName"], Value::Null);
+        assert_eq!(req["toolInput"], Value::Null);
+        assert_eq!(
+            req["options"],
+            json!([
+                "Deny",
+                "Allow once",
+                "Allow for session",
+                "Allow for project (local)",
+                "Allow for project",
+                "Allow for user (local)",
+                "Allow for user"
+            ])
+        );
+        let eff = &effects_json(&out)[0];
+        assert_eq!(eff["type"], "registerInterrogative");
+        assert_eq!(eff["pending"]["interrogativeId"], "i5");
+        assert_eq!(eff["pending"]["interrogativeType"], "permission");
+        // All 7 choices captured (no pruning — keep_targets absent).
+        assert_eq!(eff["pending"]["permissionChoiceCount"], 7);
+    }
+
+    #[test]
+    fn interrogative_permission_with_tool_call_shows_tool_name_and_input() {
+        let out = fold_fresh(
+            json!({ "type": "interrogative", "interrogative_id": "i6", "interrogative_type": "permission", "prompt_id": "p1", "question": "Run bash?", "permission_tool_call": { "tool_name": "shell_exec", "tool_use_id": "tu1", "input": { "command": "rm -rf /tmp/test" } } }),
+        );
+        let req = &event_json(&out.events[0])["request"];
+        assert_eq!(req["kind"], "permission");
+        assert_eq!(req["toolName"], "shell_exec");
+        assert_eq!(
+            req["toolInput"],
+            serde_json::to_string_pretty(&json!({ "command": "rm -rf /tmp/test" })).unwrap()
+        );
+    }
+
+    #[test]
+    fn interrogative_permission_keep_targets_session_only_3_options_render() {
+        let out = fold_fresh(
+            json!({ "type": "interrogative", "interrogative_id": "i7", "interrogative_type": "permission", "prompt_id": "p1", "question": "Run bash?", "permission_candidate_rule": { "keep_targets": ["session"], "default_target": "session", "candidate_rule_raw": "rule", "candidate_rule_resolved_today": "rule-today", "floor_context": { "tool_name": "shell_exec" } } }),
+        );
+        let req = &event_json(&out.events[0])["request"];
+        assert_eq!(req["kind"], "permission");
+        assert_eq!(
+            req["options"],
+            json!(["Deny", "Allow once", "Allow for session"])
+        );
+        let eff = &effects_json(&out)[0];
+        assert_eq!(eff["pending"]["permissionChoiceCount"], 3);
+    }
+
+    #[test]
+    fn interrogative_permission_keep_targets_user_4_options_render() {
+        let out = fold_fresh(
+            json!({ "type": "interrogative", "interrogative_id": "i8", "interrogative_type": "permission", "prompt_id": "p1", "question": "Run bash?", "permission_candidate_rule": { "keep_targets": ["user_local", "user"], "default_target": "user", "candidate_rule_raw": "rule", "candidate_rule_resolved_today": "rule-today", "floor_context": { "tool_name": "shell_exec" } } }),
+        );
+        let req = &event_json(&out.events[0])["request"];
+        assert_eq!(
+            req["options"],
+            json!([
+                "Deny",
+                "Allow once",
+                "Allow for user (local)",
+                "Allow for user"
+            ])
+        );
+        let eff = &effects_json(&out)[0];
+        assert_eq!(eff["pending"]["permissionChoiceCount"], 4);
+    }
+
+    #[test]
+    fn ask_user_question_qna_card_and_question_option_ids_captured() {
+        let out = fold_fresh(
+            json!({ "type": "ask_user_question", "interrogative_id": "q1", "payload": { "questions": [{ "id": "q-a", "mode": "single_select", "options": [{ "id": "o1", "label": "Opt1", "description": "desc" }, { "id": "o2", "label": "Opt2", "description": "" }], "question": "Pick one?" }, { "id": "q-b", "mode": "text", "question": "Free text?", "allow_free_text": true }] }, "prompt_id": "p1" }),
+        );
+        let req = &event_json(&out.events[0])["request"];
+        assert_eq!(req["kind"], "qna");
+        assert_eq!(req["requestId"], "q1");
+        assert_eq!(req["questions"][0]["question"], "Pick one?");
+        assert_eq!(req["questions"][0]["options"][0]["label"], "Opt1");
+        assert_eq!(req["questions"][0]["options"][0]["description"], "desc");
+        assert_eq!(req["questions"][0]["options"][1]["label"], "Opt2");
+        assert_eq!(req["questions"][0]["multiSelect"], false);
+        assert_eq!(req["questions"][1]["question"], "Free text?");
+        assert_eq!(req["questions"][1]["multiSelect"], false);
+        let eff = &effects_json(&out)[0];
+        assert_eq!(eff["type"], "registerInterrogative");
+        assert_eq!(eff["pending"]["interrogativeId"], "q1");
+        assert_eq!(eff["pending"]["interrogativeType"], "ask_user_question");
+        assert_eq!(eff["pending"]["questions"][0]["questionId"], "q-a");
+        assert_eq!(
+            eff["pending"]["questions"][0]["optionIds"],
+            json!(["o1", "o2"])
+        );
+        assert_eq!(
+            eff["pending"]["questions"][0]["optionLabels"],
+            json!(["Opt1", "Opt2"])
+        );
+        assert_eq!(eff["pending"]["questions"][1]["questionId"], "q-b");
+        assert_eq!(eff["pending"]["questions"][1]["optionIds"], json!([]));
+        assert_eq!(eff["pending"]["questions"][1]["optionLabels"], json!([]));
+    }
+
+    #[test]
+    fn interrogative_goal_proposal_confirm_card_and_register_interrogative() {
+        let out = fold_fresh(
+            json!({ "type": "interrogative", "interrogative_id": "g1", "interrogative_type": "goal_proposal", "goal_proposal": { "title": "Ship feature X", "proposed_summary": "Implement the new dashboard widget", "proposed_file_path": "/goal.md", "action_labels": { "accept": "Accept", "reject": "Reject" } }, "prompt_id": "p1", "question": "Propose goal?" }),
+        );
+        assert_eq!(out.events.len(), 1);
+        let req = &event_json(&out.events[0])["request"];
+        assert_eq!(req["kind"], "confirm");
+        assert_eq!(req["requestId"], "g1");
+        assert_eq!(req["title"], "Ship feature X");
+        assert_eq!(req["message"], "Implement the new dashboard widget");
+        assert_eq!(
+            effects_json(&out),
+            vec![
+                json!({ "type": "registerInterrogative", "pending": { "interrogativeId": "g1", "interrogativeType": "goal_proposal" } })
+            ]
+        );
+    }
+
+    #[test]
+    fn interrogative_goal_proposal_null_fallback_title() {
+        let out = fold_fresh(
+            json!({ "type": "interrogative", "interrogative_id": "g2", "interrogative_type": "goal_proposal", "goal_proposal": null, "prompt_id": "p1", "question": "Propose goal?" }),
+        );
+        let req = &event_json(&out.events[0])["request"];
+        assert_eq!(req["kind"], "confirm");
+        assert_eq!(req["requestId"], "g2");
+        assert_eq!(req["title"], "Goal proposal");
+        let eff = &effects_json(&out)[0];
+        assert_eq!(eff["type"], "registerInterrogative");
+        assert_eq!(eff["pending"]["interrogativeId"], "g2");
+        assert_eq!(eff["pending"]["interrogativeType"], "goal_proposal");
+    }
+
+    #[test]
+    #[ignore = "reason: phase 4/openapi enum gap — the generated InterrogativeType enum rejects unknown values before map_daemon_event, so the TS 'unknown_type' forward-compat case ({interrogative_type:'some_future_type'}) cannot be constructed without a codegen/type edit"]
+    fn interrogative_unknown_type_confirm_dialog_deny_safe_and_register_interrogative() {
+        // TS L1247: interrogative_type 'some_future_type' → confirm card titled
+        // '⚠ Unknown request type: some_future_type' + registerInterrogative with
+        // interrogativeType 'unknown'. The TS source has a runtime default arm; the
+        // generated Rust enum has none, so an unknown type fails to deserialize.
+        let out = fold_fresh(
+            json!({ "type": "interrogative", "interrogative_id": "u1", "interrogative_type": "some_future_type", "prompt_id": "p1", "question": "?" }),
+        );
+        assert_eq!(out.events.len(), 1);
+        let req = &event_json(&out.events[0])["request"];
+        assert_eq!(req["kind"], "confirm");
+        assert_eq!(req["requestId"], "u1");
+        assert_eq!(req["title"], "⚠ Unknown request type: some_future_type");
+        assert_eq!(
+            effects_json(&out),
+            vec![
+                json!({ "type": "registerInterrogative", "pending": { "interrogativeId": "u1", "interrogativeType": "unknown" } })
+            ]
+        );
+    }
+
+    #[test]
+    fn interrogative_with_subagent_handle_is_skipped_not_top_level() {
+        let out = fold_fresh(
+            json!({ "type": "interrogative", "interrogative_id": "i1", "interrogative_type": "confirmation", "prompt_id": "p1", "question": "ok?", "subagent_handle": "sub1" }),
+        );
+        assert!(out.events.is_empty());
+        assert!(out.effects.is_empty());
     }
 }
