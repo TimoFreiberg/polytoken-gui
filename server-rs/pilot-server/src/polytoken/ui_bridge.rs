@@ -448,3 +448,607 @@ fn build_ask_user_question_reply(
         free_text,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn pending(interrogative_type: PendingInterrogativeType) -> PendingInterrogative {
+        PendingInterrogative {
+            interrogative_id: "i1".to_string(),
+            interrogative_type,
+            clarification_labels: None,
+            clarification_option_keys: None,
+            plan_handoff_labels: None,
+            questions: None,
+            permission_choices: None,
+        }
+    }
+
+    fn value(value: &str) -> HostUiResponse {
+        HostUiResponse::Value {
+            request_id: "i1".to_string(),
+            value: value.to_string(),
+        }
+    }
+
+    fn confirmed(confirmed: bool) -> HostUiResponse {
+        HostUiResponse::Confirmed {
+            request_id: "i1".to_string(),
+            confirmed,
+        }
+    }
+
+    fn cancel() -> HostUiResponse {
+        HostUiResponse::Cancelled {
+            request_id: "i1".to_string(),
+            cancelled: true,
+        }
+    }
+
+    fn answer(selected_option_indices: Vec<i64>, custom_text: &str) -> QnaAnswer {
+        QnaAnswer {
+            selected_option_indices,
+            custom_text: custom_text.to_string(),
+        }
+    }
+
+    fn answers(answers: Vec<QnaAnswer>) -> HostUiResponse {
+        HostUiResponse::Answers {
+            request_id: "i1".to_string(),
+            answers,
+        }
+    }
+
+    fn with_clarification_options(
+        mut pending: PendingInterrogative,
+        labels: Vec<&str>,
+        keys: Vec<&str>,
+    ) -> PendingInterrogative {
+        pending.clarification_labels = Some(labels.into_iter().map(str::to_string).collect());
+        pending.clarification_option_keys = Some(keys.into_iter().map(str::to_string).collect());
+        pending
+    }
+
+    fn with_plan_handoff_labels(
+        mut pending: PendingInterrogative,
+        labels: Vec<&str>,
+    ) -> PendingInterrogative {
+        pending.plan_handoff_labels = Some(labels.into_iter().map(str::to_string).collect());
+        pending
+    }
+
+    fn with_questions(
+        mut pending: PendingInterrogative,
+        questions: Vec<PendingQuestion>,
+    ) -> PendingInterrogative {
+        pending.questions = Some(questions);
+        pending
+    }
+
+    fn with_permission_choices(
+        mut pending: PendingInterrogative,
+        permission_choices: Vec<ApprovalChoice>,
+    ) -> PendingInterrogative {
+        pending.permission_choices = Some(permission_choices);
+        pending
+    }
+
+    fn question(question_id: &str, option_ids: Vec<&str>) -> PendingQuestion {
+        PendingQuestion {
+            question_id: question_id.to_string(),
+            option_ids: option_ids.into_iter().map(str::to_string).collect(),
+            option_labels: None,
+        }
+    }
+
+    fn build(
+        pending: PendingInterrogative,
+        response: HostUiResponse,
+    ) -> Option<InterrogativeResponse> {
+        build_interrogative_response(&pending, &response)
+    }
+
+    fn expect_cancel(out: Option<InterrogativeResponse>) {
+        assert!(matches!(out, Some(InterrogativeResponse::Cancel)));
+    }
+
+    fn expect_permission(
+        out: Option<InterrogativeResponse>,
+        expected_granted: bool,
+        expected_target: Option<PersistenceTarget>,
+    ) {
+        match out {
+            Some(InterrogativeResponse::PermissionAnswer {
+                granted,
+                persistence_target,
+            }) => {
+                assert_eq!(granted, expected_granted);
+                assert_eq!(persistence_target, expected_target);
+            }
+            other => panic!("expected permission answer, got {other:?}"),
+        }
+    }
+
+    fn expect_ask_user_question_answers(
+        out: Option<InterrogativeResponse>,
+    ) -> Vec<AskUserQuestionReply> {
+        match out {
+            Some(InterrogativeResponse::AskUserQuestionAnswers { answers }) => answers,
+            other => panic!("expected ask_user_question_answers, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn cancel_kind_cancel_regardless_of_type() {
+        for interrogative_type in [
+            PendingInterrogativeType::Confirmation,
+            PendingInterrogativeType::Clarification,
+            PendingInterrogativeType::Capability,
+            PendingInterrogativeType::PlanHandoff,
+            PendingInterrogativeType::Permission,
+            PendingInterrogativeType::AskUserQuestion,
+            PendingInterrogativeType::GoalProposal,
+            PendingInterrogativeType::Unknown,
+        ] {
+            expect_cancel(build(pending(interrogative_type), cancel()));
+        }
+    }
+
+    #[test]
+    fn confirmation_confirmed_true_confirmation_answer_confirmed_true() {
+        match build(
+            pending(PendingInterrogativeType::Confirmation),
+            confirmed(true),
+        ) {
+            Some(InterrogativeResponse::ConfirmationAnswer { confirmed }) => assert!(confirmed),
+            other => panic!("expected confirmation answer, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn confirmation_confirmed_false_confirmation_answer_confirmed_false() {
+        match build(
+            pending(PendingInterrogativeType::Confirmation),
+            confirmed(false),
+        ) {
+            Some(InterrogativeResponse::ConfirmationAnswer { confirmed }) => assert!(!confirmed),
+            other => panic!("expected confirmation answer, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn confirmation_wrong_shape_value_null_misroute_defense() {
+        assert!(
+            build(
+                pending(PendingInterrogativeType::Confirmation),
+                value("yes")
+            )
+            .is_none()
+        );
+    }
+
+    #[test]
+    fn clarification_select_label_yes_clarification_choice_with_keys_0() {
+        let out = build(
+            with_clarification_options(
+                pending(PendingInterrogativeType::Clarification),
+                vec!["Yes", "No"],
+                vec!["yes", "no"],
+            ),
+            value("Yes"),
+        );
+        match out {
+            Some(InterrogativeResponse::ClarificationChoice { choice }) => {
+                assert_eq!(choice, "yes")
+            }
+            other => panic!("expected clarification choice, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn clarification_select_label_no_clarification_choice_with_keys_1() {
+        let out = build(
+            with_clarification_options(
+                pending(PendingInterrogativeType::Clarification),
+                vec!["Yes", "No"],
+                vec!["yes", "no"],
+            ),
+            value("No"),
+        );
+        match out {
+            Some(InterrogativeResponse::ClarificationChoice { choice }) => assert_eq!(choice, "no"),
+            other => panic!("expected clarification choice, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn clarification_unknown_label_null() {
+        let out = build(
+            with_clarification_options(
+                pending(PendingInterrogativeType::Clarification),
+                vec!["Yes"],
+                vec!["yes"],
+            ),
+            value("Maybe"),
+        );
+        assert!(out.is_none());
+    }
+
+    #[test]
+    fn clarification_value_with_no_labels_clarification_text() {
+        match build(
+            pending(PendingInterrogativeType::Clarification),
+            value("my custom answer"),
+        ) {
+            Some(InterrogativeResponse::ClarificationText { text }) => {
+                assert_eq!(text, "my custom answer");
+            }
+            other => panic!("expected clarification text, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn clarification_empty_labels_clarification_text() {
+        let out = build(
+            with_clarification_options(
+                pending(PendingInterrogativeType::Clarification),
+                vec![],
+                vec![],
+            ),
+            value("typed"),
+        );
+        match out {
+            Some(InterrogativeResponse::ClarificationText { text }) => assert_eq!(text, "typed"),
+            other => panic!("expected clarification text, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn capability_confirmed_true_capability_answer_granted_true() {
+        match build(
+            pending(PendingInterrogativeType::Capability),
+            confirmed(true),
+        ) {
+            Some(InterrogativeResponse::CapabilityAnswer { granted }) => assert!(granted),
+            other => panic!("expected capability answer, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn capability_confirmed_false_capability_answer_granted_false() {
+        match build(
+            pending(PendingInterrogativeType::Capability),
+            confirmed(false),
+        ) {
+            Some(InterrogativeResponse::CapabilityAnswer { granted }) => assert!(!granted),
+            other => panic!("expected capability answer, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn plan_handoff_label_implement_fresh_implement_new_context() {
+        let out = build(
+            with_plan_handoff_labels(
+                pending(PendingInterrogativeType::PlanHandoff),
+                vec!["Implement fresh", "Implement here", "Cancel"],
+            ),
+            value("Implement fresh"),
+        );
+        match out {
+            Some(InterrogativeResponse::PlanHandoffAnswer { decision }) => {
+                assert_eq!(decision, serde_json::json!("implement_new_context"));
+            }
+            other => panic!("expected plan handoff answer, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn plan_handoff_label_implement_here_implement_current_context() {
+        let out = build(
+            with_plan_handoff_labels(
+                pending(PendingInterrogativeType::PlanHandoff),
+                vec!["Implement fresh", "Implement here", "Cancel"],
+            ),
+            value("Implement here"),
+        );
+        match out {
+            Some(InterrogativeResponse::PlanHandoffAnswer { decision }) => {
+                assert_eq!(decision, serde_json::json!("implement_current_context"));
+            }
+            other => panic!("expected plan handoff answer, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn plan_handoff_label_cancel_cancel() {
+        let out = build(
+            with_plan_handoff_labels(
+                pending(PendingInterrogativeType::PlanHandoff),
+                vec!["Implement fresh", "Implement here", "Cancel"],
+            ),
+            value("Cancel"),
+        );
+        match out {
+            Some(InterrogativeResponse::PlanHandoffAnswer { decision }) => {
+                assert_eq!(decision, serde_json::json!("cancel"));
+            }
+            other => panic!("expected plan handoff answer, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn plan_handoff_unknown_label_null() {
+        let out = build(
+            with_plan_handoff_labels(
+                pending(PendingInterrogativeType::PlanHandoff),
+                vec!["Implement fresh", "Implement here", "Cancel"],
+            ),
+            value("Something else"),
+        );
+        assert!(out.is_none());
+    }
+
+    #[test]
+    fn permission_label_deny_permission_answer_granted_false_target_null() {
+        expect_permission(
+            build(pending(PendingInterrogativeType::Permission), value("Deny")),
+            false,
+            None,
+        );
+    }
+
+    #[test]
+    fn permission_label_allow_once_granted_true_target_null() {
+        expect_permission(
+            build(
+                pending(PendingInterrogativeType::Permission),
+                value("Allow once"),
+            ),
+            true,
+            None,
+        );
+    }
+
+    #[test]
+    fn permission_label_allow_for_session_granted_true_target_session() {
+        expect_permission(
+            build(
+                pending(PendingInterrogativeType::Permission),
+                value("Allow for session"),
+            ),
+            true,
+            Some(PersistenceTarget::Session),
+        );
+    }
+
+    #[test]
+    fn permission_label_allow_for_user_granted_true_target_user() {
+        expect_permission(
+            build(
+                pending(PendingInterrogativeType::Permission),
+                value("Allow for user"),
+            ),
+            true,
+            Some(PersistenceTarget::User),
+        );
+    }
+
+    #[test]
+    fn permission_unknown_label_null() {
+        assert!(
+            build(
+                pending(PendingInterrogativeType::Permission),
+                value("Maybe")
+            )
+            .is_none()
+        );
+    }
+
+    #[test]
+    fn permission_pruned_subset_allow_for_session_correct_grant_target() {
+        let choices = prune_approval_options(Some(&[PersistenceTarget::Session]));
+        expect_permission(
+            build(
+                with_permission_choices(pending(PendingInterrogativeType::Permission), choices),
+                value("Allow for session"),
+            ),
+            true,
+            Some(PersistenceTarget::Session),
+        );
+    }
+
+    #[test]
+    fn permission_pruned_subset_deny_granted_false() {
+        let choices = prune_approval_options(Some(&[PersistenceTarget::User]));
+        expect_permission(
+            build(
+                with_permission_choices(pending(PendingInterrogativeType::Permission), choices),
+                value("Deny"),
+            ),
+            false,
+            None,
+        );
+    }
+
+    #[test]
+    fn permission_pruned_subset_allow_for_user_pruned_out_null() {
+        let choices = prune_approval_options(Some(&[PersistenceTarget::Session]));
+        assert!(
+            build(
+                with_permission_choices(pending(PendingInterrogativeType::Permission), choices),
+                value("Allow for user"),
+            )
+            .is_none()
+        );
+    }
+
+    #[test]
+    fn permission_no_permission_choices_fallback_fixed_array_lookup_still_works() {
+        expect_permission(
+            build(
+                pending(PendingInterrogativeType::Permission),
+                value("Allow for project"),
+            ),
+            true,
+            Some(PersistenceTarget::Project),
+        );
+    }
+
+    #[test]
+    fn ask_user_question_answers_ask_user_question_answers_with_option_ids_mapped() {
+        let out = build(
+            with_questions(
+                pending(PendingInterrogativeType::AskUserQuestion),
+                vec![question("q-a", vec!["o1", "o2"]), question("q-b", vec![])],
+            ),
+            answers(vec![
+                answer(vec![0], ""),
+                answer(vec![], "free text answer"),
+            ]),
+        );
+        let answers = expect_ask_user_question_answers(out);
+        assert_eq!(answers.len(), 2);
+        assert_eq!(answers[0].question_id, "q-a");
+        assert_eq!(answers[0].selected_option_ids, Some(vec!["o1".to_string()]));
+        assert_eq!(answers[0].free_text, None);
+        assert_eq!(answers[1].question_id, "q-b");
+        assert_eq!(answers[1].selected_option_ids, Some(vec![]));
+        assert_eq!(answers[1].free_text, Some("free text answer".to_string()));
+    }
+
+    #[test]
+    fn ask_user_question_multi_select_all_selected_option_ids_mapped() {
+        let out = build(
+            with_questions(
+                pending(PendingInterrogativeType::AskUserQuestion),
+                vec![question("q-a", vec!["o1", "o2", "o3"])],
+            ),
+            answers(vec![answer(vec![0, 2], "")]),
+        );
+        let answers = expect_ask_user_question_answers(out);
+        assert_eq!(answers.len(), 1);
+        assert_eq!(answers[0].question_id, "q-a");
+        assert_eq!(
+            answers[0].selected_option_ids,
+            Some(vec!["o1".to_string(), "o3".to_string()])
+        );
+    }
+
+    #[test]
+    fn ask_user_question_out_of_range_index_filtered_out_not_crashed() {
+        let out = build(
+            with_questions(
+                pending(PendingInterrogativeType::AskUserQuestion),
+                vec![question("q-a", vec!["o1"])],
+            ),
+            answers(vec![answer(vec![0, 5], "")]),
+        );
+        let answers = expect_ask_user_question_answers(out);
+        assert_eq!(answers.len(), 1);
+        assert_eq!(answers[0].selected_option_ids, Some(vec!["o1".to_string()]));
+    }
+
+    #[test]
+    fn ask_user_question_wrong_shape_confirmed_null() {
+        assert!(
+            build(
+                pending(PendingInterrogativeType::AskUserQuestion),
+                confirmed(true),
+            )
+            .is_none()
+        );
+    }
+
+    #[test]
+    fn goal_proposal_confirmed_true_goal_proposal_answer_accepted_true() {
+        match build(
+            pending(PendingInterrogativeType::GoalProposal),
+            confirmed(true),
+        ) {
+            Some(InterrogativeResponse::GoalProposalAnswer { accepted }) => assert!(accepted),
+            other => panic!("expected goal proposal answer, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn goal_proposal_confirmed_false_goal_proposal_answer_accepted_false() {
+        match build(
+            pending(PendingInterrogativeType::GoalProposal),
+            confirmed(false),
+        ) {
+            Some(InterrogativeResponse::GoalProposalAnswer { accepted }) => assert!(!accepted),
+            other => panic!("expected goal proposal answer, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn goal_proposal_wrong_shape_value_null() {
+        assert!(
+            build(
+                pending(PendingInterrogativeType::GoalProposal),
+                value("something"),
+            )
+            .is_none()
+        );
+    }
+
+    #[test]
+    fn unknown_confirmed_false_kind_cancel_dismiss_button() {
+        expect_cancel(build(
+            pending(PendingInterrogativeType::Unknown),
+            confirmed(false),
+        ));
+    }
+
+    #[test]
+    fn unknown_confirmed_true_kind_cancel_affirmative_also_cancels() {
+        expect_cancel(build(
+            pending(PendingInterrogativeType::Unknown),
+            confirmed(true),
+        ));
+    }
+
+    #[test]
+    fn permission_approval_labels_has_7_entries_matching_the_choices() {
+        assert_eq!(PERMISSION_APPROVAL_LABELS.len(), 7);
+        assert_eq!(PERMISSION_APPROVAL_CHOICES.len(), 7);
+    }
+
+    #[test]
+    fn index_0_is_deny_granted_false() {
+        assert!(!PERMISSION_APPROVAL_CHOICES[0].granted);
+        assert_eq!(PERMISSION_APPROVAL_CHOICES[0].persistence_target, None);
+    }
+
+    #[test]
+    fn index_1_is_allow_once_granted_true_null_target() {
+        assert!(PERMISSION_APPROVAL_CHOICES[1].granted);
+        assert_eq!(PERMISSION_APPROVAL_CHOICES[1].persistence_target, None);
+    }
+
+    #[test]
+    fn indices_2_6_grant_with_escalating_persistence_targets() {
+        let targets: Vec<Option<PersistenceTarget>> = PERMISSION_APPROVAL_CHOICES[2..]
+            .iter()
+            .map(|choice| choice.persistence_target.clone())
+            .collect();
+        assert_eq!(
+            targets,
+            vec![
+                Some(PersistenceTarget::Session),
+                Some(PersistenceTarget::ProjectLocal),
+                Some(PersistenceTarget::Project),
+                Some(PersistenceTarget::UserLocal),
+                Some(PersistenceTarget::User),
+            ]
+        );
+    }
+
+    #[test]
+    fn every_grant_choice_has_granted_true() {
+        for choice in &PERMISSION_APPROVAL_CHOICES[1..] {
+            assert!(choice.granted);
+        }
+    }
+}
