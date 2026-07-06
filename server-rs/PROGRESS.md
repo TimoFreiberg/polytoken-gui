@@ -436,7 +436,8 @@ validated" — it validates hub + protocol + mock.
      (session-registry/worktree port — Phase 2 item 5; the harness can't
      exercise reload re-warm without it).
    - `list_sessions` hardcodes `archived_for: |_| false`,
-     `worktree_for: |_| None` (archive-store/worktree-store unported).
+     `worktree_for: |_| None` (archive-store/worktree-store ported in
+     Phase 2 (2026-07-06) but not yet wired here — Phase 5).
    - `warm_cap` is parsed into config and **enforced nowhere** — the warm
      daemon pool grows without bound.
    - The hub never sends `modelDefaults` (TS broadcasts it).

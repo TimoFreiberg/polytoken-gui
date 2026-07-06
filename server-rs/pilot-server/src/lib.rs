@@ -10,6 +10,7 @@
 //! `main.rs` re-imports these via `use pilot_server::{…}` and adds only
 //! `fn main` + the axum route handlers.
 
+pub mod archive_store;
 pub mod background_model;
 pub mod config;
 pub mod driver;
@@ -23,4 +24,5 @@ pub mod settings_store;
 pub mod shared;
 pub mod static_serve;
 pub mod stub_driver;
+pub mod worktree_store;
 pub mod ws_send;
