@@ -1819,7 +1819,9 @@ pub fn map_daemon_event(
             )
         }
 
-        DaemonEvent::GoalDriverUpdate { goal, .. } => {
+        DaemonEvent::GoalDriverUpdate {
+            goal, transition, ..
+        } => {
             // Mirror permission_monitor_switch (above): the event carries the
             // authoritative new goal, so emit a sessionUpdated from the payload
             // immediately, then fire fetchState to sync the cached lastState. The goal
@@ -1832,27 +1834,38 @@ pub fn map_daemon_event(
             // calls are consistent (goal lives on lastState, which fetchState refreshes
             // wholesale — unlike permissionMonitor which has a separate cache field).
             //
-            // NOTE: The daemon type `goal: Option<CurrentGoal>` collapses null and
-            // absent (both → None). With serde's default Option, we can't distinguish
-            // "field absent" from "field null". The TS checks `goal === undefined`
-            // (field absent → preserve). Here, `None` is treated as "cleared" (null),
-            // matching the TS behavior for null. The truly-absent case is lost — but
-            // serde can't represent it with `Option<CurrentGoal>`.
-            let projected = project_goal(Some(goal.as_ref()));
-            // `Some(goal.as_ref())` means the field was present in the deserialized
-            // struct. `project_goal(Some(None))` → `Some(None)` (cleared).
-            // `project_goal(Some(Some(&g)))` → `Some(Some(goal))` (set).
-            // Both cases emit a sessionUpdated + fetchState (matching the TS's
-            // non-undefined path).
-            let mut snapshot = ctx.snapshot(ctx.live_status());
-            snapshot.goal = projected;
-            fold_result(
-                vec![SessionDriverEvent::SessionUpdated { base, snapshot }],
-                vec![DaemonEffect::FetchState {
-                    emit: FetchEmit::SessionUpdated,
-                    prompt_id: None,
-                }],
-            )
+            // NOTE: The daemon type collapses `goal:null` and an absent `goal`
+            // (both → None) because serde's `Option<CurrentGoal>` can't distinguish
+            // them. The TS distinguishes via `goal === undefined`; we recover the
+            // distinction from the REQUIRED `transition` field instead:
+            //   - goal object present             → set   (sessionUpdated(goal))
+            //   - goal None && transition=cleared → clear (sessionUpdated(goal:null))
+            //   - goal None && transition≠cleared → preserve (only fetchState — a
+            //     `proposed` goal must NOT blank the badge). The fetchState re-syncs
+            //     the cached lastState from GET /state in every case.
+            let fetch = DaemonEffect::FetchState {
+                emit: FetchEmit::SessionUpdated,
+                prompt_id: None,
+            };
+            match goal.as_ref() {
+                Some(g) => {
+                    let mut snapshot = ctx.snapshot(ctx.live_status());
+                    snapshot.goal = project_goal(Some(Some(g)));
+                    fold_result(
+                        vec![SessionDriverEvent::SessionUpdated { base, snapshot }],
+                        vec![fetch],
+                    )
+                }
+                None if transition.as_str() == "cleared" => {
+                    let mut snapshot = ctx.snapshot(ctx.live_status());
+                    snapshot.goal = Some(None);
+                    fold_result(
+                        vec![SessionDriverEvent::SessionUpdated { base, snapshot }],
+                        vec![fetch],
+                    )
+                }
+                None => fold_result(vec![], vec![fetch]),
+            }
         }
 
         // ===== v1-ignored variants (return empty — the stream stays live) =====
@@ -2205,8 +2218,22 @@ mod tests {
                         .collect();
                     p.insert("questions".into(), json!(arr));
                 }
-                if let Some(v) = &pending.permission_choices {
-                    p.insert("permissionChoiceCount".into(), json!(v.len()));
+                if let Some(choices) = &pending.permission_choices {
+                    // TS pending.permissionChoices is the full array of
+                    // {granted, persistenceTarget} the reverse builder maps a chosen
+                    // label back through — project it whole, not as a count, so the
+                    // forward mapper's stored choice CONTENT (grant + target, in
+                    // pruned order) is actually asserted.
+                    let arr: Vec<Value> = choices
+                        .iter()
+                        .map(|c| {
+                            json!({
+                                "granted": c.granted,
+                                "persistenceTarget": c.persistence_target,
+                            })
+                        })
+                        .collect();
+                    p.insert("permissionChoices".into(), json!(arr));
                 }
                 json!({ "type": "registerInterrogative", "pending": Value::Object(p) })
             }
@@ -3135,8 +3162,19 @@ mod tests {
         assert_eq!(eff["type"], "registerInterrogative");
         assert_eq!(eff["pending"]["interrogativeId"], "i5");
         assert_eq!(eff["pending"]["interrogativeType"], "permission");
-        // All 7 choices captured (no pruning — keep_targets absent).
-        assert_eq!(eff["pending"]["permissionChoiceCount"], 7);
+        // All 7 choices captured (no pruning — keep_targets absent); the first
+        // (Deny) is granted:false with no persistence target (matches the oracle).
+        assert_eq!(
+            eff["pending"]["permissionChoices"]
+                .as_array()
+                .unwrap()
+                .len(),
+            7
+        );
+        assert_eq!(
+            eff["pending"]["permissionChoices"][0],
+            json!({ "granted": false, "persistenceTarget": null })
+        );
     }
 
     #[test]
@@ -3165,7 +3203,19 @@ mod tests {
             json!(["Deny", "Allow once", "Allow for session"])
         );
         let eff = &effects_json(&out)[0];
-        assert_eq!(eff["pending"]["permissionChoiceCount"], 3);
+        // Pruned to 3; the "Allow for session" choice (index 2) grants + targets
+        // session — assert the stored choice CONTENT, not just the count.
+        assert_eq!(
+            eff["pending"]["permissionChoices"]
+                .as_array()
+                .unwrap()
+                .len(),
+            3
+        );
+        assert_eq!(
+            eff["pending"]["permissionChoices"][2],
+            json!({ "granted": true, "persistenceTarget": "session" })
+        );
     }
 
     #[test]
@@ -3184,7 +3234,14 @@ mod tests {
             ])
         );
         let eff = &effects_json(&out)[0];
-        assert_eq!(eff["pending"]["permissionChoiceCount"], 4);
+        // TS asserts the count only here (4 pruned choices).
+        assert_eq!(
+            eff["pending"]["permissionChoices"]
+                .as_array()
+                .unwrap()
+                .len(),
+            4
+        );
     }
 
     #[test]
@@ -3948,11 +4005,12 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "reason: daemon-type collapse (codegen/Phase 4). The GoalDriverUpdate handler destructures only `goal` (event_map.rs ~1822), and serde maps BOTH daemon `null` and an absent `goal` field to None. So a goal-less update emits sessionUpdated(goal:null) regardless of `transition` — matching the real daemon, which always emits `goal`. The TS 'goal omitted (undefined) -> no sessionUpdated, only fetchState' distinction is structurally unrepresentable after deserialization; restoring it needs a double-Option in the generated type (or keying off `transition`)."]
     fn goal_driver_update_with_goal_omitted_only_fetch_state() {
-        // TS: goal absent -> no sessionUpdated (would blank the badge), only
-        // fetchState. Rust collapses absent into null, so the handler emits a
-        // sessionUpdated(goal:null) here — the un-portable half.
+        // goal absent + a non-`cleared` transition (`proposed`) must NOT emit a
+        // sessionUpdated (that would blank the badge) — only a fetchState. The
+        // handler recovers this from the required `transition` field despite the
+        // serde null-vs-absent collapse (see the GoalDriverUpdate arm), so this
+        // case is faithfully portable (no longer #[ignore]d).
         let out = fold_fresh(
             json!({ "type": "goal_driver_update", "proposed_summary": null, "transition": "proposed" }),
         );
