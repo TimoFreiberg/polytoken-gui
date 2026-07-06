@@ -3285,4 +3285,436 @@ mod tests {
         assert!(out.events.is_empty());
         assert!(out.effects.is_empty());
     }
+
+    // -----------------------------------------------------------------------
+    // buildPostFetchEvent — pure follow-up event builder after a fetchState.
+    // Port of event-map.test.ts `describe("buildPostFetchEvent")`.
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn post_fetch_run_completed_idle_snapshot() {
+        let ctx = TestCtx::default();
+        let j = event_json(&build_post_fetch_event(FetchEmit::RunCompleted, &ctx, None));
+        assert_eq!(j["type"], "runCompleted");
+        assert_eq!(j["snapshot"]["status"], "idle");
+    }
+
+    #[test]
+    fn post_fetch_run_completed_with_prompt_id_stamps_entry_ids() {
+        let ctx = TestCtx::default();
+        let j = event_json(&build_post_fetch_event(
+            FetchEmit::RunCompleted,
+            &ctx,
+            Some("p1"),
+        ));
+        assert_eq!(j["type"], "runCompleted");
+        assert_eq!(j["snapshot"]["status"], "idle");
+        assert_eq!(j["userEntryId"], "p1");
+        assert_eq!(j["assistantEntryId"], "p1");
+    }
+
+    #[test]
+    fn post_fetch_run_completed_without_prompt_id_no_entry_ids() {
+        let ctx = TestCtx::default();
+        let j = event_json(&build_post_fetch_event(FetchEmit::RunCompleted, &ctx, None));
+        assert_eq!(j["type"], "runCompleted");
+        // TS asserts the entryId properties are absent; serde omits `None`, and
+        // serde_json Index yields Null for a missing key — either way, null-ish.
+        assert!(j["userEntryId"].is_null());
+        assert!(j["assistantEntryId"].is_null());
+    }
+
+    #[test]
+    fn post_fetch_session_updated_uses_live_status() {
+        let ctx = TestCtx {
+            live_status: SessionStatus::Running,
+            ..TestCtx::default()
+        };
+        let j = event_json(&build_post_fetch_event(
+            FetchEmit::SessionUpdated,
+            &ctx,
+            None,
+        ));
+        assert_eq!(j["type"], "sessionUpdated");
+        assert_eq!(j["snapshot"]["status"], "running");
+    }
+
+    // -----------------------------------------------------------------------
+    // resetAccumulator — clears stale stream state on reconnect/reseed.
+    // Port of event-map.test.ts `describe("resetAccumulator")`.
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn reset_accumulator_clears_stream_state() {
+        let mut acc = create_accumulator();
+        acc.block_kind = Some(BlockKind::ToolUse);
+        acc.tool_input_buffer = "{\"partial\":true}".to_string();
+        acc.tool_use_block = Some(ToolUseBlockMeta {
+            id: "tu1".to_string(),
+            name: "bash".to_string(),
+        });
+        acc.turn_error = Some(TurnError {
+            message: "stale error".to_string(),
+        });
+        reset_accumulator(&mut acc);
+        assert!(acc.block_kind.is_none());
+        assert_eq!(acc.tool_input_buffer, "");
+        assert!(acc.tool_use_block.is_none());
+        assert!(acc.turn_error.is_none());
+    }
+
+    #[test]
+    fn reset_accumulator_prevents_stale_turn_error_failing_next_complete() {
+        let mut acc = create_accumulator();
+        fold(
+            json!({ "type": "message_start", "prompt_id": "p1" }),
+            &mut acc,
+        );
+        fold(
+            json!({ "type": "model_error", "error": { "type": "auth_failed" }, "prompt_id": "p1" }),
+            &mut acc,
+        );
+        assert!(acc.turn_error.is_some());
+
+        // Reconnect → reseed → reset clears the stale error.
+        reset_accumulator(&mut acc);
+
+        // The next turn completes successfully (NOT a runFailed).
+        fold(
+            json!({ "type": "message_start", "prompt_id": "p2" }),
+            &mut acc,
+        );
+        let out = fold(
+            json!({ "type": "message_complete", "prompt_id": "p2" }),
+            &mut acc,
+        );
+        assert_eq!(
+            effects_json(&out),
+            vec![json!({ "type": "fetchState", "emit": "runCompleted", "promptId": "p2" })]
+        );
+        assert!(out.events.is_empty());
+    }
+
+    // -----------------------------------------------------------------------
+    // Streaming pipeline integration — full observed traces across the fold.
+    // Port of event-map.test.ts `describe("streaming pipeline integration")`.
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn streaming_full_text_turn() {
+        let mut acc = create_accumulator();
+        let out = fold(
+            json!({ "type": "message_start", "prompt_id": "p1" }),
+            &mut acc,
+        );
+        assert_eq!(event_json(&out.events[0])["type"], "sessionUpdated");
+        assert_eq!(event_json(&out.events[0])["snapshot"]["status"], "running");
+
+        let out = fold(
+            json!({ "type": "content_block_start", "block_index": 0, "block_type": { "type": "text" }, "prompt_id": "p1" }),
+            &mut acc,
+        );
+        assert!(out.events.is_empty());
+
+        let out = fold(
+            json!({ "type": "content_block_delta", "block_index": 0, "delta": { "type": "text", "text": "hello world" }, "prompt_id": "p1" }),
+            &mut acc,
+        );
+        let ev = event_json(&out.events[0]);
+        assert_eq!(ev["type"], "assistantDelta");
+        assert_eq!(ev["text"], "hello world");
+        assert_eq!(ev["channel"], "text");
+
+        let out = fold(
+            json!({ "type": "content_block_stop", "block_index": 0, "prompt_id": "p1" }),
+            &mut acc,
+        );
+        assert!(out.events.is_empty());
+
+        let out = fold(
+            json!({ "type": "message_complete", "prompt_id": "p1" }),
+            &mut acc,
+        );
+        assert!(out.events.is_empty());
+        assert_eq!(
+            effects_json(&out),
+            vec![json!({ "type": "fetchState", "emit": "runCompleted", "promptId": "p1" })]
+        );
+
+        // The driver would then call build_post_fetch_event for the follow-up.
+        let ctx = TestCtx::default();
+        let fin = event_json(&build_post_fetch_event(
+            FetchEmit::RunCompleted,
+            &ctx,
+            Some("p1"),
+        ));
+        assert_eq!(fin["type"], "runCompleted");
+        assert_eq!(fin["snapshot"]["status"], "idle");
+        assert_eq!(fin["userEntryId"], "p1");
+        assert_eq!(fin["assistantEntryId"], "p1");
+    }
+
+    #[test]
+    fn streaming_tool_turn() {
+        let mut acc = create_accumulator();
+        fold(
+            json!({ "type": "message_start", "prompt_id": "p1" }),
+            &mut acc,
+        );
+        fold(
+            json!({ "type": "content_block_start", "block_index": 0, "block_type": { "type": "tool_use", "id": "tu1", "name": "bash" }, "prompt_id": "p1" }),
+            &mut acc,
+        );
+        fold(
+            json!({ "type": "content_block_delta", "block_index": 0, "delta": { "type": "tool_use_input", "partial_json": "{\"command\":\"ls\"" }, "prompt_id": "p1" }),
+            &mut acc,
+        );
+        fold(
+            json!({ "type": "content_block_delta", "block_index": 0, "delta": { "type": "tool_use_input", "partial_json": "}" }, "prompt_id": "p1" }),
+            &mut acc,
+        );
+
+        // tool_call — authoritative tool start.
+        let out = fold(
+            json!({ "type": "tool_call", "call_id": "call1", "name": "bash", "prompt_id": "p1" }),
+            &mut acc,
+        );
+        let ev = event_json(&out.events[0]);
+        assert_eq!(ev["type"], "toolStarted");
+        assert_eq!(ev["toolName"], "bash");
+        assert_eq!(ev["callId"], "call1");
+        assert_eq!(ev["input"]["command"], "ls");
+
+        // tool_result.
+        let out = fold(
+            json!({ "type": "tool_result", "call_id": "call1", "content": "file1\nfile2", "is_error": false, "prompt_id": "p1" }),
+            &mut acc,
+        );
+        let ev = event_json(&out.events[0]);
+        assert_eq!(ev["type"], "toolFinished");
+        assert_eq!(ev["success"], true);
+        assert_eq!(ev["output"], "file1\nfile2");
+
+        let out = fold(
+            json!({ "type": "message_complete", "prompt_id": "p1" }),
+            &mut acc,
+        );
+        assert_eq!(
+            effects_json(&out),
+            vec![json!({ "type": "fetchState", "emit": "runCompleted", "promptId": "p1" })]
+        );
+    }
+
+    #[test]
+    fn streaming_error_then_retry_clears_and_completes() {
+        let mut acc = create_accumulator();
+        fold(
+            json!({ "type": "message_start", "prompt_id": "p1" }),
+            &mut acc,
+        );
+        fold(
+            json!({ "type": "model_error", "error": { "type": "rate_limited", "retry_after_seconds": 10 }, "prompt_id": "p1" }),
+            &mut acc,
+        );
+        assert!(acc.turn_error.is_some());
+
+        // Retry — message_start clears the error.
+        fold(
+            json!({ "type": "message_start", "prompt_id": "p1" }),
+            &mut acc,
+        );
+        assert!(acc.turn_error.is_none());
+
+        let out = fold(
+            json!({ "type": "message_complete", "prompt_id": "p1" }),
+            &mut acc,
+        );
+        assert_eq!(
+            effects_json(&out),
+            vec![json!({ "type": "fetchState", "emit": "runCompleted", "promptId": "p1" })]
+        );
+    }
+
+    #[test]
+    fn streaming_unretried_error_fails_the_run() {
+        let mut acc = create_accumulator();
+        fold(
+            json!({ "type": "message_start", "prompt_id": "p1" }),
+            &mut acc,
+        );
+        fold(
+            json!({ "type": "model_error", "error": { "type": "auth_failed" }, "prompt_id": "p1" }),
+            &mut acc,
+        );
+        let out = fold(
+            json!({ "type": "message_complete", "prompt_id": "p1" }),
+            &mut acc,
+        );
+        assert!(out.effects.is_empty());
+        assert_eq!(out.events.len(), 1);
+        let ev = event_json(&out.events[0]);
+        assert_eq!(ev["type"], "runFailed");
+        assert_eq!(ev["timestamp"], "t");
+        assert_eq!(ev["sessionRef"]["sessionId"], "s");
+        assert_eq!(ev["error"]["message"], "Authentication failed");
+    }
+
+    // -----------------------------------------------------------------------
+    // snapshotFromState — projecting a daemon /state snapshot into a pilot
+    // SessionSnapshot. Ports both `snapshotFromState config` and
+    // `snapshotFromState` describe blocks.
+    // -----------------------------------------------------------------------
+
+    fn snap_from(state: Option<&SessionStateSnapshot>) -> SessionSnapshot {
+        snapshot_from_state(
+            state,
+            &test_ref(),
+            &test_workspace(),
+            SessionStatus::Idle,
+            "t",
+            None,
+            None,
+        )
+    }
+
+    #[test]
+    fn snapshot_config_slash_bearing_model_full_form() {
+        let st = base_state();
+        let cfg = snap_from(Some(&st)).config.expect("config present");
+        assert_eq!(cfg.provider.as_deref(), Some("anthropic"));
+        assert_eq!(cfg.model_id.as_deref(), Some("anthropic/claude-sonnet-4"));
+        assert_eq!(cfg.thinking_level.as_deref(), Some("medium"));
+    }
+
+    #[test]
+    fn snapshot_config_slash_less_model_whole_string() {
+        let mut st = base_state();
+        st.active_model = Some("local-model".to_string());
+        let cfg = snap_from(Some(&st)).config.expect("config present");
+        assert_eq!(cfg.provider.as_deref(), Some("local-model"));
+        assert_eq!(cfg.model_id.as_deref(), Some("local-model"));
+        assert_eq!(cfg.thinking_level.as_deref(), Some("medium"));
+    }
+
+    #[test]
+    fn snapshot_config_null_state_none() {
+        assert!(snap_from(None).config.is_none());
+    }
+
+    #[test]
+    fn snapshot_threads_active_facet() {
+        let mut st = base_state();
+        st.active_facet = "plan".to_string();
+        assert_eq!(snap_from(Some(&st)).facet.as_deref(), Some("plan"));
+    }
+
+    #[test]
+    fn snapshot_facet_none_for_null_state() {
+        assert!(snap_from(None).facet.is_none());
+    }
+
+    #[test]
+    fn snapshot_threads_active_plan() {
+        let mut st = base_state();
+        st.active_plan = Some("# My Plan\n- Step 1".to_string());
+        assert_eq!(
+            snap_from(Some(&st)).active_plan.as_deref(),
+            Some("# My Plan\n- Step 1")
+        );
+    }
+
+    #[test]
+    fn snapshot_active_plan_none_for_null_state() {
+        assert!(snap_from(None).active_plan.is_none());
+    }
+
+    #[test]
+    fn snapshot_threads_current_goal() {
+        use pilot_protocol::session_driver::GoalInfo;
+        let mut st = base_state();
+        st.current_goal = Some(make_goal("Ship feature X", "active"));
+        assert_eq!(
+            snap_from(Some(&st)).goal,
+            Some(Some(GoalInfo {
+                summary: "Ship feature X".to_string(),
+                lifecycle: "active".to_string(),
+            }))
+        );
+    }
+
+    #[test]
+    fn snapshot_projects_current_goal_null_to_cleared() {
+        // The daemon sends current_goal:null when a goal is cleared. serde maps
+        // that to `None` on the single-Option field; snapshot_from_state projects
+        // a PRESENT state's None → Some(None) (cleared → badge hides).
+        let st = base_state(); // current_goal: None (== daemon null)
+        assert_eq!(snap_from(Some(&st)).goal, Some(None));
+    }
+
+    #[test]
+    fn snapshot_goal_none_for_null_state() {
+        // Null state → no goal projection (preserve). This is the portable half
+        // of the TS "defaults goal to undefined when current_goal is absent" case.
+        assert!(snap_from(None).goal.is_none());
+    }
+
+    #[test]
+    #[ignore = "reason: daemon-type collapse (codegen/Phase 4). SessionStateSnapshot.current_goal is a single Option<CurrentGoal>, so serde maps BOTH daemon `null` and an absent field to None. snapshot_from_state therefore treats a PRESENT state whose current_goal is None as `cleared` (Some(None)) — correct for the real daemon, which always emits current_goal. The TS 'present state + absent current_goal -> undefined (older-daemon preserve)' distinction is structurally unrepresentable after deserialization; restoring it needs a double-Option in the generated type."]
+    fn snapshot_goal_undefined_when_current_goal_absent_present_state() {
+        // TS: snapshotFromState(baseState, ...) -> snap.goal undefined (preserve).
+        // Rust collapses absent into null, so the source yields Some(None) here.
+        let st = base_state(); // current_goal absent/None
+        assert!(snap_from(Some(&st)).goal.is_none());
+    }
+
+    #[test]
+    fn snapshot_threads_flags() {
+        use pilot_protocol::session_driver::{FlaggedFile, FlaggedFileMode};
+        let mut st = base_state();
+        st.flags = serde_json::from_value(json!([
+            { "path": "src/app.ts", "mode": "included" },
+            { "path": "README.md", "mode": "referenced" },
+        ]))
+        .expect("valid flag entries");
+        assert_eq!(
+            snap_from(Some(&st)).flags,
+            Some(vec![
+                FlaggedFile {
+                    path: "src/app.ts".to_string(),
+                    mode: FlaggedFileMode::Included,
+                },
+                FlaggedFile {
+                    path: "README.md".to_string(),
+                    mode: FlaggedFileMode::Referenced,
+                },
+            ])
+        );
+    }
+
+    #[test]
+    fn snapshot_threads_todos() {
+        use pilot_protocol::session_driver::{TodoItem, TodoStatus};
+        let mut st = base_state();
+        st.todos = serde_json::from_value(json!([
+            { "id": 1, "title": "Write tests", "description": "Add unit tests", "status": "in_progress", "dependencies": [2] },
+        ]))
+        .expect("valid todo entries");
+        assert_eq!(
+            snap_from(Some(&st)).todos,
+            Some(vec![TodoItem {
+                id: 1,
+                title: "Write tests".to_string(),
+                description: "Add unit tests".to_string(),
+                status: TodoStatus::InProgress,
+                dependencies: vec![2],
+            }])
+        );
+    }
+
+    #[test]
+    fn snapshot_flags_todos_none_for_null_state() {
+        let snap = snap_from(None);
+        assert!(snap.flags.is_none());
+        assert!(snap.todos.is_none());
+    }
 }
