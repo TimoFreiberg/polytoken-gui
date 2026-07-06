@@ -1,35 +1,95 @@
 {
   "scenario": "tool-call-approval",
   "version": "0.4.0-unstable.7",
-  "description": "A tool call mid-turn that surfaces as a permission interrogative. The agent emits message_start + a tool_use content block, then an interrogative (permission) requesting approval. The user approves via POST /interrogative/{id}/respond, the turn resumes, and a tool_result + message_complete follow. Exercises the RegisterInterrogative effect path.",
+  "description": "A turn that calls a tool requiring approval → interrogative (permission) → approve → tool_result → message_complete.",
   "canonicalization": {
     "session_id": "SESSION",
     "prompt_ids": {
-      "22222222-2222-2222-2222-222222222222": "PROMPT_0"
+      "019f3690-8ac1-7ca1-91be-80e8ac6cf25d": "PROMPT_0"
     },
     "timestamps": "monotonic-from-T0"
   },
   "http": [
+    {
+      "method": "POST",
+      "path": "/permission-monitor",
+      "request_body": {
+        "mode": "standard"
+      },
+      "status": 200,
+      "response_body": {
+        "monitor": {
+          "type": "standard"
+        },
+        "config_default": {
+          "type": "standard"
+        }
+      }
+    },
     {
       "method": "GET",
       "path": "/state",
       "request_body": null,
       "status": 200,
       "response_body": {
-        "active_facet": "default",
-        "env": {},
-        "flags": [],
-        "plugin_config": {},
+        "session_title": "main",
         "todos": [],
-        "turn_in_flight": true,
-        "session_id": "SESSION"
+        "flags": [],
+        "env": {},
+        "available_subagents": [
+          "general-purpose",
+          "general-purpose-mini",
+          "plan-reviewer",
+          "researcher"
+        ],
+        "available_skills": [
+          "polytoken:investigating-a-codebase",
+          "polytoken:modifying-polytoken",
+          "polytoken:researching-on-the-internet"
+        ],
+        "active_facet": "execute",
+        "active_model": "deepseek/deepseek-v4-pro",
+        "active_reasoning_effort": "high",
+        "project_cwd": "/PROJECT",
+        "adventurous_handoff_active": false,
+        "available_models": [
+          {
+            "name": "deepseek/deepseek-v4-pro",
+            "label": "deepseek/deepseek-v4-pro",
+            "reasoning": {
+              "type": "effort",
+              "effort_set": "deepseek_v4",
+              "can_disable": true,
+              "levels": [
+                "high",
+                "max"
+              ],
+              "default_level": "high"
+            }
+          },
+          {
+            "name": "deepseek/deepseek-v4-flash",
+            "label": "deepseek/deepseek-v4-flash",
+            "reasoning": {
+              "type": "effort",
+              "effort_set": "deepseek_v4",
+              "can_disable": true,
+              "levels": [
+                "high",
+                "max"
+              ],
+              "default_level": "high"
+            }
+          }
+        ],
+        "plugin_config": null
       }
     },
     {
       "method": "POST",
       "path": "/prompt",
       "request_body": {
-        "content": "read the file foo.txt",
+        "content": "Use your shell/command tool to run exactly `echo hello-corpus`. Actually run it with the tool; do not just describe it.",
         "max_tool_turns": null
       },
       "status": 202,
@@ -40,15 +100,13 @@
     },
     {
       "method": "POST",
-      "path": "/interrogative/INTERROGATIVE_0/respond",
+      "path": "/interrogative/019f3690-951c-7bd2-ba1f-58dc534b8f58/respond",
       "request_body": {
-        "response": {
-          "kind": "permission",
-          "decision": "allow"
-        }
+        "kind": "permission_answer",
+        "granted": true
       },
-      "status": 202,
-      "response_body": {}
+      "status": 200,
+      "response_body": null
     },
     {
       "method": "GET",
@@ -56,13 +114,67 @@
       "request_body": null,
       "status": 200,
       "response_body": {
-        "active_facet": "default",
-        "env": {},
-        "flags": [],
-        "plugin_config": {},
+        "session_title": "main",
         "todos": [],
-        "turn_in_flight": false,
-        "session_id": "SESSION"
+        "flags": [],
+        "env": {},
+        "available_subagents": [
+          "general-purpose",
+          "general-purpose-mini",
+          "plan-reviewer",
+          "researcher"
+        ],
+        "available_skills": [
+          "polytoken:investigating-a-codebase",
+          "polytoken:modifying-polytoken",
+          "polytoken:researching-on-the-internet"
+        ],
+        "active_facet": "execute",
+        "active_model": "deepseek/deepseek-v4-pro",
+        "active_reasoning_effort": "high",
+        "project_cwd": "/PROJECT",
+        "source_control": {
+          "kind": "git",
+          "label": "BRANCH",
+          "dirty": false
+        },
+        "context_usage": {
+          "used_tokens": 0,
+          "limit_tokens": 1000000
+        },
+        "most_recent_assistant_text": "",
+        "adventurous_handoff_active": false,
+        "available_models": [
+          {
+            "name": "deepseek/deepseek-v4-pro",
+            "label": "deepseek/deepseek-v4-pro",
+            "reasoning": {
+              "type": "effort",
+              "effort_set": "deepseek_v4",
+              "can_disable": true,
+              "levels": [
+                "high",
+                "max"
+              ],
+              "default_level": "high"
+            }
+          },
+          {
+            "name": "deepseek/deepseek-v4-flash",
+            "label": "deepseek/deepseek-v4-flash",
+            "reasoning": {
+              "type": "effort",
+              "effort_set": "deepseek_v4",
+              "can_disable": true,
+              "levels": [
+                "high",
+                "max"
+              ],
+              "default_level": "high"
+            }
+          }
+        ],
+        "plugin_config": null
       }
     }
   ],
@@ -72,8 +184,10 @@
       "emitted_at": "1970-01-01T00:00:00.000Z",
       "session_id": "SESSION",
       "event": {
-        "type": "message_start",
-        "prompt_id": "PROMPT_0"
+        "type": "session_state_changed",
+        "domains": [
+          "source_control"
+        ]
       }
     },
     {
@@ -81,14 +195,8 @@
       "emitted_at": "1970-01-01T00:00:01.000Z",
       "session_id": "SESSION",
       "event": {
-        "type": "content_block_start",
-        "block_index": 0,
-        "block_type": {
-          "type": "tool_use",
-          "id": "CALL_0",
-          "name": "read_file"
-        },
-        "prompt_id": "PROMPT_0"
+        "type": "notification_autodrain_switch",
+        "enabled": true
       }
     },
     {
@@ -96,13 +204,14 @@
       "emitted_at": "1970-01-01T00:00:02.000Z",
       "session_id": "SESSION",
       "event": {
-        "type": "content_block_delta",
-        "block_index": 0,
-        "delta": {
-          "type": "tool_use_input",
-          "partial_json": "{\"path\":\"foo.txt\"}"
+        "type": "system_reminder",
+        "slug": "repository-status",
+        "display_name": "Repository status",
+        "body": "Reminder: repository-status (Repository status)\n\nRepository status captured at session start.\n\nSource control: git\nRepository root: .\nCurrent branch: main\nDefault branch: main\nWorking tree: dirty\n\nChanged files:\n- ?? corpus-note.txt\n\nThis is a snapshot. Do not run source-control status or diff commands solely to rediscover this information. Run source-control commands when the user's request asks for them, when you need file-level details not shown here, or when the repository may have changed since this snapshot.",
+        "reason": {
+          "type": "session_start"
         },
-        "prompt_id": "PROMPT_0"
+        "emitted_at": "1970-01-01T00:00:02.000Z"
       }
     },
     {
@@ -110,8 +219,7 @@
       "emitted_at": "1970-01-01T00:00:03.000Z",
       "session_id": "SESSION",
       "event": {
-        "type": "content_block_stop",
-        "block_index": 0,
+        "type": "message_start",
         "prompt_id": "PROMPT_0"
       }
     },
@@ -120,13 +228,12 @@
       "emitted_at": "1970-01-01T00:00:04.000Z",
       "session_id": "SESSION",
       "event": {
-        "type": "tool_call",
-        "call_id": "CALL_0",
-        "name": "read_file",
-        "input": {
-          "path": "foo.txt"
-        },
-        "prompt_id": "PROMPT_0"
+        "type": "content_block_start",
+        "prompt_id": "PROMPT_0",
+        "block_index": 0,
+        "block_type": {
+          "type": "thinking"
+        }
       }
     },
     {
@@ -134,17 +241,12 @@
       "emitted_at": "1970-01-01T00:00:05.000Z",
       "session_id": "SESSION",
       "event": {
-        "type": "interrogative",
-        "interrogative_id": "INTERROGATIVE_0",
-        "interrogative_type": "permission",
-        "question": "Allow read_file on foo.txt?",
+        "type": "content_block_delta",
         "prompt_id": "PROMPT_0",
-        "permission_tool_call": {
-          "input": {
-            "path": "foo.txt"
-          },
-          "tool_name": "read_file",
-          "tool_use_id": "CALL_0"
+        "block_index": 0,
+        "delta": {
+          "type": "thinking",
+          "text": "The"
         }
       }
     },
@@ -153,11 +255,13 @@
       "emitted_at": "1970-01-01T00:00:06.000Z",
       "session_id": "SESSION",
       "event": {
-        "type": "tool_result",
-        "call_id": "CALL_0",
-        "content": "contents of foo.txt",
-        "is_error": false,
-        "prompt_id": "PROMPT_0"
+        "type": "content_block_delta",
+        "prompt_id": "PROMPT_0",
+        "block_index": 0,
+        "delta": {
+          "type": "thinking",
+          "text": " user"
+        }
       }
     },
     {
@@ -165,12 +269,13 @@
       "emitted_at": "1970-01-01T00:00:07.000Z",
       "session_id": "SESSION",
       "event": {
-        "type": "content_block_start",
-        "block_index": 1,
-        "block_type": {
-          "type": "text"
-        },
-        "prompt_id": "PROMPT_0"
+        "type": "content_block_delta",
+        "prompt_id": "PROMPT_0",
+        "block_index": 0,
+        "delta": {
+          "type": "thinking",
+          "text": " wants"
+        }
       }
     },
     {
@@ -179,12 +284,12 @@
       "session_id": "SESSION",
       "event": {
         "type": "content_block_delta",
-        "block_index": 1,
+        "prompt_id": "PROMPT_0",
+        "block_index": 0,
         "delta": {
-          "type": "text",
-          "text": "Done."
-        },
-        "prompt_id": "PROMPT_0"
+          "type": "thinking",
+          "text": " me"
+        }
       }
     },
     {
@@ -192,14 +297,902 @@
       "emitted_at": "1970-01-01T00:00:09.000Z",
       "session_id": "SESSION",
       "event": {
-        "type": "content_block_stop",
-        "block_index": 1,
-        "prompt_id": "PROMPT_0"
+        "type": "content_block_delta",
+        "prompt_id": "PROMPT_0",
+        "block_index": 0,
+        "delta": {
+          "type": "thinking",
+          "text": " to"
+        }
       }
     },
     {
       "seq": 10,
       "emitted_at": "1970-01-01T00:00:10.000Z",
+      "session_id": "SESSION",
+      "event": {
+        "type": "content_block_delta",
+        "prompt_id": "PROMPT_0",
+        "block_index": 0,
+        "delta": {
+          "type": "thinking",
+          "text": " run"
+        }
+      }
+    },
+    {
+      "seq": 11,
+      "emitted_at": "1970-01-01T00:00:11.000Z",
+      "session_id": "SESSION",
+      "event": {
+        "type": "content_block_delta",
+        "prompt_id": "PROMPT_0",
+        "block_index": 0,
+        "delta": {
+          "type": "thinking",
+          "text": " `"
+        }
+      }
+    },
+    {
+      "seq": 12,
+      "emitted_at": "1970-01-01T00:00:12.000Z",
+      "session_id": "SESSION",
+      "event": {
+        "type": "content_block_delta",
+        "prompt_id": "PROMPT_0",
+        "block_index": 0,
+        "delta": {
+          "type": "thinking",
+          "text": "echo"
+        }
+      }
+    },
+    {
+      "seq": 13,
+      "emitted_at": "1970-01-01T00:00:13.000Z",
+      "session_id": "SESSION",
+      "event": {
+        "type": "content_block_delta",
+        "prompt_id": "PROMPT_0",
+        "block_index": 0,
+        "delta": {
+          "type": "thinking",
+          "text": " hello"
+        }
+      }
+    },
+    {
+      "seq": 14,
+      "emitted_at": "1970-01-01T00:00:14.000Z",
+      "session_id": "SESSION",
+      "event": {
+        "type": "content_block_delta",
+        "prompt_id": "PROMPT_0",
+        "block_index": 0,
+        "delta": {
+          "type": "thinking",
+          "text": "-cor"
+        }
+      }
+    },
+    {
+      "seq": 15,
+      "emitted_at": "1970-01-01T00:00:15.000Z",
+      "session_id": "SESSION",
+      "event": {
+        "type": "content_block_delta",
+        "prompt_id": "PROMPT_0",
+        "block_index": 0,
+        "delta": {
+          "type": "thinking",
+          "text": "pus"
+        }
+      }
+    },
+    {
+      "seq": 16,
+      "emitted_at": "1970-01-01T00:00:16.000Z",
+      "session_id": "SESSION",
+      "event": {
+        "type": "content_block_delta",
+        "prompt_id": "PROMPT_0",
+        "block_index": 0,
+        "delta": {
+          "type": "thinking",
+          "text": "`"
+        }
+      }
+    },
+    {
+      "seq": 17,
+      "emitted_at": "1970-01-01T00:00:17.000Z",
+      "session_id": "SESSION",
+      "event": {
+        "type": "content_block_delta",
+        "prompt_id": "PROMPT_0",
+        "block_index": 0,
+        "delta": {
+          "type": "thinking",
+          "text": " using"
+        }
+      }
+    },
+    {
+      "seq": 18,
+      "emitted_at": "1970-01-01T00:00:18.000Z",
+      "session_id": "SESSION",
+      "event": {
+        "type": "content_block_delta",
+        "prompt_id": "PROMPT_0",
+        "block_index": 0,
+        "delta": {
+          "type": "thinking",
+          "text": " the"
+        }
+      }
+    },
+    {
+      "seq": 19,
+      "emitted_at": "1970-01-01T00:00:19.000Z",
+      "session_id": "SESSION",
+      "event": {
+        "type": "content_block_delta",
+        "prompt_id": "PROMPT_0",
+        "block_index": 0,
+        "delta": {
+          "type": "thinking",
+          "text": " shell"
+        }
+      }
+    },
+    {
+      "seq": 20,
+      "emitted_at": "1970-01-01T00:00:20.000Z",
+      "session_id": "SESSION",
+      "event": {
+        "type": "content_block_delta",
+        "prompt_id": "PROMPT_0",
+        "block_index": 0,
+        "delta": {
+          "type": "thinking",
+          "text": "_exec"
+        }
+      }
+    },
+    {
+      "seq": 21,
+      "emitted_at": "1970-01-01T00:00:21.000Z",
+      "session_id": "SESSION",
+      "event": {
+        "type": "content_block_delta",
+        "prompt_id": "PROMPT_0",
+        "block_index": 0,
+        "delta": {
+          "type": "thinking",
+          "text": " tool"
+        }
+      }
+    },
+    {
+      "seq": 22,
+      "emitted_at": "1970-01-01T00:00:22.000Z",
+      "session_id": "SESSION",
+      "event": {
+        "type": "content_block_delta",
+        "prompt_id": "PROMPT_0",
+        "block_index": 0,
+        "delta": {
+          "type": "thinking",
+          "text": "."
+        }
+      }
+    },
+    {
+      "seq": 23,
+      "emitted_at": "1970-01-01T00:00:23.000Z",
+      "session_id": "SESSION",
+      "event": {
+        "type": "content_block_delta",
+        "prompt_id": "PROMPT_0",
+        "block_index": 0,
+        "delta": {
+          "type": "signature_delta",
+          "signature": "a95876db-f0c3-4b62-b25e-4c1dc020be07"
+        }
+      }
+    },
+    {
+      "seq": 24,
+      "emitted_at": "1970-01-01T00:00:24.000Z",
+      "session_id": "SESSION",
+      "event": {
+        "type": "content_block_stop",
+        "prompt_id": "PROMPT_0",
+        "block_index": 0
+      }
+    },
+    {
+      "seq": 25,
+      "emitted_at": "1970-01-01T00:00:25.000Z",
+      "session_id": "SESSION",
+      "event": {
+        "type": "content_block_start",
+        "prompt_id": "PROMPT_0",
+        "block_index": 1,
+        "block_type": {
+          "type": "tool_use",
+          "id": "call_00_LZJXgdUF4Ni37vt0TAUl4633",
+          "name": "shell_exec"
+        }
+      }
+    },
+    {
+      "seq": 26,
+      "emitted_at": "1970-01-01T00:00:26.000Z",
+      "session_id": "SESSION",
+      "event": {
+        "type": "content_block_delta",
+        "prompt_id": "PROMPT_0",
+        "block_index": 1,
+        "delta": {
+          "type": "tool_use_input",
+          "partial_json": "{"
+        }
+      }
+    },
+    {
+      "seq": 27,
+      "emitted_at": "1970-01-01T00:00:27.000Z",
+      "session_id": "SESSION",
+      "event": {
+        "type": "content_block_delta",
+        "prompt_id": "PROMPT_0",
+        "block_index": 1,
+        "delta": {
+          "type": "tool_use_input",
+          "partial_json": "\""
+        }
+      }
+    },
+    {
+      "seq": 28,
+      "emitted_at": "1970-01-01T00:00:28.000Z",
+      "session_id": "SESSION",
+      "event": {
+        "type": "content_block_delta",
+        "prompt_id": "PROMPT_0",
+        "block_index": 1,
+        "delta": {
+          "type": "tool_use_input",
+          "partial_json": "command"
+        }
+      }
+    },
+    {
+      "seq": 29,
+      "emitted_at": "1970-01-01T00:00:29.000Z",
+      "session_id": "SESSION",
+      "event": {
+        "type": "content_block_delta",
+        "prompt_id": "PROMPT_0",
+        "block_index": 1,
+        "delta": {
+          "type": "tool_use_input",
+          "partial_json": "\""
+        }
+      }
+    },
+    {
+      "seq": 30,
+      "emitted_at": "1970-01-01T00:00:30.000Z",
+      "session_id": "SESSION",
+      "event": {
+        "type": "content_block_delta",
+        "prompt_id": "PROMPT_0",
+        "block_index": 1,
+        "delta": {
+          "type": "tool_use_input",
+          "partial_json": ": "
+        }
+      }
+    },
+    {
+      "seq": 31,
+      "emitted_at": "1970-01-01T00:00:31.000Z",
+      "session_id": "SESSION",
+      "event": {
+        "type": "content_block_delta",
+        "prompt_id": "PROMPT_0",
+        "block_index": 1,
+        "delta": {
+          "type": "tool_use_input",
+          "partial_json": "\""
+        }
+      }
+    },
+    {
+      "seq": 32,
+      "emitted_at": "1970-01-01T00:00:32.000Z",
+      "session_id": "SESSION",
+      "event": {
+        "type": "content_block_delta",
+        "prompt_id": "PROMPT_0",
+        "block_index": 1,
+        "delta": {
+          "type": "tool_use_input",
+          "partial_json": "echo"
+        }
+      }
+    },
+    {
+      "seq": 33,
+      "emitted_at": "1970-01-01T00:00:33.000Z",
+      "session_id": "SESSION",
+      "event": {
+        "type": "content_block_delta",
+        "prompt_id": "PROMPT_0",
+        "block_index": 1,
+        "delta": {
+          "type": "tool_use_input",
+          "partial_json": " hello"
+        }
+      }
+    },
+    {
+      "seq": 34,
+      "emitted_at": "1970-01-01T00:00:34.000Z",
+      "session_id": "SESSION",
+      "event": {
+        "type": "content_block_delta",
+        "prompt_id": "PROMPT_0",
+        "block_index": 1,
+        "delta": {
+          "type": "tool_use_input",
+          "partial_json": "-cor"
+        }
+      }
+    },
+    {
+      "seq": 35,
+      "emitted_at": "1970-01-01T00:00:35.000Z",
+      "session_id": "SESSION",
+      "event": {
+        "type": "content_block_delta",
+        "prompt_id": "PROMPT_0",
+        "block_index": 1,
+        "delta": {
+          "type": "tool_use_input",
+          "partial_json": "pus"
+        }
+      }
+    },
+    {
+      "seq": 36,
+      "emitted_at": "1970-01-01T00:00:36.000Z",
+      "session_id": "SESSION",
+      "event": {
+        "type": "content_block_delta",
+        "prompt_id": "PROMPT_0",
+        "block_index": 1,
+        "delta": {
+          "type": "tool_use_input",
+          "partial_json": "\""
+        }
+      }
+    },
+    {
+      "seq": 37,
+      "emitted_at": "1970-01-01T00:00:37.000Z",
+      "session_id": "SESSION",
+      "event": {
+        "type": "content_block_delta",
+        "prompt_id": "PROMPT_0",
+        "block_index": 1,
+        "delta": {
+          "type": "tool_use_input",
+          "partial_json": "}"
+        }
+      }
+    },
+    {
+      "seq": 38,
+      "emitted_at": "1970-01-01T00:00:38.000Z",
+      "session_id": "SESSION",
+      "event": {
+        "type": "content_block_stop",
+        "prompt_id": "PROMPT_0",
+        "block_index": 1
+      }
+    },
+    {
+      "seq": 39,
+      "emitted_at": "1970-01-01T00:00:39.000Z",
+      "session_id": "SESSION",
+      "event": {
+        "type": "tool_call",
+        "prompt_id": "PROMPT_0",
+        "call_id": "call_00_LZJXgdUF4Ni37vt0TAUl4633",
+        "name": "shell_exec",
+        "input": {
+          "command": "echo hello-corpus"
+        }
+      }
+    },
+    {
+      "seq": 40,
+      "emitted_at": "1970-01-01T00:00:40.000Z",
+      "session_id": "SESSION",
+      "event": {
+        "type": "interrogative",
+        "prompt_id": "PROMPT_0",
+        "interrogative_id": "019f3690-951c-7bd2-ba1f-58dc534b8f58",
+        "question": "Allow tool 'shell_exec' on 'echo hello-corpus'?",
+        "interrogative_type": "permission",
+        "permission_candidate_rule": {
+          "candidate_rule_raw": "allow tool 'shell_exec' on 'echo hello-corpus'",
+          "candidate_rule_resolved_today": "allow tool 'shell_exec' on 'echo hello-corpus'",
+          "keep_targets": [
+            "session",
+            "project_local",
+            "project",
+            "user_local",
+            "user"
+          ],
+          "default_target": "project_local",
+          "floor_context": {
+            "tool_name": "shell_exec",
+            "subject_kind": "shell_structural",
+            "subject": "echo hello-corpus"
+          }
+        },
+        "permission_tool_call": {
+          "tool_use_id": "call_00_LZJXgdUF4Ni37vt0TAUl4633",
+          "tool_name": "shell_exec",
+          "input": {
+            "command": "echo hello-corpus"
+          }
+        }
+      }
+    },
+    {
+      "seq": 41,
+      "emitted_at": "1970-01-01T00:00:41.000Z",
+      "session_id": "SESSION",
+      "event": {
+        "type": "tool_result",
+        "prompt_id": "PROMPT_0",
+        "call_id": "call_00_LZJXgdUF4Ni37vt0TAUl4633",
+        "content": "exit_code=0\nstdout:\nhello-corpus\n\nstderr:\n",
+        "content_full": {
+          "text": "exit_code=0\nstdout:\nhello-corpus\n\nstderr:\n"
+        }
+      }
+    },
+    {
+      "seq": 42,
+      "emitted_at": "1970-01-01T00:00:42.000Z",
+      "session_id": "SESSION",
+      "event": {
+        "type": "session_state_changed",
+        "domains": [
+          "env"
+        ]
+      }
+    },
+    {
+      "seq": 43,
+      "emitted_at": "1970-01-01T00:00:43.000Z",
+      "session_id": "SESSION",
+      "event": {
+        "type": "content_block_start",
+        "prompt_id": "PROMPT_0",
+        "block_index": 0,
+        "block_type": {
+          "type": "thinking"
+        }
+      }
+    },
+    {
+      "seq": 44,
+      "emitted_at": "1970-01-01T00:00:44.000Z",
+      "session_id": "SESSION",
+      "event": {
+        "type": "content_block_delta",
+        "prompt_id": "PROMPT_0",
+        "block_index": 0,
+        "delta": {
+          "type": "thinking",
+          "text": "The"
+        }
+      }
+    },
+    {
+      "seq": 45,
+      "emitted_at": "1970-01-01T00:00:45.000Z",
+      "session_id": "SESSION",
+      "event": {
+        "type": "content_block_delta",
+        "prompt_id": "PROMPT_0",
+        "block_index": 0,
+        "delta": {
+          "type": "thinking",
+          "text": " command"
+        }
+      }
+    },
+    {
+      "seq": 46,
+      "emitted_at": "1970-01-01T00:00:46.000Z",
+      "session_id": "SESSION",
+      "event": {
+        "type": "content_block_delta",
+        "prompt_id": "PROMPT_0",
+        "block_index": 0,
+        "delta": {
+          "type": "thinking",
+          "text": " executed"
+        }
+      }
+    },
+    {
+      "seq": 47,
+      "emitted_at": "1970-01-01T00:00:47.000Z",
+      "session_id": "SESSION",
+      "event": {
+        "type": "content_block_delta",
+        "prompt_id": "PROMPT_0",
+        "block_index": 0,
+        "delta": {
+          "type": "thinking",
+          "text": " successfully"
+        }
+      }
+    },
+    {
+      "seq": 48,
+      "emitted_at": "1970-01-01T00:00:48.000Z",
+      "session_id": "SESSION",
+      "event": {
+        "type": "content_block_delta",
+        "prompt_id": "PROMPT_0",
+        "block_index": 0,
+        "delta": {
+          "type": "thinking",
+          "text": "."
+        }
+      }
+    },
+    {
+      "seq": 49,
+      "emitted_at": "1970-01-01T00:00:49.000Z",
+      "session_id": "SESSION",
+      "event": {
+        "type": "content_block_delta",
+        "prompt_id": "PROMPT_0",
+        "block_index": 0,
+        "delta": {
+          "type": "thinking",
+          "text": " The"
+        }
+      }
+    },
+    {
+      "seq": 50,
+      "emitted_at": "1970-01-01T00:00:50.000Z",
+      "session_id": "SESSION",
+      "event": {
+        "type": "content_block_delta",
+        "prompt_id": "PROMPT_0",
+        "block_index": 0,
+        "delta": {
+          "type": "thinking",
+          "text": " output"
+        }
+      }
+    },
+    {
+      "seq": 51,
+      "emitted_at": "1970-01-01T00:00:51.000Z",
+      "session_id": "SESSION",
+      "event": {
+        "type": "content_block_delta",
+        "prompt_id": "PROMPT_0",
+        "block_index": 0,
+        "delta": {
+          "type": "thinking",
+          "text": " was"
+        }
+      }
+    },
+    {
+      "seq": 52,
+      "emitted_at": "1970-01-01T00:00:52.000Z",
+      "session_id": "SESSION",
+      "event": {
+        "type": "content_block_delta",
+        "prompt_id": "PROMPT_0",
+        "block_index": 0,
+        "delta": {
+          "type": "thinking",
+          "text": " \""
+        }
+      }
+    },
+    {
+      "seq": 53,
+      "emitted_at": "1970-01-01T00:00:53.000Z",
+      "session_id": "SESSION",
+      "event": {
+        "type": "content_block_delta",
+        "prompt_id": "PROMPT_0",
+        "block_index": 0,
+        "delta": {
+          "type": "thinking",
+          "text": "hello"
+        }
+      }
+    },
+    {
+      "seq": 54,
+      "emitted_at": "1970-01-01T00:00:54.000Z",
+      "session_id": "SESSION",
+      "event": {
+        "type": "content_block_delta",
+        "prompt_id": "PROMPT_0",
+        "block_index": 0,
+        "delta": {
+          "type": "thinking",
+          "text": "-cor"
+        }
+      }
+    },
+    {
+      "seq": 55,
+      "emitted_at": "1970-01-01T00:00:55.000Z",
+      "session_id": "SESSION",
+      "event": {
+        "type": "content_block_delta",
+        "prompt_id": "PROMPT_0",
+        "block_index": 0,
+        "delta": {
+          "type": "thinking",
+          "text": "pus"
+        }
+      }
+    },
+    {
+      "seq": 56,
+      "emitted_at": "1970-01-01T00:00:56.000Z",
+      "session_id": "SESSION",
+      "event": {
+        "type": "content_block_delta",
+        "prompt_id": "PROMPT_0",
+        "block_index": 0,
+        "delta": {
+          "type": "thinking",
+          "text": "\""
+        }
+      }
+    },
+    {
+      "seq": 57,
+      "emitted_at": "1970-01-01T00:00:57.000Z",
+      "session_id": "SESSION",
+      "event": {
+        "type": "content_block_delta",
+        "prompt_id": "PROMPT_0",
+        "block_index": 0,
+        "delta": {
+          "type": "thinking",
+          "text": " as"
+        }
+      }
+    },
+    {
+      "seq": 58,
+      "emitted_at": "1970-01-01T00:00:58.000Z",
+      "session_id": "SESSION",
+      "event": {
+        "type": "content_block_delta",
+        "prompt_id": "PROMPT_0",
+        "block_index": 0,
+        "delta": {
+          "type": "thinking",
+          "text": " expected"
+        }
+      }
+    },
+    {
+      "seq": 59,
+      "emitted_at": "1970-01-01T00:00:59.000Z",
+      "session_id": "SESSION",
+      "event": {
+        "type": "content_block_delta",
+        "prompt_id": "PROMPT_0",
+        "block_index": 0,
+        "delta": {
+          "type": "thinking",
+          "text": "."
+        }
+      }
+    },
+    {
+      "seq": 60,
+      "emitted_at": "1970-01-01T00:01:00.000Z",
+      "session_id": "SESSION",
+      "event": {
+        "type": "content_block_delta",
+        "prompt_id": "PROMPT_0",
+        "block_index": 0,
+        "delta": {
+          "type": "signature_delta",
+          "signature": "ed669919-e57e-4f86-8dd2-4ae84870c34c"
+        }
+      }
+    },
+    {
+      "seq": 61,
+      "emitted_at": "1970-01-01T00:01:01.000Z",
+      "session_id": "SESSION",
+      "event": {
+        "type": "content_block_stop",
+        "prompt_id": "PROMPT_0",
+        "block_index": 0
+      }
+    },
+    {
+      "seq": 62,
+      "emitted_at": "1970-01-01T00:01:02.000Z",
+      "session_id": "SESSION",
+      "event": {
+        "type": "content_block_start",
+        "prompt_id": "PROMPT_0",
+        "block_index": 1,
+        "block_type": {
+          "type": "text"
+        }
+      }
+    },
+    {
+      "seq": 63,
+      "emitted_at": "1970-01-01T00:01:03.000Z",
+      "session_id": "SESSION",
+      "event": {
+        "type": "content_block_delta",
+        "prompt_id": "PROMPT_0",
+        "block_index": 1,
+        "delta": {
+          "type": "text",
+          "text": "Done"
+        }
+      }
+    },
+    {
+      "seq": 64,
+      "emitted_at": "1970-01-01T00:01:04.000Z",
+      "session_id": "SESSION",
+      "event": {
+        "type": "content_block_delta",
+        "prompt_id": "PROMPT_0",
+        "block_index": 1,
+        "delta": {
+          "type": "text",
+          "text": "."
+        }
+      }
+    },
+    {
+      "seq": 65,
+      "emitted_at": "1970-01-01T00:01:05.000Z",
+      "session_id": "SESSION",
+      "event": {
+        "type": "content_block_delta",
+        "prompt_id": "PROMPT_0",
+        "block_index": 1,
+        "delta": {
+          "type": "text",
+          "text": " Output"
+        }
+      }
+    },
+    {
+      "seq": 66,
+      "emitted_at": "1970-01-01T00:01:06.000Z",
+      "session_id": "SESSION",
+      "event": {
+        "type": "content_block_delta",
+        "prompt_id": "PROMPT_0",
+        "block_index": 1,
+        "delta": {
+          "type": "text",
+          "text": ":"
+        }
+      }
+    },
+    {
+      "seq": 67,
+      "emitted_at": "1970-01-01T00:01:07.000Z",
+      "session_id": "SESSION",
+      "event": {
+        "type": "content_block_delta",
+        "prompt_id": "PROMPT_0",
+        "block_index": 1,
+        "delta": {
+          "type": "text",
+          "text": " `"
+        }
+      }
+    },
+    {
+      "seq": 68,
+      "emitted_at": "1970-01-01T00:01:08.000Z",
+      "session_id": "SESSION",
+      "event": {
+        "type": "content_block_delta",
+        "prompt_id": "PROMPT_0",
+        "block_index": 1,
+        "delta": {
+          "type": "text",
+          "text": "hello"
+        }
+      }
+    },
+    {
+      "seq": 69,
+      "emitted_at": "1970-01-01T00:01:09.000Z",
+      "session_id": "SESSION",
+      "event": {
+        "type": "content_block_delta",
+        "prompt_id": "PROMPT_0",
+        "block_index": 1,
+        "delta": {
+          "type": "text",
+          "text": "-cor"
+        }
+      }
+    },
+    {
+      "seq": 70,
+      "emitted_at": "1970-01-01T00:01:10.000Z",
+      "session_id": "SESSION",
+      "event": {
+        "type": "content_block_delta",
+        "prompt_id": "PROMPT_0",
+        "block_index": 1,
+        "delta": {
+          "type": "text",
+          "text": "pus"
+        }
+      }
+    },
+    {
+      "seq": 71,
+      "emitted_at": "1970-01-01T00:01:11.000Z",
+      "session_id": "SESSION",
+      "event": {
+        "type": "content_block_delta",
+        "prompt_id": "PROMPT_0",
+        "block_index": 1,
+        "delta": {
+          "type": "text",
+          "text": "`"
+        }
+      }
+    },
+    {
+      "seq": 72,
+      "emitted_at": "1970-01-01T00:01:12.000Z",
+      "session_id": "SESSION",
+      "event": {
+        "type": "content_block_stop",
+        "prompt_id": "PROMPT_0",
+        "block_index": 1
+      }
+    },
+    {
+      "seq": 73,
+      "emitted_at": "1970-01-01T00:01:13.000Z",
       "session_id": "SESSION",
       "event": {
         "type": "message_complete",

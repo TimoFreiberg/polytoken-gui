@@ -61,6 +61,7 @@ import {
   ensureEnv,
   isolationEnv,
   paths,
+  renderConfig,
 } from "../parity/lib";
 
 /** Read a fresh daemon's startup.json (state/pid/port). Inlined from parity/lib.ts
@@ -401,12 +402,57 @@ function freshSessionId(): string {
 }
 
 /** Spawn a fresh (non-resume) isolated daemon session; resolve its port. */
-async function spawnFreshDaemon(p: Paths): Promise<{
+async function spawnFreshDaemon(
+  p: Paths,
+  permissionMatcher: "bypass_plus" | "standard",
+): Promise<{
   proc: ReturnType<typeof Bun.spawn>;
   port: number;
   sessionId: string;
 }> {
   ensureEnv(p);
+  // The permission matcher is baked into config.yaml BEFORE spawn and governs
+  // whether the daemon prompts for tool execution. If $PILOT_PARITY_CONFIG_DIR
+  // points at a hand-maintained config (generateConfig=false), we can't control
+  // it — fail loud rather than silently capture against the wrong matcher (e.g.
+  // an unattended `bypass_plus` that would auto-approve `tool-call-approval`).
+  if (!p.generateConfig) {
+    throw new Error(
+      `$PILOT_PARITY_CONFIG_DIR is set, so the capture harness cannot guarantee ` +
+        `default_permission_matcher=${permissionMatcher} for this scenario. Unset it to ` +
+        `let the harness generate an isolated capture config, or point it at a config that ` +
+        `uses the right matcher.`,
+    );
+  }
+  // Write an ISOLATED, per-capture global config carrying the required matcher.
+  // Kept OUT of p.globalConfigDir (the shared parity config e2e/other runs rely
+  // on) so a `standard` capture never leaves the shared config prompting. Still
+  // under PARITY_ROOT, so isolation holds.
+  const captureConfigHome = join(p.root, "xdg-config-capture");
+  const captureGlobalConfigDir = join(captureConfigHome, "polytoken");
+  mkdirSync(captureGlobalConfigDir, { recursive: true });
+  writeFileSync(
+    join(captureGlobalConfigDir, "config.yaml"),
+    renderConfig(p.model, permissionMatcher),
+  );
+  // `standard` alone does NOT prompt: it means "apply your allow/ask/deny rules",
+  // and with no rule file a shell_exec matches nothing and runs unprompted (only
+  // `deny`/`ask` rules gate; `bypass_plus` ignores `ask` entirely). So for the
+  // `standard` capture we ALSO write a version-2 permissions rule file that FORCES
+  // an ask before the shell tools — the approval interrogative then fires
+  // deterministically, regardless of how "safe" the command looks. Loaded from the
+  // global config dir (same dir as config.yaml). See `polytoken schemas
+  // permissions-config` and docs.polytoken.dev/reference/permissions-config.
+  //
+  // Written UNCONDITIONALLY (empty rule set for bypass_plus) so the reused capture
+  // config dir always matches the current matcher — a stale `ask` rule from a prior
+  // `standard` capture must never leak into a later `bypass_plus` one.
+  writeFileSync(
+    join(captureGlobalConfigDir, "permissions.yaml"),
+    permissionMatcher === "standard"
+      ? "version: 2\nask:\n  - tool: shell_exec\n  - tool: shell_monitor\n"
+      : "version: 2\n",
+  );
   const sessionId = freshSessionId();
   const proc = Bun.spawn({
     cmd: [
@@ -419,9 +465,13 @@ async function spawnFreshDaemon(p: Paths): Promise<{
       "--sessions-dir",
       p.sessionsDir,
       "--global-config-dir",
-      p.globalConfigDir,
+      captureGlobalConfigDir,
     ],
-    env: { ...process.env, ...isolationEnv(p) },
+    env: {
+      ...process.env,
+      ...isolationEnv(p),
+      XDG_CONFIG_HOME: captureConfigHome,
+    },
     stdout: "pipe",
     stderr: "pipe",
   });
@@ -547,18 +597,16 @@ const SCENARIOS: Record<string, Scenario> = {
     description:
       "A turn that calls a tool requiring approval → interrogative (permission) → approve → " +
       "tool_result → message_complete.",
-    // ⚠ BLOCKED on the isolated config's permission matcher — see the note in drive().
-    // The drive logic below is correct and ready; it fails loud until the config prompts.
+    // Runs under an isolated `standard` permission matcher PLUS a version-2
+    // permissions rule file that `ask`s before the shell tools (both written by
+    // spawnFreshDaemon; main() selects `standard` for this scenario only). Neither
+    // alone prompts: `standard` only means "apply your allow/ask/deny rules", and
+    // it is the `ask` rule that forces the interrogative before shell_exec (a
+    // `bypass_plus` matcher would ignore `ask` entirely). Earlier finding
+    // (2026-07-06): a runtime `POST /permission-monitor` switch alone does NOT gate
+    // the tool; the monitor call below only governs notifications and is kept as
+    // belt-and-suspenders.
     drive: async (ctx) => {
-      // KNOWN BLOCKER (verified 2026-07-06): the generated parity config pins
-      // `default_permission_matcher: bypass_plus`, and that governs EXECUTION — a
-      // runtime `POST /permission-monitor {mode:"standard"}` flips the monitor (a
-      // `permission_monitor_switch` event fires) but does NOT gate the tool: both
-      // `echo hello-corpus` and a file-writing `echo hello > f.txt` ran straight
-      // through (tool_call → tool_result, no interrogative). To capture a REAL
-      // approval, regenerate the isolated config with `default_permission_matcher:
-      // standard` (parity/lib.ts renderConfig, or a scenario-specific config) so the
-      // daemon actually prompts. See server-rs/PROGRESS.md.
       await ctx.call("POST", "/permission-monitor", { mode: "standard" });
       await ctx.call("GET", "/state");
       await ctx.call("POST", "/prompt", {
@@ -581,9 +629,11 @@ const SCENARIOS: Record<string, Scenario> = {
       }
       if (!interro) {
         throw new Error(
-          "no interrogative within 120s — the isolated config auto-approves " +
-            "(default_permission_matcher: bypass_plus). Regenerate the config with " +
-            "default_permission_matcher: standard so tools prompt. See PROGRESS.md.",
+          "no interrogative within 120s. The capture ran under " +
+            "default_permission_matcher: standard, so either the model didn't call the " +
+            "tool (transient — re-run) or `standard` did not gate execution (escalate: " +
+            "check the daemon permission-matcher docs for the correct gating value — do " +
+            "NOT loop on money-spending retries). See server-rs/PROGRESS.md.",
         );
       }
       const id = (interro.event as { interrogative_id?: string })
@@ -751,7 +801,13 @@ async function main() {
   const scenario = SCENARIOS[scenarioName]!;
   const p = paths();
 
-  const { proc, port, sessionId } = await spawnFreshDaemon(p);
+  // tool-call-approval needs the daemon to actually PROMPT before running the
+  // tool (so we can capture the permission interrogative + approval); every
+  // other scenario runs unattended under bypass_plus.
+  const permissionMatcher: "bypass_plus" | "standard" =
+    scenarioName === "tool-call-approval" ? "standard" : "bypass_plus";
+
+  const { proc, port, sessionId } = await spawnFreshDaemon(p, permissionMatcher);
   const http: HttpEntry[] = [];
   const sse: SseFrame[] = [];
   let stopHeartbeat: (() => void) | null = null;

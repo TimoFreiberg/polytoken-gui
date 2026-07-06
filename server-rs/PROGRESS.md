@@ -9,9 +9,12 @@ a heartbeat timeout (health-probe machinery deleted); golden corpus + Rust loade
 (accumulator stays server-side Rust; DECISIONS.md D19); version discipline now
 "pin the corpus, not the binary" (D20, supersedes standing invariant #3). 180
 Rust tests green, fmt+clippy clean. NEXT: Phase 2.1 (port event_map/ui_bridge +
-their unit tests, shrunk). LIVE CORPUS CAPTURE DONE (2026-07-06, 4/6 scenarios,
+their unit tests, shrunk). LIVE CORPUS CAPTURE DONE (2026-07-06, 5/6 scenarios,
 deepseek): found+fixed a canonicalization bug (+regression test), 2 seed/reality
-mismatches, and a permission-config blocker — see "Live corpus capture" below.
+mismatches, and RESOLVED the tool-call-approval permission gating (needs the
+`standard` matcher PLUS a version-2 `ask` permissions rule — `standard` alone
+does not prompt). Corpus now FROZEN: inner `event.emitted_at` canon + `/state`
+redaction landed, cross-language parity test added — see "Live corpus capture" below.
 
 Last updated: 2026-07-05 (Phase 1 mock-e2e burn-down COMPLETE + review-approved:
 0 deterministic Rust e2e failures; 176 Rust tests green). The 2026-07-04 full
@@ -26,26 +29,25 @@ Chunk A (mock fixture text/lifecycle parity) is complete and reviewer-approved
 (32/32 e2e specs pass, 1 flake confirmed), cutting failures 72 → 33 (~90%).
 Chunk F (polish/prompt-nav + scroll) resolved (0 failures, no action needed).
 
-## Live corpus capture (2026-07-06) — real deepseek daemon, 4/6 scenarios
+## Live corpus capture (2026-07-06) — real deepseek daemon, 5/6 scenarios
 
 Ran `scripts/capture-daemon-corpus.ts` against a **real** isolated polytoken
 daemon (`0.4.0-unstable.7`, deepseek/deepseek-v4-pro full via the parity harness,
 `$DEEPSEEK_API_KEY`). The seed fixtures were hand-authored-from-schema; these are
 now grounded in what the daemon actually emits. **All captures deserialize into the
 real `DaemonEvent` enum and canonicalize idempotently — `cargo test --test corpus`
-green (5 tests).**
+green (8 tests).**
 
-### Captured (real, committed — but see "provisional" below)
+### Captured (real, committed, FROZEN — `/state` redacted, no machine-specific data)
 | scenario | frames | notes |
 |---|---|---|
 | `streaming-turn` | 22 | real turn has a **thinking block + signature_delta** BEFORE the text block; seed had only a plain text block |
 | `queue-while-in-flight` | 65 | **AC.3 auto-queue VALIDATED live** — 2nd `/prompt` → 202 + `queued_item{admission_prompt_id,content,id}`, NOT 409; full queue→drain lifecycle |
 | `abort` | 7 | `POST /turn/cancel` → `{status:"cancel_requested"}` → `turn_cancelled{reason:"user_cancelled"}` |
 | `ask-user-question` | 291 | `ask_user_question` interrogative + `/interrogative/{id}/respond {kind:"ask_user_question_answers",answers:[{question_id,selected_option_ids}]}` → 200. Verbose (model chatty); could trim the prompt further |
+| `tool-call-approval` | 74 | **permission gating RESOLVED (2026-07-06)** — needs `standard` matcher + a version-2 `ask` shell rule (`standard` alone does not prompt). Real `interrogative` → `/interrogative/{id}/respond {kind:"permission_answer",granted:true}` → `tool_call{name:"shell_exec",input:{command}}` → `tool_result{content,content_full}` (no `is_error`) |
 
 ### NOT captured (still the seed fixture)
-- `tool-call-approval` — **BLOCKED**: see permission finding below. Driver is
-  written + ready in `capture-daemon-corpus.ts`; fails loud until the config prompts.
 - `reconnect-stream-discontinuity` — not attempted. Requires forcing a
   `stream_discontinuity` (SSE resume is a documented upstream no-op) — hard to
   reproduce deterministically against a live model. Improved-stub the driver.
@@ -65,15 +67,18 @@ green (5 tests).**
    (fails against the old code). Seeds never had a plural array of real uuids, so it was latent.
 
 ### Findings to ACT ON (teed up for tomorrow)
-- **Permission blocker for `tool-call-approval`** (verified): the isolated parity
-  config pins `default_permission_matcher: bypass_plus`, which governs EXECUTION. A
-  runtime `POST /permission-monitor {mode:"standard"}` flips the monitor (emits a
-  real `permission_monitor_switch{from_monitor,to_monitor}` event) but does NOT gate
-  the tool — both `echo hello-corpus` and a file-writing `echo hello > f.txt` ran
-  straight through (`tool_call`→`tool_result`, no interrogative). **To capture a real
-  approval: regenerate the isolated config with `default_permission_matcher: standard`**
-  (`parity/lib.ts` `renderConfig`, or a scenario-specific config), then re-run the
-  ready driver. ~15 min.
+- **Permission gating for `tool-call-approval` — RESOLVED (2026-07-06).** The prior
+  hypothesis ("regenerate with `default_permission_matcher: standard`") was WRONG on
+  its own: `standard` only means "apply your allow/ask/deny rules", and with no rule
+  file a `shell_exec` matches nothing and runs unprompted (verified live: `echo
+  hello-corpus` ran straight through under `standard` too, tool_call→tool_result, no
+  interrogative). The real mechanism: per-tool allow/ask/deny rules live in a SEPARATE
+  version-2 `permissions.{yml,yaml}` file (loaded from the global config dir + project
+  dir), NOT in `config.yaml`. `bypass_plus` ignores `ask` entirely; only `standard`
+  honors it. Fix (in `spawnFreshDaemon`): for this scenario write BOTH a `standard`
+  config AND a `permissions.yaml` = `{version:2, ask:[{tool:shell_exec},{tool:shell_monitor}]}`
+  into an isolated per-scenario config dir. Captured cleanly (74 frames). See `polytoken
+  schemas permissions-config` / docs.polytoken.dev/reference/permissions-config.
 - **Two seed/reality mismatches in `tool-call-approval`** (seed is wrong vs the daemon):
   - respond body: seed `{response:{kind:"permission",decision:"allow"}}` is INVALID.
     Real shape is the flat `oneOf` `{kind:"permission_answer",granted:true}`.
@@ -90,20 +95,19 @@ green (5 tests).**
   `most_recent_assistant_text`, `source_control`, `active_model/facet`, a full `env`, etc.
   ⚠ If the reseed path reads `turn_in_flight` from `/state`, verify it against unstable.7.
 
-### DEFERRED canon work — "before freezing" (canon is a pure re-appliable transform,
-### so this costs ZERO extra model spend — re-run canon over the committed files)
-- **Inner event `emitted_at`**: `canonicalize_frame` rewrites `event.timestamp` but
-  NOT `event.emitted_at`. Real `system_reminder` carries a wall-clock `emitted_at`
-  (e.g. `2026-07-05T22:52:08Z`) that leaks into every capture. Extend the timestamp
-  rewrite next to the `timestamp` one, in BOTH `corpus.rs` and `capture-daemon-corpus.ts`.
-- **`/state` HTTP body redaction (JUDGMENT CALL — your scope decision)**: the captured
-  `/state` bodies contain non-deterministic + **machine-specific** data — a full `env`
-  map with absolute paths incl. a skills-plugin UUID, `context_usage.used_tokens`
-  (per-run counter), `most_recent_assistant_text`. Recommend normalizing in
-  `canonicalize_http` (mirror both files): `env`→`{}` (matches seed precedent),
-  `used_tokens`→`0`, and any absolute-path field. **This is why the 4 captures are
-  PROVISIONAL** — they currently embed my local `/Users/timo/...` paths. Decide the
-  redaction scope, re-canonicalize (no re-capture needed), then freeze.
+### Canon freeze — DONE (2026-07-06, committed)
+- **Inner event `emitted_at`**: `canonicalize_frame` now rewrites `event.emitted_at`
+  (next to the existing `event.timestamp` rewrite) to a monotonic epoch, idempotently,
+  in BOTH `corpus.rs` and `capture-daemon-corpus.ts`. Test: `canon_rewrites_inner_emitted_at`.
+- **`/state` HTTP body redaction**: type-preserving key-driven redaction in
+  `canonicalize_value` (mirrored both files): `env`→`{}`, `most_recent_assistant_text`→`""`,
+  `used_tokens`→`0` (keeps `limit_tokens`), `project_cwd`→`/PROJECT`, `source_control`
+  leaves (`label`/`dirty`/commit-like)→fixed placeholders (keeps `kind`/shape for typed
+  replay). Re-canonicalized all committed captures via a new `--recanon` mode (zero model
+  spend). Gates: `corpus_has_no_machine_specific_data` (no `/Users/`|`/home/`, `env=={}`,
+  `used_tokens==0`, `most_recent_assistant_text==""`) + cross-language parity test
+  `canon_matches_ts_golden` (plus a TS-side `bun test` guard) against a committed
+  non-canonical fixture exercising every redacted field.
 - Model **thinking/text content is irreducibly non-deterministic** — the corpus is a
   human-reviewed drift canary, not a byte-exact oracle. Content churn on re-capture is
   expected; the idempotency test only pins that canon-of-canon is stable.
@@ -545,10 +549,11 @@ wants.
       TS tests that cover them. (Vocabulary-coupled — behind the gate above.
       Note `RefetchQueue` also interacts with unstable.6's `/prompt`
       auto-queue breaking change; see "Daemon-owned first".)
-- [~] Build the **daemon-fixture corpus** (PARTIAL 2026-07-06: 4/6 real captures
-      landed — streaming-turn/queue-while-in-flight/abort/ask-user-question;
-      tool-call-approval blocked on permission config, reconnect not attempted;
-      captures are PROVISIONAL pending `/state` redaction — see "Live corpus
+- [~] Build the **daemon-fixture corpus** (5/6 real captures landed + FROZEN
+      2026-07-06 — streaming-turn/queue-while-in-flight/abort/ask-user-question/
+      tool-call-approval; reconnect-stream-discontinuity stays a seed (upstream
+      no-op); captures canonicalized + `/state`-redacted, no machine-specific
+      data — see "Live corpus
       capture" near the top): hand-translate the mock fixture
       scripts into real daemon wire sequences (`DaemonEvent`s over SSE plus
       the matching HTTP responses). Ground it with **golden recordings**:
