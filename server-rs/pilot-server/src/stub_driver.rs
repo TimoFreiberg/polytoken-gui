@@ -88,8 +88,8 @@ impl PilotDriver for StubDriver {
     async fn new_session(
         &self,
         _opts: crate::driver::NewSessionOptsData,
-    ) -> Vec<SessionDriverEvent> {
-        Vec::new()
+    ) -> Result<Vec<SessionDriverEvent>, String> {
+        Ok(Vec::new())
     }
 
     async fn list_models(&self) -> Vec<ModelOption> {

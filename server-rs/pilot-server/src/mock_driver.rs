@@ -1977,11 +1977,14 @@ impl PilotDriver for MockDriver {
         }
     }
 
-    async fn new_session(&self, opts: NewSessionOptsData) -> Vec<SessionDriverEvent> {
+    async fn new_session(
+        &self,
+        opts: NewSessionOptsData,
+    ) -> Result<Vec<SessionDriverEvent>, String> {
         // One-shot failure injection (armed via run_script("failnewsession")): fail before
         // any state mutation, mirroring TS `MockDriver.failNextNewSession`.
         if self.fail_next_new_session.swap(false, Ordering::SeqCst) {
-            return Vec::new();
+            return Err("new session failed (failnewsession)".to_string());
         }
         // Faithful port of TS `newSession()`: resolve the cwd (applying a
         // `-worktree` suffix when the draft asked for an isolated worktree) and
@@ -2091,7 +2094,7 @@ impl PilotDriver for MockDriver {
             session_id,
             snapshot,
         });
-        events
+        Ok(events)
     }
 
     async fn set_archived(&self, path: String, archived: bool) -> ArchiveResult {

@@ -41,29 +41,38 @@
 //
 
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use parking_lot::{Mutex, RwLock};
 use pilot_daemon_types::*;
 use pilot_protocol::session_driver::{
     CommandInfo, DirListing, FileInfo, HostUiResponse, ImageContent, ModelDefaults, ModelOption,
-    PathStat, PermissionMonitorMode, SessionDriverEvent, SessionId, SessionListEntry, SessionRef,
-    SessionSnapshot, SessionStatus, WorkspaceId, WorkspaceRef,
+    PathStat, PermissionMonitorMode, SessionClosedReason, SessionDriverEvent, SessionEventBase,
+    SessionId, SessionListEntry, SessionRef, SessionSnapshot, SessionStatus, SessionUsage,
+    WorkspaceId, WorkspaceRef, WorktreeInfo,
 };
-use pilot_protocol::wire::{DeliveryMode, McpAction};
+use pilot_protocol::wire::{DeliveryMode, LoginEnvStatus, McpAction};
 use tokio::sync::mpsc;
-use tracing::{error, warn};
+use tracing::{error, info, warn};
 
 use async_trait::async_trait;
 
-use crate::driver::{BranchResult, ClearQueueResult, NewSessionOptsData, PilotDriver};
+use crate::archive_store::ArchiveStore;
+use crate::driver::{
+    BranchResult, ClearQueueResult, NewSessionOptsData, PilotDriver, WorktreeCleanupResult,
+};
 use crate::polytoken::daemon_client::{DaemonClient, SpawnDaemonOpts, SseSubscription};
 use crate::polytoken::event_map::{self, DaemonEffect, FoldAccumulator, FoldResult, MapCtx};
 use crate::polytoken::history_seed::{self, HistoryMapCtx};
 use crate::polytoken::models::parse_models;
 use crate::polytoken::sessions_registry;
 use crate::polytoken::ui_bridge::{PendingInterrogative, build_interrogative_response};
+use crate::shared::login_env::{self, CapturedLoginEnv};
+use crate::shared::session_list::merge_session_lists;
+use crate::shared::warm_cap::eviction_plan;
+use crate::shared::worktree::{self, WorktreeMeta};
+use crate::worktree_store::WorktreeStore;
 
 /// A warm session: a daemon client + accumulator + cached state.
 struct WarmSession {
@@ -106,6 +115,23 @@ struct PolytokenInner {
     sessions_dir: PathBuf,
     bin_path: String,
     is_fake: bool,
+    warm_cap: i64,
+    /// The captured login-shell env, threaded into every daemon spawn so the
+    /// daemon gets the user's real PATH + tool env. `None` only when capture
+    /// ran but produced no env (a degraded state — spawn gets the inherited env).
+    login_env: Mutex<Option<HashMap<String, String>>>,
+    /// The status of the login-env capture, stored for the Settings panel.
+    /// NOTE: the hub does NOT yet read this — `pilot_settings_msg` still sends
+    /// a hardcoded stub `LoginEnvStatus { ok: false, .. }`. This is the ready
+    /// read side for when the Settings-panel wiring is implemented.
+    login_env_status: RwLock<LoginEnvStatus>,
+    archive_store: Mutex<ArchiveStore>,
+    worktree_store: Mutex<WorktreeStore>,
+    /// Warm recency order: oldest→newest by focus. `eviction_plan` reads this
+    /// slice; `focus` moves a session to the back (most-recent). Faithful to
+    /// TS's insertion-ordered `Map` (where `focus` deletes + re-inserts). The
+    /// `warm` HashMap stays the lookup; `order` is the recency substrate.
+    order: Mutex<Vec<SessionId>>,
     warm: RwLock<HashMap<SessionId, Arc<WarmSession>>>,
     subscribers: Mutex<Vec<(usize, mpsc::Sender<SessionDriverEvent>)>>,
     next_sub_id: Mutex<usize>,
@@ -123,12 +149,34 @@ pub struct PolytokenDriver {
 }
 
 impl PolytokenDriver {
-    pub fn new(sessions_dir: PathBuf, bin_path: String, is_fake: bool) -> Self {
+    /// Construct the live polytoken driver. Eagerly captures the login-shell env
+    /// once (mirroring `polytoken-driver.ts:175-178`) so every daemon spawn gets
+    /// the user's real PATH + tool env, and so the Settings panel's login-env
+    /// status is correct from t0. Constructs the archive + worktree stores under
+    /// `data_dir`. `warm_cap` bounds the warm pool (≤0 = unbounded).
+    pub async fn new(
+        data_dir: PathBuf,
+        bin_path: String,
+        is_fake: bool,
+        warm_cap: i64,
+        login_shell: Option<String>,
+    ) -> Self {
+        let sessions_dir = data_dir.join("sessions");
+        let captured = login_env::capture_login_env(login_shell.as_deref()).await;
+        let CapturedLoginEnv { env, status } = captured;
+        let login_env = if env.is_empty() { None } else { Some(env) };
+
         Self {
             inner: Arc::new(PolytokenInner {
                 sessions_dir,
                 bin_path,
                 is_fake,
+                warm_cap,
+                login_env: Mutex::new(login_env),
+                login_env_status: RwLock::new(status),
+                archive_store: Mutex::new(ArchiveStore::new(data_dir.join("archived.json"))),
+                worktree_store: Mutex::new(WorktreeStore::new(data_dir.join("worktrees.json"))),
+                order: Mutex::new(Vec::new()),
                 warm: RwLock::new(HashMap::new()),
                 subscribers: Mutex::new(Vec::new()),
                 next_sub_id: Mutex::new(0),
@@ -136,6 +184,52 @@ impl PolytokenDriver {
                 command_cache: Mutex::new(HashMap::new()),
             }),
         }
+    }
+
+    /// Test-only constructor: takes a pre-set `login_env` so the threading test
+    /// (AC.9) is deterministic — no real shell spawn in CI. `warm_cap` and
+    /// `data_dir` are real so warm-cap eviction + store wiring are exercised.
+    // Test-support only (reachable from integration tests, hence not `#[cfg(test)]`).
+    #[doc(hidden)]
+    pub async fn new_with_login_env(
+        data_dir: PathBuf,
+        bin_path: String,
+        is_fake: bool,
+        warm_cap: i64,
+        login_env: Option<HashMap<String, String>>,
+    ) -> Self {
+        let sessions_dir = data_dir.join("sessions");
+        let status = LoginEnvStatus {
+            active_shell: None,
+            ok: login_env.is_some(),
+            detail: Some("injected (test)".to_string()),
+        };
+        Self {
+            inner: Arc::new(PolytokenInner {
+                sessions_dir,
+                bin_path,
+                is_fake,
+                warm_cap,
+                login_env: Mutex::new(login_env),
+                login_env_status: RwLock::new(status),
+                archive_store: Mutex::new(ArchiveStore::new(data_dir.join("archived.json"))),
+                worktree_store: Mutex::new(WorktreeStore::new(data_dir.join("worktrees.json"))),
+                order: Mutex::new(Vec::new()),
+                warm: RwLock::new(HashMap::new()),
+                subscribers: Mutex::new(Vec::new()),
+                next_sub_id: Mutex::new(0),
+                is_viewed: RwLock::new(None),
+                command_cache: Mutex::new(HashMap::new()),
+            }),
+        }
+    }
+
+    /// The login-env status, exposed for the Settings panel. NOTE: the hub
+    /// does NOT yet call this — `pilot_settings_msg` still sends a hardcoded
+    /// stub `LoginEnvStatus { ok: false, .. }`. This is the ready read side
+    /// for when the Settings-panel wiring is implemented.
+    pub fn login_env_status(&self) -> LoginEnvStatus {
+        self.inner.login_env_status.read().clone()
     }
 }
 
@@ -149,6 +243,15 @@ struct DriverMapCtx {
     autodrain_enabled: Option<bool>,
 }
 
+impl DriverMapCtx {
+    /// A current UTC RFC3339 timestamp, matching the daemon's date-time
+    /// format. Shared between `DriverMapCtx::now` and `list_sessions`' warm
+    /// entries so freshest (warm-only) sessions sort correctly by recency.
+    fn now_ts() -> String {
+        chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true)
+    }
+}
+
 impl MapCtx for DriverMapCtx {
     fn r#ref(&self) -> &SessionRef {
         &self.session_ref
@@ -159,12 +262,7 @@ impl MapCtx for DriverMapCtx {
     }
 
     fn now(&self) -> String {
-        // ISO 8601 timestamp (simplified — matches the daemon's date-time format)
-        let secs = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_secs())
-            .unwrap_or(0);
-        format!("2025-01-01T00:00:{:02}Z", secs % 60)
+        Self::now_ts()
     }
 
     fn snapshot(&self, status: SessionStatus) -> SessionSnapshot {
@@ -200,6 +298,42 @@ impl PolytokenInner {
 
     fn get_warm(&self, session_id: &SessionId) -> Option<Arc<WarmSession>> {
         self.warm.read().get(session_id).cloned()
+    }
+
+    /// Move `session_id` to the back of the warm recency order (most-recently
+    /// focused). If absent, append it. Mirrors TS `focus` (`focus` deletes +
+    /// re-inserts into the insertion-ordered `Map`). Recency is fully encoded by
+    /// position — no `lastFocusedAt` field. Called on install/open/new before
+    /// running eviction. Does NOT track `active_session_id` (its only consumer
+    /// is the idle reaper, out of scope here — adding it would be dead state).
+    fn focus(&self, session_id: &SessionId) {
+        let mut order = self.order.lock();
+        order.retain(|id| id != session_id);
+        order.push(session_id.clone());
+    }
+
+    /// Resolve a session's project cwd from its on-disk `session.json`, falling
+    /// back to `None` when the metadata is missing/unreadable (the caller then
+    /// falls back to the sessions dir, mirroring `polytoken-driver.ts:1138`).
+    fn cwd_for_session(sessions_dir: &Path, session_id: &str) -> Option<String> {
+        let session_dir = sessions_dir.join(session_id);
+        sessions_registry::read_session_json(&session_dir)
+            .filter(|meta| !meta.project_path.is_empty())
+            .map(|meta| meta.project_path)
+    }
+
+    /// The worktree field for a session's cwd, or `None`. Resolved from the
+    /// worktree store at list time (pilot's own flag — polytoken has no concept).
+    /// Carries `name` + `reaped` so the sidebar can show a tooltip + a tombstoned
+    /// indicator. Mirrors `polytoken-driver.ts:827-839` `worktreeFieldFor`.
+    fn worktree_field_for(cwd: &str, store: &WorktreeStore) -> Option<WorktreeInfo> {
+        let meta = store.get(cwd)?;
+        Some(WorktreeInfo {
+            path: meta.path.clone(),
+            base: meta.base.clone(),
+            name: meta.name.clone(),
+            reaped: store.is_reaped(cwd).then_some(true),
+        })
     }
 
     /// Build a `WarmSession` from an already-connected client: claim the lease,
@@ -312,8 +446,84 @@ impl PolytokenInner {
 
         *warm.sse_subscription.lock() = Some(sub);
 
-        self.warm.write().insert(session_id, warm.clone());
+        self.warm.write().insert(session_id.clone(), warm.clone());
+        // Focus the new session (most-recently focused) before running eviction
+        // so it's the protected id (never evicted). Mirrors TS `focus(spawned.sessionId)`.
+        self.focus(&session_id);
+
+        // Enforce the warm cap: evict the least-recently-focused sessions (never
+        // the one just warmed). Sessions with a running turn (turn_in_flight)
+        // are never evicted — disposing one mid-turn kills it and the synthetic
+        // sessionClosed makes it look finished. Mirrors
+        // `polytoken-driver.ts:567-600`.
+        let order = self.order.lock().clone();
+        let victims = eviction_plan(&order, Some(&session_id), self.warm_cap, |id| {
+            !self.turn_in_flight(id)
+        });
+        for victim_id in &victims {
+            let Some(victim) = self.warm.write().remove(victim_id) else {
+                continue;
+            };
+            // Emit a synthetic sessionClosed BEFORE dispose so the hub clears the
+            // running indicator on an evicted session (dispose tears down SSE,
+            // so the abort's terminal event never arrives). Mirrors the TS pattern.
+            let now = DriverMapCtx::now_ts();
+            self.emit(SessionDriverEvent::SessionClosed {
+                base: SessionEventBase {
+                    session_ref: victim.session_ref.clone(),
+                    timestamp: now,
+                    run_id: None,
+                },
+                reason: SessionClosedReason::Ended,
+            });
+            // Dispose: tear down SSE + close the client (the TS `disposeSession`).
+            self.dispose_warm(&victim).await;
+            // Remove from recency order.
+            self.order.lock().retain(|id| id != victim_id);
+            info!(
+                "evicted LRU warm session {victim_id}; {} warm",
+                self.warm.read().len()
+            );
+        }
+        if self.warm_cap > 0 && (self.warm.read().len() as i64) > self.warm_cap {
+            warn!(
+                "warm cap {} exceeded ({} warm) — not enough idle eviction candidates; \
+                 deferring until running turns finish",
+                self.warm_cap,
+                self.warm.read().len()
+            );
+        }
+
         Ok(warm)
+    }
+
+    /// True if the session's cached state reports a turn in flight (the
+    /// authoritative signal — disposing one mid-turn kills the running turn).
+    /// Used by the eviction predicate to skip running sessions.
+    fn turn_in_flight(&self, session_id: &SessionId) -> bool {
+        self.warm
+            .read()
+            .get(session_id)
+            .and_then(|ws| ws.last_state.read().as_ref().and_then(|s| s.turn_in_flight))
+            .unwrap_or(false)
+    }
+
+    /// Dispose a warm session: stop the SSE subscription, drop the consumer
+    /// sender, abort + await the consumer task, close the client. Mirrors TS
+    /// `disposeSession`. Extracted so `install_warm` (eviction) and
+    /// `reload_session` share one teardown path.
+    async fn dispose_warm(&self, ws: &Arc<WarmSession>) {
+        let sub = ws.sse_subscription.lock().take();
+        *ws.sse_tx.lock() = None;
+        let consumer_handle = ws.sse_consumer_handle.lock().take();
+        if let Some(sub) = sub {
+            sub.stop().await;
+        }
+        if let Some(handle) = consumer_handle {
+            handle.abort();
+            let _ = handle.await;
+        }
+        ws.client.close().await;
     }
 
     /// Warm up a NEW session by spawning the daemon (`polytoken new --no-attach`),
@@ -335,14 +545,11 @@ impl PolytokenInner {
             session_id: None,
             sessions_dir: None,
             global_config_dir: None,
-            login_env: {
-                #[expect(
-                    unused_variables,
-                    reason = "BUG: login_env forced None; login-env module unported until Phase 2"
-                )]
-                let ignored_login_env = ();
-                None
-            },
+            // Thread the captured login-shell env into the spawn so the daemon
+            // gets the user's real PATH + tool env (pilot launched from the .app
+            // bundle inherits launchd's minimal PATH). Mirrors
+            // `polytoken-driver.ts:175-178` + the spawn's login-env merge.
+            login_env: self.login_env.lock().clone(),
         };
 
         let (spawned, _child) =
@@ -607,25 +814,117 @@ impl PilotDriver for PolytokenDriver {
 
     async fn list_sessions(&self) -> Vec<SessionListEntry> {
         let sessions_dir = self.inner.sessions_dir.clone();
-        sessions_registry::list_cold_sessions(
+        // Resolve pilot's own side-flags from the stores (not polytoken's
+        // concern): the archive flag + the worktree indicator, keyed by the
+        // session path / cwd. Mirrors `polytoken-driver.ts:1078-1080`.
+        let archive_store = self.inner.archive_store.lock();
+        let worktree_store = self.inner.worktree_store.lock();
+        let on_disk = sessions_registry::list_cold_sessions(
             &sessions_dir,
             sessions_registry::ListColdSessionsOpts {
-                archived_for: Box::new(
-                    #[expect(
-                        unused_variables,
-                        reason = "BUG: archive store unported; list_sessions hardcodes archived=false until Phase 2"
-                    )]
-                    |session_id| false,
-                ),
-                worktree_for: Some(Box::new(
-                    #[expect(
-                        unused_variables,
-                        reason = "BUG: worktree store unported; list_sessions hardcodes worktree=None until Phase 2"
-                    )]
-                    |session_id| None,
-                )),
+                archived_for: Box::new(|session_json_path| archive_store.has(session_json_path)),
+                // NOTE: the archive WRITE side (`set_archived`) is still the
+                // trait-default no-op in the live PolytokenDriver (only the mock
+                // overrides it), so `archived` is always false on the live path
+                // until `set_archived` is wired — out of Phase 5 scope.
+                worktree_for: Some(Box::new(|cwd| {
+                    PolytokenInner::worktree_field_for(cwd, &worktree_store)
+                })),
             },
-        )
+        );
+        // The borrow of `archive_store`/`worktree_store` ends here; drop the
+        // guards before acquiring `warm` below (deadlock class: a guard held
+        // across another lock acquire).
+        drop(archive_store);
+        drop(worktree_store);
+
+        // Merge warm-pool entries (a session flushed but not yet on disk is
+        // merged in via merge_session_lists). Live usage is overlaid only where
+        // a session is warm. Mirrors `polytoken-driver.ts:1082-1113`.
+        let now = DriverMapCtx::now_ts();
+        let mut warm_entries: Vec<SessionListEntry> = Vec::new();
+        let mut warm_usage: HashMap<String, SessionUsage> = HashMap::new();
+        let warm = self.inner.warm.read().clone();
+        let archive_store = self.inner.archive_store.lock();
+        let worktree_store = self.inner.worktree_store.lock();
+        for (sid, ws) in warm.iter() {
+            let title = ws
+                .last_state
+                .read()
+                .as_ref()
+                .and_then(|s| s.session_title.clone());
+            let session_path = sessions_dir.join(sid).join("session.json");
+            let cwd = ws.workspace.path.clone();
+            warm_entries.push(SessionListEntry {
+                session_id: sid.clone(),
+                path: session_path.to_string_lossy().to_string(),
+                cwd: cwd.clone(),
+                display_name: title,
+                preview: String::new(),
+                user_message_count: 0,
+                updated_at: now.clone(),
+                created_at: now.clone(),
+                last_user_message_at: now.clone(),
+                parent_session_path: None,
+                usage: None,
+                archived: archive_store.has(session_path.to_string_lossy().as_ref()),
+                worktree: PolytokenInner::worktree_field_for(&cwd, &worktree_store),
+            });
+            if let Some(state) = ws.last_state.read().as_ref() {
+                if let Some(u) = event_map::usage_from_state(Some(state)) {
+                    warm_usage.insert(sid.clone(), u);
+                }
+            }
+        }
+        drop(archive_store);
+        drop(worktree_store);
+
+        let merged = merge_session_lists(&on_disk, &warm_entries);
+        // Overlay live usage onto the winning entry (disk supersedes the warm
+        // placeholder, so usage set only on warmEntries would be lost on merge).
+        merged
+            .into_iter()
+            .map(|e| match warm_usage.get(&e.session_id) {
+                Some(u) => SessionListEntry {
+                    usage: Some(u.clone()),
+                    ..e
+                },
+                None => e,
+            })
+            .collect()
+    }
+
+    /// Remove a pilot-created worktree at `path` (== a session cwd) and tombstone
+    /// it. The store index is the gate — we never touch a worktree pilot didn't
+    /// create. `force=false` leaves a dirty worktree in place (returns
+    /// `removed:false` + a reason). Mirrors `polytoken-driver.ts:1380-1387`
+    /// (`cleanupWorktree` → `reapWorktree`, `:862-872`).
+    async fn cleanup_worktree(&self, path: String, force: bool) -> WorktreeCleanupResult {
+        let meta = {
+            let store = self.inner.worktree_store.lock();
+            store.live(&path).cloned()
+        };
+        let Some(meta) = meta else {
+            return WorktreeCleanupResult {
+                removed: false,
+                reason: Some("no pilot worktree at this path".to_string()),
+            };
+        };
+        match worktree::remove(&meta, force).await {
+            Ok(res) => {
+                if res.removed {
+                    self.inner.worktree_store.lock().mark_reaped(&path);
+                }
+                WorktreeCleanupResult {
+                    removed: res.removed,
+                    reason: res.reason,
+                }
+            }
+            Err(e) => WorktreeCleanupResult {
+                removed: false,
+                reason: Some(e),
+            },
+        }
     }
 
     async fn open_session(&self, path: String) -> Result<Vec<SessionDriverEvent>, String> {
@@ -638,20 +937,16 @@ impl PilotDriver for PolytokenDriver {
             workspace_id: WorkspaceId::default(),
             session_id: session_id.clone(),
         };
-        // BUG: open_session workspace is still fabricated from HOME until
-        // session-registry/worktree path is ported in Phase 2.
-        let workspace = {
-            #[expect(
-                unused_variables,
-                reason = "BUG: open_session ignores session registry/worktree workspace path and fabricates HOME until Phase 2"
-            )]
-            let ignored_registry_workspace_path = ();
-            let fabricated_home = std::env::var("HOME").unwrap_or_default();
-            WorkspaceRef {
-                workspace_id: WorkspaceId::default(),
-                path: fabricated_home,
-                display_name: None,
-            }
+        // Resolve the project cwd from the on-disk session.json so the daemon
+        // resumes in the right project; fall back to the sessions dir if the
+        // metadata is missing (the daemon still resumes the session). Mirrors
+        // `polytoken-driver.ts:1138` `cwdForSession(...) ?? sessionsDir`.
+        let cwd = PolytokenInner::cwd_for_session(&self.inner.sessions_dir, &session_id)
+            .unwrap_or_else(|| self.inner.sessions_dir.to_string_lossy().to_string());
+        let workspace = WorkspaceRef {
+            workspace_id: WorkspaceId::default(),
+            path: cwd,
+            display_name: None,
         };
 
         // Resolve the daemon port from startup.json (the daemon is ALREADY running
@@ -685,6 +980,10 @@ impl PilotDriver for PolytokenDriver {
                 .await
             {
                 Ok(ws) => {
+                    // Refocus the warm session (most-recently focused) — mirrors
+                    // TS `focus(existing.ref.sessionId)` on the instant-switch path.
+                    let real_id = ws.client.session_id.clone();
+                    self.inner.focus(&real_id);
                     // Build the seed from the warm client's /history.
                     let history_res = ws.client.history(None, None).await;
                     if let Some(history) = history_res.data {
@@ -737,16 +1036,48 @@ impl PilotDriver for PolytokenDriver {
         self.open_session(path).await
     }
 
-    async fn new_session(&self, opts: NewSessionOptsData) -> Vec<SessionDriverEvent> {
-        #[expect(
-            unused_variables,
-            reason = "BUG: opts.worktree ignored; worktree module unported until Phase 2"
-        )]
-        let ignored_worktree = &opts.worktree;
+    async fn new_session(
+        &self,
+        opts: NewSessionOptsData,
+    ) -> Result<Vec<SessionDriverEvent>, String> {
+        // Resolve cwd = opts.cwd trimmed or $HOME (a bare new session defaults to
+        // $HOME — the contract the whole stack advertises). $HOME is set in
+        // normal environments so the existence guard below accepts a cwd-less
+        // call; if HOME is unset, `unwrap_or_default()` yields "" and
+        // `Path::new("").exists()` is false, so the guard rejects it — a loud
+        // failure rather than a silent spawn against an unknown cwd.
+        // Mirrors `polytoken-driver.ts:1177-1183`.
         let cwd = opts
             .cwd
-            .clone()
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(|s| s.to_string())
             .unwrap_or_else(|| std::env::var("HOME").unwrap_or_default());
+
+        // Validate the cwd exists + is a dir, loudly — don't let the daemon spawn
+        // against a typo'd path. Mirrors `polytoken-driver.ts:1181-1183`.
+        let path = std::path::Path::new(&cwd);
+        if !path.exists() {
+            return Err(format!("no such directory: {cwd}"));
+        }
+        if !path.is_dir() {
+            return Err(format!("not a directory: {cwd}"));
+        }
+        let mut cwd = cwd;
+
+        // If the draft asked for an isolated worktree, create one against the
+        // cwd and record it in the worktree store; the session then runs in the
+        // worktree dir. Mirrors `polytoken-driver.ts:1184-1188`.
+        // Track the meta so a later failure in this call reaps it (otherwise the
+        // worktree dir + store entry leak).
+        let mut created_worktree: Option<WorktreeMeta> = None;
+        if opts.worktree.unwrap_or(false) {
+            let meta = worktree::create(&cwd, None).await?;
+            self.inner.worktree_store.lock().add(meta.clone());
+            cwd = meta.path.clone();
+            created_worktree = Some(meta);
+        }
 
         // Spawn + health + lease + state + SSE subscribe + insert into the warm
         // pool, all via warm_session. The session id comes back from the spawn.
@@ -808,16 +1139,29 @@ impl PilotDriver for PolytokenDriver {
                 // Build seed from history
                 let history_res = ws.client.history(None, None).await;
                 if let Some(history) = history_res.data {
-                    return history_seed::history_to_seed_events(
+                    return Ok(history_seed::history_to_seed_events(
                         &history.items,
                         &HistoryMapCtx { r#ref: session_ref },
-                    );
+                    ));
                 }
-                Vec::new()
+                // A successful spawn with empty history is a valid empty seed —
+                // the session exists. Mirrors the TS path.
+                Ok(Vec::new())
             }
             Err(e) => {
                 error!("new_session warm failed: {e}");
-                Vec::new()
+                // A worktree was created in THIS call but the spawn/warm failed,
+                // so reap it (dir + store entry) rather than leaving an orphan.
+                if let Some(meta) = created_worktree {
+                    if let Err(reap_err) = worktree::remove(&meta, true).await {
+                        warn!(
+                            "failed to reap worktree {} after new_session failure: {reap_err}",
+                            meta.path
+                        );
+                    }
+                    self.inner.worktree_store.lock().mark_reaped(&meta.path);
+                }
+                Err(e)
             }
         }
     }
@@ -1198,5 +1542,156 @@ impl PilotDriver for PolytokenDriver {
         if self.inner.is_fake {
             warn!("reset({bootstrap}) on fake daemon — not yet wired");
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use pilot_protocol::wire::LoginEnvStatus;
+
+    /// A minimal `PolytokenInner` for recency/focus tests — only the `order` +
+    /// `warm_cap` fields matter; the rest are inert defaults. The warm map is
+    /// empty (focus only mutates `order`, never `warm`).
+    fn inner_with_order(order: Vec<SessionId>, warm_cap: i64) -> PolytokenInner {
+        PolytokenInner {
+            sessions_dir: PathBuf::new(),
+            bin_path: String::new(),
+            is_fake: true,
+            warm_cap,
+            login_env: Mutex::new(None),
+            login_env_status: RwLock::new(LoginEnvStatus {
+                active_shell: None,
+                ok: false,
+                detail: None,
+            }),
+            archive_store: Mutex::new(ArchiveStore::new(PathBuf::new())),
+            worktree_store: Mutex::new(WorktreeStore::new(PathBuf::new())),
+            order: Mutex::new(order),
+            warm: RwLock::new(HashMap::new()),
+            subscribers: Mutex::new(Vec::new()),
+            next_sub_id: Mutex::new(0),
+            is_viewed: RwLock::new(None),
+            command_cache: Mutex::new(HashMap::new()),
+        }
+    }
+
+    // ---- AC.6: cwd_for_session reads project_path from session.json ----
+
+    /// AC.6: `cwd_for_session` returns the `project_path` from a session's
+    /// `session.json` when it's present and non-empty.
+    #[test]
+    fn cwd_for_session_reads_project_path() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let sessions_dir = dir.path();
+        let session_id = "sess-1";
+
+        // Write a minimal session.json with a project_path.
+        let session_dir = sessions_dir.join(session_id);
+        std::fs::create_dir_all(&session_dir).expect("mkdir");
+        let json = serde_json::json!({
+            "session_id": session_id,
+            "project_path": "/home/user/my-project",
+            "created_at": "2025-01-01T00:00:00Z",
+            "last_activity_at": "2025-01-01T00:00:00Z",
+        });
+        std::fs::write(
+            session_dir.join("session.json"),
+            serde_json::to_string(&json).unwrap(),
+        )
+        .expect("write");
+
+        let cwd = PolytokenInner::cwd_for_session(sessions_dir, session_id);
+        assert_eq!(
+            cwd.as_deref(),
+            Some("/home/user/my-project"),
+            "cwd_for_session should return the project_path from session.json"
+        );
+    }
+
+    /// AC.6 (fallback case): a missing `session.json` (or one with an empty
+    /// `project_path`) yields `None`, which the caller maps to the sessions-dir
+    /// fallback. Both sub-cases are documented behavior of the helper.
+    #[test]
+    fn cwd_for_session_missing_file_yields_none() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let sessions_dir = dir.path();
+
+        // No session.json at all.
+        let cwd = PolytokenInner::cwd_for_session(sessions_dir, "no-such-session");
+        assert_eq!(
+            cwd, None,
+            "missing session.json should yield None (caller falls back to sessions dir)"
+        );
+
+        // A session.json with an empty project_path also yields None (the
+        // `.filter(|meta| !meta.project_path.is_empty())` guard).
+        let session_dir = sessions_dir.join("empty-cwd");
+        std::fs::create_dir_all(&session_dir).expect("mkdir");
+        let json = serde_json::json!({
+            "session_id": "empty-cwd",
+            "project_path": "",
+            "created_at": "2025-01-01T00:00:00Z",
+            "last_activity_at": "2025-01-01T00:00:00Z",
+        });
+        std::fs::write(
+            session_dir.join("session.json"),
+            serde_json::to_string(&json).unwrap(),
+        )
+        .expect("write");
+        let cwd = PolytokenInner::cwd_for_session(sessions_dir, "empty-cwd");
+        assert_eq!(
+            cwd, None,
+            "empty project_path should yield None (filtered out)"
+        );
+    }
+
+    // ---- focus: recency order via move-to-back ----
+
+    /// AC.1 (focus unit): focusing a known id moves it to the back (most-recently
+    /// focused), preserving the relative order of the others.
+    #[test]
+    fn focus_moves_known_id_to_back() {
+        let inner = inner_with_order(vec!["a".to_string(), "b".to_string(), "c".to_string()], 64);
+        // Focus "a" (the front/LRU) → it becomes the most-recent.
+        inner.focus(&"a".to_string());
+        assert_eq!(
+            *inner.order.lock(),
+            vec!["b".to_string(), "c".to_string(), "a".to_string()],
+            "focus should move the id to the back (most-recently focused)"
+        );
+    }
+
+    /// AC.1 (focus unit): re-focusing an id that's already at the back is
+    /// idempotent — no duplicate, order unchanged.
+    #[test]
+    fn focus_idempotent_on_repeated_focus() {
+        let inner = inner_with_order(vec!["a".to_string(), "b".to_string(), "c".to_string()], 64);
+        inner.focus(&"c".to_string()); // already at back
+        assert_eq!(
+            *inner.order.lock(),
+            vec!["a".to_string(), "b".to_string(), "c".to_string()],
+            "re-focusing the most-recent id should be a no-op (idempotent, no dup)"
+        );
+        inner.focus(&"c".to_string()); // again
+        assert_eq!(
+            inner.order.lock().len(),
+            3,
+            "repeated focus must not duplicate the id"
+        );
+    }
+
+    /// AC.1 (focus unit): focusing an unknown id appends it to the back (never
+    /// inserted in the middle or front). This is the documented "if absent,
+    /// append it" behavior.
+    #[test]
+    fn focus_unknown_id_appends_to_back() {
+        let inner = inner_with_order(vec!["a".to_string(), "b".to_string()], 64);
+        inner.focus(&"z".to_string()); // unknown
+        assert_eq!(
+            *inner.order.lock(),
+            vec!["a".to_string(), "b".to_string(), "z".to_string()],
+            "focusing an unknown id should append it to the back"
+        );
     }
 }

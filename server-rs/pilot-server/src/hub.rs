@@ -1538,7 +1538,7 @@ impl SessionHub {
                             let swap = Box::new(move |_hub: Arc<Mutex<SessionHub>>| {
                                 let driver = driver.clone();
                                 let opts = opts.clone();
-                                Box::pin(async move { Ok(driver.new_session(opts).await) })
+                                Box::pin(async move { driver.new_session(opts).await })
                                     as SwapFuture
                             });
                             let sid = switch_to(hub.clone(), client_key, swap, false, false).await;
@@ -3011,6 +3011,51 @@ mod hub_models_tests {
     }
 
     #[tokio::test]
+    async fn failed_new_session_without_prompt_sends_error() {
+        // When a plain `NewSession` (no first prompt) fails, the creation error
+        // must reach the client as `ServerMessage::Error` — the path that
+        // `switch_to`'s Err arm → `classify_switch_error` takes
+        // (hub.rs ~2338-2352), plus the `has_first_prompt == false` fallback
+        // (hub.rs ~1600-1608). Without a prompt there is no `PromptResult` to
+        // restore a draft from, so `Error` is the only client-visible signal.
+        let (driver, hub, mut hub_ops) = test_hub();
+        driver.run_script("failnewsession".into());
+
+        let (client_key, _tx, mut rx) = hub.lock().add_client(None);
+        hub.lock().handle_client(
+            client_key,
+            ClientMessage::NewSession {
+                cwd: Some("/workspace".into()),
+                worktree: None,
+                model: None,
+                thinking: None,
+                facet: None,
+                permission_monitor: None,
+                prompt: None,
+                images: None,
+                prompt_id: None,
+            },
+        );
+        apply_one(hub.clone(), &mut hub_ops).await;
+
+        let result = drain_until(&mut rx, |msg| matches!(msg, ServerMessage::Error { .. })).await;
+        match result {
+            ServerMessage::Error { message, kind } => {
+                // The first `Error` delivered comes from `switch_to`'s Err arm
+                // (classify_switch_error's fallback): it wraps the raw driver
+                // error. The mock's `failnewsession` script yields
+                // "new session failed (failnewsession)".
+                assert!(
+                    message.contains("session switch failed") && message.contains("failnewsession"),
+                    "expected switch-failure message, got: {message}"
+                );
+                assert_eq!(kind, None);
+            }
+            other => panic!("expected ServerMessage::Error, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
     async fn failnewsession_is_one_shot_and_does_not_mutate_before_failure() {
         // Ports TS `MockDriver.failNextNewSession`: the first creation after
         // `runScript("failnewsession")` fails before adding a session row; the next
@@ -3025,7 +3070,7 @@ mod hub_models_tests {
                 ..Default::default()
             })
             .await;
-        assert!(failed.is_empty());
+        assert!(failed.is_err());
         assert_eq!(driver.list_sessions().await.len(), before.len());
 
         let succeeded = driver
@@ -3033,7 +3078,8 @@ mod hub_models_tests {
                 cwd: Some("/second".into()),
                 ..Default::default()
             })
-            .await;
+            .await
+            .expect("second new_session succeeds");
         assert!(!succeeded.is_empty());
         assert!(
             driver

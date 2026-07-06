@@ -234,11 +234,11 @@ pub fn cold_session_entry(
 }
 
 /// Callbacks the caller provides to resolve pilot-side flags.
-type WorktreeResolver = dyn Fn(&str) -> Option<WorktreeInfo> + Send + Sync;
+type WorktreeResolver<'a> = dyn Fn(&str) -> Option<WorktreeInfo> + Send + Sync + 'a;
 
-pub struct ListColdSessionsOpts {
-    pub archived_for: Box<dyn Fn(&str) -> bool + Send + Sync>,
-    pub worktree_for: Option<Box<WorktreeResolver>>,
+pub struct ListColdSessionsOpts<'a> {
+    pub archived_for: Box<dyn Fn(&str) -> bool + Send + Sync + 'a>,
+    pub worktree_for: Option<Box<WorktreeResolver<'a>>>,
 }
 
 /// List every cold session on disk as `SessionListEntry`s. Sessions with no
@@ -246,7 +246,7 @@ pub struct ListColdSessionsOpts {
 /// callbacks resolve pilot's own side-flags keyed by the session path.
 pub fn list_cold_sessions(
     sessions_dir: &Path,
-    opts: ListColdSessionsOpts,
+    opts: ListColdSessionsOpts<'_>,
 ) -> Vec<SessionListEntry> {
     let mut out: Vec<SessionListEntry> = Vec::new();
     for id in list_session_ids(sessions_dir) {

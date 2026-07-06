@@ -7,6 +7,8 @@ use std::collections::HashMap;
 use std::ffi::CStr;
 use std::path::Path;
 
+use pilot_protocol::wire::LoginEnvStatus;
+
 /// Resolve which shell to run: the configured override wins, then `$SHELL`, then
 /// the OS passwd login shell, then sane fallbacks. Returns `None` if none exists
 /// on disk.
@@ -65,6 +67,117 @@ fn is_valid_env_key(key: &str) -> bool {
     };
     (first.is_ascii_alphabetic() || first == '_')
         && chars.all(|ch| ch.is_ascii_alphanumeric() || ch == '_')
+}
+
+/// The outcome of a login-env capture: the parsed env plus a status struct for
+/// the Settings panel (configured vs active shell + a human detail).
+pub struct CapturedLoginEnv {
+    pub env: HashMap<String, String>,
+    pub status: LoginEnvStatus,
+}
+
+/// Capture the login-shell environment by spawning `<shell> -l -c env`.
+///
+/// Login shell only (NOT `-i` interactive): sources `.zprofile`/`.zshenv` (where
+/// PATH is typically set) WITHOUT sourcing `.zshrc` (where p10k/direnv/pyenv/nvm
+/// live — any of which can take >5s on a cold start or hang on a network home
+/// dir).
+///
+/// Never throws — all failure paths return `{ env: {} }` + a status struct with
+/// `ok: false`. A capture failure degrades to current behavior (empty merge =
+/// the daemon gets pilot's inherited env, unchanged). Faithful port of
+/// `server/src/shared/login-env.ts:captureLoginEnv`.
+pub async fn capture_login_env(configured: Option<&str>) -> CapturedLoginEnv {
+    let Some(shell) = resolve_login_shell(configured) else {
+        return CapturedLoginEnv {
+            env: HashMap::new(),
+            status: LoginEnvStatus {
+                active_shell: None,
+                ok: false,
+                detail: Some("no login shell found".to_string()),
+            },
+        };
+    };
+
+    // Spawn `<shell> -l -c env` with a 5s timeout. A login shell sources the
+    // profile files (PATH etc.) without the interactive rc (p10k/direnv hang).
+    let mut cmd = tokio::process::Command::new(&shell);
+    cmd.args(["-l", "-c", "env"]);
+    cmd.stdout(std::process::Stdio::piped());
+    cmd.stderr(std::process::Stdio::piped());
+    cmd.env_clear();
+    // Inherit the current process env so the login shell sees the same base
+    // environment (mirrors TS `env: process.env`). The login profile then
+    // layers PATH etc. on top.
+    for (k, v) in std::env::vars() {
+        cmd.env(k, v);
+    }
+
+    let child = match cmd.spawn() {
+        Ok(child) => child,
+        Err(e) => {
+            return CapturedLoginEnv {
+                env: HashMap::new(),
+                status: LoginEnvStatus {
+                    active_shell: Some(shell),
+                    ok: false,
+                    detail: Some(format!("capture failed: {e}")),
+                },
+            };
+        }
+    };
+
+    let result = tokio::time::timeout(
+        std::time::Duration::from_millis(5_000),
+        child.wait_with_output(),
+    )
+    .await;
+    match result {
+        // Timed out — the child was killed by `wait_with_output`'s drop? No:
+        // `timeout` cancels the future, but `wait_with_output` owns the Child and
+        // drops it on cancel → the child is killed. Treat as a timeout failure.
+        Err(_) => CapturedLoginEnv {
+            env: HashMap::new(),
+            status: LoginEnvStatus {
+                active_shell: Some(shell),
+                ok: false,
+                detail: Some("capture timed out".to_string()),
+            },
+        },
+        Ok(Err(e)) => CapturedLoginEnv {
+            env: HashMap::new(),
+            status: LoginEnvStatus {
+                active_shell: Some(shell),
+                ok: false,
+                detail: Some(format!("capture failed: {e}")),
+            },
+        },
+        Ok(Ok(output)) => {
+            if !output.status.success() {
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                let detail = stderr.chars().take(200).collect::<String>();
+                return CapturedLoginEnv {
+                    env: HashMap::new(),
+                    status: LoginEnvStatus {
+                        active_shell: Some(shell),
+                        ok: false,
+                        detail: Some(format!("capture failed: {detail}")),
+                    },
+                };
+            }
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            let parsed = parse_env_output(&stdout);
+            let count = parsed.len();
+            CapturedLoginEnv {
+                env: parsed,
+                status: LoginEnvStatus {
+                    active_shell: Some(shell),
+                    ok: true,
+                    detail: Some(format!("{count} vars captured")),
+                },
+            }
+        }
+    }
 }
 
 #[cfg(test)]

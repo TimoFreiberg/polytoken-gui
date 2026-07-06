@@ -67,14 +67,25 @@ impl Drop for OverrideGuard {
     }
 }
 
-/// Build a driver pointed at a temp sessions dir (no real daemon needed).
-fn make_driver() -> (PolytokenDriver, tempfile::TempDir) {
+/// Build a driver pointed at a temp sessions dir (no real daemon needed). Uses
+/// the test-only constructor with an injected (empty) login_env so no real shell
+/// spawns in CI. `warm_cap` is large by default so existing tests don't trigger
+/// eviction; warm-cap tests pass an explicit cap.
+async fn make_driver() -> (PolytokenDriver, tempfile::TempDir) {
+    make_driver_with_cap(64).await
+}
+
+/// Build a driver with an explicit warm cap (for the eviction tests).
+async fn make_driver_with_cap(warm_cap: i64) -> (PolytokenDriver, tempfile::TempDir) {
     let dir = tempfile::tempdir().expect("tempdir");
-    let driver = PolytokenDriver::new(
+    let driver = PolytokenDriver::new_with_login_env(
         dir.path().to_path_buf(),
         "polytoken".into(), // never invoked — the override answers spawns
         false,
-    );
+        warm_cap,
+        None,
+    )
+    .await;
     (driver, dir)
 }
 
@@ -150,8 +161,11 @@ async fn harness_smoke_opens_session_and_seeds() {
     let fake = Arc::new(fake_daemon::spawn(scenario.clone(), "smoke-1".into(), 0).await);
     let _ovr = OverrideGuard::install(fake.clone());
 
-    let (driver, _dir) = make_driver();
-    let seed = driver.new_session(NewSessionOptsData::default()).await;
+    let (driver, _dir) = make_driver().await;
+    let seed = driver
+        .new_session(NewSessionOptsData::default())
+        .await
+        .expect("new_session");
 
     // The spawn seam ran: the driver made it through health → claim → history.
     assert!(
@@ -272,11 +286,14 @@ async fn warm_session_subscribes_and_folds_sse() {
     let fake = Arc::new(fake_daemon::spawn(scenario.clone(), "warm-1".into(), 5).await);
     let _ovr = OverrideGuard::install(fake.clone());
 
-    let (driver, _dir) = make_driver();
+    let (driver, _dir) = make_driver().await;
     let (_sub_id, mut rx) = collect_events(&driver, 256);
 
     // new_session warms + subscribes SSE before returning the seed.
-    let _seed = driver.new_session(NewSessionOptsData::default()).await;
+    let _seed = driver
+        .new_session(NewSessionOptsData::default())
+        .await
+        .expect("new_session");
 
     // Wait for a SessionUpdated from the SSE path. `message_start` (frame 2)
     // emits one with status Running. Timeout so a dead SSE path fails the test
@@ -319,11 +336,14 @@ async fn reload_session_disposes_old_warm_and_rewarms() {
     let fake = Arc::new(fake_daemon::spawn(scenario.clone(), "reload-1".into(), 5).await);
     let _ovr = OverrideGuard::install(fake.clone());
 
-    let (driver, _dir) = make_driver();
+    let (driver, _dir) = make_driver().await;
     let (sub_id, mut rx) = collect_events(&driver, 256);
 
     // Warm via new_session (spawn path) + subscribe SSE.
-    let _seed = driver.new_session(NewSessionOptsData::default()).await;
+    let _seed = driver
+        .new_session(NewSessionOptsData::default())
+        .await
+        .expect("new_session");
 
     // Observe one SSE-driven emission (proves the first warm is live).
     let _first = tokio::time::timeout(std::time::Duration::from_secs(5), rx.recv())
@@ -376,9 +396,12 @@ async fn multi_spawn_override_mints_fresh_fake_per_new_session() {
     let override_guard = fake_daemon::MultiSpawnOverrideGuard::install(scenario, "multi-smoke");
     let handle = override_guard.handle();
 
-    let (driver, _dir) = make_driver();
+    let (driver, _dir) = make_driver().await;
     for _ in 0..3 {
-        let _seed = driver.new_session(NewSessionOptsData::default()).await;
+        let _seed = driver
+            .new_session(NewSessionOptsData::default())
+            .await
+            .expect("new_session");
     }
 
     let spawned = handle.spawned();
@@ -430,7 +453,7 @@ async fn multi_spawn_override_mints_fresh_fake_per_new_session() {
     );
     assert!(
         captured_opts.iter().all(|opts| opts.login_env.is_none()),
-        "Phase 4 driver still passes login_env None; captured opts: {captured_opts:?}"
+        "default test driver passes login_env None (no injected env); captured opts: {captured_opts:?}"
     );
 }
 
@@ -594,10 +617,13 @@ async fn sse_burst_folds_in_order() {
     let fake = Arc::new(fake_daemon::spawn(scenario, "order-1".into(), 1).await);
     let _ovr = OverrideGuard::install(fake.clone());
 
-    let (driver, _dir) = make_driver();
+    let (driver, _dir) = make_driver().await;
     let (_sub_id, mut rx) = collect_events(&driver, 512);
 
-    let _seed = driver.new_session(NewSessionOptsData::default()).await;
+    let _seed = driver
+        .new_session(NewSessionOptsData::default())
+        .await
+        .expect("new_session");
 
     // Collect N AssistantDelta events (the text deltas). Other events
     // (SessionUpdated from message_start, etc.) are skipped. Timeout per recv
@@ -638,10 +664,13 @@ async fn fetch_state_emits_run_completed_with_prompt_id() {
     let fake = Arc::new(fake_daemon::spawn(scenario.clone(), "fetch-1".into(), 5).await);
     let _ovr = OverrideGuard::install(fake.clone());
 
-    let (driver, _dir) = make_driver();
+    let (driver, _dir) = make_driver().await;
     let (_sub_id, mut rx) = collect_events(&driver, 256);
 
-    let _seed = driver.new_session(NewSessionOptsData::default()).await;
+    let _seed = driver
+        .new_session(NewSessionOptsData::default())
+        .await
+        .expect("new_session");
 
     // Wait for the RunCompleted (the message_complete → FetchState → emit).
     let mut got = None;
@@ -701,10 +730,13 @@ async fn refetch_queue_emits_queue_updated() {
     let fake = Arc::new(fake_daemon::spawn(scenario.clone(), "queue-1".into(), 5).await);
     let _ovr = OverrideGuard::install(fake.clone());
 
-    let (driver, _dir) = make_driver();
+    let (driver, _dir) = make_driver().await;
     let (_sub_id, mut rx) = collect_events(&driver, 256);
 
-    let _seed = driver.new_session(NewSessionOptsData::default()).await;
+    let _seed = driver
+        .new_session(NewSessionOptsData::default())
+        .await
+        .expect("new_session");
 
     // Wait for the QueueUpdated (the pending_turn_input_queued → RefetchQueue →
     // GET /turn/input → emit). Timeout so a missing emit fails fast.
@@ -737,4 +769,468 @@ async fn refetch_queue_emits_queue_updated() {
         "RefetchQueue should have fetched GET /turn/input; calls: {:?}",
         fake.recorded_calls()
     );
+}
+
+// ===========================================================================
+// Phase 5 — new_session wiring: cwd resolution, worktree, login-env,
+//           warm-cap eviction, invalid-cwd errors (AC.7, AC.8, AC.9, AC.12)
+// ===========================================================================
+
+/// AC.7: with `warm_cap = N`, warming `N+1` sessions via `new_session` evicts
+/// exactly the least-recently-focused **idle** session. The synthetic idle
+/// scenario serves `/state` with `turn_in_flight:false`, so every warmed
+/// session is evictable. The most-recently-focused session (the N+1th, just
+/// warmed) is protected; the LRU (the 1st, never re-focused) is the victim.
+///
+/// Eviction is observed two ways: (1) a `SessionClosed` event is emitted for
+/// the victim, and (2) the victim is gone from the driver's warm pool —
+/// observable via `list_sessions` (an evicted session with no on-disk
+/// `session.json` disappears from the list, since `list_sessions` merges warm
+/// + on-disk; the fake daemon writes no `session.json`).
+///
+/// **Warm-pool membership note:** there is no public `warm_session_ids()`
+/// accessor on `PolytokenDriver`. The cleanest externally-observable proxy is
+/// `list_sessions` (warm entries appear there until evicted; the fake daemon
+/// writes no on-disk `session.json`, so only warm sessions surface). This is
+/// documented here so a future refactor that adds a direct accessor can
+/// sharpen the assertion.
+#[tokio::test]
+async fn warm_cap_evicts_lru_idle_session() {
+    let _guard = OVERRIDE_MUTEX.lock().await;
+
+    const CAP: i64 = 2;
+    let scenario = synthetic_idle_scenario();
+    let override_guard = fake_daemon::MultiSpawnOverrideGuard::install(scenario, "evict-idle");
+    let handle = override_guard.handle();
+
+    let (driver, _dir) = make_driver_with_cap(CAP).await;
+    let (_sub_id, mut rx) = collect_events(&driver, 256);
+
+    // Warm CAP+1 sessions. Each new_session focuses the just-warmed session
+    // (most-recent), so the FIRST warmed session is the LRU and the victim.
+    let mut session_ids: Vec<String> = Vec::new();
+    for _ in 0..=(CAP as usize) {
+        let seed = driver
+            .new_session(NewSessionOptsData::default())
+            .await
+            .expect("new_session");
+        let _ = seed;
+        let spawned = handle.spawned();
+        let last = spawned.last().expect("a spawn per new_session");
+        session_ids.push(last.session_id.clone());
+    }
+    assert_eq!(session_ids.len(), (CAP as usize) + 1);
+
+    let lru_id = session_ids[0].clone();
+    let most_recent = session_ids.last().unwrap().clone();
+
+    // Collect SessionClosed events (with a drain window for the async emit +
+    // dispose). The victim should get a synthetic SessionClosed.
+    let mut closed_ids: Vec<String> = Vec::new();
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(5);
+    while let Ok(Some(ev)) = tokio::time::timeout_at(deadline, rx.recv()).await {
+        if let SessionDriverEvent::SessionClosed { base, .. } = ev {
+            closed_ids.push(base.session_ref.session_id.clone());
+        }
+    }
+
+    assert!(
+        closed_ids.contains(&lru_id),
+        "LRU idle session {lru_id} should have been evicted (SessionClosed emitted); \
+         closed ids: {closed_ids:?}"
+    );
+    assert!(
+        !closed_ids.contains(&most_recent),
+        "the most-recently-focused session {most_recent} must NOT be evicted; \
+         closed ids: {closed_ids:?}"
+    );
+
+    // Confirm the LRU is gone from the warm pool via list_sessions. Only warm
+    // sessions surface here (the fake writes no session.json), so the LRU
+    // dropping out of the list == dropped from the warm pool.
+    let listed: Vec<String> = driver
+        .list_sessions()
+        .await
+        .into_iter()
+        .map(|e| e.session_id)
+        .collect();
+    assert!(
+        !listed.contains(&lru_id),
+        "evicted LRU {lru_id} should be gone from list_sessions (warm pool); listed: {listed:?}"
+    );
+    assert!(
+        listed.contains(&most_recent),
+        "most-recent session {most_recent} should still be listed (in warm pool); listed: {listed:?}"
+    );
+}
+
+/// AC.7 (in-flight skip): a session whose `/state` reports
+/// `turn_in_flight:true` is NEVER evicted, even when it's the LRU. We install
+/// a multi-spawn override that serves the turn-in-flight scenario, so EVERY
+/// warmed session reports in-flight. With `warm_cap = N`, warming N+1 sessions
+/// cannot evict the LRU (it's in-flight), so the warm pool exceeds the cap and
+/// the driver logs a deferral — but critically, no `SessionClosed` is emitted
+/// for any session.
+///
+/// This is the discriminating case: the idle eviction test above proves the
+/// eviction *fires* for idle sessions; this test proves it's *skipped* for
+/// in-flight ones.
+#[tokio::test]
+async fn warm_cap_never_evicts_in_flight() {
+    let _guard = OVERRIDE_MUTEX.lock().await;
+
+    const CAP: i64 = 2;
+    let scenario = synthetic_turn_in_flight_scenario();
+    let override_guard = fake_daemon::MultiSpawnOverrideGuard::install(scenario, "evict-inflight");
+    let handle = override_guard.handle();
+
+    let (driver, _dir) = make_driver_with_cap(CAP).await;
+    let (_sub_id, mut rx) = collect_events(&driver, 256);
+
+    // Warm CAP+1 sessions, all reporting turn_in_flight:true.
+    let mut session_ids: Vec<String> = Vec::new();
+    for _ in 0..=(CAP as usize) {
+        let _seed = driver
+            .new_session(NewSessionOptsData::default())
+            .await
+            .expect("new_session");
+        let spawned = handle.spawned();
+        session_ids.push(spawned.last().unwrap().session_id.clone());
+    }
+    let lru_id = session_ids[0].clone();
+
+    // Drain any events for a short window. No SessionClosed should arrive —
+    // the LRU is in-flight and must not be evicted.
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_millis(800);
+    let mut saw_closed = false;
+    while let Ok(Some(ev)) = tokio::time::timeout_at(deadline, rx.recv()).await {
+        if matches!(ev, SessionDriverEvent::SessionClosed { .. }) {
+            saw_closed = true;
+        }
+    }
+    assert!(
+        !saw_closed,
+        "no SessionClosed should be emitted — in-flight sessions are never evicted"
+    );
+
+    // The LRU in-flight session must still be in the warm pool (observable via
+    // list_sessions: only warm sessions surface, no on-disk session.json).
+    let listed: Vec<String> = driver
+        .list_sessions()
+        .await
+        .into_iter()
+        .map(|e| e.session_id)
+        .collect();
+    assert!(
+        listed.contains(&lru_id),
+        "in-flight LRU {lru_id} must NOT be evicted (still in warm pool); listed: {listed:?}"
+    );
+}
+
+/// AC.8: `new_session` with `worktree: Some(true)` creates an isolated git
+/// worktree and runs the session in it. The resulting session's cwd is a
+/// worktree path (a SIBLING of the repo, not the repo itself), and the
+/// `WorktreeStore` records it.
+///
+/// Uses a real `git init` tempdir repo (git, not jj, so it runs on CI where git
+/// is present). Skipped (not failed) if git is unavailable, mirroring the
+/// `worktree.rs` integration test convention.
+#[tokio::test]
+async fn new_session_worktree_isolates_cwd() {
+    let _guard = OVERRIDE_MUTEX.lock().await;
+
+    // Skip if git isn't available (CI always has it, but be defensive).
+    if tokio::process::Command::new("git")
+        .arg("--version")
+        .output()
+        .await
+        .is_err()
+    {
+        eprintln!("skipping worktree isolation test: git executable unavailable");
+        return;
+    }
+
+    // Set up a real git repo in a tempdir.
+    let repo_tmp = tempfile::tempdir().expect("tempdir");
+    let repo = repo_tmp.path().join("repo");
+    std::fs::create_dir(&repo).expect("mkdir repo");
+
+    async fn git(repo: &std::path::Path, args: &[&str]) {
+        let out = tokio::process::Command::new("git")
+            .arg("-C")
+            .arg(repo)
+            .args(args)
+            .output()
+            .await
+            .expect("git");
+        assert!(
+            out.status.success(),
+            "git -C {} {} failed: {}",
+            repo.display(),
+            args.join(" "),
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
+    // git init + an initial commit (a worktree needs at least one commit).
+    git(&repo, &["init"]).await;
+    std::fs::write(repo.join("README.md"), "hello\n").expect("write");
+    git(&repo, &["add", "README.md"]).await;
+    git(
+        &repo,
+        &[
+            "-c",
+            "user.email=pilot@example.test",
+            "-c",
+            "user.name=Pilot Test",
+            "commit",
+            "-m",
+            "initial",
+        ],
+    )
+    .await;
+
+    // Install the multi-spawn override so the spawn goes to the fake daemon
+    // (no real polytoken binary). The synthetic idle scenario suffices — we
+    // only need the session to warm; the worktree is created by the driver
+    // BEFORE the spawn.
+    let scenario = synthetic_idle_scenario();
+    let override_guard = fake_daemon::MultiSpawnOverrideGuard::install(scenario, "worktree-cwd");
+    let handle = override_guard.handle();
+
+    let (driver, _dir) = make_driver().await;
+
+    let _seed = driver
+        .new_session(NewSessionOptsData {
+            cwd: Some(repo.to_string_lossy().to_string()),
+            worktree: Some(true),
+            ..Default::default()
+        })
+        .await
+        .expect("new_session with worktree");
+
+    // The spawned session's cwd should be a worktree path: a sibling of the
+    // repo (not the repo itself). We get the cwd from the list_sessions warm
+    // entry (the fake daemon writes no session.json, so only the warm entry
+    // surfaces).
+    let listed = driver.list_sessions().await;
+    let entry = listed
+        .into_iter()
+        .find(|e| {
+            handle
+                .spawned()
+                .iter()
+                .any(|s| s.session_id == e.session_id)
+        })
+        .expect("the warmed session should appear in list_sessions");
+
+    let session_cwd = &entry.cwd;
+    assert_ne!(
+        session_cwd,
+        &repo.to_string_lossy().to_string(),
+        "session cwd should be the worktree path, not the repo itself"
+    );
+    // The worktree is a sibling: it shares the repo's parent dir.
+    let worktree_path = std::path::Path::new(session_cwd);
+    assert!(
+        worktree_path.starts_with(repo.parent().unwrap()),
+        "worktree path {session_cwd} should be a sibling of the repo (under {})",
+        repo.parent().unwrap().display()
+    );
+    assert!(
+        worktree_path.is_dir(),
+        "the worktree dir should exist on disk: {session_cwd}"
+    );
+
+    // The WorktreeStore should record the worktree for this cwd. We verify via
+    // the worktree indicator on the list_sessions entry (it's surfaced from
+    // the store via worktree_field_for).
+    assert!(
+        entry.worktree.is_some(),
+        "list_sessions should surface the worktree indicator for a worktree session"
+    );
+    let wt = entry.worktree.as_ref().unwrap();
+    assert_eq!(
+        wt.path, *session_cwd,
+        "worktree indicator path should match the session cwd"
+    );
+}
+
+/// AC.9: a driver constructed with an injected `login_env` threads that env
+/// into every daemon spawn. We build the driver via `new_with_login_env` with a
+/// known env map, install the multi-spawn override, call `new_session`, and
+/// assert the captured `SpawnDaemonOpts.login_env` equals the injected map
+/// (not `None` — the default-driver regression that AC.11's `#[expect]`
+/// removal guarded against).
+#[tokio::test]
+async fn new_session_passes_captured_login_env_to_spawn() {
+    let _guard = OVERRIDE_MUTEX.lock().await;
+
+    let scenario = synthetic_idle_scenario();
+    let override_guard = fake_daemon::MultiSpawnOverrideGuard::install(scenario, "login-env");
+    let handle = override_guard.handle();
+
+    // A known, non-empty env map — distinct from the default (None).
+    let mut known_env: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+    known_env.insert("PATH".to_string(), "/test/bin:/usr/bin".to_string());
+    known_env.insert("PILOT_TEST_VAR".to_string(), "threaded".to_string());
+
+    let dir = tempfile::tempdir().expect("tempdir");
+    let driver = PolytokenDriver::new_with_login_env(
+        dir.path().to_path_buf(),
+        "polytoken".into(),
+        false,
+        64,
+        Some(known_env.clone()),
+    )
+    .await;
+
+    let _seed = driver
+        .new_session(NewSessionOptsData::default())
+        .await
+        .expect("new_session");
+
+    let captured = handle.captured_opts();
+    assert_eq!(captured.len(), 1, "one spawn per new_session");
+    assert_eq!(
+        captured[0].login_env,
+        Some(known_env.clone()),
+        "the driver should thread its captured login_env into the spawn opts \
+         (not None); captured: {captured:?}"
+    );
+}
+
+/// AC.12: `new_session` with a nonexistent cwd produces a **specific** error
+/// that names the bad path — not the generic empty-seed "session switch
+/// returned no session" message. The driver validates `cwd.exists()` before
+/// spawning and returns `Err(format!("no such directory: {cwd}"))`.
+#[tokio::test]
+async fn new_session_invalid_cwd_errors_specifically() {
+    let _guard = OVERRIDE_MUTEX.lock().await;
+
+    // No override needed — the validation fires BEFORE the spawn. But the
+    // mutex serializes against the other spawn-override tests, and we install
+    // a benign override so a stray spawn (there shouldn't be one) is caught.
+    let scenario = synthetic_idle_scenario();
+    let _override_guard = fake_daemon::MultiSpawnOverrideGuard::install(scenario, "invalid-cwd");
+    let handle = _override_guard.handle();
+
+    let (driver, _dir) = make_driver().await;
+
+    let bad_cwd = "/no/such/directory";
+    let err = driver
+        .new_session(NewSessionOptsData {
+            cwd: Some(bad_cwd.to_string()),
+            ..Default::default()
+        })
+        .await
+        .expect_err("new_session with a nonexistent cwd should error");
+
+    assert!(
+        err.contains(bad_cwd),
+        "error should NAME the bad path ({bad_cwd}); got: {err}"
+    );
+    assert!(
+        !err.is_empty(),
+        "error should not be the generic empty-seed message"
+    );
+
+    // No spawn should have occurred (validation is before the spawn).
+    assert!(
+        handle.spawned().is_empty(),
+        "no daemon should be spawned for an invalid cwd"
+    );
+}
+
+/// AC.5: `list_sessions` surfaces the real `archived` flag + worktree
+/// indicator from the `ArchiveStore`/`WorktreeStore` (not the old hardcoded
+/// `false`/`None`). We seed a `session.json` on disk + populate both stores
+/// (by writing their JSON files before constructing the driver — they load
+/// from disk at construction), then assert the cold session's entry carries
+/// the correct flags.
+///
+/// This is a pure driver-integration test (no daemon spawn): it exercises the
+/// `list_sessions` → `list_cold_sessions` + store-overlay path only.
+#[tokio::test]
+async fn list_sessions_overlays_archive_and_worktree_flags() {
+    // No override mutex needed — no spawn override is installed, no daemon is
+    // spawned. This test only exercises the cold-session listing path.
+    let data_dir = tempfile::tempdir().expect("tempdir");
+    let sessions_dir = data_dir.path().join("sessions");
+    let session_id = "sess-archive-wt";
+    let session_dir = sessions_dir.join(session_id);
+    std::fs::create_dir_all(&session_dir).expect("mkdir session dir");
+
+    let project_path = "/home/user/project-x";
+    let session_json_path = session_dir.join("session.json");
+    let session_json_path_str = session_json_path.to_string_lossy().to_string();
+
+    // Write a session.json so the cold session surfaces in list_sessions.
+    let json = serde_json::json!({
+        "session_id": session_id,
+        "project_path": project_path,
+        "created_at": "2025-01-01T00:00:00Z",
+        "last_activity_at": "2025-01-01T00:00:00Z",
+    });
+    std::fs::write(&session_json_path, serde_json::to_string(&json).unwrap())
+        .expect("write session.json");
+
+    // Seed the ArchiveStore on disk: it loads a JSON array of session paths.
+    // The archive key is the session.json path (see list_sessions: it calls
+    // `archive_store.has(session_json_path)`).
+    let archive_file = data_dir.path().join("archived.json");
+    std::fs::write(
+        &archive_file,
+        serde_json::to_string(&[&session_json_path_str]).unwrap(),
+    )
+    .expect("write archive index");
+
+    // Seed the WorktreeStore on disk: it loads a JSON *array* of
+    // `PersistedWorktree` objects (each flattens WorktreeMeta + an optional
+    // `reaped` flag). The worktree key is the cwd (project_path) — see
+    // list_sessions: it calls `worktree_field_for(cwd, &worktree_store)`.
+    let worktree_file = data_dir.path().join("worktrees.json");
+    let wt_seed = serde_json::json!([{
+        "path": project_path,
+        "base": "/home/user",
+        "vcs": "git",
+        "name": "pilot-archive-wt"
+    }]);
+    std::fs::write(
+        &worktree_file,
+        serde_json::to_string_pretty(&wt_seed).unwrap(),
+    )
+    .expect("write worktree store");
+
+    // Construct the driver — it loads both stores from disk on construction.
+    let driver = PolytokenDriver::new_with_login_env(
+        data_dir.path().to_path_buf(),
+        "polytoken".into(),
+        false,
+        64,
+        None,
+    )
+    .await;
+
+    let listed = driver.list_sessions().await;
+    let entry = listed
+        .into_iter()
+        .find(|e| e.session_id == session_id)
+        .unwrap_or_else(|| panic!("cold session {session_id} should appear in list_sessions"));
+
+    // AC.5: the archived flag is the real store value (true), not hardcoded false.
+    assert!(
+        entry.archived,
+        "archived flag should be true (sourced from ArchiveStore); got false"
+    );
+
+    // AC.5: the worktree indicator is the real store value (Some), not None.
+    let wt = entry
+        .worktree
+        .as_ref()
+        .expect("worktree indicator should be Some (sourced from WorktreeStore)");
+    assert_eq!(
+        wt.path, project_path,
+        "worktree indicator path should match the session cwd"
+    );
+    assert_eq!(wt.name, "pilot-archive-wt");
 }

@@ -140,8 +140,15 @@ pub trait PilotDriver: Send + Sync {
         None
     }
 
-    /// Create a fresh session and make it active; resolves with its seed events.
-    async fn new_session(&self, opts: NewSessionOptsData) -> Vec<SessionDriverEvent>;
+    /// Create a fresh session and make it active; resolves with its seed events,
+    /// or `Err(message)` on a failure (e.g. an invalid cwd, or a spawn failure)
+    /// so `switch_to` can classify + surface a client-visible `Error` — the same
+    /// path `open_session` uses. Ports the TS `Promise<SessionDriverEvent[]>`
+    /// that throws.
+    async fn new_session(
+        &self,
+        opts: NewSessionOptsData,
+    ) -> Result<Vec<SessionDriverEvent>, String>;
 
     /// Jump the session to a prior tree entry and branch from it.
     async fn branch_from(

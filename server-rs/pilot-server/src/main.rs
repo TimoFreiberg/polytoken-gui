@@ -83,11 +83,22 @@ async fn main() {
                 Arc::new(pilot_server::mock_driver::MockDriver::new())
             }
             _ => {
-                Arc::new(PolytokenDriver::new(
-                    cfg.data_dir.join("sessions"),
-                    std::env::var("PILOT_POLYTOKEN_BIN").unwrap_or_else(|_| "polytoken".into()),
-                    false, // not fake — real daemon
-                ))
+                // Read the pilot-local settings for the configured login-shell
+                // override (None = auto-resolve from $SHELL/passwd). The driver
+                // captures the login env once at construction so daemon spawns
+                // get the user's real PATH.
+                let login_shell =
+                    pilot_server::settings_store::read_pilot_settings(&cfg.data_dir).login_shell;
+                Arc::new(
+                    PolytokenDriver::new(
+                        cfg.data_dir.clone(),
+                        std::env::var("PILOT_POLYTOKEN_BIN").unwrap_or_else(|_| "polytoken".into()),
+                        false, // not fake — real daemon
+                        cfg.warm_cap,
+                        login_shell,
+                    )
+                    .await,
+                )
             }
         }
     };
