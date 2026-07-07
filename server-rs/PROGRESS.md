@@ -19,22 +19,34 @@ being ignored). **Phase 2 (items 1–3) COMPLETE (2026-07-06):** the harness +
 spawn-override seam are live, the warm-session lifecycle is wired (was entirely
 dead — `#[expect(dead_code)]`), and both effect bugs are fixed. See "Phase 2
 live-path validation" below for the findings + the `Arc<Inner>` refactor. Items
-4–5 (daemon-client/lease-retry test ports, shared/module ports) + Phases 2.5/3
-remain. LIVE CORPUS CAPTURE DONE (2026-07-06, 5/6 scenarios,
+4–5 (daemon-client/lease-retry test ports) + Phases 2.5/3
+remain. **Phase 5 (item 5 — shared modules + fs stores + worktree + live-driver
+wiring) COMPLETE (2026-07-07):** new_session (cwd validation + worktree +
+login-env threading, now `Result`), open_session (real `cwd_for_session`),
+list_sessions (real archive/worktree resolvers + warm merge + live-usage
+overlay), warm-cap eviction, and cleanup_worktree are all wired into the live
+`PolytokenDriver`; the 4 wired-path `#[expect]` markers removed. 423 Rust tests
+green (330 lib + 8 corpus + 16 live_path), fmt+clippy clean. Two known gaps
+left out of scope: `set_archived` is still a trait-default no-op on the live
+path, and the hub's `pilot_settings_msg` still sends a stub
+`LoginEnvStatus{ok:false}` (the driver exposes `login_env_status()` but the hub
+doesn't call it). LIVE CORPUS CAPTURE DONE (2026-07-06, 5/6 scenarios,
 deepseek): found+fixed a canonicalization bug (+regression test), 2 seed/reality
 mismatches, and RESOLVED the tool-call-approval permission gating (needs the
 `standard` matcher PLUS a version-2 `ask` permissions rule — `standard` alone
 does not prompt). Corpus now FROZEN: inner `event.emitted_at` canon + `/state`
 redaction landed, cross-language parity test added — see "Live corpus capture" below.
 
-Last updated: 2026-07-05 (Phase 1 mock-e2e burn-down COMPLETE + review-approved:
-0 deterministic Rust e2e failures; 176 Rust tests green). The 2026-07-04 full
-review + plan revision stands (fake-daemon e2e tier reinstated as Phase 2.5, hub
-completion queue made deliberate in Phase 1, daemon-owned items folded in from
-the polytoken changelog (unstable.6), the "Daemon-owned first" standing section,
-the Phase-2 event-vocabulary gate, and the Phase-3 daemon-bump step). This update
-reflects the Phase 1.5–1.8 cluster burn-down that cleared failures 13 → 0
-deterministic.
+Last updated: 2026-07-07 (Phase 5 — shared modules + fs stores + worktree +
+live-driver wiring COMPLETE + review-approved: 0 deterministic Rust e2e
+failures; 423 Rust tests green, 761 TS tests green, 298/298 Rust-server e2e).
+The 2026-07-04 full review + plan revision stands (fake-daemon e2e tier
+reinstated as Phase 2.5, hub completion queue made deliberate in Phase 1,
+daemon-owned items folded in from the polytoken changelog (unstable.6), the
+"Daemon-owned first" standing section, the Phase-2 event-vocabulary gate, and
+the Phase-3 daemon-bump step). This update reflects the Phase 1.5–1.8 cluster
+burn-down that cleared failures 13 → 0 deterministic, plus Phase 2 (items 1–3)
+live-path coverage and Phase 5 driver wiring.
 
 Chunk A (mock fixture text/lifecycle parity) is complete and reviewer-approved
 (32/32 e2e specs pass, 1 flake confirmed), cutting failures 72 → 33 (~90%).
@@ -167,9 +179,12 @@ patterns in `reload_session`/`shutdown` survived.
   → `QueueUpdated` via `queue_messages_from_snapshot` (pure, unit-tested).
   AC.4 + AC.5.
 
-**Scope kept (out of scope, `#[expect]` BUG markers retained):** the `$HOME`
-workspace fabrication, `opts.worktree`, `login_env`, `owned_process` retention,
-`warm_cap` enforcement, `list_sessions` hardcoded closures. The reload
+**Scope kept (now resolved — Phase 5, 2026-07-07):** the `$HOME`
+workspace fabrication, `opts.worktree`, `login_env`, `warm_cap` enforcement,
+and `list_sessions` hardcoded closures were all deferred here as Phase-2 item-5
+work. **Phase 5 wired all of them** (see "What is genuinely done and
+trustworthy" above); the 4 wired-path `#[expect]` BUG markers were removed.
+Still out of scope: `owned_process` retention. The reload
 re-warm-via-attach path needs `startup.json` (session-registry/worktree port —
 Phase 2 item 5); the harness can't exercise it, so the reload test asserts
 disposal + no-deadlock (the in-scope half) rather than re-warm emission.
@@ -189,23 +204,28 @@ validation legs are green plus a live-daemon smoke test.
 
 ## Where the port actually stands
 
-**Ground truth (2026-07-06, full suite, one machine — Phase 2 items 1–3 done):**
+**Ground truth (2026-07-07, full suite, one machine — Phase 5 done):**
 
-- `cargo test`: **358/358 pass** (5 daemon-types, 64 protocol, 281 server — incl.
-  8 live-path integration tests under `tests/live_path.rs` + 8 corpus). The
-  live path now has its FIRST integration coverage: harness + spawn seam + warm
-  lifecycle + SSE ordering + both effect emits.
+- `cargo test`: **423/423 pass** (5 daemon-types, 64 protocol, 330 server lib
+  [5 `#[ignore]`], 8 corpus, 16 live-path integration under `tests/live_path.rs`).
+  Phase 5 (items 4–5) wired the shared modules + fs stores + worktree planners
+  into the live `PolytokenDriver`: `new_session` (cwd validation + worktree
+  creation + login-env threading, now `Result`), `open_session` (real
+  `cwd_for_session` from `session.json`), `list_sessions` (real archive/worktree
+  resolvers + warm merge + live-usage overlay), warm-cap eviction, and
+  `cleanup_worktree`. The 4 wired-path `#[expect]` markers were removed.
 - `cargo clippy --all-targets -- -D warnings`: 0 warnings (Phase 0.2).
-- `bun test` (TS side): 760/760 pass.
+- `bun test` (TS side): 761/761 pass.
 - e2e vs Bun server (control): **320/321 pass** (the 1 is `sidebar-drafts` "retargeting
   a draft" — a load-induced flake that passes in isolation; confirmed suite-level,
   not Rust-port: it flakes identically vs the Bun server).
-- e2e vs Rust server (`PILOT_SERVER_IMPL=rust`): **298 passed / 2 failed / 0
-  deterministic** (4.5 min, `--project=desktop`). The 2 are load-induced flakes
-  that pass in isolation: `dir-picker` "Escape clears the filter" (known since
-  Phase 1.4) + `sidebar-drafts` "retargeting a draft" (same flake that hits the
-  Bun control). **Phase 1 (mock-e2e cluster burn-down) is COMPLETE and
-  review-approved: failures 33 → 0 deterministic.** Reproduce:
+- e2e vs Rust server (`PILOT_SERVER_IMPL=rust`): **298 passed / 0 failed** (3.0 min,
+  `--project=desktop`, 2026-07-07). The two known load-induced flakes
+  (`dir-picker` "Escape clears the filter", `sidebar-drafts` "retargeting a
+  draft") did NOT fire this run — both passed. They remain documented as
+  load-induced (pass in isolation) and are not regressions.
+  **Phase 1 (mock-e2e cluster burn-down) is COMPLETE and review-approved:
+  failures 33 → 0 deterministic.** Reproduce:
   `PILOT_SERVER_IMPL=rust bunx playwright test --project=desktop`.
 - server-rs is now in CI (Phase 0.2): the `rust-server` job runs
   `cargo fmt --check` + `cargo clippy --locked --all-targets -- -D warnings` +
@@ -387,20 +407,59 @@ flakes (dir-picker, sidebar-drafts) that pass in isolation — not deterministic
   present; Chunk A byte-matches TS mock replies; e2e wiring via
   `scripts/dev.ts` works end to end.
 
-**The load-bearing caveat:** test-porting stopped exactly where the code became
-I/O-shaped. TS has ~285 test cases with no Rust counterpart, concentrated on
-the modules that matter most for cutover:
+**Phase 5 — shared modules + fs stores + worktree + live-driver wiring
+(2026-07-07, DONE + dual-review-approved).** The "item 5" shared work is ported
+AND wired (not just ported):
+- `shared/worktree_name.rs` (2 tests), `shared/warm_cap.rs` (10),
+  `shared/session_list.rs` (4), `shared/login_env.rs` (11 pure; the impure
+  `capture_login_env` shell-spawn is now wired into the driver), and
+  `background_model.rs` (10, ported earlier in Phase 1.8) — all pure ports.
+- `shared/worktree.rs` — `WorktreeMeta`/`Vcs`, `detect_vcs`, the pure
+  `plan_worktree`/`plan_worktree_removal`/`plan_fresh_worktree` planners, and
+  async `create`/`remove`/`is_clean` jj/git helpers. 8 planner/detect unit
+  tests + 1 real git integration test.
+- `archive_store.rs` (5 tests) + `worktree_store.rs` (10 tests) — fs-backed
+  stores, tempdir round-trip tested.
+- The live `PolytokenDriver` now uses all of it: `new_session` → `Result` with
+  cwd validation + worktree creation + login-env threading (trait sig rippled to
+  mock/stub/hub/8 call-sites); `open_session` reads the real project cwd via
+  `cwd_for_session`; `list_sessions` uses real `archived_for`/`worktree_for`
+  resolvers backed by the stores + warm merge + live-usage overlay; warm-cap
+  eviction hooked into `install_warm`; `cleanup_worktree` wired to
+  `removeWorktree` + `mark_reaped`. The 4 wired-path `#[expect]` BUG markers
+  were removed. 16 live-path integration tests cover the ACs (see
+  `tests/live_path.rs`).
+- **Two known gaps Phase 5 surfaced and left out of scope** (tracked below in
+  "Wrong turns to undo"): (a) `set_archived` is still the trait-default no-op
+  in the live `PolytokenDriver` — the `archived` flag is always false on the
+  live path until it's wired (the `list_sessions` READ side is ready); (b) the
+  hub's `pilot_settings_msg` still sends a stub `LoginEnvStatus{ok:false}` —
+  the driver exposes `login_env_status()` but the hub doesn't call it yet.
+
+**The load-bearing caveat:** test-porting stopped where the code became
+I/O-shaped. The pure modules + fs stores + worktree planners now have Rust
+counterparts (Phases 1–3) and are wired into the live driver (Phase 5); the
+remaining gap is the I/O-shaped daemon/hub integration tests. TS test cases
+with no (or partial) Rust counterpart:
 
 | TS test file                        | cases | Rust counterpart tests |
 | ----------------------------------- | ----- | ---------------------- |
 | hub.test.ts                         | 64    | 0                      |
 | hub-journal.test.ts                 | 14    | 0 (journal unit ≠ hub integration) |
-| polytoken/event-map.test.ts         | 129   | 123 (+6 `#[ignore]`, see below) |
-| polytoken/ui-bridge.test.ts         | 38    | 38 (ported)            |
-| polytoken/daemon-client.test.ts     | 14    | 0                      |
-| polytoken/lease-retry.test.ts       | 11    | 0                      |
+| polytoken/event-map.test.ts         | 129   | 124 (+5 `#[ignore]`, see below) |
+| polytoken/ui-bridge.test.ts        | 38    | 38 (ported)            |
+| polytoken/daemon-client.test.ts    | 14    | 0                      |
+| polytoken/lease-retry.test.ts      | 11    | 0                      |
 | polytoken/sessions-registry.test.ts | 15    | 0                      |
-| shared/* (worktree, login-env, warm-cap, background-model, session-list) | 53 | 27 (Phase-1 pure ports 2026-07-06: warm_cap 10, login_env pure 11, session_list 4, worktree_name 2; background_model 10 counted above). worktree.rs, fs stores, and impure login_env capture deferred to later phases |
+| shared/worktree-name.test.ts       | 2     | 2 (`worktree_name.rs`) |
+| shared/warm-cap.test.ts            | 10    | 10 (`warm_cap.rs`)     |
+| shared/session-list.test.ts        | 4     | 4 (`session_list.rs`)  |
+| shared/login-env.test.ts (pure)     | 11    | 11 (`login_env.rs`, pure parts; impure `capture_login_env` is wired into the driver + covered by `live_path::new_session_passes_captured_login_env_to_spawn`) |
+| shared/worktree.test.ts            | 8     | 8 planner/detect + 1 git integration (`worktree.rs` = 9) |
+| shared/archive-store.test.ts       | 5     | 5 (`archive_store.rs`) |
+| shared/worktree-store.test.ts      | 10    | 10 (`worktree_store.rs`) |
+| shared/background-model.test.ts    | 16    | 10 (`background_model.rs`, ported Phase 1.8) |
+| live-path ACs (new, no TS file)     | —     | 16 (`tests/live_path.rs`: 10 Phase-2 harness/warm/effect tests + 6 Phase-5 driver-wiring AC tests: cwd validation, worktree isolation, login-env threading, list_sessions flag overlay, warm-cap eviction, etc.) |
 
 And the e2e suite runs the **mock driver only**, so the live path
 (`daemon_client` → `event_map` → `driver`, ~5.7k lines) currently has **zero
@@ -420,8 +479,10 @@ validated" — it validates hub + protocol + mock.
 
 2. **Live-path bugs visible by inspection** (no test existed to catch them —
    that's the point). **FIXED 2026-07-06 (Phase 2, items 1–3)** — the three
-   below now have integration coverage via the fake-daemon harness; the
-   remaining items are out-of-scope Phase-2 item 5 / Phase 3 work:
+   below now have integration coverage via the fake-daemon harness. **The
+   remaining item-5 wiring bugs are FIXED 2026-07-07 (Phase 5)** — wired into
+   the live `PolytokenDriver` + covered by 6 driver-wiring AC tests in
+   `tests/live_path.rs`. Only the genuinely-out-of-scope gaps remain:
    - ✅ `driver.rs` SSE handling spawned a task **per event** → unordered fold
      under bursts. FIXED: one per-session unbounded-mpsc consumer task
      (`debug_assert` single-consumer). See driver.rs header.
@@ -429,17 +490,31 @@ validated" — it validates hub + protocol + mock.
      FIXED: emits `build_post_fetch_event` against the refreshed cache.
    - ✅ `DaemonEffect::RefetchQueue` was a TODO. FIXED: maps the snapshot →
      `QueueUpdated` via `queue_messages_from_snapshot` (pure, unit-tested).
-   - `new_session` ignores `opts.worktree` (worktree module unported) and
-     passes `login_env: None` (login-env unported).
-   - `open_session` fabricates the workspace path from `$HOME`, and its
-     resume/reload path resolves the daemon port from `startup.json`
-     (session-registry/worktree port — Phase 2 item 5; the harness can't
-     exercise reload re-warm without it).
-   - `list_sessions` hardcodes `archived_for: |_| false`,
-     `worktree_for: |_| None` (archive-store/worktree-store ported in
-     Phase 2 (2026-07-06) but not yet wired here — Phase 5).
-   - `warm_cap` is parsed into config and **enforced nowhere** — the warm
-     daemon pool grows without bound.
+   - ✅ RESOLVED (Phase 5): `new_session` ignores `opts.worktree` and passes
+     `login_env: None` — FIXED: `new_session` is now `Result`-returning, creates
+     the worktree via `worktree::plan_fresh_worktree`, and threads captured
+     login-env into the spawn (covered by `new_session_worktree_isolates_cwd`
+     + `new_session_passes_captured_login_env_to_spawn`).
+   - ✅ RESOLVED (Phase 5): `open_session` fabricates the workspace path from
+     `$HOME` — FIXED: `cwd_for_session` reads the real project cwd from the
+     on-disk `session.json`. (The reload re-warm-via-attach path still wants
+     `startup.json` session-registry/worktree port — see Phase 2 item 5; the
+     harness asserts disposal + no-deadlock, not re-warm emission.)
+   - ✅ RESOLVED (Phase 5): `list_sessions` hardcodes `archived_for: |_|
+     false` / `worktree_for: |_| None` — FIXED: real resolvers backed by
+     `archive_store`/`worktree_store` + warm-merge via `merge_session_lists` +
+     live-usage overlay (covered by `list_sessions_overlays_archive_and_worktree_flags`).
+   - ✅ RESOLVED (Phase 5): `warm_cap` enforced nowhere — FIXED: eviction
+     hooked into `install_warm` after insert with a recency-order structure +
+     `focus` operation; emits synthetic `sessionClosed` before disposing each
+     LRU victim, skipping any with `turn_in_flight` (covered by
+     `warm_cap_evicts_lru_idle_session` + `warm_cap_never_evicts_in_flight`).
+   - **Still open (out of Phase 5 scope):** `set_archived` is still the
+     trait-default no-op in the live `PolytokenDriver` — the `archived` flag is
+     always false on the live path until it's wired (the `list_sessions` READ
+     side is ready). The hub's `pilot_settings_msg` still sends a stub
+     `LoginEnvStatus{ok:false}` — the driver exposes `login_env_status()` but
+     the hub doesn't call it yet.
    - The hub never sends `modelDefaults` (TS broadcasts it).
 
 3. **Silent-degradation idiom.** Repo philosophy is fail-loud; the port
@@ -680,13 +755,24 @@ wants.
       the wire (in fake mode nothing spawns). Lease conflicts and
       daemon-death-mid-session CAN be wire-expressed (claim rejection, SSE
       drop) — cover those in the fake-daemon integration tests.
-- [ ] Port the `shared/` modules **with their tests** and wire them:
+- [x] Port the `shared/` modules **with their tests** and wire them:
       `worktree` (+name, 8 tests) into `new_session`; `login-env` (15) into
       daemon spawn; `warm-cap` (10) into pool eviction; `background-model`
       (16) into settings/modelDefaults; `sessions-registry` tests (15).
       Port `archive-store` + `worktree-store` and wire `list_sessions`.
-- [ ] Fix `open_session`'s `$HOME` workspace fabrication (read the session's
-      real project path).
+      **DONE (Phase 5, 2026-07-07):** pure modules ported in Phase 1
+      (worktree_name 2, warm_cap 10, session_list 4, login_env 11 pure),
+      fs stores in Phase 2 (archive_store 5, worktree_store 10), worktree
+      planners + jj/git helpers in Phase 3 (8 + 1 git), all wired into the
+      live `PolytokenDriver` (new_session→Result + worktree + login_env;
+      open_session cwd; list_sessions real resolvers + warm merge;
+      warm-cap eviction; cleanup_worktree). `background-model` was ported
+      + wired in Phase 1.8. **Still 0 Rust counterpart:** `sessions-registry`
+      (15) — its `read_session_json` is consumed by `cwd_for_session` but the
+      dedicated test file is not ported.
+- [x] Fix `open_session`'s `$HOME` workspace fabrication (read the session's
+      real project path). **DONE (Phase 5):** `cwd_for_session` reads the
+      project cwd from the on-disk `session.json`.
 
 ### Phase 2.5 — live-path validation, part 2: fake-daemon e2e tier
 
@@ -744,10 +830,10 @@ fail-loud philosophy applied to tests — not noise to be waited away.
 ## How to verify current state
 
 ```bash
-cd server-rs && cargo test                      # 176 tests, green
+cd server-rs && cargo test                      # 423 tests, green (5 daemon-types, 64 protocol, 330 lib, 8 corpus, 16 live_path)
 cd server-rs && cargo clippy --all-targets -- -D warnings   # 0 warnings (Phase 0.2)
 bun run check:rs                                # fmt + clippy + test locally (CI gate)
-bun test                                        # 760 tests, green
+bun test                                        # 761 tests, green
 bun run test:e2e                                # control vs Bun server: deterministic-core green (320/321; the 1 is the suite-level sidebar-drafts flake, passes in isolation)
-PILOT_SERVER_IMPL=rust bun run test:e2e         # vs Rust server: 0 det failures + 2 load-induced flakes (post-Phase-1.8)
+PILOT_SERVER_IMPL=rust bunx playwright test --project=desktop   # vs Rust server: 298/298 (0 det failures; 2 known load-induced flakes pass in isolation)
 ```
