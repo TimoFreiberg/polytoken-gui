@@ -882,18 +882,31 @@ fail-loud philosophy applied to tests — not noise to be waited away.
       tests: `live_path::{fake_mode_boots_and_bootstraps, dev_surface_reset_reseeds,
       dev_surface_run_script_pushes_scenario}`. (The earlier `/dev/reset`·`/dev/script`
       naming was never used — the real wire is `/debug/reset` + the `mock` message.)
-- [~] **Playwright live tier — landed as a corpus SUBSET (Phase 2.5, 2026-07-07;
-      D21).** A SEPARATE `playwright.live.config.ts` runs `e2e/live/*.e2e.ts`
-      (streaming, queue, abort, ask-user-question, tool-approval) against
-      `PILOT_DRIVER=fake` via `bun run test:e2e:live`; the default `test:e2e` mock
-      tier (`desktop`/`mobile`) is unchanged. This is a deliberate BEACHHEAD over the
+- [x] **Playwright live tier — landed as a corpus SUBSET (Phase 2.5, 2026-07-07;
+      D21); FIRST GREEN RUN + bootstrap bug fix (2026-07-07).** A SEPARATE
+      `playwright.live.config.ts` runs `e2e/live/*.e2e.ts` (streaming, queue,
+      abort, ask-user-question, tool-approval) against `PILOT_DRIVER=fake` via
+      `bun run test:e2e:live`; the default `test:e2e` mock tier
+      (`desktop`/`mobile`) is unchanged. This is a deliberate BEACHHEAD over the
       frozen corpus flows, NOT the full ~298-spec suite (D21) — widening needs
-      conscious live captures. The specs assert structural DOM (roles/testids), not
-      the mock's fixture strings (the corpus content differs). CI job `web-live`
-      exists but is gated to `workflow_dispatch` until a first green run confirms the
-      specs (authored against the corpus + existing DOM selectors, not yet browser-run
-      in-session); promote it to the PR gate then. GROW-THE-CORPUS PATH: capture a new
-      scenario (`scripts/capture-daemon-corpus.ts`, operator + `$DEEPSEEK_API_KEY`),
+      conscious live captures. The specs assert structural DOM (roles/testids),
+      not the mock's fixture strings (the corpus content differs). **First
+      browser run found + fixed a real fake-daemon bug:** the bootstrap session
+      reused the `reconnect-stream-discontinuity` corpus, whose first `/state`
+      reports `turn_in_flight:true`, seeding a Running snapshot that stuck the
+      composer on "Working…" (all 5 specs failed at `gotoFreshLive`). Fixed by
+      synthesizing an idle bootstrap scenario (`turn_in_flight:false`, empty
+      transcript) in `fake_daemon.rs`; `run_script` now arms the chosen flow's
+      HTTP recordings as an override (so in-turn `FetchState`/`RefetchQueue`
+      calls serve that flow's responses, not 500 on cursor exhaustion), `reset`
+      drops it back to idle, and a small inter-frame delay on the controlled SSE
+      push makes transient mid-flow UI (the queue tray, drained before the turn
+      ends) observable — the queue spec asserts it via a bounded `expect.poll`.
+      All 5 specs pass locally (twice, stable). CI job `web-live` is still gated to
+      `workflow_dispatch`; next step is a CI dispatch run to confirm green on the
+      runner, then drop the `if:` to promote it to the PR gate. GROW-THE-CORPUS
+      PATH: capture a new scenario
+      (`scripts/capture-daemon-corpus.ts`, operator + `$DEEPSEEK_API_KEY`),
       add a `run_script` match arm + an `e2e/live` spec.
 - [ ] Keep the MockDriver project as the fast deterministic tier for UI dev
       (dev bar, Claude_Preview) and triage. Revisit after cutover: if the
