@@ -141,7 +141,14 @@ async fn main() {
         cfg.live_refresh_ms,
         server_id.clone(),
         Some(cfg.data_dir.clone()),
-        String::new(), // build_sha — read from dist marker
+        option_env!("PILOT_BUILD_SHA")
+            .unwrap_or("")
+            // build_sha: read at COMPILE time from the build environment (a
+            // CI/desktop-shell build exports PILOT_BUILD_SHA, e.g.
+            // `PILOT_BUILD_SHA=$(git rev-parse --short HEAD) cargo build`).
+            // Empty in dev (no build step sets it). There is no in-repo
+            // build.rs that sets it — it's an external convention.
+            .to_string(),
         cfg.delta_flush_ms,
     );
 
@@ -236,13 +243,14 @@ fn build_router(state: AppState) -> Router {
 // ── /health ─────────────────────────────────────────────────────────────
 
 async fn health(State(state): State<AppState>) -> Json<serde_json::Value> {
-    let _hub = state.hub.lock();
+    let hub = state.hub.lock();
+    let activity = hub.activity();
     Json(json!({
         "ok": true,
-        "clients": 0, // TODO: track client count in hub
-        "running": 0,
-        "initializing": 0,
-        "busy": false,
+        "clients": hub.client_count(),
+        "running": activity["running"],
+        "initializing": activity["initializing"],
+        "busy": activity["busy"],
     }))
 }
 

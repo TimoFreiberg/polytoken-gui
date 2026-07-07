@@ -950,8 +950,7 @@ impl SessionHub {
     // ── Public API ────────────────────────────────────────────────────────
 
     pub fn client_count(&self) -> usize {
-        // Will be wired when client management is in the hub
-        0
+        self.clients.len()
     }
 
     pub fn snapshot(&self) -> serde_json::Value {
@@ -3936,5 +3935,66 @@ mod hub_models_tests {
             "unknown errors must not get a session-switch kind"
         );
         assert!(message.contains("session switch failed: something totally unexpected"));
+    }
+
+    /// `client_count()` mirrors TS `clientCount()` — 0 on a fresh hub, increments
+    /// after `add_client`, decrements after `remove_client`.
+    #[tokio::test]
+    async fn client_count_tracks_add_remove() {
+        let (_driver, hub, _ops) = test_hub();
+
+        assert_eq!(hub.lock().client_count(), 0, "fresh hub has no clients");
+
+        let (a, _tx_a, _rx_a) = hub.lock().add_client(None);
+        assert_eq!(hub.lock().client_count(), 1, "one client connected");
+
+        let (b, _tx_b, _rx_b) = hub.lock().add_client(None);
+        assert_eq!(hub.lock().client_count(), 2, "two clients connected");
+
+        hub.lock().remove_client(a);
+        assert_eq!(hub.lock().client_count(), 1, "one client removed");
+
+        hub.lock().remove_client(b);
+        assert_eq!(hub.lock().client_count(), 0, "all clients removed");
+    }
+
+    /// `activity()` + `client_count()` together produce the exact `/health` shape
+    /// (`{running, initializing, busy}` + `clients`) when a session is running.
+    /// A `userMessage` event drives `track_running` → `set_running(sid, true)`,
+    /// so `activity()` must report `running: 1, busy: true`.
+    #[tokio::test]
+    async fn activity_and_client_count_with_running_session() {
+        let (_driver, hub, _ops) = test_hub();
+
+        // Before any activity: nothing running, no clients.
+        let activity = hub.lock().activity();
+        assert_eq!(activity["running"], 0);
+        assert_eq!(activity["initializing"], 0);
+        assert_eq!(activity["busy"], false);
+        assert_eq!(hub.lock().client_count(), 0);
+
+        // A userMessage event flips the session to running (track_running →
+        // set_running(sid, true)).
+        let ev = SessionDriverEvent::UserMessage {
+            base: SessionEventBase {
+                session_ref: session_ref_for("demo-session"),
+                timestamp: ts(),
+                run_id: None,
+            },
+            id: "u1".into(),
+            text: "hello".into(),
+            images: None,
+            entry_id: None,
+        };
+        hub.lock().on_event(ev);
+
+        let activity = hub.lock().activity();
+        assert_eq!(activity["running"], 1, "session should be running");
+        assert_eq!(activity["initializing"], 0);
+        assert_eq!(activity["busy"], true, "busy when a session is running");
+
+        // A connected client should be reflected in client_count.
+        let (_key, _tx, _rx) = hub.lock().add_client(None);
+        assert_eq!(hub.lock().client_count(), 1);
     }
 }

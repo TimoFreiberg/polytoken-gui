@@ -569,8 +569,25 @@ async fn reload_session_disposes_old_warm_and_rewarms() {
     let fake = Arc::new(fake_daemon::spawn(scenario.clone(), "reload-1".into(), 5).await);
     let _ovr = OverrideGuard::install(fake.clone());
 
-    let (driver, _dir) = make_driver().await;
+    let (driver, dir) = make_driver().await;
     let (sub_id, mut rx) = collect_events(&driver, 256);
+
+    // Write a session.json for `reload-1` so the cold-start re-warm (fired by
+    // reload_session) can resolve the project cwd. Production always sends the
+    // `.../<id>/session.json` path; the session id is the parent dir name.
+    let reload_dir = dir.path().join("sessions").join("reload-1");
+    std::fs::create_dir_all(&reload_dir).expect("mkdir reload-1 session dir");
+    std::fs::write(
+        reload_dir.join("session.json"),
+        serde_json::json!({
+            "session_id": "reload-1",
+            "project_path": "/tmp/project",
+            "created_at": "2025-01-01T00:00:00Z",
+            "last_activity_at": "2025-01-01T00:00:00Z",
+        })
+        .to_string(),
+    )
+    .expect("write reload-1 session.json");
 
     // Warm via new_session (spawn path) + subscribe SSE.
     let _seed = driver
@@ -589,14 +606,25 @@ async fn reload_session_disposes_old_warm_and_rewarms() {
     // now spawns a resume daemon via the spawn-override seam when no
     // startup.json is found. The fake daemon answers the spawn, so the
     // re-warm goes through health → claim → history (the spawn seam is hit
-    // again, proving the cold-start path works). The seed may be empty if the
-    // corpus has no recorded /history items (streaming-turn doesn't).
-    let path = "reload-1.jsonl".to_string();
+    // Snapshot the fake's cumulative call count BEFORE reload. The first warm
+    // already hit /health (via install_warm), so a bare `fake.called(...)`
+    // would be vacuously true even if reload's re-warm never ran. Asserting the
+    // count strictly INCREASES proves the reload re-warm actually re-hit the
+    // daemon's endpoints (the cold-start spawn seam fired again).
+    let calls_before = fake.recorded_calls().len();
+    let path = reload_dir.join("session.json");
+    let path = path.to_string_lossy().to_string();
     let reseed = driver
         .reload_session(path)
         .await
         .expect("reload_session ok");
     // The cold-start spawn re-hit the fake daemon's endpoints.
+    assert!(
+        fake.recorded_calls().len() > calls_before,
+        "cold-start spawn: no new daemon calls after reload; before={calls_before}, after={}, calls: {:?}",
+        fake.recorded_calls().len(),
+        fake.recorded_calls()
+    );
     assert!(
         fake.called("GET", "/health"),
         "cold-start spawn: GET /health not hit after reload; calls: {:?}",
@@ -725,8 +753,10 @@ async fn test_open_session_cold_start_spawns_daemon() {
     .expect("write session.json");
 
     // open_session on a cold session (no startup.json) should spawn via the
-    // override seam. The path stem is the session id.
-    let path = format!("{session_id}.jsonl");
+    // override seam. Pass the real `session.json` path (production always
+    // sends `.../<id>/session.json`); the session id is the parent dir name.
+    let path = session_dir.join("session.json");
+    let path = path.to_string_lossy().to_string();
     let seed = driver
         .open_session(path)
         .await
