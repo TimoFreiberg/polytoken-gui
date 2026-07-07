@@ -260,7 +260,7 @@ pub struct SpawnDaemonOpts {
 async fn spawn_new_daemon(
     polytoken_bin: &str,
     opts: SpawnDaemonOpts,
-) -> Result<SpawnedDaemon, String> {
+) -> Result<(SpawnedDaemon, Option<tokio::process::Child>), String> {
     let mut global_args: Vec<String> = Vec::new();
     if let Some(cwd) = &opts.cwd {
         global_args.push("--working-dir".into());
@@ -300,7 +300,7 @@ async fn spawn_new_daemon(
             &stdout[..stdout.len().min(500)]
         ));
     }
-    parse_spawn_output(&stdout)
+    parse_spawn_output(&stdout).map(|spawned| (spawned, None))
 }
 
 /// Spawn a daemon to RESUME an existing session. Unlike `new --no-attach` (which
@@ -383,15 +383,23 @@ async fn spawn_resume_daemon(
 /// writes startup.json with the port). The two paths are NOT interchangeable — `new`
 /// does not accept `--resume`/`--session-id`, and `daemon` doesn't print to stdout.
 ///
-/// On resume, also returns the Child handle so the caller can keep it alive.
+/// On resume (and in tests via override), also returns the Child handle so the
+/// caller can keep it alive and reap it during warm-session disposal. New
+/// `--no-attach` spawns detach and therefore have no child handle here.
 /// A boxed future returned by a spawn-override function.
-pub type SpawnOverrideFuture =
-    Pin<Box<dyn Future<Output = Result<SpawnedDaemon, String>> + Send + 'static>>;
+pub type SpawnOverrideFuture = Pin<
+    Box<
+        dyn Future<Output = Result<(SpawnedDaemon, Option<tokio::process::Child>), String>>
+            + Send
+            + 'static,
+    >,
+>;
 
 /// The signature of a spawn-override: given the polytoken binary path + spawn
 /// options, return a `SpawnedDaemon` (the fake daemon's ephemeral port + a
-/// session id) WITHOUT launching a real process. Used by the fake-daemon
-/// integration harness to swap the process launch for an in-process axum router.
+/// session id) and optionally a child handle to retain. Used by the fake-daemon
+/// integration harness to swap the process launch for an in-process axum router;
+/// child-carrying tests use the optional handle to verify disposal kills/reaps.
 pub type SpawnOverrideFn = Arc<dyn Fn(&str, SpawnDaemonOpts) -> SpawnOverrideFuture + Send + Sync>;
 
 /// Process-global spawn override (test seam). `OnceLock` holds an inner
@@ -435,8 +443,7 @@ pub async fn spawn_daemon(
     // before resume-path arg validation, so the harness can answer resume
     // spawns without supplying cwd/sessions_dir/global_config_dir.
     if let Some(override_fn) = spawn_override() {
-        let spawned = override_fn(polytoken_bin, opts).await?;
-        return Ok((spawned, None));
+        return override_fn(polytoken_bin, opts).await;
     }
 
     if opts.session_id.is_some() {
@@ -453,8 +460,7 @@ pub async fn spawn_daemon(
         spawn_resume_daemon(polytoken_bin, opts).await
     } else {
         // New session path.
-        let spawned = spawn_new_daemon(polytoken_bin, opts).await?;
-        Ok((spawned, None))
+        spawn_new_daemon(polytoken_bin, opts).await
     }
 }
 

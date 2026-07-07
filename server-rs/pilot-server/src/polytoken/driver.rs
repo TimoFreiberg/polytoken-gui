@@ -41,16 +41,19 @@
 //
 
 use std::collections::HashMap;
+use std::future::Future;
 use std::path::{Path, PathBuf};
+use std::pin::Pin;
+use std::process::Output;
 use std::sync::Arc;
 
 use parking_lot::{Mutex, RwLock};
 use pilot_daemon_types::*;
 use pilot_protocol::session_driver::{
-    CommandInfo, DirListing, FileInfo, HostUiResponse, ImageContent, ModelDefaults, ModelOption,
-    PathStat, PermissionMonitorMode, SessionClosedReason, SessionDriverEvent, SessionEventBase,
-    SessionId, SessionListEntry, SessionRef, SessionSnapshot, SessionStatus, SessionUsage,
-    WorkspaceId, WorkspaceRef, WorktreeInfo,
+    CommandInfo, DirListing, FileInfo, HostUiRequest, HostUiResponse, ImageContent, ModelDefaults,
+    ModelOption, NotifyLevel, PathStat, PermissionMonitorMode, SessionClosedReason,
+    SessionDriverEvent, SessionEventBase, SessionId, SessionListEntry, SessionRef, SessionSnapshot,
+    SessionStatus, SessionUsage, WorkspaceId, WorkspaceRef, WorktreeInfo,
 };
 use pilot_protocol::wire::{DeliveryMode, LoginEnvStatus, McpAction};
 use tokio::sync::mpsc;
@@ -86,10 +89,8 @@ struct WarmSession {
     sse_subscription: Mutex<Option<SseSubscription>>,
     monitor_mode: Mutex<Option<PermissionMonitorMode>>,
     autodrain_enabled: Mutex<Option<bool>>,
-    #[expect(
-        dead_code,
-        reason = "BUG: spawned daemon child is not retained/enforced until warm session lifecycle is fixed in Phase 2"
-    )]
+    /// Owned daemon child for real spawned sessions. Retained so dispose can kill
+    /// and reap the out-of-process daemon, mirroring TS `WarmSession.child`.
     owned_process: Mutex<Option<tokio::process::Child>>,
     /// The push end of the per-warm-session SSE consumer channel. The
     /// `client.subscribe` callback is synchronous (`Fn`), so it can only push
@@ -107,6 +108,24 @@ struct WarmSession {
 }
 
 type SessionViewed = dyn Fn(SessionId) -> bool + Send + Sync;
+type CommandRunnerFuture = Pin<Box<dyn Future<Output = Result<Output, String>> + Send + 'static>>;
+type CommandRunner =
+    dyn Fn(String, Vec<String>, Option<String>) -> CommandRunnerFuture + Send + Sync;
+
+fn default_command_runner() -> Arc<CommandRunner> {
+    Arc::new(|program: String, args: Vec<String>, cwd: Option<String>| {
+        Box::pin(async move {
+            let mut cmd = tokio::process::Command::new(program);
+            cmd.args(args);
+            if let Some(cwd) = cwd {
+                cmd.current_dir(cwd);
+            }
+            cmd.output()
+                .await
+                .map_err(|e| format!("polytoken subprocess failed: {e}"))
+        })
+    })
+}
 
 /// The shared inner driver state. All fields that were on `PolytokenDriver`
 /// live here; `PolytokenDriver` is a thin `Arc<PolytokenInner>` wrapper so the
@@ -137,6 +156,7 @@ struct PolytokenInner {
     next_sub_id: Mutex<usize>,
     is_viewed: RwLock<Option<Box<SessionViewed>>>,
     command_cache: Mutex<HashMap<String, Vec<CommandInfo>>>,
+    command_runner: Arc<CommandRunner>,
 }
 
 /// The polytoken daemon driver.
@@ -182,6 +202,7 @@ impl PolytokenDriver {
                 next_sub_id: Mutex::new(0),
                 is_viewed: RwLock::new(None),
                 command_cache: Mutex::new(HashMap::new()),
+                command_runner: default_command_runner(),
             }),
         }
     }
@@ -220,6 +241,7 @@ impl PolytokenDriver {
                 next_sub_id: Mutex::new(0),
                 is_viewed: RwLock::new(None),
                 command_cache: Mutex::new(HashMap::new()),
+                command_runner: default_command_runner(),
             }),
         }
     }
@@ -353,6 +375,66 @@ impl PolytokenInner {
             .map(|meta| meta.project_path)
     }
 
+    fn active_warm(&self) -> Option<Arc<WarmSession>> {
+        let active_id = self.order.lock().last().cloned()?;
+        self.get_warm(&active_id)
+    }
+
+    fn warm_cwd(&self, ws: &WarmSession) -> Option<String> {
+        let state = ws.last_state.read();
+        state
+            .as_ref()
+            .and_then(|s| s.project_cwd.clone().or_else(|| s.cwd.clone()))
+            .filter(|cwd| !cwd.is_empty())
+            .or_else(|| Self::cwd_for_session(&self.sessions_dir, &ws.client.session_id))
+    }
+
+    fn target_warm_for_read(&self, session_id: Option<&SessionId>) -> Option<Arc<WarmSession>> {
+        match session_id {
+            Some(sid) => self.get_warm(sid),
+            None => self.active_warm(),
+        }
+    }
+
+    fn targeted_session_cwd(&self, session_id: Option<&SessionId>) -> Option<String> {
+        self.target_warm_for_read(session_id)
+            .and_then(|ws| self.warm_cwd(&ws))
+    }
+
+    fn file_lookup_root(
+        &self,
+        cwd: Option<String>,
+        session_id: Option<&SessionId>,
+    ) -> Option<String> {
+        cwd.filter(|root| !root.is_empty())
+            .or_else(|| self.targeted_session_cwd(session_id))
+    }
+
+    async fn run_polytoken(
+        &self,
+        args: Vec<String>,
+        cwd: Option<String>,
+    ) -> Result<Output, String> {
+        (self.command_runner)(self.bin_path.clone(), args, cwd).await
+    }
+
+    fn build_branch_seed(
+        snapshot: SessionSnapshot,
+        history_items: &[pilot_daemon_types::SessionHistoryItem],
+        ctx: &HistoryMapCtx,
+    ) -> Vec<SessionDriverEvent> {
+        let mut seed = vec![SessionDriverEvent::SessionOpened {
+            base: SessionEventBase {
+                session_ref: ctx.r#ref.clone(),
+                timestamp: DriverMapCtx::now_ts(),
+                run_id: None,
+            },
+            snapshot,
+        }];
+        seed.extend(history_seed::history_to_seed_events(history_items, ctx));
+        seed
+    }
+
     /// The worktree field for a session's cwd, or `None`. Resolved from the
     /// worktree store at list time (pilot's own flag — polytoken has no concept).
     /// Carries `name` + `reaped` so the sidebar can show a tooltip + a tombstoned
@@ -377,6 +459,7 @@ impl PolytokenInner {
         session_id: SessionId,
         session_ref: SessionRef,
         workspace: WorkspaceRef,
+        owned_process: Option<tokio::process::Child>,
     ) -> Result<Arc<WarmSession>, String> {
         // Wait for health (poll up to 10s)
         let healthy = tokio::time::timeout(std::time::Duration::from_secs(10), async {
@@ -416,7 +499,7 @@ impl PolytokenInner {
             sse_subscription: Mutex::new(None),
             monitor_mode: Mutex::new(None),
             autodrain_enabled: Mutex::new(None),
-            owned_process: Mutex::new(None),
+            owned_process: Mutex::new(owned_process),
             sse_tx: Mutex::new(None),
             sse_consumer_handle: Mutex::new(None),
         });
@@ -554,6 +637,11 @@ impl PolytokenInner {
             handle.abort();
             let _ = handle.await;
         }
+        let child = { ws.owned_process.lock().take() };
+        if let Some(mut child) = child {
+            let _ = child.kill().await;
+            let _ = child.wait().await;
+        }
         ws.client.close().await;
     }
 
@@ -583,7 +671,7 @@ impl PolytokenInner {
             login_env: self.login_env.lock().clone(),
         };
 
-        let (spawned, _child) =
+        let (spawned, child) =
             crate::polytoken::daemon_client::spawn_daemon(&self.bin_path, opts).await?;
 
         // The spawn reports the real session id; use it for the client + warm map.
@@ -601,7 +689,7 @@ impl PolytokenInner {
             std::process::id() as i32,
         ));
 
-        self.install_warm(client, session_id, session_ref, workspace)
+        self.install_warm(client, session_id, session_ref, workspace, child)
             .await
     }
 
@@ -627,7 +715,7 @@ impl PolytokenInner {
             std::process::id() as i32,
         ));
 
-        self.install_warm(client, session_id, session_ref, workspace)
+        self.install_warm(client, session_id, session_ref, workspace, None)
             .await
     }
 
@@ -773,10 +861,6 @@ impl PilotDriver for PolytokenDriver {
         self.inner.subscribers.lock().retain(|(sid, _)| *sid != id);
     }
 
-    #[expect(
-        unused_variables,
-        reason = "BUG: deliver_as/images/prompt_id ignored; prompt routing parity is Phase 2"
-    )]
     async fn prompt(
         &self,
         text: String,
@@ -785,17 +869,52 @@ impl PilotDriver for PolytokenDriver {
         images: Vec<ImageContent>,
         prompt_id: Option<String>,
     ) -> Result<(), String> {
-        // Ports TS `polytoken-driver.ts:882` which throws on no warm session /
-        // POST failure. Returns `Err` so the hub surfaces `promptResult { accepted:
-        // false }` to the client rather than silently dropping the prompt.
+        // Ports TS `polytoken-driver.ts:882-941`. `deliver_as` remains
+        // pilot-side UX only: daemon unstable.6+ auto-queues and has no
+        // steer/follow-up discriminator on `/prompt`.
+        let _deliver_as = deliver_as;
         let Some(sid) = session_id else {
             return Err("no session to prompt".into());
         };
         let Some(ws) = self.inner.get_warm(&sid) else {
             return Err("no warm polytoken session to prompt".into());
         };
+        self.inner.focus(&sid);
+        // POST first; only echo after success so a failed POST doesn't create a
+        // ghost transcript row.
         if let Err(e) = ws.client.prompt(&text, None).await {
             return Err(format!("prompt failed: {e}"));
+        }
+        let now = DriverMapCtx::now_ts();
+        let base = SessionEventBase {
+            session_ref: ws.session_ref.clone(),
+            timestamp: now.clone(),
+            run_id: None,
+        };
+        self.inner.emit(SessionDriverEvent::UserMessage {
+            base: base.clone(),
+            id: prompt_id
+                .unwrap_or_else(|| format!("pt-{}", chrono::Utc::now().timestamp_millis())),
+            text,
+            images: (!images.is_empty()).then_some(images.clone()),
+            entry_id: None,
+        });
+        if !images.is_empty() {
+            let plural = if images.len() == 1 {
+                "1 image was".to_string()
+            } else {
+                format!("{} images were", images.len())
+            };
+            self.inner.emit(SessionDriverEvent::HostUiRequest {
+                base,
+                request: HostUiRequest::Notify {
+                    request_id: format!("img-unsupported-{}", chrono::Utc::now().timestamp_millis()),
+                    message: format!(
+                        "⚠ {plural} attached but the daemon doesn't support images yet — only the text was sent."
+                    ),
+                    level: Some(NotifyLevel::Warning),
+                },
+            });
         }
         Ok(())
     }
@@ -1244,16 +1363,15 @@ impl PilotDriver for PolytokenDriver {
         }
     }
 
-    #[expect(
-        unused_variables,
-        reason = "BUG: branch summarize option ignored; branch parity is Phase 2"
-    )]
     async fn branch_from(
         &self,
         entry_id: String,
         summarize: bool,
         session_id: Option<SessionId>,
     ) -> BranchResult {
+        // summarize: pilot-side only, no daemon /rewind param (matches TS
+        // `polytoken-driver.ts:1277-1315`).
+        let _summarize = summarize;
         if let Some(sid) = &session_id {
             if let Some(ws) = self.inner.get_warm(sid) {
                 let req = RewindRequest {
@@ -1265,10 +1383,23 @@ impl PilotDriver for PolytokenDriver {
                     error!("branch rewind failed: {e}");
                     return BranchResult::default();
                 }
+                let state_res = ws.client.state().await;
+                if let Some(state) = state_res.data {
+                    *ws.last_state.write() = Some(state);
+                }
+                let ctx = DriverMapCtx {
+                    session_ref: ws.session_ref.clone(),
+                    workspace: ws.workspace.clone(),
+                    last_state: ws.last_state.read().clone(),
+                    monitor_mode: *ws.monitor_mode.lock(),
+                    autodrain_enabled: *ws.autodrain_enabled.lock(),
+                };
+                let snapshot = ctx.snapshot(ctx.live_status());
                 let history_res = ws.client.history(None, None).await;
                 if let Some(history) = history_res.data {
                     return BranchResult {
-                        seed: history_seed::history_to_seed_events(
+                        seed: PolytokenInner::build_branch_seed(
+                            snapshot,
                             &history.items,
                             &HistoryMapCtx {
                                 r#ref: ws.session_ref.clone(),
@@ -1326,19 +1457,27 @@ impl PilotDriver for PolytokenDriver {
         }
     }
 
-    #[expect(
-        unused_variables,
-        reason = "BUG: session-scoped command discovery ignored; live command parity is Phase 2"
-    )]
     async fn list_commands(&self, session_id: Option<SessionId>) -> Vec<CommandInfo> {
-        let cache_key = std::env::var("HOME").unwrap_or_default();
-        if let Some(cached) = self.inner.command_cache.lock().get(&cache_key) {
+        // Ports TS `polytoken-driver.ts:1455-1489`: commands are cwd-scoped,
+        // keyed by the targeted warm session cwd, and the CLI must run there.
+        let Some(cwd) = self.inner.targeted_session_cwd(session_id.as_ref()) else {
+            return Vec::new();
+        };
+        if let Some(cached) = self.inner.command_cache.lock().get(&cwd) {
             return cached.clone();
         }
-        let bin_path = self.inner.bin_path.clone();
-        let output = tokio::process::Command::new(&bin_path)
-            .args(["print-slash-commands", "--format", "json"])
-            .output()
+        let output = self
+            .inner
+            .run_polytoken(
+                vec![
+                    "--working-dir".into(),
+                    cwd.clone(),
+                    "print-slash-commands".into(),
+                    "--format".into(),
+                    "json".into(),
+                ],
+                Some(cwd.clone()),
+            )
             .await;
         match output {
             Ok(out) => {
@@ -1347,7 +1486,7 @@ impl PilotDriver for PolytokenDriver {
                 self.inner
                     .command_cache
                     .lock()
-                    .insert(cache_key, commands.clone());
+                    .insert(cwd, commands.clone());
                 commands
             }
             Err(e) => {
@@ -1357,30 +1496,72 @@ impl PilotDriver for PolytokenDriver {
         }
     }
 
-    #[expect(
-        unused_variables,
-        reason = "BUG: session-scoped facet discovery ignored; live facet parity is Phase 2"
-    )]
     async fn list_facets(&self, session_id: Option<SessionId>) -> Vec<String> {
-        let bin_path = self.inner.bin_path.clone();
-        let output = tokio::process::Command::new(&bin_path)
-            .args(["vfs", "ls", "polytoken://facets"])
-            .output()
+        // Ports TS `polytoken-driver.ts:1491-1559`: read facet names through
+        // the daemon VFS, not local filesystem paths, and never empty the picker.
+        let builtins = || vec!["execute".to_string(), "plan".to_string()];
+        let Some(cwd) = self.inner.targeted_session_cwd(session_id.as_ref()) else {
+            return builtins();
+        };
+        let output = self
+            .inner
+            .run_polytoken(
+                vec![
+                    "--working-dir".into(),
+                    cwd.clone(),
+                    "vfs".into(),
+                    "ls".into(),
+                    "polytoken://facets".into(),
+                ],
+                Some(cwd.clone()),
+            )
             .await;
         match output {
             Ok(out) => {
                 let stdout = String::from_utf8_lossy(&out.stdout).to_string();
-                stdout
+                let files: Vec<String> = stdout
                     .lines()
-                    .filter_map(|line| {
-                        let content = std::fs::read_to_string(line.trim()).ok()?;
-                        crate::polytoken::facets::parse_facet_name(&content)
-                    })
-                    .collect()
+                    .map(str::trim)
+                    .filter(|line| line.ends_with(".md"))
+                    .map(ToString::to_string)
+                    .collect();
+                if files.is_empty() {
+                    return builtins();
+                }
+                let mut names = Vec::new();
+                for file in files {
+                    let cat = self
+                        .inner
+                        .run_polytoken(
+                            vec![
+                                "--working-dir".into(),
+                                cwd.clone(),
+                                "vfs".into(),
+                                "cat".into(),
+                                format!("polytoken://facets/{file}"),
+                            ],
+                            Some(cwd.clone()),
+                        )
+                        .await;
+                    match cat {
+                        Ok(out) => {
+                            let content = String::from_utf8_lossy(&out.stdout).to_string();
+                            names.push(
+                                crate::polytoken::facets::parse_facet_name(&content)
+                                    .unwrap_or_else(|| file.trim_end_matches(".md").to_string()),
+                            );
+                        }
+                        Err(e) => {
+                            error!("vfs cat facet {file} failed: {e}");
+                            names.push(file.trim_end_matches(".md").to_string());
+                        }
+                    }
+                }
+                if names.is_empty() { builtins() } else { names }
             }
             Err(e) => {
                 error!("list_facets failed: {e}");
-                Vec::new()
+                builtins()
             }
         }
     }
@@ -1399,26 +1580,27 @@ impl PilotDriver for PolytokenDriver {
         (Vec::new(), false)
     }
 
-    #[expect(
-        unused_variables,
-        reason = "BUG: session_id ignored for live file lookup; file index parity is Phase 2"
-    )]
     async fn list_files(
         &self,
         query: String,
         session_id: Option<SessionId>,
         cwd: Option<String>,
     ) -> Vec<FileInfo> {
-        let bin_path = self.inner.bin_path.clone();
-        let mut cmd = tokio::process::Command::new(&bin_path);
-        cmd.args(["files", "--format", "json"]);
+        // Ports TS `polytoken-driver.ts:1589-1601`: caller cwd wins; otherwise
+        // fall back to the targeted session cwd.
+        let Some(root) = self.inner.file_lookup_root(cwd, session_id.as_ref()) else {
+            return Vec::new();
+        };
+        let mut args = vec![
+            "files".to_string(),
+            "--format".to_string(),
+            "json".to_string(),
+        ];
         if !query.is_empty() {
-            cmd.args(["--query", &query]);
+            args.extend(["--query".to_string(), query]);
         }
-        if let Some(cwd) = &cwd {
-            cmd.args(["--cwd", cwd]);
-        }
-        match cmd.output().await {
+        args.extend(["--cwd".to_string(), root.clone()]);
+        match self.inner.run_polytoken(args, Some(root)).await {
             Ok(out) => {
                 let stdout = String::from_utf8_lossy(&out.stdout).to_string();
                 if let Ok(paths) = serde_json::from_str::<Vec<String>>(&stdout) {
@@ -1595,18 +1777,7 @@ impl PilotDriver for PolytokenDriver {
         // abort consumer, close client.
         let warm: Vec<Arc<WarmSession>> = self.inner.warm.write().drain().map(|(_, v)| v).collect();
         for ws in warm {
-            // Extract handles before awaiting (avoid holding guards across .await).
-            let sub = ws.sse_subscription.lock().take();
-            *ws.sse_tx.lock() = None;
-            let consumer_handle = ws.sse_consumer_handle.lock().take();
-            if let Some(sub) = sub {
-                sub.stop().await;
-            }
-            if let Some(handle) = consumer_handle {
-                handle.abort();
-                let _ = handle.await;
-            }
-            ws.client.close().await;
+            self.inner.dispose_warm(&ws).await;
         }
     }
 
@@ -1651,6 +1822,7 @@ mod tests {
             next_sub_id: Mutex::new(0),
             is_viewed: RwLock::new(None),
             command_cache: Mutex::new(HashMap::new()),
+            command_runner: default_command_runner(),
         }
     }
 
@@ -1770,6 +1942,196 @@ mod tests {
             *inner.order.lock(),
             vec!["a".to_string(), "b".to_string(), "z".to_string()],
             "focusing an unknown id should append it to the back"
+        );
+    }
+
+    #[cfg(unix)]
+    fn ok_output(stdout: &str) -> Output {
+        use std::os::unix::process::ExitStatusExt;
+        Output {
+            status: std::process::ExitStatus::from_raw(0),
+            stdout: stdout.as_bytes().to_vec(),
+            stderr: Vec::new(),
+        }
+    }
+
+    fn write_session_json(root: &Path, session_id: &str, cwd: &str) {
+        let session_dir = root.join(session_id);
+        std::fs::create_dir_all(&session_dir).expect("mkdir session");
+        let json = serde_json::json!({
+            "session_id": session_id,
+            "project_path": cwd,
+            "created_at": "2025-01-01T00:00:00Z",
+            "last_activity_at": "2025-01-01T00:00:00Z",
+        });
+        std::fs::write(
+            session_dir.join("session.json"),
+            serde_json::to_string(&json).unwrap(),
+        )
+        .expect("write session.json");
+    }
+
+    fn warm_for(session_id: &str) -> Arc<WarmSession> {
+        let workspace = WorkspaceRef {
+            workspace_id: "ws".into(),
+            path: "/tmp/ws".into(),
+            display_name: None,
+        };
+        Arc::new(WarmSession {
+            client: Arc::new(DaemonClient::new(session_id.to_string(), 1, 0)),
+            accumulator: Mutex::new(event_map::create_accumulator()),
+            last_state: RwLock::new(None),
+            session_ref: SessionRef {
+                workspace_id: workspace.workspace_id.clone(),
+                session_id: session_id.to_string(),
+            },
+            workspace,
+            pending_interrogatives: Mutex::new(HashMap::new()),
+            sse_subscription: Mutex::new(None),
+            monitor_mode: Mutex::new(None),
+            autodrain_enabled: Mutex::new(None),
+            owned_process: Mutex::new(None),
+            sse_tx: Mutex::new(None),
+            sse_consumer_handle: Mutex::new(None),
+        })
+    }
+
+    fn driver_with_runner(
+        session_id: &str,
+        cwd: &str,
+        runner: Arc<CommandRunner>,
+    ) -> (PolytokenDriver, tempfile::TempDir) {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let sessions_dir = dir.path().join("sessions");
+        write_session_json(&sessions_dir, session_id, cwd);
+        let mut inner = inner_with_order(vec![session_id.to_string()], 64);
+        inner.sessions_dir = sessions_dir;
+        inner.bin_path = "polytoken-test".into();
+        inner.command_runner = runner;
+        inner
+            .warm
+            .write()
+            .insert(session_id.to_string(), warm_for(session_id));
+        (
+            PolytokenDriver {
+                inner: Arc::new(inner),
+            },
+            dir,
+        )
+    }
+
+    #[tokio::test]
+    async fn list_commands_runs_in_session_cwd_and_caches_by_cwd() {
+        let calls = Arc::new(Mutex::new(Vec::<(Vec<String>, Option<String>)>::new()));
+        let calls_for_runner = calls.clone();
+        let runner: Arc<CommandRunner> = Arc::new(move |_program, args, cwd| {
+            calls_for_runner.lock().push((args, cwd));
+            Box::pin(async { Ok(ok_output("[]")) })
+        });
+        let (driver, _dir) = driver_with_runner("s1", "/repo/a", runner);
+
+        let _ = driver.list_commands(Some("s1".into())).await;
+        let _ = driver.list_commands(Some("s1".into())).await;
+
+        let calls = calls.lock();
+        assert_eq!(calls.len(), 1, "second call should hit the cwd cache");
+        assert_eq!(calls[0].1.as_deref(), Some("/repo/a"));
+        assert_eq!(calls[0].0[0..2], ["--working-dir", "/repo/a"]);
+        assert!(calls[0].0.contains(&"print-slash-commands".to_string()));
+    }
+
+    #[tokio::test]
+    async fn list_facets_runs_in_session_cwd_and_falls_back_to_file_stems() {
+        let calls = Arc::new(Mutex::new(Vec::<(Vec<String>, Option<String>)>::new()));
+        let calls_for_runner = calls.clone();
+        let runner: Arc<CommandRunner> = Arc::new(move |_program, args, cwd| {
+            calls_for_runner.lock().push((args.clone(), cwd));
+            Box::pin(async move {
+                if args.iter().any(|a| a == "ls") {
+                    Ok(ok_output("execute.md\nplan.md\nREADME.txt\n"))
+                } else if args.iter().any(|a| a.ends_with("execute.md")) {
+                    Ok(ok_output("---\nname: execute\n---\nbody"))
+                } else {
+                    Ok(ok_output("no frontmatter"))
+                }
+            })
+        });
+        let (driver, _dir) = driver_with_runner("s1", "/repo/facets", runner);
+
+        let facets = driver.list_facets(Some("s1".into())).await;
+
+        assert_eq!(facets, vec!["execute".to_string(), "plan".to_string()]);
+        let calls = calls.lock();
+        assert_eq!(calls.len(), 3, "vfs ls + two vfs cat calls");
+        assert!(
+            calls
+                .iter()
+                .all(|(_, cwd)| cwd.as_deref() == Some("/repo/facets"))
+        );
+    }
+
+    #[tokio::test]
+    async fn list_facets_falls_back_to_builtins_on_error_or_empty() {
+        let runner: Arc<CommandRunner> =
+            Arc::new(move |_program, _args, _cwd| Box::pin(async { Err("boom".to_string()) }));
+        let (driver, _dir) = driver_with_runner("s1", "/repo/facets", runner);
+
+        assert_eq!(
+            driver.list_facets(Some("s1".into())).await,
+            vec!["execute".to_string(), "plan".to_string()]
+        );
+    }
+
+    #[tokio::test]
+    async fn list_files_uses_session_cwd_when_caller_omits_cwd() {
+        let calls = Arc::new(Mutex::new(Vec::<(Vec<String>, Option<String>)>::new()));
+        let calls_for_runner = calls.clone();
+        let runner: Arc<CommandRunner> = Arc::new(move |_program, args, cwd| {
+            calls_for_runner.lock().push((args, cwd));
+            Box::pin(async { Ok(ok_output("[\"src/main.rs\"]")) })
+        });
+        let (driver, _dir) = driver_with_runner("s1", "/repo/files", runner);
+
+        let files = driver
+            .list_files("main".into(), Some("s1".into()), None)
+            .await;
+
+        assert_eq!(files.len(), 1);
+        let calls = calls.lock();
+        assert_eq!(calls[0].1.as_deref(), Some("/repo/files"));
+        assert!(calls[0].0.windows(2).any(|w| w == ["--cwd", "/repo/files"]));
+    }
+
+    #[test]
+    fn build_branch_seed_prepends_session_opened() {
+        let session_ref = SessionRef {
+            workspace_id: "ws".into(),
+            session_id: "s1".into(),
+        };
+        let workspace = WorkspaceRef {
+            workspace_id: "ws".into(),
+            path: "/repo".into(),
+            display_name: None,
+        };
+        let snapshot = event_map::snapshot_from_state(
+            None,
+            &session_ref,
+            &workspace,
+            SessionStatus::Idle,
+            "2025-01-01T00:00:00.000Z",
+            None,
+            None,
+        );
+        let seed = PolytokenInner::build_branch_seed(
+            snapshot,
+            &[],
+            &HistoryMapCtx {
+                r#ref: session_ref.clone(),
+            },
+        );
+        assert!(
+            matches!(seed.first(), Some(SessionDriverEvent::SessionOpened { base, .. }) if base.session_ref == session_ref),
+            "branch seed must start with sessionOpened so reseed:true rebuilds SessionState metadata"
         );
     }
 }

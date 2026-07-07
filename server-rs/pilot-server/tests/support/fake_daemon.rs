@@ -332,7 +332,7 @@ impl MultiSpawnOverrideGuard {
                     fake,
                 };
                 state.lock().spawned.push(spawned);
-                Ok(SpawnedDaemon { session_id, port })
+                Ok((SpawnedDaemon { session_id, port }, None))
             })
         }));
 

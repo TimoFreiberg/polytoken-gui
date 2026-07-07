@@ -52,10 +52,13 @@ impl OverrideGuard {
         set_spawn_override(Arc::new(move |_bin: &str, _opts: SpawnDaemonOpts| {
             let session_id = session_id.clone();
             Box::pin(async move {
-                Ok(SpawnedDaemon {
-                    session_id: session_id.clone(),
-                    port,
-                })
+                Ok((
+                    SpawnedDaemon {
+                        session_id: session_id.clone(),
+                        port,
+                    },
+                    None,
+                ))
             })
         }));
         Self
@@ -265,6 +268,135 @@ fn collect_events(
         let _ = tx.try_send(ev);
     }));
     (id, rx)
+}
+
+struct ClearOverrideOnDrop;
+impl Drop for ClearOverrideOnDrop {
+    fn drop(&mut self) {
+        clear_spawn_override();
+    }
+}
+
+#[tokio::test]
+async fn prompt_echoes_images_and_warns_with_prompt_id() {
+    let _guard = OVERRIDE_MUTEX.lock().await;
+
+    let scenario = corpus_loader::load_named(VERSION, "streaming-turn");
+    let fake = Arc::new(fake_daemon::spawn(scenario, "prompt-1".into(), 20).await);
+    let _ovr = OverrideGuard::install(fake.clone());
+
+    let (driver, _dir) = make_driver().await;
+    let (_sub_id, mut rx) = collect_events(&driver, 256);
+
+    let _seed = driver
+        .new_session(NewSessionOptsData::default())
+        .await
+        .expect("new_session");
+
+    let image = pilot_protocol::session_driver::ImageContent::Image {
+        data: "ZmFrZQ==".into(),
+        mime_type: "image/png".into(),
+    };
+    driver
+        .prompt(
+            "hello with image".into(),
+            Some(pilot_protocol::wire::DeliveryMode::FollowUp),
+            Some(fake.session_id.clone()),
+            vec![image],
+            Some("custom-prompt-id".into()),
+        )
+        .await
+        .expect("prompt");
+
+    assert!(
+        fake.called("POST", "/prompt"),
+        "prompt POST not sent: {:?}",
+        fake.recorded_calls()
+    );
+
+    let mut saw_user = false;
+    let mut saw_warning_after_user = false;
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(5);
+    while let Ok(Some(ev)) = tokio::time::timeout_at(deadline, rx.recv()).await {
+        match ev {
+            SessionDriverEvent::UserMessage {
+                id, text, images, ..
+            } if id == "custom-prompt-id" => {
+                assert_eq!(text, "hello with image");
+                assert_eq!(images.as_ref().map(Vec::len), Some(1));
+                saw_user = true;
+            }
+            SessionDriverEvent::HostUiRequest {
+                request:
+                    pilot_protocol::session_driver::HostUiRequest::Notify { message, level, .. },
+                ..
+            } if saw_user && message.contains("1 image was attached") => {
+                assert_eq!(
+                    level,
+                    Some(pilot_protocol::session_driver::NotifyLevel::Warning)
+                );
+                saw_warning_after_user = true;
+                break;
+            }
+            _ => {}
+        }
+    }
+
+    assert!(saw_user, "prompt did not emit userMessage echo");
+    assert!(
+        saw_warning_after_user,
+        "prompt did not emit image warning after userMessage"
+    );
+}
+
+#[tokio::test]
+async fn warm_child_killed_on_shutdown() {
+    let _guard = OVERRIDE_MUTEX.lock().await;
+
+    let scenario = corpus_loader::load_named(VERSION, "streaming-turn");
+    let fake = Arc::new(fake_daemon::spawn(scenario, "child-1".into(), 20).await);
+    let port = fake.port;
+    let child = tokio::process::Command::new("sleep")
+        .arg("60")
+        .spawn()
+        .expect("spawn sleep child");
+    let pid = child.id().expect("sleep pid");
+
+    let child_holder = Arc::new(std::sync::Mutex::new(Some(child)));
+    let child_holder_for_override = child_holder.clone();
+    let session_id_for_override = fake.session_id.clone();
+    set_spawn_override(Arc::new(move |_bin: &str, _opts: SpawnDaemonOpts| {
+        let child_holder = child_holder_for_override.clone();
+        let session_id = session_id_for_override.clone();
+        Box::pin(async move {
+            let child = child_holder
+                .lock()
+                .expect("child holder mutex")
+                .take()
+                .ok_or_else(|| "child already consumed".to_string())?;
+            Ok((SpawnedDaemon { session_id, port }, Some(child)))
+        })
+    }));
+    let _clear = ClearOverrideOnDrop;
+
+    let (driver, _dir) = make_driver().await;
+    let _seed = driver
+        .new_session(NewSessionOptsData::default())
+        .await
+        .expect("new_session");
+
+    driver.shutdown().await;
+
+    let status = tokio::process::Command::new("kill")
+        .arg("-0")
+        .arg(pid.to_string())
+        .status()
+        .await
+        .expect("kill -0");
+    assert!(
+        !status.success(),
+        "owned daemon child pid {pid} should be gone after driver shutdown"
+    );
 }
 
 /// AC.2: after `new_session`, the warm session is SUBSCRIBED to daemon SSE and
