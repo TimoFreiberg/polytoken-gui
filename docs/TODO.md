@@ -29,7 +29,8 @@ resolution is non-obvious or likely to bite again. Otherwise see `jj log`.
       `get_permission_monitor()` is now called during `install_warm` to seed
       the cached mode.
 - [x] opt+enter inserts a newline in the prompt text field.
-
+- [ ] epic: there should be a sidebar showing "Flagged files", "Async Jobs"
+      (e.g. subagents) and "Todos", like polytoken has.
 ## 🔵 Corpus capture follow-ups (from the 2026-07-06 live-capture session)
 
 Full detail in `server-rs/PROGRESS.md` → "Live corpus capture (2026-07-06)". The
