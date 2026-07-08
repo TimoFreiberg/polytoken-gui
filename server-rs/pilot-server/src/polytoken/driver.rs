@@ -372,6 +372,20 @@ impl MapCtx for DriverMapCtx {
     }
 }
 
+/// How `install_warm` should wait for the daemon to become healthy.
+///
+/// - **Poll** (spawn path): the daemon was just spawned and may need a moment
+///   to bind its port. Retry every 100ms for up to 10s.
+/// - **ProbeOnce** (attach path): the daemon is assumed to be *already
+///   running*. If the first health check fails (connection refused), the
+///   daemon is dead — fail immediately so the caller's cold-start fallback
+///   fires without delay. Never subject the user to a 10s timeout for a
+///   daemon that isn't there.
+enum HealthProbeMode {
+    Poll,
+    ProbeOnce,
+}
+
 impl PolytokenInner {
     fn emit(&self, ev: SessionDriverEvent) {
         let subs = self.subscribers.lock();
@@ -538,22 +552,34 @@ impl PolytokenInner {
         session_ref: SessionRef,
         workspace: WorkspaceRef,
         owned_process: Option<tokio::process::Child>,
+        probe: HealthProbeMode,
     ) -> Result<Arc<WarmSession>, String> {
-        // Wait for health (poll up to 10s)
-        let healthy = tokio::time::timeout(std::time::Duration::from_secs(10), async {
-            loop {
-                let res = client.health().await;
-                if res.status == 200 {
-                    return true;
-                }
-                tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        let healthy = match probe {
+            HealthProbeMode::ProbeOnce => {
+                // Attach path: the daemon should already be running. A single
+                // failed health check means it's dead — don't waste the user's
+                // time retrying for 10s.
+                client.health().await.status == 200
             }
-        })
-        .await
-        .unwrap_or(false);
+            HealthProbeMode::Poll => {
+                // Spawn path: the daemon was just spawned and may need a moment
+                // to bind its port. Retry up to 10s.
+                tokio::time::timeout(std::time::Duration::from_secs(10), async {
+                    loop {
+                        let res = client.health().await;
+                        if res.status == 200 {
+                            return true;
+                        }
+                        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                    }
+                })
+                .await
+                .unwrap_or(false)
+            }
+        };
 
         if !healthy {
-            return Err("daemon health probe timed out".into());
+            return Err("daemon health probe failed".into());
         }
 
         // Claim lease
@@ -771,8 +797,15 @@ impl PolytokenInner {
             spawned.auth_token.clone(),
         ));
 
-        self.install_warm(client, session_id, session_ref, workspace, child)
-            .await
+        self.install_warm(
+            client,
+            session_id,
+            session_ref,
+            workspace,
+            child,
+            HealthProbeMode::Poll,
+        )
+        .await
     }
 
     /// Warm up a session by ATTACHING to an already-running daemon on a known
@@ -799,8 +832,15 @@ impl PolytokenInner {
             auth_token,
         ));
 
-        self.install_warm(client, session_id, session_ref, workspace, None)
-            .await
+        self.install_warm(
+            client,
+            session_id,
+            session_ref,
+            workspace,
+            None,
+            HealthProbeMode::ProbeOnce,
+        )
+        .await
     }
 
     /// Spawn a resume daemon for a cold session (no running daemon found), then
@@ -833,8 +873,15 @@ impl PolytokenInner {
             std::process::id() as i32,
             spawned.auth_token.clone(),
         ));
-        self.install_warm(client, session_id, session_ref, workspace, child)
-            .await
+        self.install_warm(
+            client,
+            session_id,
+            session_ref,
+            workspace,
+            child,
+            HealthProbeMode::Poll,
+        )
+        .await
     }
 
     /// Process an SSE event: map through event_map, emit results, execute effects.
