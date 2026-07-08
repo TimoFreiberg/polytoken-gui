@@ -293,4 +293,69 @@ mod tests {
         assert_eq!(mime_type(".html").unwrap(), "text/html; charset=utf-8");
         assert!(mime_type(".unknown").is_err());
     }
+
+    // ── Ported from static.test.ts.bak ──────────────────────────
+
+    #[tokio::test]
+    async fn index_html_falls_back_for_non_hashed_routes() {
+        let dir = make_dist();
+        let server = StaticServer::new(dir.path().to_path_buf());
+        let res = server.serve("/", &empty_headers()).await.unwrap();
+        assert_eq!(res.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(res.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        assert_eq!(&body[..], b"<!doctype html>spa");
+    }
+
+    #[tokio::test]
+    async fn hashed_assets_get_immutable_cache() {
+        let dir = make_dist();
+        let server = StaticServer::new(dir.path().to_path_buf());
+        let res = server
+            .serve("/assets/app-abc123.js", &empty_headers())
+            .await
+            .unwrap();
+        assert_eq!(res.status(), StatusCode::OK);
+        assert_eq!(
+            res.headers().get(header::CACHE_CONTROL).unwrap(),
+            HeaderValue::from_static("public, max-age=31536000, immutable")
+        );
+    }
+
+    #[tokio::test]
+    async fn missing_hashed_asset_is_404_not_spa_fallback() {
+        let dir = make_dist();
+        let server = StaticServer::new(dir.path().to_path_buf());
+        let res = server
+            .serve("/assets/gone-999.js", &empty_headers())
+            .await
+            .unwrap();
+        assert_eq!(res.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn index_revalidates_no_cache_etag_then_304() {
+        let dir = make_dist();
+        let server = StaticServer::new(dir.path().to_path_buf());
+
+        // First request: 200 + no-cache + ETag
+        let first = server.serve("/", &empty_headers()).await.unwrap();
+        assert_eq!(first.status(), StatusCode::OK);
+        assert_eq!(
+            first.headers().get(header::CACHE_CONTROL).unwrap(),
+            HeaderValue::from_static("no-cache")
+        );
+        let etag = first.headers().get(header::ETAG).unwrap().clone();
+
+        // Second request with matching If-None-Match → 304
+        let mut headers = HeaderMap::new();
+        headers.insert(header::IF_NONE_MATCH, etag);
+        let second = server.serve("/", &headers).await.unwrap();
+        assert_eq!(second.status(), StatusCode::NOT_MODIFIED);
+        let body = axum::body::to_bytes(second.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        assert!(body.is_empty());
+    }
 }

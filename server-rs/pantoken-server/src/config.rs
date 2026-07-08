@@ -174,6 +174,26 @@ mod tests {
         assert_eq!(token, None);
     }
 
+    // ── Ported from config.test.ts.bak ──────────────────────────
+
+    #[test]
+    fn empty_string_token_behaves_like_real_token() {
+        // An empty env var would set token=""; it must NOT be treated as
+        // "auth disabled" (which None means). Only None disables.
+        let cfg = Config {
+            token: Some("".into()),
+            ..test_config()
+        };
+        assert!(token_ok(Some(""), &cfg));
+        assert!(!token_ok(None, &cfg));
+    }
+
+    #[test]
+    fn trims_whitespace_around_bearer_token() {
+        let token = token_from_request(Some("Bearer   spaced   "), None);
+        assert_eq!(token, Some("spaced".into()));
+    }
+
     fn test_config() -> Config {
         Config {
             port: 8787,

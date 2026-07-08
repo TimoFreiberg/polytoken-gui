@@ -254,3 +254,170 @@ pub struct ModelRef {
     pub provider: String,
     pub model_id: String,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const REAL_OUTPUT: &str = "\
+default_model: umans/umans-glm-5.2
+default_small_model: umans/umans-flash
+
+models:
+- deepseek/deepseek-v4-pro
+  provider: deepseek/deepseek-v4-pro
+  variant: claude
+  tool_loading: eager
+  reasoning: effort set=deepseek_v4; levels=high (default), max, none; can_disable=yes
+  selectable: deepseek/deepseek-v4-pro, deepseek/deepseek-v4-pro(none), deepseek/deepseek-v4-pro(high), deepseek/deepseek-v4-pro(max)
+- umans/umans-glm-5.2 (default, dynamic)
+  provider: umans/umans-glm-5.2
+  variant: other
+  tool_loading: eager
+  reasoning: effort set=custom; levels=high (default), max, none; can_disable=yes
+  selectable: umans/umans-glm-5.2, umans/umans-glm-5.2(none), umans/umans-glm-5.2(high), umans/umans-glm-5.2(max)
+- umans/umans-flash (small, dynamic)
+  provider: umans/umans-flash
+  variant: other
+  tool_loading: eager
+  reasoning: effort set=custom; levels=low, medium (default), high, none; can_disable=yes
+  selectable: umans/umans-flash, umans/umans-flash(none), umans/umans-flash(low), umans/umans-flash(medium), umans/umans-flash(high), umans/umans-flash(none)
+";
+
+    #[test]
+    fn parses_the_real_observed_output() {
+        let out = parse_models(REAL_OUTPUT);
+        assert_eq!(out.default_model.as_deref(), Some("umans/umans-glm-5.2"));
+        assert_eq!(
+            out.default_small_model.as_deref(),
+            Some("umans/umans-flash")
+        );
+        assert_eq!(out.models.len(), 3);
+
+        let pro = &out.models[0];
+        assert_eq!(pro.provider, "deepseek/deepseek-v4-pro");
+        assert_eq!(pro.model_id, "deepseek/deepseek-v4-pro");
+        assert_eq!(pro.label, "deepseek/deepseek-v4-pro");
+        assert_eq!(
+            pro.thinking_levels.as_deref(),
+            Some(&["high".to_string(), "max".into(), "none".into()][..])
+        );
+
+        let glm = &out.models[1];
+        assert_eq!(glm.model_id, "umans/umans-glm-5.2");
+        assert_eq!(
+            glm.thinking_levels.as_deref(),
+            Some(&["high".to_string(), "max".into(), "none".into()][..])
+        );
+
+        let flash = &out.models[2];
+        assert_eq!(flash.model_id, "umans/umans-flash");
+        assert_eq!(
+            flash.thinking_levels.as_deref(),
+            Some(
+                &[
+                    "low".to_string(),
+                    "medium".into(),
+                    "high".into(),
+                    "none".into()
+                ][..]
+            )
+        );
+    }
+
+    #[test]
+    fn splits_provider_from_model_id_on_first_slash() {
+        let out = parse_models(
+            "models:\n- anthropic/claude-sonnet-5\n  reasoning: levels=low (default), high; can_disable=yes\n",
+        );
+        assert_eq!(out.models.len(), 1);
+        assert_eq!(out.models[0].provider, "anthropic");
+        assert_eq!(out.models[0].model_id, "anthropic/claude-sonnet-5");
+    }
+
+    #[test]
+    fn falls_back_to_whole_id_as_provider_when_no_slash() {
+        let out =
+            parse_models("models:\n- local-model\n  reasoning: levels=high; can_disable=yes\n");
+        assert_eq!(out.models[0].provider, "local-model");
+        assert_eq!(out.models[0].model_id, "local-model");
+    }
+
+    #[test]
+    fn no_reasoning_line_yields_none_thinking_levels() {
+        let out = parse_models("models:\n- base-model\n  provider: base-model\n");
+        assert!(out.models[0].thinking_levels.is_none());
+    }
+
+    #[test]
+    fn reasoning_levels_strip_default_marker_and_trim() {
+        let out = parse_models(
+            "models:\n- m1\n  reasoning: effort set=x; levels= minimal (default),  high , none ; can_disable=yes\n",
+        );
+        assert_eq!(
+            out.models[0].thinking_levels.as_deref(),
+            Some(&["minimal".to_string(), "high".into(), "none".into()][..])
+        );
+    }
+
+    #[test]
+    fn empty_output_yields_no_models_and_null_defaults() {
+        let out = parse_models("");
+        assert!(out.models.is_empty());
+        assert!(out.default_model.is_none());
+        assert!(out.default_small_model.is_none());
+    }
+
+    #[test]
+    fn malformed_header_line_no_id_after_dash_is_skipped() {
+        let out = parse_models("models:\n- \n- good-model\n  provider: good-model\n");
+        assert_eq!(out.models.len(), 1);
+        assert_eq!(out.models[0].model_id, "good-model");
+    }
+
+    #[test]
+    fn crlf_line_endings_are_handled() {
+        let crlf = REAL_OUTPUT.replace('\n', "\r\n");
+        let out = parse_models(&crlf);
+        assert_eq!(out.default_model.as_deref(), Some("umans/umans-glm-5.2"));
+        assert_eq!(out.models.len(), 3);
+        assert_eq!(
+            out.models[0].thinking_levels.as_deref(),
+            Some(&["high".to_string(), "max".into(), "none".into()][..])
+        );
+    }
+
+    #[test]
+    fn dash_bulleted_line_before_models_section_is_not_a_model() {
+        let out = parse_models(
+            "notes:\n- this is not a model\nmodels:\n- real-model\n  provider: real-model\n",
+        );
+        assert_eq!(out.models.len(), 1);
+        assert_eq!(out.models[0].model_id, "real-model");
+    }
+
+    #[test]
+    fn no_models_section_yields_no_models() {
+        let out = parse_models("default_model: umans/umans-glm-5.2\n- stray dash line\n");
+        assert!(out.models.is_empty());
+        assert_eq!(out.default_model.as_deref(), Some("umans/umans-glm-5.2"));
+    }
+
+    #[test]
+    fn default_model_ref_and_model_post_key() {
+        let r = default_model_ref("umans/umans-glm-5.2");
+        assert_eq!(r.provider, "umans");
+        assert_eq!(r.model_id, "umans/umans-glm-5.2");
+
+        let r2 = default_model_ref("local-model");
+        assert_eq!(r2.provider, "local-model");
+        assert_eq!(r2.model_id, "local-model");
+
+        assert_eq!(model_post_key("umans/umans-glm-5.2"), "umans/umans-glm-5.2");
+        assert_eq!(
+            model_post_key("deepseek/deepseek-v4-pro"),
+            "deepseek/deepseek-v4-pro"
+        );
+        assert_eq!(model_post_key("local-model"), "local-model");
+    }
+}

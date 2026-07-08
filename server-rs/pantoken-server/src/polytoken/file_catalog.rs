@@ -42,3 +42,64 @@ pub fn parse_file_catalog(paths: &[String]) -> Vec<FileInfo> {
     }
     out
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn s(v: &str) -> String {
+        v.to_string()
+    }
+
+    #[test]
+    fn splits_files_from_dirs_by_trailing_slash() {
+        let input = vec![s("src/main.ts"), s("src/lib/"), s("README.md"), s("docs/")];
+        let out = parse_file_catalog(&input);
+        assert_eq!(out.len(), 4);
+        assert_eq!(out[0].path, "src/main.ts");
+        assert!(!out[0].is_directory);
+        assert_eq!(out[1].path, "src/lib");
+        assert!(out[1].is_directory);
+        assert_eq!(out[2].path, "README.md");
+        assert!(!out[2].is_directory);
+        assert_eq!(out[3].path, "docs");
+        assert!(out[3].is_directory);
+    }
+
+    #[test]
+    fn drops_stray_git_entries_defensively() {
+        let input = vec![
+            s(".git"),
+            s(".git/config"),
+            s("src/.git/hooks"),
+            s("src/main.ts"),
+        ];
+        let out = parse_file_catalog(&input);
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].path, "src/main.ts");
+        assert!(!out[0].is_directory);
+    }
+
+    #[test]
+    fn empty_input_yields_empty() {
+        let out = parse_file_catalog(&[]);
+        assert!(out.is_empty());
+    }
+
+    #[test]
+    fn empty_entries_are_skipped() {
+        let input = vec![s(""), s("valid.ts")];
+        let out = parse_file_catalog(&input);
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].path, "valid.ts");
+    }
+
+    #[test]
+    fn root_level_directory_with_trailing_slash() {
+        let input = vec![s("node_modules/")];
+        let out = parse_file_catalog(&input);
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].path, "node_modules");
+        assert!(out[0].is_directory);
+    }
+}

@@ -419,4 +419,39 @@ mod tests {
         // The other process's lock should still be there
         assert!(lock.path.exists());
     }
+
+    // ── Ported from pidlock.test.ts.bak ──────────────────────────
+
+    #[test]
+    fn our_own_pid_is_alive() {
+        assert!(is_pid_alive(std::process::id() as i64));
+    }
+
+    #[test]
+    fn absurdly_high_pid_is_not_alive() {
+        // 2^30 is far above any real pid on macOS/Linux
+        assert!(!is_pid_alive(1 << 30));
+    }
+
+    #[test]
+    fn live_foreign_pid_is_live() {
+        // process.pid is live; pretend a different self_pid so it's foreign
+        let lock = LockInfo {
+            pid: std::process::id() as i64,
+            server_id: None,
+        };
+        assert_eq!(
+            lock_decision(Some(&lock), std::process::id() as i64 + 1),
+            "live"
+        );
+    }
+
+    #[test]
+    fn different_data_dirs_get_different_ids() {
+        let d1 = tempfile::tempdir().unwrap();
+        let d2 = tempfile::tempdir().unwrap();
+        let id1 = mint_or_read_server_id(d1.path()).unwrap();
+        let id2 = mint_or_read_server_id(d2.path()).unwrap();
+        assert_ne!(id1, id2);
+    }
 }

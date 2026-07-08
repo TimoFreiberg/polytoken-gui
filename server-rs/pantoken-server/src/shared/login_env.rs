@@ -322,4 +322,35 @@ mod tests {
             assert_eq!(parse_env_output(""), HashMap::new());
         }
     }
+
+    // ── Ported from login-env.test.ts.bak (captureLoginEnv) ──────────
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn real_shell_returns_env_with_path_and_ok() {
+        if !std::path::Path::new("/bin/sh").exists() {
+            return; // skip on minimal containers / NixOS
+        }
+        let result = capture_login_env(Some("/bin/sh")).await;
+        assert!(result.status.ok, "status should be ok");
+        assert_eq!(result.status.active_shell.as_deref(), Some("/bin/sh"));
+        assert!(result.env.contains_key("PATH"));
+        assert!(!result.env["PATH"].is_empty());
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn never_throws_failure_paths_return_status_struct() {
+        if !std::path::Path::new("/usr/bin/false").exists() {
+            return; // skip if /usr/bin/false isn't present
+        }
+        let result = capture_login_env(Some("/usr/bin/false")).await;
+        assert!(!result.status.ok, "status should be false");
+        assert_eq!(
+            result.status.active_shell.as_deref(),
+            Some("/usr/bin/false")
+        );
+        assert!(result.env.is_empty(), "env should be empty on failure");
+        assert!(result.status.detail.is_some(), "detail should be present");
+    }
 }

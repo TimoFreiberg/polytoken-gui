@@ -4146,4 +4146,26 @@ mod hub_models_tests {
             "an idle sessionOpened with no activity must not create an attention record"
         );
     }
+
+    /// Blocked: the attach-window buffer (`take_swap_buffer`) is
+    /// `#[expect(dead_code)]` and not wired. These tests document the gap.
+    #[tokio::test]
+    #[ignore = "blocked: take_swap_buffer / buffer_swap_event not wired (hub.rs:576,601)"]
+    async fn events_racing_cold_open_trigger_one_seed_rebuild() {
+        // Ported from TS hub.test.ts — verifies that events arriving during a
+        // cold open (before the seed is delivered) are folded into the seed
+        // rather than sent as separate live events. Blocked on wiring the
+        // swap buffer.
+        let _ = ("take_swap_buffer blocker",);
+    }
+
+    /// Blocked: same as above — the swap buffer is not wired.
+    #[tokio::test]
+    #[ignore = "blocked: take_swap_buffer / buffer_swap_event not wired (hub.rs:576,601)"]
+    async fn raced_events_never_re_run_non_retryable_swap() {
+        // Ported from TS hub.test.ts — verifies that a newSession swap
+        // triggered by raced events is not re-run. Blocked on wiring the
+        // swap buffer.
+        let _ = ("take_swap_buffer blocker",);
+    }
 }

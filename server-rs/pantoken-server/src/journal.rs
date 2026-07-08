@@ -646,4 +646,45 @@ mod tests {
         // Items should be empty (meta seed carries no transcript items)
         assert!(folded.items.is_empty());
     }
+
+    // ── Ported from journal.test.ts.bak ──────────────────────────
+
+    #[test]
+    fn evicts_by_byte_budget_and_single_over_budget_event_passes_through() {
+        let mut j = create_journal(1, &[]);
+
+        // A single event larger than TAIL_MAX_BYTES should pass through to
+        // compacted, not be dropped.
+        let big_text = "x".repeat(TAIL_MAX_BYTES);
+        let big = assistant_delta(&big_text);
+        append_event(&mut j, big.clone());
+
+        // The tail can't hold it (it exceeds the byte budget), so it should
+        // be evicted to compacted immediately.
+        assert!(
+            j.tail.is_empty(),
+            "tail should be empty after over-budget event"
+        );
+        assert_eq!(j.tail_bytes, 0);
+        assert!(
+            !j.compacted.is_empty(),
+            "compacted should contain the over-budget event"
+        );
+
+        // Now fill with events that stay under the byte budget but eventually
+        // trigger eviction. Interleave users so deltas can't all coalesce.
+        let chunk = "y".repeat(64 * 1024);
+        for i in 0..8 {
+            append_event(&mut j, user_msg(&format!("u{i}"), "-"));
+            append_event(&mut j, assistant_delta(&chunk));
+        }
+
+        // After all appends, tail_bytes must respect the budget.
+        assert!(
+            j.tail_bytes <= TAIL_MAX_BYTES,
+            "tail_bytes {} should be <= {}",
+            j.tail_bytes,
+            TAIL_MAX_BYTES
+        );
+    }
 }

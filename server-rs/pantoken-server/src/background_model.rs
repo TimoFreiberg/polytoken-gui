@@ -429,4 +429,50 @@ mod tests {
         assert!(r.warning.is_none());
         assert_eq!(r.model.as_ref().unwrap().model_id, "claude-x-4-5-latest");
     }
+
+    // ── Ported from background-model.test.ts.bak ──────────────────────────
+
+    #[test]
+    fn invalid_thinking_level_on_non_resolving_prefix_is_fatal() {
+        // The prefix doesn't resolve either: the missing model is the real
+        // problem, the bad suffix is moot, so the resolver returns no model +
+        // the inner (fatal) warning.
+        let r = resolve_background_model(Some("anthropic/nope-9-9:banana"), &reg());
+        assert!(r.model.is_none());
+        assert!(
+            r.warning
+                .as_deref()
+                .unwrap()
+                .contains("No registered model matches")
+        );
+    }
+
+    #[test]
+    fn canonical_provider_id_with_real_collision_warns() {
+        // The SAME canonical `provider/id` appearing twice (shouldn't happen,
+        // but if a custom provider double-registers) is ambiguous and rejected
+        // loud — no silent pick.
+        let dup = vec![
+            ModelOption {
+                provider: "anthropic".into(),
+                model_id: "dupe".into(),
+                label: "Dupe 1".into(),
+                thinking_levels: None,
+            },
+            ModelOption {
+                provider: "anthropic".into(),
+                model_id: "dupe".into(),
+                label: "Dupe 2".into(),
+                thinking_levels: None,
+            },
+        ];
+        let r = resolve_background_model(Some("anthropic/dupe"), &dup);
+        assert!(r.model.is_none());
+        assert!(
+            r.warning
+                .as_deref()
+                .unwrap()
+                .contains("No registered model matches")
+        );
+    }
 }

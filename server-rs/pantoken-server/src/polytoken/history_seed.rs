@@ -1134,4 +1134,137 @@ mod tests {
             other => panic!("expected ToolFinished, got {:?}", other),
         }
     }
+
+    // ── Ported from history-seed.test.ts.bak ──────────────────────────
+
+    #[test]
+    fn standalone_tool_use_block_emits_tool_started_with_input() {
+        let items = vec![json!({
+            "type": "assistant",
+            "prompt_id": "p1",
+            "blocks": [
+                { "type": "tool_use", "id": "call_1", "name": "shell", "input": { "cmd": "ls" } },
+            ],
+        })];
+        let out = history_to_seed_events(&items, &ctx());
+        assert_eq!(out.len(), 1);
+        match &out[0] {
+            SessionDriverEvent::ToolStarted {
+                call_id,
+                tool_name,
+                input,
+                ..
+            } => {
+                assert_eq!(call_id, "call_1");
+                assert_eq!(tool_name, "shell");
+                assert_eq!(input.as_ref().unwrap(), &json!({ "cmd": "ls" }));
+            }
+            other => panic!("expected ToolStarted, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn multi_block_emits_deltas_and_tool_started_in_order() {
+        let items = vec![json!({
+            "type": "assistant",
+            "prompt_id": "p1",
+            "blocks": [
+                { "type": "text", "text": "Running a tool" },
+                { "type": "thinking", "text": "planning", "signature": "s" },
+                { "type": "tool_use", "id": "c1", "name": "edit", "input": { "file": "a.ts" } },
+                { "type": "text", "text": "Done" },
+            ],
+        })];
+        let out = history_to_seed_events(&items, &ctx());
+        let types: Vec<&str> = out
+            .iter()
+            .map(|e| match e {
+                SessionDriverEvent::AssistantDelta { .. } => "assistantDelta",
+                SessionDriverEvent::ToolStarted { .. } => "toolStarted",
+                _ => "other",
+            })
+            .collect();
+        assert_eq!(
+            types,
+            vec![
+                "assistantDelta",
+                "assistantDelta",
+                "toolStarted",
+                "assistantDelta"
+            ]
+        );
+    }
+
+    #[test]
+    fn non_transcript_kinds_mapped_to_same_events_as_live_path() {
+        let items = vec![
+            json!({
+                "type": "session_lifecycle",
+                "kind": "created",
+                "session_id": "s",
+                "text": "session started",
+                "emitted_at": "2025-01-01T00:00:00.000Z",
+            }),
+            json!({
+                "type": "model_switch",
+                "from_model": "a",
+                "to_model": "anthropic/claude-sonnet-4",
+                "to_reasoning_effort": null,
+                "emitted_at": "2025-01-01T00:00:00.000Z",
+            }),
+            json!({
+                "type": "state_update",
+                "delta": {},
+                "emitted_at": "2025-01-01T00:00:00.000Z",
+            }),
+            json!({ "type": "user", "content": "only this counts", "prompt_id": "p1" }),
+        ];
+        let out = history_to_seed_events(&items, &ctx());
+        // lifecycle → customMessage, model_switch → sessionUpdated, state_update → skipped
+        assert_eq!(out.len(), 3);
+        assert!(matches!(out[0], SessionDriverEvent::CustomMessage { .. }));
+        assert!(matches!(out[1], SessionDriverEvent::SessionUpdated { .. }));
+        assert!(matches!(out[2], SessionDriverEvent::UserMessage { .. }));
+    }
+
+    #[test]
+    fn full_turn_user_assistant_tool_result_event_ordering() {
+        let items = vec![
+            json!({ "type": "user", "content": "edit the file", "prompt_id": "p1" }),
+            json!({
+                "type": "assistant",
+                "prompt_id": "p1",
+                "blocks": [
+                    { "type": "text", "text": "Sure" },
+                    { "type": "tool_use", "id": "c1", "name": "edit", "input": { "file": "a.ts" } },
+                ],
+            }),
+            json!({
+                "type": "tool_result",
+                "call_id": "c1",
+                "content": { "text": "edited" },
+                "is_error": false,
+            }),
+        ];
+        let out = history_to_seed_events(&items, &ctx());
+        let types: Vec<&str> = out
+            .iter()
+            .map(|e| match e {
+                SessionDriverEvent::UserMessage { .. } => "userMessage",
+                SessionDriverEvent::AssistantDelta { .. } => "assistantDelta",
+                SessionDriverEvent::ToolStarted { .. } => "toolStarted",
+                SessionDriverEvent::ToolFinished { .. } => "toolFinished",
+                _ => "other",
+            })
+            .collect();
+        assert_eq!(
+            types,
+            vec![
+                "userMessage",
+                "assistantDelta",
+                "toolStarted",
+                "toolFinished"
+            ]
+        );
+    }
 }

@@ -82,3 +82,168 @@ pub async fn with_error_notify<F, R>(
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn test_ref() -> SessionRef {
+        SessionRef {
+            workspace_id: "/test".to_string(),
+            session_id: "test-sid".to_string(),
+        }
+    }
+
+    const TS: &str = "2026-07-02T12:00:00.000Z";
+
+    #[test]
+    fn builds_host_ui_request_notify_event_with_level_error() {
+        let ev = error_notify(
+            test_ref(),
+            TS.to_string(),
+            "setModel",
+            "Failed to set model: 500",
+        );
+        match ev {
+            SessionDriverEvent::HostUiRequest { base, request } => {
+                assert_eq!(base.session_ref, test_ref());
+                assert_eq!(base.timestamp, TS);
+                match request {
+                    HostUiRequest::Notify {
+                        request_id,
+                        message,
+                        level,
+                    } => {
+                        assert_eq!(request_id, "setModel-failed-2026-07-02T12-00-00-000Z");
+                        assert_eq!(message, "Failed to set model: 500");
+                        assert_eq!(level, Some(NotifyLevel::Error));
+                    }
+                    other => panic!("expected Notify, got {other:?}"),
+                }
+            }
+            other => panic!("expected HostUiRequest, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn request_id_is_namespaced_by_operation() {
+        let ev_a = error_notify(test_ref(), TS.to_string(), "setModel", "msg");
+        let ev_b = error_notify(test_ref(), TS.to_string(), "setFacet", "msg");
+        let req_a = match ev_a {
+            SessionDriverEvent::HostUiRequest {
+                request: HostUiRequest::Notify { request_id, .. },
+                ..
+            } => request_id,
+            _ => panic!("expected HostUiRequest Notify"),
+        };
+        let req_b = match ev_b {
+            SessionDriverEvent::HostUiRequest {
+                request: HostUiRequest::Notify { request_id, .. },
+                ..
+            } => request_id,
+            _ => panic!("expected HostUiRequest Notify"),
+        };
+        assert!(req_a.contains("setModel"));
+        assert!(req_b.contains("setFacet"));
+        assert_ne!(req_a, req_b);
+    }
+
+    #[tokio::test]
+    async fn does_not_emit_on_success() {
+        let emitted: std::sync::Mutex<Vec<SessionDriverEvent>> = std::sync::Mutex::new(Vec::new());
+        let emit = |ev: SessionDriverEvent| emitted.lock().unwrap().push(ev);
+        let now = || TS.to_string();
+
+        with_error_notify(
+            async { Ok::<_, Box<dyn std::error::Error + Send + Sync>>("ok") },
+            &emit,
+            test_ref(),
+            &now,
+            "setModel",
+            "Failed to set model",
+            None,
+        )
+        .await;
+
+        assert!(emitted.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn emits_error_notify_on_rejection_with_error_message() {
+        let emitted: std::sync::Mutex<Vec<SessionDriverEvent>> = std::sync::Mutex::new(Vec::new());
+        let emit = |ev: SessionDriverEvent| emitted.lock().unwrap().push(ev);
+        let now = || TS.to_string();
+
+        let err: Box<dyn std::error::Error + Send + Sync> = "daemon unreachable".into();
+        with_error_notify(
+            async { Err::<(), _>(err) },
+            &emit,
+            test_ref(),
+            &now,
+            "setModel",
+            "Failed to set model",
+            None,
+        )
+        .await;
+
+        let guard = emitted.lock().unwrap();
+        assert_eq!(guard.len(), 1);
+        match &guard[0] {
+            SessionDriverEvent::HostUiRequest {
+                request: HostUiRequest::Notify { message, level, .. },
+                ..
+            } => {
+                assert_eq!(message, "Failed to set model: daemon unreachable");
+                assert_eq!(*level, Some(NotifyLevel::Error));
+            }
+            other => panic!("expected HostUiRequest Notify, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn invokes_rollback_on_failure() {
+        let emitted: std::sync::Mutex<Vec<SessionDriverEvent>> = std::sync::Mutex::new(Vec::new());
+        let emit = |ev: SessionDriverEvent| emitted.lock().unwrap().push(ev);
+        let now = || TS.to_string();
+        let rolled_back = std::sync::Mutex::new(false);
+        let rb = || *rolled_back.lock().unwrap() = true;
+
+        let err: Box<dyn std::error::Error + Send + Sync> = "post failed".into();
+        with_error_notify(
+            async { Err::<(), _>(err) },
+            &emit,
+            test_ref(),
+            &now,
+            "setPermissionMonitor",
+            "Failed to set permission monitor mode",
+            Some(&rb),
+        )
+        .await;
+
+        assert_eq!(emitted.lock().unwrap().len(), 1);
+        assert!(*rolled_back.lock().unwrap());
+    }
+
+    #[tokio::test]
+    async fn does_not_invoke_rollback_on_success() {
+        let emitted: std::sync::Mutex<Vec<SessionDriverEvent>> = std::sync::Mutex::new(Vec::new());
+        let emit = |ev: SessionDriverEvent| emitted.lock().unwrap().push(ev);
+        let now = || TS.to_string();
+        let rolled_back = std::sync::Mutex::new(false);
+        let rb = || *rolled_back.lock().unwrap() = true;
+
+        with_error_notify(
+            async { Ok::<_, Box<dyn std::error::Error + Send + Sync>>("ok") },
+            &emit,
+            test_ref(),
+            &now,
+            "setPermissionMonitor",
+            "Failed to set permission monitor mode",
+            Some(&rb),
+        )
+        .await;
+
+        assert!(emitted.lock().unwrap().is_empty());
+        assert!(!*rolled_back.lock().unwrap());
+    }
+}

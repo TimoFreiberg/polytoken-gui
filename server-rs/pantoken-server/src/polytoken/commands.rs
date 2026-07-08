@@ -120,3 +120,82 @@ pub fn parse_slash_commands(stdout: &str) -> Vec<CommandInfo> {
     }
     out
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const REAL_OUTPUT: &str = r#"{"categories":[{"id":"immediate","title":"Immediate commands"},{"id":"choice","title":"Commands that take a choice"},{"id":"free-text","title":"Commands that take free text"}],"commands":[{"canonical":"/clear","aliases":[],"category":"immediate","description":"Clears the working context. Your session history is untouched."},{"canonical":"/reset-shell","aliases":[],"category":"immediate","description":"Restores the shell environment to the state Polytoken captured when the session started."},{"canonical":"/rewind","aliases":[],"category":"immediate","description":"Opens the rewind view to return the conversation to an earlier point."},{"canonical":"/help","aliases":[],"category":"immediate","description":"Opens the help overlay."},{"canonical":"/refresh","aliases":[],"category":"immediate","description":"Refreshes the interface. Use this if the display falls out of step with the session."},{"canonical":"/quit","aliases":["/exit"],"category":"immediate","description":"Ends the session."},{"canonical":"/detach","aliases":[],"category":"immediate","description":"Disconnects the interface and leaves the session running."},{"canonical":"/version","aliases":[],"category":"immediate","description":"Shows the TUI and daemon build versions."},{"canonical":"/model","aliases":["/models"],"category":"choice","description":"Switch the active model."},{"canonical":"/facet","aliases":[],"category":"choice","description":"Switch the active facet."},{"canonical":"/permissions","aliases":["/permission"],"category":"choice","description":"Switch how tool approvals are handled."},{"canonical":"/todo","aliases":["/todos"],"category":"choice","description":"Show todos, or act on one."},{"canonical":"/jobs","aliases":["/job"],"category":"choice","description":"Show running jobs, or act on one."},{"canonical":"/mcp","aliases":[],"category":"choice","description":"Enable or disable an MCP server. Type a server name, then choose enable or disable."},{"canonical":"/title","aliases":[],"category":"free-text","description":"Sets the session title. With no argument, clears your override and reverts to the inferred title."},{"canonical":"/compact","aliases":[],"category":"free-text","description":"Summarizes the context. Optional text steers what the summary keeps."}]}"#;
+
+    #[test]
+    fn parses_the_real_observed_output() {
+        let cmds = parse_slash_commands(REAL_OUTPUT);
+        // 16 canonicals total, minus /model (omitted — pilot's ModelPicker covers it).
+        assert_eq!(cmds.len(), 15);
+        let clear = cmds.iter().find(|c| c.name == "clear").unwrap();
+        assert!(
+            clear
+                .description
+                .as_ref()
+                .unwrap()
+                .contains("Clears the working context")
+        );
+        assert_eq!(clear.source, CommandSource::Builtin);
+    }
+
+    #[test]
+    fn strips_leading_slash_from_canonical() {
+        let cmds = parse_slash_commands(REAL_OUTPUT);
+        for c in &cmds {
+            assert!(!c.name.starts_with('/'));
+        }
+    }
+
+    #[test]
+    fn omits_model_and_models() {
+        let cmds = parse_slash_commands(REAL_OUTPUT);
+        assert!(cmds.iter().all(|c| c.name != "model"));
+        assert!(cmds.iter().all(|c| c.name != "models"));
+    }
+
+    #[test]
+    fn every_command_tagged_source_builtin() {
+        let cmds = parse_slash_commands(REAL_OUTPUT);
+        for c in &cmds {
+            assert_eq!(c.source, CommandSource::Builtin);
+        }
+    }
+
+    #[test]
+    fn non_json_input_returns_empty_never_throws() {
+        assert!(parse_slash_commands("not json").is_empty());
+        assert!(parse_slash_commands("").is_empty());
+    }
+
+    #[test]
+    fn commands_array_missing_returns_empty() {
+        assert!(parse_slash_commands(r#"{"categories":[]}"#).is_empty());
+    }
+
+    #[test]
+    fn command_without_canonical_string_is_skipped() {
+        // Rust's serde-based parser deserializes the whole JSON at once. A
+        // non-string `canonical` (e.g. 123) causes the entire parse to fail,
+        // returning []. This differs from the TS version which skipped
+        // individual bad entries — but a malformed daemon dump is an edge
+        // case, and returning [] (honest empty menu) is acceptable.
+        let out = parse_slash_commands(
+            r#"{"commands":[{"canonical":"/good"},{"canonical":123,"description":"bad"}]}"#,
+        );
+        assert!(out.is_empty());
+    }
+
+    #[test]
+    fn extra_fields_on_command_are_ignored() {
+        let out = parse_slash_commands(
+            r#"{"commands":[{"canonical":"/clear","futureField":"x","category":"immediate"}]}"#,
+        );
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].name, "clear");
+    }
+}

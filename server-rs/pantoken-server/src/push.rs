@@ -517,4 +517,96 @@ mod tests {
             SendOutcome::Failed
         ));
     }
+
+    // ── Ported from push.test.ts.bak ──────────────────────────
+
+    fn sub(endpoint: &str) -> PushSubscription {
+        PushSubscription {
+            endpoint: endpoint.to_string(),
+            keys: SubscriptionKeys {
+                p256dh: format!("p256-{endpoint}"),
+                auth: format!("auth-{endpoint}"),
+            },
+        }
+    }
+
+    #[test]
+    fn add_is_idempotent_by_endpoint_with_rotated_keys() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut store = PushSubscriptionStore::new(dir.path().join("subs.json"));
+        store.add(sub("https://fcm/a"));
+        store.add(PushSubscription {
+            endpoint: "https://fcm/a".into(),
+            keys: SubscriptionKeys {
+                p256dh: "rotated".into(),
+                auth: "rotated".into(),
+            },
+        });
+        assert_eq!(store.count(), 1);
+        let vals = store.values();
+        assert_eq!(vals[0].keys.auth, "rotated");
+    }
+
+    #[test]
+    fn remove_drops_subscription_and_persists() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("subs.json");
+        let mut store = PushSubscriptionStore::new(path.clone());
+        store.add(sub("https://fcm/a"));
+        store.add(sub("https://fcm/b"));
+        store.remove("https://fcm/a");
+        assert_eq!(store.count(), 1);
+        assert_eq!(store.values()[0].endpoint, "https://fcm/b");
+        // persisted: reload from disk
+        let reloaded = PushSubscriptionStore::new(path);
+        assert_eq!(reloaded.count(), 1);
+    }
+
+    #[test]
+    fn remove_is_noop_for_unknown_endpoint() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("subs.json");
+        let mut store = PushSubscriptionStore::new(path.clone());
+        store.add(sub("https://fcm/a"));
+        let before = std::fs::read_to_string(&path).unwrap();
+        store.remove("https://fcm/never-added");
+        assert_eq!(store.count(), 1);
+        // no file rewrite
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), before);
+    }
+
+    #[test]
+    fn prune_with_empty_list_is_noop() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("subs.json");
+        let mut store = PushSubscriptionStore::new(path.clone());
+        store.add(sub("https://fcm/a"));
+        let before = std::fs::read_to_string(&path).unwrap();
+        store.prune(&[]);
+        assert_eq!(store.count(), 1);
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), before);
+    }
+
+    #[test]
+    fn prune_tolerates_endpoints_not_present() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut store = PushSubscriptionStore::new(dir.path().join("subs.json"));
+        store.add(sub("https://fcm/a"));
+        store.add(sub("https://fcm/b"));
+        store.prune(&["https://fcm/a".into(), "https://fcm/unknown".into()]);
+        assert_eq!(store.count(), 1);
+        assert_eq!(store.values()[0].endpoint, "https://fcm/b");
+    }
+
+    #[test]
+    fn malformed_subs_file_falls_back_to_empty() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("subs.json");
+        let mut store = PushSubscriptionStore::new(path.clone());
+        store.add(sub("https://fcm/a"));
+        // Corrupt the file
+        std::fs::write(&path, "{ not valid json").unwrap();
+        let reloaded = PushSubscriptionStore::new(path);
+        assert_eq!(reloaded.count(), 0);
+    }
 }
