@@ -29,6 +29,7 @@ use std::time::Duration;
 
 use notify::event::Event as NotifyEvent;
 use notify::{RecommendedWatcher, RecursiveMode, Watcher};
+use parking_lot::Mutex;
 use tokio::sync::mpsc;
 use tracing::{error, warn};
 
@@ -77,12 +78,18 @@ pub enum WatchedPath {
     /// The user/global config directory. Changes invalidate ALL
     /// config-dependent caches.
     GlobalConfig(PathBuf),
+    /// A per-cwd project config directory (`<cwd>/.polytoken`). Changes
+    /// invalidate only that cwd's facet/command caches. The `cwd` field is
+    /// the project root the watched `.polytoken` dir belongs to.
+    ProjectConfig { path: PathBuf, cwd: String },
 }
 
 impl WatchedPath {
     pub fn path(&self) -> &Path {
         match self {
-            WatchedPath::Binary(p) | WatchedPath::GlobalConfig(p) => p,
+            WatchedPath::Binary(p)
+            | WatchedPath::GlobalConfig(p)
+            | WatchedPath::ProjectConfig { path: p, .. } => p,
         }
     }
 }
@@ -93,20 +100,31 @@ impl WatchedPath {
 pub enum InvalidationAction {
     /// Invalidate model/default caches AND all cwd-scoped facet/command caches.
     All,
+    /// Invalidate only the facet/command caches for the given cwd.
+    Cwd(String),
     /// No action needed (event was irrelevant, e.g. a directory was removed).
     None,
 }
 
 /// Classify a raw `notify` event into an invalidation action.
 ///
-/// All watched paths (binary + global config) currently map to `All` because
-/// a change to either could affect any config-dependent cache. If per-cwd
-/// project config watching is added later, this is where cwd-scoped
-/// classification would go.
-pub fn classify_event(_event: &NotifyEvent) -> InvalidationAction {
-    // We treat any event from a watched path as a potential config change.
-    // The debounce layer coalesces bursts; over-invalidation is safe (just
-    // a cache miss + re-run on next lookup).
+/// `watched_paths` maps each watched directory to its invalidation scope:
+/// binary/global config → `All`, project config → `Cwd(cwd)`. If the event
+/// path is under a watched project config dir, we return `Cwd(cwd)`. For all
+/// other events (binary, global, or unmatched), we return `All` —
+/// over-invalidation is safe (just a cache miss + re-run on next lookup).
+pub fn classify_event(event: &NotifyEvent, watched_paths: &[WatchedPath]) -> InvalidationAction {
+    // Check if the event path is under a watched project config directory.
+    for wp in watched_paths {
+        if let WatchedPath::ProjectConfig { path, cwd } = wp {
+            for event_path in &event.paths {
+                if event_path.starts_with(path) {
+                    return InvalidationAction::Cwd(cwd.clone());
+                }
+            }
+        }
+    }
+    // Default: any event from a binary/global path (or unmatched) → All.
     InvalidationAction::All
 }
 
@@ -146,10 +164,28 @@ impl DebounceCoalescer {
                 None
             }
             Some(pending) => {
-                // Merge: All supersedes None; All + All = All.
-                let merged = match (pending, &action) {
+                // Merge rules:
+                // - All supersedes everything (binary/global change → invalidate all).
+                // - Cwd(a) + Cwd(b) where a≠b → All (two different cwds → just nuke all).
+                // - Cwd(a) + Cwd(a) → Cwd(a) (same cwd, keep scoped).
+                // - Cwd + None → Cwd (None is a no-op).
+                // - None + None → None.
+                let merged = match (pending.clone(), action) {
                     (InvalidationAction::All, _) | (_, InvalidationAction::All) => {
                         InvalidationAction::All
+                    }
+                    (InvalidationAction::Cwd(a), InvalidationAction::Cwd(b)) => {
+                        if a == b {
+                            InvalidationAction::Cwd(a)
+                        } else {
+                            InvalidationAction::All
+                        }
+                    }
+                    (InvalidationAction::Cwd(cwd), InvalidationAction::None) => {
+                        InvalidationAction::Cwd(cwd)
+                    }
+                    (InvalidationAction::None, InvalidationAction::Cwd(cwd)) => {
+                        InvalidationAction::Cwd(cwd)
                     }
                     (InvalidationAction::None, InvalidationAction::None) => {
                         InvalidationAction::None
@@ -184,8 +220,12 @@ impl DebounceCoalescer {
 /// The watcher must be kept alive for events to flow; dropping the
 /// `RecommendedWatcher` stops watching.
 pub struct ConfigWatcherHandle {
-    /// The notify watcher — kept alive so events continue to flow.
-    _watcher: RecommendedWatcher,
+    /// The notify watcher — kept alive so events continue to flow. Wrapped in
+    /// a Mutex so `register_project_config` can add new watches at runtime.
+    watcher: Mutex<RecommendedWatcher>,
+    /// Shared list of all watched paths (including dynamically-registered
+    /// project config paths). Read by the debounce task for event classification.
+    watched_paths: Arc<Mutex<Vec<WatchedPath>>>,
     /// The debounce task. Aborted on drop.
     task: tokio::task::JoinHandle<()>,
 }
@@ -194,6 +234,49 @@ impl ConfigWatcherHandle {
     /// Abort the watcher task. Safe to call multiple times.
     pub fn abort(&self) {
         self.task.abort();
+    }
+
+    /// Register a project config directory for watching. Idempotent: if the
+    /// given cwd is already watched, this is a no-op. Returns `true` if a new
+    /// watch was added, `false` if it was already registered or failed.
+    pub fn register_project_config(&self, path: PathBuf, cwd: String) -> bool {
+        // Check if this cwd is already watched (idempotent).
+        {
+            let paths = self.watched_paths.lock();
+            if paths.iter().any(|wp| match wp {
+                WatchedPath::ProjectConfig { cwd: c, .. } => c == &cwd,
+                _ => false,
+            }) {
+                return false;
+            }
+        }
+
+        // Determine the watch target: the .polytoken dir if it exists,
+        // otherwise its parent (the cwd) to catch creation.
+        let (watch_target, recursive) = if path.exists() {
+            (path.clone(), RecursiveMode::Recursive)
+        } else if let Some(parent) = path.parent() {
+            (parent.to_path_buf(), RecursiveMode::NonRecursive)
+        } else {
+            (path.clone(), RecursiveMode::Recursive)
+        };
+
+        let mut watcher = self.watcher.lock();
+        match watcher.watch(&watch_target, recursive) {
+            Ok(()) => {
+                self.watched_paths
+                    .lock()
+                    .push(WatchedPath::ProjectConfig { path, cwd });
+                true
+            }
+            Err(e) => {
+                warn!(
+                    "register_project_config: failed to watch {}: {e}",
+                    path.display()
+                );
+                false
+            }
+        }
     }
 }
 
@@ -279,6 +362,17 @@ pub fn setup_watcher(
                 }
             }
             WatchedPath::GlobalConfig(p) => (p.clone(), RecursiveMode::Recursive),
+            WatchedPath::ProjectConfig { path, .. } => {
+                // Watch the .polytoken directory recursively. If it doesn't
+                // exist yet, watch the parent (the cwd) to catch its creation.
+                if path.exists() {
+                    (path.clone(), RecursiveMode::Recursive)
+                } else if let Some(parent) = path.parent() {
+                    (parent.to_path_buf(), RecursiveMode::NonRecursive)
+                } else {
+                    (path.clone(), RecursiveMode::Recursive)
+                }
+            }
         };
 
         match watcher.watch(&watch_target, recursive) {
@@ -315,39 +409,48 @@ pub fn setup_watcher(
         return (None, status);
     }
 
-    // Spawn the debounce task.
-    let task = tokio::spawn(async move {
-        let mut coalescer = DebounceCoalescer::new(Duration::from_millis(200));
+    // Shared list of all watched paths. The debounce task reads this for
+    // event classification; `register_project_config` adds to it at runtime.
+    let shared_watched_paths = Arc::new(Mutex::new(watched_paths.clone()));
 
-        loop {
-            // Either wait for a new event or check the debounce timer.
-            tokio::select! {
-                event = rx.recv() => {
-                    match event {
-                        None => break, // Channel closed → watcher dropped → exit.
-                        Some(event) => {
-                            let action = classify_event(&event);
-                            if action != InvalidationAction::None {
-                                coalescer.feed(action, tokio::time::Instant::now());
+    // Spawn the debounce task.
+    let task = {
+        let watched_paths_ref = shared_watched_paths.clone();
+        tokio::spawn(async move {
+            let mut coalescer = DebounceCoalescer::new(Duration::from_millis(200));
+
+            loop {
+                // Either wait for a new event or check the debounce timer.
+                tokio::select! {
+                    event = rx.recv() => {
+                        match event {
+                            None => break, // Channel closed → watcher dropped → exit.
+                            Some(event) => {
+                                let paths = watched_paths_ref.lock().clone();
+                                let action = classify_event(&event, &paths);
+                                if action != InvalidationAction::None {
+                                    coalescer.feed(action, tokio::time::Instant::now());
+                                }
                             }
                         }
                     }
-                }
-                _ = tokio::time::sleep(Duration::from_millis(50)) => {
-                    if coalescer.has_pending() {
-                        if let Some(action) = coalescer.check_debounce(tokio::time::Instant::now()) {
-                            if action != InvalidationAction::None {
-                                invalidation(action);
+                    _ = tokio::time::sleep(Duration::from_millis(50)) => {
+                        if coalescer.has_pending() {
+                            if let Some(action) = coalescer.check_debounce(tokio::time::Instant::now()) {
+                                if action != InvalidationAction::None {
+                                    invalidation(action);
+                                }
                             }
                         }
                     }
                 }
             }
-        }
-    });
+        })
+    };
 
     let handle = ConfigWatcherHandle {
-        _watcher: watcher,
+        watcher: Mutex::new(watcher),
+        watched_paths: shared_watched_paths,
         task,
     };
 
@@ -387,7 +490,6 @@ pub fn resolve_binary_path(bin_path: &str) -> Option<PathBuf> {
 mod tests {
     use super::*;
     use notify::EventKind;
-    use parking_lot::Mutex;
 
     // ---- WatchStatus tests ----
 
@@ -494,14 +596,15 @@ mod tests {
 
     #[test]
     fn any_event_classifies_as_all_invalidation() {
-        // All watched paths (binary + global config) map to All because a
-        // change to either could affect any config-dependent cache.
+        // Binary/global config events map to All because a change to either
+        // could affect any config-dependent cache.
         let event = NotifyEvent {
             kind: EventKind::Create(notify::event::CreateKind::File),
             paths: vec![PathBuf::from("/etc/polytoken/config.toml")],
             attrs: notify::event::EventAttributes::default(),
         };
-        assert_eq!(classify_event(&event), InvalidationAction::All);
+        let watched = vec![WatchedPath::GlobalConfig(PathBuf::from("/etc/polytoken"))];
+        assert_eq!(classify_event(&event, &watched), InvalidationAction::All);
     }
 
     #[test]
@@ -513,7 +616,31 @@ mod tests {
             paths: vec![PathBuf::from("/usr/local/bin/polytoken")],
             attrs: notify::event::EventAttributes::default(),
         };
-        assert_eq!(classify_event(&event), InvalidationAction::All);
+        let watched = vec![WatchedPath::Binary(PathBuf::from(
+            "/usr/local/bin/polytoken",
+        ))];
+        assert_eq!(classify_event(&event, &watched), InvalidationAction::All);
+    }
+
+    #[test]
+    fn project_config_event_classifies_as_cwd() {
+        // An event under a watched project config dir maps to Cwd(cwd).
+        let project_path = PathBuf::from("/repo/myproject/.polytoken");
+        let event = NotifyEvent {
+            kind: EventKind::Modify(notify::event::ModifyKind::Data(
+                notify::event::DataChange::Any,
+            )),
+            paths: vec![project_path.join("facets/custom.md")],
+            attrs: notify::event::EventAttributes::default(),
+        };
+        let watched = vec![WatchedPath::ProjectConfig {
+            path: project_path,
+            cwd: "/repo/myproject".to_string(),
+        }];
+        assert_eq!(
+            classify_event(&event, &watched),
+            InvalidationAction::Cwd("/repo/myproject".to_string())
+        );
     }
 
     // ---- resolve_binary_path tests ----
@@ -641,16 +768,47 @@ mod tests {
         );
     }
 
-    // ---- AC.7: project watching unavailability is reported ----
+    // ---- AC.7: project config event debounces to cwd-scoped invalidation ----
 
     #[test]
-    fn project_config_watching_unavailable_is_reported_when_no_verified_path_convention_exists() {
-        // When project_watching_unavailable is true, the WatchStatus::Ok variant
-        // must explicitly carry that flag so callers can report the limitation
-        // rather than silently assuming per-cwd project watching is active.
+    fn project_config_event_debounces_to_cwd_cache_invalidation() {
+        let mut c = DebounceCoalescer::new(Duration::from_millis(100));
+        let base = tokio::time::Instant::now();
+        let project_path = PathBuf::from("/repo/myproject/.polytoken");
+        let watched = vec![WatchedPath::ProjectConfig {
+            path: project_path.clone(),
+            cwd: "/repo/myproject".to_string(),
+        }];
+
+        // Simulate a burst of events from the project config dir.
+        for i in 0..5 {
+            let event = NotifyEvent {
+                kind: EventKind::Modify(notify::event::ModifyKind::Data(
+                    notify::event::DataChange::Any,
+                )),
+                paths: vec![project_path.join("config.toml")],
+                attrs: notify::event::EventAttributes::default(),
+            };
+            let action = classify_event(&event, &watched);
+            c.feed(action, base + Duration::from_millis(i));
+        }
+
+        // After debounce, exactly one Cwd invalidation fires.
+        let fired = c.check_debounce(base + Duration::from_millis(150));
+        assert_eq!(
+            fired,
+            Some(InvalidationAction::Cwd("/repo/myproject".to_string())),
+            "project config events should coalesce into one Cwd invalidation"
+        );
+    }
+
+    #[test]
+    fn project_config_watching_available_is_reported_when_setup_succeeds() {
+        // When project_watching_unavailable is false, the WatchStatus::Ok variant
+        // reports that per-cwd project config watching is active.
         let status = WatchStatus::Ok {
             watched: vec![PathBuf::from("/etc/polytoken")],
-            project_watching_unavailable: true,
+            project_watching_unavailable: false,
         };
         match status {
             WatchStatus::Ok {
@@ -658,13 +816,35 @@ mod tests {
                 ..
             } => {
                 assert!(
-                    project_watching_unavailable,
-                    "project_watching_unavailable must be true when no verified \
-                     project config path convention exists"
+                    !project_watching_unavailable,
+                    "project_watching_unavailable must be false when \
+                     <cwd>/.polytoken watching is active"
                 );
             }
             _ => panic!("expected Ok status"),
         }
+    }
+
+    #[test]
+    fn two_different_cwds_coalesce_to_all() {
+        // If events from two different project config dirs arrive in the same
+        // debounce window, the coalescer escalates to All (cheaper than
+        // tracking individual cwds through a burst).
+        let mut c = DebounceCoalescer::new(Duration::from_millis(100));
+        let base = tokio::time::Instant::now();
+
+        c.feed(InvalidationAction::Cwd("/repo/a".to_string()), base);
+        c.feed(
+            InvalidationAction::Cwd("/repo/b".to_string()),
+            base + Duration::from_millis(10),
+        );
+
+        let fired = c.check_debounce(base + Duration::from_millis(150));
+        assert_eq!(
+            fired,
+            Some(InvalidationAction::All),
+            "two different cwd events should escalate to All"
+        );
     }
 
     // ---- AC.6: global/binary event debounces to all-cache invalidation ----
@@ -675,6 +855,7 @@ mod tests {
         let base = tokio::time::Instant::now();
 
         // Simulate a burst of events from a binary/global config change.
+        let watched = vec![WatchedPath::GlobalConfig(PathBuf::from("/etc/polytoken"))];
         for i in 0..5 {
             let event = NotifyEvent {
                 kind: EventKind::Modify(notify::event::ModifyKind::Data(
@@ -683,7 +864,7 @@ mod tests {
                 paths: vec![PathBuf::from("/etc/polytoken/config.toml")],
                 attrs: notify::event::EventAttributes::default(),
             };
-            let action = classify_event(&event);
+            let action = classify_event(&event, &watched);
             c.feed(action, base + Duration::from_millis(i));
         }
 

@@ -168,6 +168,12 @@ struct PolytokenInner {
     /// `get_model_defaults()` so a single subprocess result serves both.
     /// `None` = not yet populated (or invalidated). Not cached on error.
     model_cache: Mutex<Option<ParsedModels>>,
+    /// Single-flight lock for model cache misses. Prevents the thundering
+    /// herd: N concurrent callers on a cold cache would each spawn
+    /// `polytoken models` independently. With this lock, only the first
+    /// caller runs the subprocess; others wait, then find the cache populated
+    /// (double-checked locking).
+    model_cache_lock: tokio::sync::Mutex<()>,
     /// The inspectable status of the config watcher (binary/global config).
     /// `Disabled` in fake/test mode.
     watch_status: Mutex<config_watcher::WatchStatus>,
@@ -239,6 +245,7 @@ impl PolytokenDriver {
                 command_cache: Mutex::new(HashMap::new()),
                 facet_cache: Mutex::new(HashMap::new()),
                 model_cache: Mutex::new(None),
+                model_cache_lock: tokio::sync::Mutex::new(()),
                 watch_status: Mutex::new(config_watcher::WatchStatus::Disabled),
                 watcher_handle: Mutex::new(None),
                 command_runner: default_command_runner(),
@@ -295,6 +302,7 @@ impl PolytokenDriver {
                 command_cache: Mutex::new(HashMap::new()),
                 facet_cache: Mutex::new(HashMap::new()),
                 model_cache: Mutex::new(None),
+                model_cache_lock: tokio::sync::Mutex::new(()),
                 watch_status: Mutex::new(config_watcher::WatchStatus::Disabled),
                 watcher_handle: Mutex::new(None),
                 command_runner: default_command_runner(),
@@ -529,7 +537,6 @@ impl PolytokenInner {
 
     /// Invalidate facet and command caches for a specific cwd only.
     /// Used when a project-scoped config change is detected for that cwd.
-    #[allow(dead_code)] // used by watcher integration + tests
     pub fn invalidate_cwd_config_caches(&self, cwd: &str) {
         debug!("invalidating cwd config caches for {cwd}");
         self.facet_cache.lock().remove(cwd);
@@ -542,16 +549,69 @@ impl PolytokenInner {
         self.watch_status.lock().clone()
     }
 
+    /// Register `<cwd>/.polytoken` for filesystem watching. Called lazily by
+    /// `list_facets` and `list_commands` when they resolve a session cwd.
+    /// Idempotent — safe to call repeatedly for the same cwd. No-op if the
+    /// watcher is not active (fake/test mode or setup failure).
+    fn register_project_config_watch(&self, cwd: &str) {
+        let guard = self.watcher_handle.lock();
+        let Some(handle) = guard.as_ref() else {
+            return;
+        };
+        let project_config_path = Path::new(cwd).join(".polytoken");
+        handle.register_project_config(project_config_path, cwd.to_string());
+    }
+
+    // ---- Single-flight model cache fetch ----
+
+    /// Get the cached parsed models, or fetch them via `polytoken models` if
+    /// the cache is empty. Uses single-flight deduplication: concurrent
+    /// callers on a cold cache share one subprocess — the first caller
+    /// acquires `model_cache_lock`, runs the command, and populates the cache;
+    /// waiting callers acquire the lock after, find the cache populated
+    /// (double-checked locking), and return without spawning a subprocess.
+    ///
+    /// On subprocess error, returns an empty `ParsedModels` (matching the
+    /// original `list_models` error behavior) and does NOT cache the failure
+    /// so the next call retries.
+    async fn get_or_fetch_parsed_models(self: &Arc<Self>) -> ParsedModels {
+        // Fast path: cache hit (no lock contention).
+        if let Some(cached) = self.model_cache.lock().clone() {
+            return cached;
+        }
+        // Slow path: acquire the single-flight lock.
+        let _guard = self.model_cache_lock.lock().await;
+        // Double-check: another caller may have populated the cache while we
+        // waited for the lock.
+        if let Some(cached) = self.model_cache.lock().clone() {
+            return cached;
+        }
+        // Still a miss — we're the elected caller. Run the subprocess.
+        let output = self.run_polytoken(vec!["models".into()], None).await;
+        match output {
+            Ok(out) => {
+                let stdout = String::from_utf8_lossy(&out.stdout).to_string();
+                let parsed = parse_models(&stdout);
+                *self.model_cache.lock() = Some(parsed.clone());
+                parsed
+            }
+            Err(e) => {
+                error!("list_models failed: {e}");
+                // Do not cache failed results (AC.3: next call retries).
+                ParsedModels::default()
+            }
+        }
+    }
+
     // ---- Config watcher setup ----
 
     /// Start the config watcher over the resolved binary path and the global
     /// config directory. Called only in real (non-fake) driver mode.
     ///
-    /// Per-cwd project config watching is intentionally unavailable: Pantoken
-    /// delegates project config resolution to `polytoken --working-dir <cwd>`,
-    /// and no inspected CLI command exposes a project config dependency graph
-    /// or fingerprint. The watcher status explicitly reports this limitation
-    /// so callers don't silently assume per-cwd freshness.
+    /// Per-cwd project config watching is registered lazily: when `list_facets`
+    /// or `list_commands` resolves a session cwd, it registers `<cwd>/.polytoken`
+    /// for watching via `ConfigWatcherHandle::register_project_config`. Events
+    /// from that directory invalidate only that cwd's facet/command caches.
     fn start_config_watcher(self: Arc<Self>) {
         let mut watched_paths: Vec<config_watcher::WatchedPath> = Vec::new();
 
@@ -610,15 +670,19 @@ impl PolytokenInner {
                 config_watcher::InvalidationAction::All => {
                     inner.invalidate_all_config_caches();
                 }
+                config_watcher::InvalidationAction::Cwd(cwd) => {
+                    inner.invalidate_cwd_config_caches(&cwd);
+                }
                 config_watcher::InvalidationAction::None => {}
             });
 
         let (handle, status) = config_watcher::setup_watcher(
             watched_paths,
             invalidation,
-            // project_watching_unavailable = true: no verified project config
-            // path convention exists (see method doc above).
-            true,
+            // project_watching_unavailable = false: we watch <cwd>/.polytoken
+            // for project config changes (registered lazily by list_facets/
+            // list_commands).
+            false,
         );
 
         *self.watch_status.lock() = status;
@@ -2026,37 +2090,15 @@ impl PantokenDriver for PolytokenDriver {
         if let Some(cached) = self.inner.model_cache.lock().clone() {
             return cached.models;
         }
-        // Cache miss: run `polytoken models` through the injectable command
-        // runner (required for testability — AC.1-AC.3).
-        let output = self.inner.run_polytoken(vec!["models".into()], None).await;
-        match output {
-            Ok(out) => {
-                let stdout = String::from_utf8_lossy(&out.stdout).to_string();
-                let parsed = parse_models(&stdout);
-                let models = parsed.models.clone();
-                // Cache the full parsed result so get_model_defaults can reuse it.
-                *self.inner.model_cache.lock() = Some(parsed);
-                models
-            }
-            Err(e) => {
-                error!("list_models failed: {e}");
-                // Do not cache failed empty results (AC.3: next call retries).
-                Vec::new()
-            }
-        }
+        // Cache miss: use the single-flight fetch path so concurrent callers
+        // share one subprocess (thundering herd fix).
+        let parsed = self.inner.get_or_fetch_parsed_models().await;
+        parsed.models
     }
 
     async fn get_model_defaults(&self) -> ModelDefaults {
         // Reuse the same cached parsed models as list_models (AC.2).
-        // If the cache is empty, populate it by calling list_models.
-        if self.inner.model_cache.lock().is_none() {
-            self.list_models().await;
-        }
-        let parsed = self.inner.model_cache.lock().clone();
-        let Some(parsed) = parsed else {
-            // list_models failed and didn't cache — return defaults.
-            return ModelDefaults::default();
-        };
+        let parsed = self.inner.get_or_fetch_parsed_models().await;
         ModelDefaults {
             provider: parsed
                 .default_model
@@ -2074,6 +2116,9 @@ impl PantokenDriver for PolytokenDriver {
         let Some(cwd) = self.inner.targeted_session_cwd(session_id.as_ref()) else {
             return Vec::new();
         };
+        // Register `<cwd>/.polytoken` for watching (idempotent, no-op if
+        // watcher is inactive). Events invalidate this cwd's command cache.
+        self.inner.register_project_config_watch(&cwd);
         if let Some(cached) = self.inner.command_cache.lock().get(&cwd) {
             return cached.clone();
         }
@@ -2114,6 +2159,9 @@ impl PantokenDriver for PolytokenDriver {
         let Some(cwd) = self.inner.targeted_session_cwd(session_id.as_ref()) else {
             return builtins();
         };
+        // Register `<cwd>/.polytoken` for watching (idempotent, no-op if
+        // watcher is inactive). Events invalidate this cwd's facet cache.
+        self.inner.register_project_config_watch(&cwd);
         if let Some(cached) = self.inner.facet_cache.lock().get(&cwd) {
             return cached.clone();
         }
@@ -2623,6 +2671,7 @@ mod tests {
             command_cache: Mutex::new(HashMap::new()),
             facet_cache: Mutex::new(HashMap::new()),
             model_cache: Mutex::new(None),
+            model_cache_lock: tokio::sync::Mutex::new(()),
             watch_status: Mutex::new(config_watcher::WatchStatus::Disabled),
             watcher_handle: Mutex::new(None),
             command_runner: default_command_runner(),
@@ -3827,5 +3876,47 @@ mod tests {
             "driver should still list models despite watcher status"
         );
         assert_eq!(*calls.lock(), 1);
+    }
+
+    // ---- Thundering herd: concurrent model cache miss shares one subprocess ----
+
+    #[tokio::test]
+    async fn concurrent_model_cache_miss_shares_one_subprocess() {
+        // N concurrent callers on a cold cache should share one subprocess
+        // invocation (single-flight deduplication via model_cache_lock).
+        let calls = Arc::new(Mutex::new(0));
+        let calls_clone = calls.clone();
+        let runner: Arc<CommandRunner> = Arc::new(move |_program, _args, _cwd| {
+            *calls_clone.lock() += 1;
+            Box::pin(async {
+                // Simulate a slow subprocess so concurrent callers overlap.
+                tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+                Ok(ok_output(
+                    "default_model: umans/umans-glm-5.2\n\nmodels:\n- umans/umans-glm-5.2\n  provider: umans/umans-glm-5.2\n",
+                ))
+            })
+        });
+        let (driver, _dir) = driver_with_runner("s1", "/repo/a", runner);
+
+        // Fire N concurrent list_models calls on a cold cache.
+        let n = 8;
+        let mut handles = Vec::new();
+        for _ in 0..n {
+            let d = driver.inner.clone();
+            handles.push(tokio::spawn(async move {
+                PolytokenDriver { inner: d }.list_models().await
+            }));
+        }
+        for h in handles {
+            let models = h.await.expect("task panicked");
+            assert_eq!(models.len(), 1, "each caller should get the model list");
+        }
+
+        // Only one subprocess should have run.
+        assert_eq!(
+            *calls.lock(),
+            1,
+            "concurrent cache miss should share one subprocess (single-flight)"
+        );
     }
 }
