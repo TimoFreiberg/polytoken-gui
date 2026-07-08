@@ -11,6 +11,7 @@ use axum::extract::{Query, State};
 use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
+use axum::serve::ListenerExt;
 use axum::{Json, Router};
 use parking_lot::Mutex as ParkingMutex;
 use serde::Deserialize;
@@ -230,9 +231,18 @@ async fn main() {
         cfg.debug,
     );
 
+    // TCP_NODELAY on every accepted connection: the WS path pushes many small
+    // frames (deltas, status) and Nagle would batch them behind unacked data —
+    // imperceptible on localhost, but adds up to an RTT of lag per burst for a
+    // phone/remote client. Nothing this server sends benefits from batching.
     let listener = tokio::net::TcpListener::bind(addr)
         .await
-        .unwrap_or_else(|e| panic!("failed to bind {addr}: {e}"));
+        .unwrap_or_else(|e| panic!("failed to bind {addr}: {e}"))
+        .tap_io(|tcp_stream| {
+            if let Err(err) = tcp_stream.set_nodelay(true) {
+                warn!("failed to set TCP_NODELAY on incoming connection: {err}");
+            }
+        });
 
     // Live-refresh ticker: polls running sessions' usage every PANTOKEN_LIVE_REFRESH_MS,
     // mirroring the TS hub's syncLiveRefresh interval. Only runs while there are
