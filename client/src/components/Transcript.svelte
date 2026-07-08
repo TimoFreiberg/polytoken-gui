@@ -1228,15 +1228,16 @@
     max-width: var(--maxw);
     margin-inline: auto;
   }
-  /* The thinking block must fill its row like .md-host does, not shrink-wrap. Without
-     this, `margin-inline: auto` on the flex item above prevents cross-axis stretch and the
-     block collapses to its content width — a narrow centered box floating away from the
-     prose left edge. */
+  /* The thinking block must fill its measure like .md-host fills the wide row, not
+     shrink-wrap to its "Thinking…" label. Capped at --maxw (not --maxw-wide) and centered
+     so its left edge lines up with the prose left edge instead of the wide row's edge —
+     `max-width: none` here would stretch it under the full --maxw-wide row, landing its
+     border ~200px left of the prose. */
   .row.assistant > :global(.think) {
     width: 100%;
     min-width: 0;
-    max-width: none;
-    margin-inline: 0;
+    max-width: var(--maxw);
+    margin-inline: auto;
   }
   /* The markdown body fills the wide row so its fenced code / tables can break out; the
      leaf `.node-content > *` rules below re-cap prose at the measure. `<Markdown>` wraps
@@ -1247,15 +1248,6 @@
      instead of letting a wide table scroll. `min-width: 0` stops this flex item blowing
      out to a wide table's min-content. */
   .row.assistant > :global(.md-host) {
-    width: 100%;
-    min-width: 0;
-    max-width: none;
-    margin-inline: 0;
-  }
-  /* The thinking block also fills the row (so its left border aligns with the prose
-     edge) instead of shrink-wrapping + centering under the catch-all auto-margin rule
-     above. */
-  .row.assistant > :global(.think) {
     width: 100%;
     min-width: 0;
     max-width: none;
@@ -1788,5 +1780,22 @@
     display: flex;
     flex-direction: column;
     gap: 8px;
+  }
+  /* Consecutive tool cards sit flush, with no dead-space gap between them — the flex
+     `gap` on their container is for spacing a tool against neighboring narration/thinking,
+     but between two tool cards in a row it just made the hover-highlighted header
+     background look like a floating stripe. A negative margin on the second (and any
+     later) adjacent `.tool` cancels exactly that gap, without touching tool-to-prose or
+     tool-to-thinking spacing (these selectors only match when BOTH sides are `.tool`).
+     Two containers, because a turn's tools live in different parents depending on state:
+       • `.work-body` (gap 8px) — a SETTLED turn, tools folded behind "Worked for Ns".
+       • `.col` (gap 18px) — a LIVE turn: groupTurns forces its work lane non-collapsible
+         while in flight, so the tools render inline as direct transcript children. This
+         is the case the freshly-loaded / streaming screenshot shows. */
+  .work-body > :global(.tool) + :global(.tool) {
+    margin-top: -8px;
+  }
+  .col > :global(.tool) + :global(.tool) {
+    margin-top: -18px;
   }
 </style>
