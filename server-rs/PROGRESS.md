@@ -1,14 +1,15 @@
 # Rust Server Port — Status & Resumption Plan
 
-**Status (2026-07-07):** Phase 5 complete. 470 Rust tests green (5 daemon-types,
-64 protocol, 368 lib [5 `#[ignore]`], 8 corpus, 25 live_path), 761 TS tests
+**Status (2026-07-08):** Phase 5 complete. 485 Rust tests green (5 daemon-types,
+64 protocol, 383 lib [5 `#[ignore]`], 8 corpus, 25 live_path), 761 TS tests
 green, 298/298 Rust-server e2e (0 deterministic failures). `cargo clippy
 --all-targets -- -D warnings` + `cargo fmt --check` clean. Mock-e2e burn-down
 complete (Phase 1); live-path validation parts 1–2 complete (Phases 2, 2.5, 5);
 6 live-path `BUG:` markers resolved (Phase A). Phase 3 `/health` real counts +
 `build_sha` env + web push delivery (VAPID keygen + `/push/*` + hub `notify`)
-done. Remaining: daemon-client/lease-retry test ports (Phase 2 item 4), Phase 3
-cutover mechanics (live smoke, default flip).
+done; `sessions-registry` (15) tests ported. Remaining: daemon-client/lease-
+retry test ports (Phase 2 item 4), Phase 3 cutover mechanics (live smoke,
+default flip).
 
 ## Goal
 
@@ -84,7 +85,7 @@ I/O-shaped. The remaining gap is the I/O-shaped daemon/hub integration tests:
 | `hub-journal.test.ts` | 14 | 0 (journal unit ≠ hub integration) |
 | `daemon-client.test.ts` | 14 | 0 |
 | `lease-retry.test.ts` | 11 | 0 |
-| `sessions-registry.test.ts` | 15 | 0 (`read_session_json` is consumed but the test file isn't ported) |
+| `sessions-registry.test.ts` | 15 | ✅ 15 (ported 2026-07-08) |
 
 The e2e suite runs the **mock driver only** (plus the `e2e/live` corpus-subset
 tier). "e2e passes" must not be read as "the live path is validated" — the mock
@@ -249,8 +250,9 @@ faithfully.
       daemon-death-mid-session CAN be wire-expressed (claim rejection, SSE drop)
       — cover those in the fake-daemon integration tests.
 - [x] `shared/` modules ported with tests and wired into live driver (Phase 5).
-      **Still 0 Rust counterpart:** `sessions-registry` (15 tests) —
-      `read_session_json` is consumed but the test file isn't ported.
+      ✅ `sessions-registry` (15 tests) ported (2026-07-08): the Rust module
+      had no tests; all 15 TS cases now mirrored (mtime sort, cold-entry
+      fallbacks, archive/worktree merge).
 - [x] `open_session` `$HOME` fabrication fixed (reads real cwd from
       `session.json`).
 
