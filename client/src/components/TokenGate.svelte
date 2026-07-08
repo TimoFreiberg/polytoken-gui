@@ -10,7 +10,7 @@
 
 <div class="gate">
   <div class="card">
-    <div class="mark">π</div>
+    <img class="mark" src="/icon.svg" alt="" width="52" height="52" />
     <h1>pantoken</h1>
     {#if expired}
       <p>Your access token was rejected or expired — re-enter it to reconnect.</p>
@@ -50,13 +50,7 @@
     width: 52px;
     height: 52px;
     margin: 0 auto 12px;
-    border-radius: 14px;
-    background: var(--accent);
-    color: var(--accent-text);
-    font-size: 28px;
-    font-weight: 700;
-    display: grid;
-    place-items: center;
+    display: block;
   }
   h1 {
     margin: 0 0 4px;
