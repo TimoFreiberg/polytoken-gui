@@ -61,29 +61,20 @@ test("streaming text reveals with a fade wrapper; settled history stays static",
   ).not.toHaveCount(0);
 });
 
-test("with thinking hidden, the most recent thinking block shows collapsed", async ({
+test("with thinking hidden, no thinking block renders when the item has answer text", async ({
   page,
 }) => {
   // The "reply" fixture has thinking → text → tool → text. The thinking is on
-  // the first assistant item (which also has text). With hideThinking on (default),
-  // only the most recent thinking block renders as a collapsed stub.
+  // the first assistant item which also has text. With hideThinking on
+  // (default), the thinking is superseded by the answer text — no
+  // ThinkingBlock renders (no collapsed stub lingers).
   await drive(page, "reply");
   await expect(
     page.getByText("That confirms it", { exact: false }),
   ).toBeVisible();
   await waitForSettledWorkBlocks(page, 2);
   await expandWork(page);
-  const thinkHeader = page.getByText("Thought process").first();
-  await expect(thinkHeader).toBeVisible();
-  // The reasoning text itself is hidden (collapsed) — not expanded.
-  await expect(
-    page.getByText("Let me think about the cleanest way", { exact: false }),
-  ).toHaveCount(0);
-  // Clicking the header expands it.
-  await thinkHeader.click();
-  await expect(
-    page.getByText("Let me think about the cleanest way", { exact: false }),
-  ).toBeVisible();
+  await expect(page.getByText("Thought process")).toHaveCount(0);
 });
 
 test("disabling Hide thinking reveals the expandable thinking block", async ({
@@ -121,6 +112,17 @@ test("typing a prompt then sending clears the composer", async ({ page }) => {
   await box.press("Enter");
   await expect(page.getByText("hello there")).toBeVisible();
   await expect(box).toHaveValue("");
+});
+
+test("with thinking hidden, the active thinking tail renders while streaming (pendinghold)", async ({
+  page,
+}) => {
+  // The "pendinghold" fixture streams only thinking deltas (no answer text),
+  // never settling. While the turn is active and thinking-only, the last item
+  // IS the active thinking tail, so a ThinkingBlock renders — its streaming
+  // shimmer (unique to ThinkingBlock, only present while streaming) is visible.
+  await drive(page, "pendinghold");
+  await expect(page.locator(".think .shimmer")).toBeVisible();
 });
 
 test("run-failed shows an error card whose Resume sends continue", async ({

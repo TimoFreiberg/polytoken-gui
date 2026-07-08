@@ -8,10 +8,11 @@
     filterHiddenThinking,
     groupTurns,
     injectText,
+    thinkingTailId,
     type TurnGroup,
     workedLabel,
   } from "../lib/transcript-view.js";
-  import type { AssistantItem, TranscriptItem } from "@pilot/protocol";
+  import type { TranscriptItem } from "@pilot/protocol";
   import Markdown from "./Markdown.svelte";
   import ToolCard from "./ToolCard.svelte";
   import ThinkingBlock from "./ThinkingBlock.svelte";
@@ -78,18 +79,14 @@
   //      portion (tools + intermediate narration) and the turn-final response that
   //      stays visible. That's the "Worked for Ns" block below.
   const displayItems = $derived(filterHiddenThinking(items, store.hideThinking));
-  // When hideThinking is on, only the most recent thinking block renders (collapsed).
-  // null = show all thinking blocks (hideThinking off); otherwise a Set of item IDs
-  // whose thinking should be visible.
+  // When hideThinking is on, only the active thinking tail renders (collapsed):
+  // the last item, if it's still streaming reasoning with no answer text yet.
+  // null = show all thinking blocks (hideThinking off); otherwise a Set of item
+  // IDs whose thinking should be visible (at most one — the tail, or empty).
   const visibleThinkingIds = $derived.by<(Set<string> | null)>(() => {
     if (!store.hideThinking) return null;
-    for (let i = displayItems.length - 1; i >= 0; i--) {
-      const it = displayItems[i];
-      if (it && it.kind === "assistant" && (it as AssistantItem).thinking !== "") {
-        return new Set([it.id]);
-      }
-    }
-    return new Set<string>(); // no thinking at all — nothing to show
+    const tail = thinkingTailId(displayItems);
+    return tail ? new Set([tail]) : new Set<string>();
   });
   // While the last turn is active, its trailing text is only a candidate final
   // response — another tool can still follow. Keep the whole turn inline until the
@@ -841,10 +838,11 @@
         </div>
       {:else if item.kind === "assistant"}
         <div class="row assistant">
-          <!-- Thinking blocks: always render (collapsed by default, expandable via
-               ThinkingBlock's header button). The hideThinking setting controls only
-               superseded (older) blocks — the most recent one always shows as a
-               collapsed stub. -->
+          <!-- Thinking blocks: when hideThinking is off, all render (collapsed by
+               default, expandable via ThinkingBlock's header button). When on,
+               only the active thinking tail — the last item, still streaming
+               reasoning with no text — renders as a collapsed ThinkingBlock.
+               All superseded thinking is dropped entirely. -->
           {#if item.thinking && (visibleThinkingIds === null || visibleThinkingIds.has(item.id))}
             <ThinkingBlock text={item.thinking} streaming={item.streaming && !item.text} />
           {/if}

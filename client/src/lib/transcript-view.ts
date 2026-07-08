@@ -56,36 +56,54 @@ function splitLeadUp(run: TranscriptItem[]): [TranscriptItem[], TranscriptItem[]
   return [run.slice(0, j), run.slice(j)];
 }
 
+/** The id of the assistant item that is the active thinking tail: the LAST
+ *  item, only if it is an assistant item still accumulating reasoning with no
+ *  answer text yet (thinking present, text empty). This is the single thinking
+ *  block shown (collapsed) when hideThinking is on — the moment any text or
+ *  tool follows, it is superseded and dropped. Returns undefined when no such
+ *  tail exists. */
+export function thinkingTailId(
+  items: readonly TranscriptItem[],
+): string | undefined {
+  const last = items[items.length - 1];
+  if (
+    last &&
+    last.kind === "assistant" &&
+    (last as AssistantItem).thinking !== "" &&
+    last.text.trim() === ""
+  ) {
+    return last.id;
+  }
+  return undefined;
+}
+
 /** Filter out superseded thinking-only items when thinking is hidden. When the
- *  "hide thinking" toggle is on, thinking-only assistant items (no text) that are
- *  NOT the most recent thinking block are dropped — they'd render as invisible gaps.
- *  The most recent thinking block is always kept (rendered as a collapsed stub).
- *  Items with both thinking + text are never dropped (text is always visible).
- *  When thinking is visible, the pass is a no-op (returns a shallow copy). */
+ *  "hide thinking" toggle is on, every thinking-only assistant item (no text)
+ *  is dropped EXCEPT the active thinking tail — the last item, if it is still
+ *  streaming reasoning with no answer text yet. Once any text or tool follows,
+ *  the thinking is superseded and dropped entirely (no collapsed stub lingers).
+ *  Items with both thinking + text are never dropped (text is always visible,
+ *  though their thinking block won't render — see thinkingTailId). When
+ *  thinking is visible, the pass is a no-op (returns a shallow copy). */
 export function filterHiddenThinking(
   items: readonly TranscriptItem[],
   hideThinking: boolean,
 ): TranscriptItem[] {
   if (!hideThinking) return [...items];
-  // Find the last item with thinking content — it always stays.
-  let lastThinkingIdx = -1;
-  for (let i = items.length - 1; i >= 0; i--) {
-    const item = items[i];
-    if (item && item.kind === "assistant" && (item as AssistantItem).thinking !== "") {
-      lastThinkingIdx = i;
-      break;
+  const tail = thinkingTailId(items);
+  return items.filter((i) => {
+    // Keep non-thinking-only items: tools, user items, and assistant items
+    // with text (text is always visible). A thinking-only assistant item
+    // survives ONLY if it's the active tail.
+    if (
+      i.kind === "assistant" &&
+      i.text.trim() === "" &&
+      (i as AssistantItem).thinking !== ""
+    ) {
+      return i.id === tail;
     }
-  }
-  if (lastThinkingIdx < 0) return [...items]; // no thinking at all
-  return items.filter(
-    (i, idx) =>
-      !(
-        i.kind === "assistant" &&
-        i.text.trim() === "" &&
-        (i as AssistantItem).thinking !== "" &&
-        idx < lastThinkingIdx
-      ),
-  );
+    return true;
+  });
 }
 
 /** True for tool items — the "work" that the turn-level collapse treats as activity. */

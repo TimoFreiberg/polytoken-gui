@@ -11,6 +11,7 @@ import {
   groupTurns,
   injectText,
   parseQnaResult,
+  thinkingTailId,
   workedLabel,
 } from "./transcript-view.js";
 
@@ -56,7 +57,7 @@ const inject = (
 });
 
 describe("filterHiddenThinking", () => {
-  test("with thinking hidden, superseded thinking-only items are dropped; the most recent is kept", () => {
+  test("with thinking hidden, all superseded thinking-only items are dropped when followed by text/tool", () => {
     const out = filterHiddenThinking(
       [
         tool("b1", "bash"),
@@ -67,9 +68,8 @@ describe("filterHiddenThinking", () => {
       ],
       true,
     );
-    // t1 is superseded (not the last with thinking) → dropped.
-    // t2 is the most recent thinking block → kept (rendered as a collapsed stub).
-    expect(out.map((i) => i.id)).toEqual(["b1", "b2", "t2", "b3"]);
+    // Every thinking-only item is followed by a tool → all dropped.
+    expect(out.map((i) => i.id)).toEqual(["b1", "b2", "b3"]);
   });
 
   test("an assistant item with user-facing text is kept even when thinking is hidden", () => {
@@ -97,7 +97,7 @@ describe("filterHiddenThinking", () => {
     expect(out.map((i) => i.id)).toEqual(["b1", "t1", "b2"]);
   });
 
-  test("with thinking hidden and only one thinking-only item, it is kept", () => {
+  test("with thinking hidden, a thinking-only item BETWEEN two tools is dropped (superseded)", () => {
     const out = filterHiddenThinking(
       [
         tool("b1", "bash"),
@@ -106,8 +106,50 @@ describe("filterHiddenThinking", () => {
       ],
       true,
     );
-    // t1 is the only (and thus most recent) thinking block → kept.
-    expect(out.map((i) => i.id)).toEqual(["b1", "t1", "b2"]);
+    // t1 is followed by a tool → superseded → dropped.
+    expect(out.map((i) => i.id)).toEqual(["b1", "b2"]);
+  });
+
+  test("with thinking hidden, a thinking-only item as the LAST item is kept (active tail)", () => {
+    const out = filterHiddenThinking(
+      [
+        tool("b1", "bash"),
+        asst("t1", { text: "", thinking: "pondering" }),
+      ],
+      true,
+    );
+    // t1 is the last item, thinking-only, no text → the active tail → kept.
+    expect(out.map((i) => i.id)).toEqual(["b1", "t1"]);
+  });
+
+  test("with thinking hidden, think → tool → think → tool → text drops all thinking", () => {
+    const out = filterHiddenThinking(
+      [
+        asst("t1", { text: "", thinking: "first" }),
+        tool("b1", "bash"),
+        asst("t2", { text: "", thinking: "second" }),
+        tool("b2", "bash"),
+        asst("a1", { text: "the answer" }),
+      ],
+      true,
+    );
+    // Every thinking-only item is superseded (followed by a tool or text) → dropped.
+    expect(out.map((i) => i.id)).toEqual(["b1", "b2", "a1"]);
+  });
+
+  test("with thinking hidden, a thinking+text item survives but is not the thinking tail", () => {
+    const out = filterHiddenThinking(
+      [
+        tool("b1", "bash"),
+        asst("a1", { text: "answer text", thinking: "my reasoning" }),
+      ],
+      true,
+    );
+    // a1 has text → survives (text visible). But thinkingTailId is undefined
+    // (text follows the thinking on the same item), so its thinking block
+    // won't render — it's not the active tail.
+    expect(out.map((i) => i.id)).toEqual(["b1", "a1"]);
+    expect(thinkingTailId(out)).toBeUndefined();
   });
 
   test("with thinking hidden and no thinking items, all pass through", () => {
@@ -116,6 +158,68 @@ describe("filterHiddenThinking", () => {
       true,
     );
     expect(out.map((i) => i.id)).toEqual(["b1", "a1", "b2"]);
+  });
+});
+
+describe("thinkingTailId", () => {
+  test("returns the id of the last item when it's thinking-only (active tail)", () => {
+    expect(
+      thinkingTailId([
+        tool("b1", "bash"),
+        asst("t1", { text: "", thinking: "pondering" }),
+      ]),
+    ).toBe("t1");
+  });
+
+  test("returns undefined when the last item has text (thinking is superseded)", () => {
+    expect(
+      thinkingTailId([
+        asst("a1", { text: "answer", thinking: "my reasoning" }),
+      ]),
+    ).toBeUndefined();
+  });
+
+  test("returns undefined when the last item is a tool", () => {
+    expect(
+      thinkingTailId([
+        asst("t1", { text: "", thinking: "pondering" }),
+        tool("b1", "bash"),
+      ]),
+    ).toBeUndefined();
+  });
+
+  test("returns undefined when the list is empty", () => {
+    expect(thinkingTailId([])).toBeUndefined();
+  });
+
+  test("returns undefined when the last item has no thinking", () => {
+    expect(
+      thinkingTailId([
+        tool("b1", "bash"),
+        asst("a1", { text: "answer" }),
+      ]),
+    ).toBeUndefined();
+  });
+
+  test("returns the id of a thinking-only last item even with whitespace-only text", () => {
+    expect(
+      thinkingTailId([
+        tool("b1", "bash"),
+        asst("t1", { text: "   ", thinking: "pondering" }),
+      ]),
+    ).toBe("t1");
+  });
+
+  test("returns undefined for think → tool → think → tool → text (all superseded)", () => {
+    expect(
+      thinkingTailId([
+        asst("t1", { text: "", thinking: "first" }),
+        tool("b1", "bash"),
+        asst("t2", { text: "", thinking: "second" }),
+        tool("b2", "bash"),
+        asst("a1", { text: "the answer" }),
+      ]),
+    ).toBeUndefined();
   });
 });
 
