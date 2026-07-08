@@ -440,6 +440,18 @@ async fn spawn_resume_daemon(
     let credential_file = PathBuf::from(&sessions_dir)
         .join(&session_id)
         .join("credential.json");
+    let credential_parent = credential_file.parent().ok_or_else(|| {
+        format!(
+            "credential file has no parent: {}",
+            credential_file.display()
+        )
+    })?;
+    std::fs::create_dir_all(credential_parent).map_err(|e| {
+        format!(
+            "failed to create credential file parent {}: {e}",
+            credential_parent.display()
+        )
+    })?;
 
     let args = build_resume_args(
         &cwd,
@@ -2337,6 +2349,80 @@ mod tests {
         assert!(args.contains(&"sess-123".to_string()));
         assert!(args.contains(&"--project-dir".to_string()));
         assert!(args.contains(&"/project".to_string()));
+    }
+
+    #[tokio::test]
+    async fn test_spawn_resume_creates_credential_parent_before_launch() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let bin = dir.path().join("fake-polytoken-daemon");
+        std::fs::write(
+            &bin,
+            r#"#!/bin/sh
+set -eu
+session_id=""
+sessions_dir=""
+credential_file=""
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --session-id) session_id="$2"; shift 2 ;;
+    --sessions-dir) sessions_dir="$2"; shift 2 ;;
+    --credential-file) credential_file="$2"; shift 2 ;;
+    *) shift ;;
+  esac
+done
+if [ -z "$session_id" ] || [ -z "$sessions_dir" ] || [ -z "$credential_file" ]; then
+  echo "missing required resume args" >&2
+  exit 2
+fi
+credential_parent=$(dirname "$credential_file")
+if [ ! -d "$credential_parent" ]; then
+  echo "credential parent missing: $credential_parent" >&2
+  exit 3
+fi
+printf '{"version":1,"kind":"daemon_auth","token":"resume-token"}' > "$credential_file"
+printf '{"state":"ready","session_id":"%s","pid":%s,"port":4567,"credential_file_path":"%s"}' \
+  "$session_id" "$$" "$credential_file" > "$sessions_dir/$session_id/startup.json"
+sleep 30
+"#,
+        )
+        .expect("write fake daemon");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mut perms = std::fs::metadata(&bin).expect("metadata").permissions();
+            perms.set_mode(0o755);
+            std::fs::set_permissions(&bin, perms).expect("chmod fake daemon");
+        }
+
+        let session_id = "resume-needs-credential-dir";
+        let sessions_dir = dir.path().join("sessions");
+        let (spawned, mut child) = spawn_daemon(
+            bin.to_str().expect("utf8 bin"),
+            SpawnDaemonOpts {
+                cwd: Some(dir.path().to_string_lossy().to_string()),
+                session_id: Some(session_id.to_string()),
+                sessions_dir: Some(sessions_dir.to_string_lossy().to_string()),
+                global_config_dir: Some(dir.path().join("config").to_string_lossy().to_string()),
+                login_env: None,
+            },
+        )
+        .await
+        .expect("resume spawn should succeed after creating credential parent");
+
+        assert_eq!(spawned.session_id, session_id);
+        assert_eq!(spawned.port, 4567);
+        assert_eq!(spawned.auth_token.as_deref(), Some("resume-token"));
+        assert!(
+            sessions_dir
+                .join(session_id)
+                .join("credential.json")
+                .exists(),
+            "fake daemon should have been able to write credential.json"
+        );
+
+        if let Some(child) = child.as_mut() {
+            cleanup_child(child).await;
+        }
     }
 
     // AC.2 — auth_header returns the correct header value when a token is set.
