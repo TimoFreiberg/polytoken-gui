@@ -189,8 +189,8 @@ fn read_startup_json(session_dir: &Path) -> Option<StartupJson> {
 }
 
 /// Read the bearer token from a daemon credential file
-/// (`{"version":1,"kind":"daemon_auth","token":"<hex>"}` JSON written by 0.5.0+
-/// daemons at startup). Returns `None` if the file is missing or unparseable —
+/// (`{"version":1,"kind":"polytoken-daemon-credential","token":"<hex>"}` JSON
+/// written by 0.5.0+ daemons at startup). Returns `None` if the file is missing or unparseable —
 /// legacy daemons that predate bearer auth have no credential file, so callers
 /// treat `None` as "no auth header" and the daemon (which doesn't enforce auth)
 /// accepts the request.
@@ -200,7 +200,7 @@ pub fn read_credential_token(credential_file_path: &Path) -> Option<String> {
     json.get("token")?.as_str().map(String::from)
 }
 
-fn generate_daemon_auth_token() -> String {
+fn generate_daemon_credential_token() -> String {
     let bytes: [u8; 32] = rand::random();
     bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
@@ -245,10 +245,10 @@ fn prepare_resume_credential_file(credential_file: &Path) -> Result<String, Stri
     })?;
     set_private_session_dir_mode(credential_parent)?;
 
-    let token = generate_daemon_auth_token();
+    let token = generate_daemon_credential_token();
     let credential_json = serde_json::json!({
         "version": 1,
-        "kind": "daemon_auth",
+        "kind": "polytoken-daemon-credential",
         "token": token,
     })
     .to_string();
@@ -2521,9 +2521,19 @@ sleep 30
 
         let credential_file = sessions_dir.join(session_id).join("credential.json");
         let credential_text = std::fs::read_to_string(&credential_file).expect("credential file");
-        assert!(
-            credential_text.contains(token),
-            "credential file should contain the token used for auth"
+        let credential_json: serde_json::Value =
+            serde_json::from_str(&credential_text).expect("credential json should parse");
+        assert_eq!(
+            credential_json.get("version").and_then(|v| v.as_u64()),
+            Some(1)
+        );
+        assert_eq!(
+            credential_json.get("kind").and_then(|v| v.as_str()),
+            Some("polytoken-daemon-credential")
+        );
+        assert_eq!(
+            credential_json.get("token").and_then(|v| v.as_str()),
+            Some(token)
         );
         #[cfg(unix)]
         {
@@ -2884,7 +2894,7 @@ sleep 30
         let cred_path = dir.path().join("credential.json");
         std::fs::write(
             &cred_path,
-            r#"{"version":1,"kind":"daemon_auth","token":"abc123"}"#,
+            r#"{"version":1,"kind":"polytoken-daemon-credential","token":"abc123"}"#,
         )
         .expect("write credential file");
         let token = read_credential_token(&cred_path);
