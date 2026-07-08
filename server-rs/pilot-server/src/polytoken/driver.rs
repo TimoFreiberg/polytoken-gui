@@ -552,6 +552,46 @@ impl PolytokenInner {
         seed
     }
 
+    /// Build the event sequence for an SSE **reseed** (stream_discontinuity /
+    /// session_rewound / context_cleared) — the sibling of `build_branch_seed` for
+    /// the ALREADY-OPEN, live-emit path (these events are emitted through the SSE
+    /// consumer, not returned as an atomic openSession seed).
+    ///
+    /// Unlike the open path — which leads with a `SessionOpened` that REPLACES the
+    /// whole SessionState — a reseed must preserve the session's live metadata, so it
+    /// leads with a `SessionReset` (clears only the transcript items; the hub's fold
+    /// is additive, so re-emitting history without this DUPLICATES every row). Because
+    /// `SessionReset` preserves the prior status and the replayed user/assistant/tool
+    /// events flip the hub's running set + attention to "running", the trailing
+    /// `SessionUpdated` re-assert is UNCONDITIONAL here (the open path can skip it when
+    /// nothing replayed because its leading `SessionOpened` already carries the status;
+    /// `SessionReset` does not). `snapshot` must be built from a FRESH GET /state, and
+    /// the caller must `reset_accumulator` before emitting these (a discontinuity can
+    /// leave stale in-flight block/tool state in the fold accumulator).
+    fn build_reseed_events(
+        snapshot: SessionSnapshot,
+        history_items: &[pilot_daemon_types::SessionHistoryItem],
+        ctx: &HistoryMapCtx,
+    ) -> Vec<SessionDriverEvent> {
+        let mut events = vec![SessionDriverEvent::SessionReset {
+            base: SessionEventBase {
+                session_ref: ctx.r#ref.clone(),
+                timestamp: DriverMapCtx::now_ts(),
+                run_id: None,
+            },
+        }];
+        events.extend(history_seed::history_to_seed_events(history_items, ctx));
+        events.push(SessionDriverEvent::SessionUpdated {
+            base: SessionEventBase {
+                session_ref: ctx.r#ref.clone(),
+                timestamp: DriverMapCtx::now_ts(),
+                run_id: None,
+            },
+            snapshot,
+        });
+        events
+    }
+
     /// The worktree field for a session's cwd, or `None`. Resolved from the
     /// worktree store at list time (pilot's own flag — polytoken has no concept).
     /// Carries `name` + `reaped` so the sidebar can show a tooltip + a tombstoned
@@ -965,15 +1005,56 @@ impl PolytokenInner {
                 self.emit(ev);
             }
             DaemonEffect::Reseed => {
-                let res = ws.client.history(None, None).await;
-                if let Some(history) = res.data {
-                    let seed = history_seed::history_to_seed_events(
+                // A reseed fires when the transcript's identity changed out from under
+                // us: an SSE stream_discontinuity (events dropped), a session_rewound
+                // (history truncated), or a context_cleared. We must rebuild the hub's
+                // transcript from GET /history to match the daemon's truth. Four things
+                // this needs beyond a bare re-broadcast — each guards a distinct failure:
+                //
+                // 1. reset_accumulator: a discontinuity can drop events mid-block, leaving
+                //    stale in-flight block/tool/turn_error state in the fold accumulator
+                //    that would corrupt the re-fold (and spuriously fail the next turn).
+                // 2. refresh last_state: the settling snapshot below must reflect the
+                //    daemon's CURRENT truth (turn_in_flight, title, usage), not a cache
+                //    from before the discontinuity.
+                // 3. sessionReset BEFORE the replay: the hub's fold is additive, so
+                //    re-emitting history on top of the existing transcript would DUPLICATE
+                //    every row. sessionReset clears the items (preserving metadata) so the
+                //    fresh history folds into an empty transcript.
+                // 4. trailing sessionUpdated AFTER the replay: sessionReset preserves the
+                //    prior status and the replayed user/assistant/tool events flip the hub's
+                //    running set + attention to "running", so without a re-assert an
+                //    idle-but-reseeded session gets stuck showing "Responding"/Working (the
+                //    same class of bug build_branch_seed's trailing re-assert fixes on the
+                //    open path). A genuinely running session carries status:running here,
+                //    correctly keeping the turn live.
+                {
+                    let mut acc = ws.accumulator.lock();
+                    event_map::reset_accumulator(&mut acc);
+                }
+                let state_res = ws.client.state().await;
+                if let Some(state) = state_res.data {
+                    *ws.last_state.write() = Some(state);
+                }
+                let history_res = ws.client.history(None, None).await;
+                if let Some(history) = history_res.data {
+                    // Built AFTER the awaits so no parking_lot guard is held across one.
+                    let ctx = DriverMapCtx {
+                        session_ref: ws.session_ref.clone(),
+                        workspace: ws.workspace.clone(),
+                        last_state: ws.last_state.read().clone(),
+                        monitor_mode: *ws.monitor_mode.lock(),
+                        autodrain_enabled: *ws.autodrain_enabled.lock(),
+                    };
+                    let snapshot = ctx.snapshot(ctx.live_status());
+                    let events = PolytokenInner::build_reseed_events(
+                        snapshot,
                         &history.items,
                         &HistoryMapCtx {
                             r#ref: ws.session_ref.clone(),
                         },
                     );
-                    for ev in &seed {
+                    for ev in &events {
                         self.emit(ev.clone());
                     }
                 }
@@ -2715,6 +2796,107 @@ mod tests {
             !last_assistant.streaming,
             "trailing session-resumed reminders must not leave the assistant bubble \
              streaming — the idle re-assert has to close it"
+        );
+    }
+
+    /// Regression: an SSE reseed (stream_discontinuity / session_rewound /
+    /// context_cleared) must rebuild the transcript WITHOUT duplicating it and must
+    /// settle status. `build_reseed_events` leads with a `SessionReset` (clears the
+    /// fold's items, so re-emitting history on top of the existing transcript doesn't
+    /// double every row) and ends with an idle `SessionUpdated` re-assert (so a
+    /// reseeded idle session isn't left stuck "running"/"Responding"). Without the
+    /// SessionReset the transcript doubles; without the trailing re-assert the replayed
+    /// events leave the running set + streaming bubble stuck.
+    #[test]
+    fn build_reseed_events_clears_then_resettles_without_duplication() {
+        use pilot_protocol::state::{TranscriptItem, fold_all, fold_all_from};
+
+        let session_ref = SessionRef {
+            workspace_id: "ws".into(),
+            session_id: "s1".into(),
+        };
+        let workspace = WorkspaceRef {
+            workspace_id: "ws".into(),
+            path: "/repo".into(),
+            display_name: None,
+        };
+        // A small transcript that ends mid-turn (assistant thinking, no completion) —
+        // the shape a discontinuity is most likely to strand as "running".
+        let history = vec![
+            serde_json::json!({
+                "type": "user",
+                "content": "hi",
+                "prompt_id": "p1",
+                "emitted_at": "2025-01-01T00:00:01.000Z",
+            }),
+            serde_json::json!({
+                "type": "assistant",
+                "prompt_id": "p1",
+                "blocks": [ { "type": "thinking", "text": "pondering" } ],
+                "emitted_at": "2025-01-01T00:00:02.000Z",
+            }),
+        ];
+        let hist_ctx = HistoryMapCtx {
+            r#ref: session_ref.clone(),
+        };
+
+        // The hub's PRE-reseed state: the live fold of that history, stranded mid-turn.
+        let pre = fold_all(&history_seed::history_to_seed_events(&history, &hist_ctx));
+        let pre_items = pre.items.len();
+        assert!(pre_items > 0, "sanity: pre-reseed transcript is non-empty");
+
+        // The reseed sequence, at the daemon's real (idle) status.
+        let snapshot = event_map::snapshot_from_state(
+            None,
+            &session_ref,
+            &workspace,
+            SessionStatus::Idle,
+            "2025-01-01T00:00:03.000Z",
+            None,
+            None,
+        );
+        let events = PolytokenInner::build_reseed_events(snapshot, &history, &hist_ctx);
+        assert!(
+            matches!(
+                events.first(),
+                Some(SessionDriverEvent::SessionReset { .. })
+            ),
+            "reseed must lead with SessionReset to clear the stale transcript"
+        );
+        assert!(
+            matches!(
+                events.last(),
+                Some(SessionDriverEvent::SessionUpdated { snapshot, .. })
+                    if matches!(snapshot.status, SessionStatus::Idle)
+            ),
+            "reseed must end with an idle SessionUpdated re-assert; got {:?}",
+            events.last()
+        );
+
+        // Apply the reseed ON TOP of the existing hub state (the additive-fold path).
+        let post = fold_all_from(pre, &events);
+        assert_eq!(
+            post.items.len(),
+            pre_items,
+            "reseed must REPLACE the transcript, not duplicate it (SessionReset clears items)"
+        );
+        assert!(
+            matches!(post.status, SessionStatus::Idle),
+            "reseeded state must settle to idle, got {:?}",
+            post.status
+        );
+        let last_assistant = post
+            .items
+            .iter()
+            .rev()
+            .find_map(|it| match it {
+                TranscriptItem::Assistant(a) => Some(a),
+                _ => None,
+            })
+            .expect("reseed should fold to an assistant item");
+        assert!(
+            !last_assistant.streaming,
+            "the idle re-assert must close the streaming bubble after reseed"
         );
     }
 }
