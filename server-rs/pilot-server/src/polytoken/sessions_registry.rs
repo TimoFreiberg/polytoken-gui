@@ -21,13 +21,13 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use pilot_protocol::session_driver::{SessionListEntry, WorktreeInfo};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 /// The on-disk `session.json` shape — the durable per-session metadata polytoken
 /// writes when a session is created. Fields are all optional in the parser
 /// because a corrupt or partial file must degrade to "unknown" rather than
 /// crash the list.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, PartialEq, Serialize)]
 pub struct SessionJson {
     pub session_id: String,
     pub project_path: String,
@@ -46,7 +46,7 @@ pub struct SessionJson {
 }
 
 /// The `parent_session_id` field — a tagged union on `kind`.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, PartialEq, Serialize)]
 #[serde(tag = "kind")]
 pub enum ParentSessionRef {
     #[serde(rename = "standalone")]
@@ -274,4 +274,388 @@ pub fn list_cold_sessions(
         out.push(entry);
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    //! Mirrors `server/src/polytoken/sessions-registry.test.ts` (15 tests).
+    //!
+    //! Env-var tests mutate global process state, so they are serialized behind a
+    //! single `ENV_MUTEX` (the `serial_test` crate is not a dev-dep here).
+
+    use super::*;
+    use pilot_protocol::session_driver::WorktreeInfo;
+    use std::fs;
+    use std::path::PathBuf;
+    use std::sync::Mutex;
+
+    /// Serializes env-mutating tests so they don't race each other under the
+    /// default parallel test runner. `set_var`/`remove_var` are `unsafe` on
+    /// edition 2024, hence the explicit `unsafe` blocks.
+    static ENV_MUTEX: Mutex<()> = Mutex::new(());
+
+    /// RAII guard that restores `XDG_DATA_HOME` to its prior value (or unsets
+    /// it) on drop — even if the test's assertion panics, so one failing test
+    /// can't bleed a stale env var into the rest of the process.
+    struct XdgGuard {
+        orig: Option<String>,
+    }
+    impl XdgGuard {
+        fn set(value: Option<&str>) -> Self {
+            let orig = std::env::var("XDG_DATA_HOME").ok();
+            match value {
+                Some(v) => unsafe { std::env::set_var("XDG_DATA_HOME", v) },
+                None => unsafe { std::env::remove_var("XDG_DATA_HOME") },
+            }
+            Self { orig }
+        }
+    }
+    impl Drop for XdgGuard {
+        fn drop(&mut self) {
+            match self.orig.take() {
+                Some(v) => unsafe { std::env::set_var("XDG_DATA_HOME", v) },
+                None => unsafe { std::env::remove_var("XDG_DATA_HOME") },
+            }
+        }
+    }
+
+    /// Base `SessionJson`, equivalent to the TS `baseMeta()` helper. Takes an
+    /// override closure so each test customizes only the fields it cares about.
+    fn base_meta<F>(over: F) -> SessionJson
+    where
+        F: FnOnce(&mut SessionJson),
+    {
+        let mut m = SessionJson {
+            session_id: "test".to_string(),
+            project_path: "/proj".to_string(),
+            created_at: "2026-06-28T10:00:00Z".to_string(),
+            last_activity_at: "2026-06-28T11:00:00Z".to_string(),
+            last_user_message_preview: Some("hello".to_string()),
+            initial_model_name: Some("anthropic/claude".to_string()),
+            parent_session_id: Some(ParentSessionRef::Standalone),
+        };
+        over(&mut m);
+        m
+    }
+
+    /// Make a temp sessions dir and populate it with the given session metadatas.
+    /// `None` values create an empty dir (a failed startup with no session.json).
+    /// Returns a `TempDir` guard so the dir is cleaned up on drop (the TS
+    /// `mkdtempSync` leaks; we improve on it — CI runs these loops repeatedly).
+    fn make_sessions_dir(sessions: &[(&str, Option<SessionJson>)]) -> tempfile::TempDir {
+        let dir = tempfile::tempdir().unwrap();
+        for (id, meta) in sessions {
+            let session_dir = dir.path().join(id);
+            fs::create_dir_all(&session_dir).unwrap();
+            if let Some(meta) = meta {
+                let json = serde_json::to_string(meta).unwrap();
+                fs::write(session_dir.join("session.json"), json).unwrap();
+            }
+            // A failed startup has no session.json — leave the dir empty.
+        }
+        dir
+    }
+
+    // ── default_sessions_dir ───────────────────────────────────────────────
+
+    #[test]
+    fn default_sessions_dir_respects_xdg_data_home() {
+        let _guard = ENV_MUTEX.lock().unwrap();
+        // Restored on drop (even on panic) so a failing assert can't bleed the
+        // var into other tests.
+        let _env = XdgGuard::set(Some("/custom/xdg"));
+        let dir = default_sessions_dir();
+        assert_eq!(dir, PathBuf::from("/custom/xdg/polytoken/sessions"));
+    }
+
+    #[test]
+    fn default_sessions_dir_falls_back_to_home_local_share() {
+        let _guard = ENV_MUTEX.lock().unwrap();
+        let _env = XdgGuard::set(None);
+        let dir = default_sessions_dir();
+        let s = dir.to_string_lossy();
+        assert!(s.contains("polytoken/sessions"));
+        assert!(s.contains(".local/share"));
+    }
+
+    // ── read_session_json ─────────────────────────────────────────────────
+
+    #[test]
+    fn read_session_json_returns_none_for_a_dir_with_no_session_json() {
+        let dir = tempfile::tempdir().unwrap();
+        assert!(read_session_json(dir.path()).is_none());
+    }
+
+    #[test]
+    fn read_session_json_returns_none_for_a_corrupt_file() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::write(dir.path().join("session.json"), "{not valid json").unwrap();
+        // Must NOT panic — degrades to None.
+        assert!(read_session_json(dir.path()).is_none());
+    }
+
+    #[test]
+    fn read_session_json_parses_a_valid_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let expected = base_meta(|_| {});
+        fs::write(
+            dir.path().join("session.json"),
+            serde_json::to_string(&expected).unwrap(),
+        )
+        .unwrap();
+        let got = read_session_json(dir.path()).expect("should parse");
+        assert_eq!(got, expected);
+    }
+
+    // ── list_session_ids ──────────────────────────────────────────────────
+
+    #[test]
+    fn list_session_ids_returns_session_dirs_sorted_newest_first() {
+        use filetime::{FileTime, set_file_mtime};
+        use std::time::{SystemTime, UNIX_EPOCH};
+
+        let dir = make_sessions_dir(&[
+            (
+                "older",
+                Some(base_meta(|m| m.session_id = "older".to_string())),
+            ),
+            (
+                "newer",
+                Some(base_meta(|m| m.session_id = "newer".to_string())),
+            ),
+        ]);
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        // Pin distinct mtimes so the sort is deterministic (back-to-back mkdirs
+        // can land within one mtime tick and tie).
+        set_file_mtime(
+            dir.path().join("older"),
+            FileTime::from_unix_time((now - 60) as i64, 0),
+        )
+        .unwrap();
+        set_file_mtime(
+            dir.path().join("newer"),
+            FileTime::from_unix_time(now as i64, 0),
+        )
+        .unwrap();
+
+        let ids = list_session_ids(dir.path());
+        assert_eq!(ids.len(), 2);
+        assert_eq!(ids[0], "newer");
+    }
+
+    #[test]
+    fn list_session_ids_skips_non_directory_entries() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::create_dir_all(dir.path().join("real-session")).unwrap();
+        fs::write(dir.path().join("stray-file.json"), "{}").unwrap();
+        assert_eq!(
+            list_session_ids(dir.path()),
+            vec!["real-session".to_string()]
+        );
+    }
+
+    #[test]
+    fn list_session_ids_returns_empty_for_a_missing_dir() {
+        assert!(list_session_ids(Path::new("/nonexistent/path/xyz")).is_empty());
+    }
+
+    // ── cold_session_entry ────────────────────────────────────────────────
+
+    #[test]
+    fn cold_session_entry_builds_a_session_list_entry() {
+        let dir = make_sessions_dir(&[(
+            "abc123",
+            Some(base_meta(|m| {
+                m.session_id = "abc123".to_string();
+                m.project_path = "/my/proj".to_string();
+                m.last_user_message_preview = Some("do the thing".to_string());
+            })),
+        )]);
+        let entry = cold_session_entry(
+            &dir.path().join("abc123"),
+            "abc123",
+            ColdSessionOpts {
+                archived: false,
+                worktree: None,
+            },
+        )
+        .expect("should build an entry");
+
+        assert_eq!(entry.session_id, "abc123");
+        assert_eq!(entry.cwd, "/my/proj");
+        assert_eq!(entry.preview, "do the thing");
+        assert!(!entry.archived);
+        // preview present → last_user_message_at == last_activity_at.
+        assert_eq!(entry.last_user_message_at, "2026-06-28T11:00:00Z");
+        assert_eq!(entry.path, dir.path().join("abc123").join("session.json"));
+    }
+
+    #[test]
+    fn cold_session_entry_returns_none_for_a_failed_startup() {
+        let dir = make_sessions_dir(&[("failed", None)]);
+        assert!(
+            cold_session_entry(
+                &dir.path().join("failed"),
+                "failed",
+                ColdSessionOpts {
+                    archived: false,
+                    worktree: None,
+                },
+            )
+            .is_none()
+        );
+    }
+
+    #[test]
+    fn cold_session_entry_last_user_message_at_falls_back_to_created_at() {
+        let dir = make_sessions_dir(&[(
+            "no-turn",
+            Some(base_meta(|m| {
+                m.session_id = "no-turn".to_string();
+                m.last_user_message_preview = None;
+                m.last_activity_at = "2026-06-28T11:00:00Z".to_string();
+                m.created_at = "2026-06-28T10:00:00Z".to_string();
+            })),
+        )]);
+        let entry = cold_session_entry(
+            &dir.path().join("no-turn"),
+            "no-turn",
+            ColdSessionOpts {
+                archived: false,
+                worktree: None,
+            },
+        )
+        .expect("should build an entry");
+        // No preview → last activity wasn't a user turn → fall back to createdAt.
+        assert_eq!(entry.last_user_message_at, "2026-06-28T10:00:00Z");
+        assert_eq!(entry.preview, "");
+    }
+
+    #[test]
+    fn cold_session_entry_local_parent_sets_parent_session_path() {
+        let dir = make_sessions_dir(&[(
+            "child",
+            Some(base_meta(|m| {
+                m.session_id = "child".to_string();
+                m.parent_session_id = Some(ParentSessionRef::Local {
+                    session_id: Some("parent-id".to_string()),
+                });
+            })),
+        )]);
+        let entry = cold_session_entry(
+            &dir.path().join("child"),
+            "child",
+            ColdSessionOpts {
+                archived: false,
+                worktree: None,
+            },
+        )
+        .expect("should build an entry");
+        assert_eq!(entry.parent_session_path.as_deref(), Some("parent-id"));
+    }
+
+    #[test]
+    fn cold_session_entry_standalone_parent_has_no_parent_session_path() {
+        let dir = make_sessions_dir(&[(
+            "solo",
+            Some(base_meta(|m| {
+                m.session_id = "solo".to_string();
+                m.parent_session_id = Some(ParentSessionRef::Standalone);
+            })),
+        )]);
+        let entry = cold_session_entry(
+            &dir.path().join("solo"),
+            "solo",
+            ColdSessionOpts {
+                archived: false,
+                worktree: None,
+            },
+        )
+        .expect("should build an entry");
+        assert!(entry.parent_session_path.is_none());
+    }
+
+    // ── list_cold_sessions ────────────────────────────────────────────────
+
+    #[test]
+    fn list_cold_sessions_merges_archive_and_worktree_flags() {
+        let dir = make_sessions_dir(&[
+            (
+                "s1",
+                Some(base_meta(|m| {
+                    m.session_id = "s1".to_string();
+                    m.project_path = "/p1".to_string();
+                })),
+            ),
+            (
+                "s2",
+                Some(base_meta(|m| {
+                    m.session_id = "s2".to_string();
+                    m.project_path = "/p2".to_string();
+                })),
+            ),
+            ("failed", None),
+        ]);
+        let archived_paths = std::collections::HashSet::from([dir
+            .path()
+            .join("s2")
+            .join("session.json")
+            .to_string_lossy()
+            .to_string()]);
+        let entries = list_cold_sessions(
+            dir.path(),
+            ListColdSessionsOpts {
+                archived_for: Box::new(move |p: &str| archived_paths.contains(p)),
+                worktree_for: Some(Box::new(|cwd: &str| {
+                    if cwd == "/p1" {
+                        Some(WorktreeInfo {
+                            path: "/p1".to_string(),
+                            base: "/repo".to_string(),
+                            name: "wt-name".to_string(),
+                            reaped: None,
+                        })
+                    } else {
+                        None
+                    }
+                })),
+            },
+        );
+        // "failed" is skipped (no session.json).
+        assert_eq!(entries.len(), 2);
+        let s1 = entries
+            .iter()
+            .find(|e| e.session_id == "s1")
+            .expect("s1 present");
+        let s2 = entries
+            .iter()
+            .find(|e| e.session_id == "s2")
+            .expect("s2 present");
+        assert!(!s1.archived);
+        assert_eq!(
+            s1.worktree,
+            Some(WorktreeInfo {
+                path: "/p1".to_string(),
+                base: "/repo".to_string(),
+                name: "wt-name".to_string(),
+                reaped: None,
+            })
+        );
+        assert!(s2.archived);
+        assert!(s2.worktree.is_none());
+    }
+
+    #[test]
+    fn list_cold_sessions_returns_empty_for_a_missing_dir() {
+        let entries = list_cold_sessions(
+            Path::new("/nonexistent"),
+            ListColdSessionsOpts {
+                archived_for: Box::new(|_| false),
+                worktree_for: None,
+            },
+        );
+        assert!(entries.is_empty());
+    }
 }

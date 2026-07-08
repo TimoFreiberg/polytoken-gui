@@ -39,3 +39,5 @@ ignore = { workspace = true }
 # Pinned to 0.2 to match `web-push`'s `http` — tests construct push-service
 # responses via `web_push::request_builder::parse_response(http::StatusCode, _)`.
 http = "0.2"
+# Pinning distinct mtimes in `list_session_ids` sort tests (mirrors Node's `utimesSync`).
+filetime = "0.2"
