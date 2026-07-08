@@ -710,16 +710,55 @@ impl std::fmt::Display for LeaseConflictError {
 
 impl std::error::Error for LeaseConflictError {}
 
-/// Retry a claim function on 409 lease-conflict errors, up to `max_retries` times
+/// The boxed future returned by a [`SleepFn`]. Mirrors the [`SpawnOverrideFuture`]
+/// shape: a pinned, boxed, `Send + 'static` future so the sleep closure can be
+/// stored as a trait object.
+pub type SleepFuture = Pin<Box<dyn Future<Output = ()> + Send + 'static>>;
+
+/// An injectable sleep seam for [`retry_claim`]. The default (used by
+/// [`retry_claim`]) is `tokio::time::sleep`; tests pass a no-op so retry loops
+/// run without real wall-clock delay. Mirrors the `SpawnOverrideFn` pattern
+/// (`Arc<dyn Fn(...) -> Pin<Box<dyn Future + Send + 'static>> + Send + Sync>`).
+pub type SleepFn = Arc<dyn Fn(Duration) -> SleepFuture + Send + Sync>;
+
+/// Retry a claim function on lease-conflict errors, up to `max_retries` times
 /// with `delay_ms` backoff between attempts. Pure — takes the claim function so
-/// it's unit-testable without a live daemon. Throws on non-lease-conflict errors
-/// immediately (no retry). On exhaustion (or an early exit when the lease won't
-/// lapse within the remaining retry window), throws a LeaseConflictError whose
-/// message includes the computed time-to-lapse.
+/// it's unit-testable without a live daemon. On exhaustion (or an early exit
+/// when the lease won't lapse within the remaining retry window), returns a
+/// LeaseConflictError whose message includes the computed time-to-lapse.
+///
+/// **Divergence from TS `retryClaim`:** the TS version's `claim` throws
+/// arbitrary errors and re-throws non-`LeaseConflictError`s immediately (no
+/// retry). The Rust `claim` returns `Result<_, LeaseConflictError>`, so *every*
+/// `Err` is a lease conflict and is retried. `claim_lease` models non-409
+/// failures as `LeaseConflictError { held: None }`, which has no expiry and so
+/// always retries to exhaustion. Restoring the TS behavior would need an error
+/// enum distinguishing conflict from other failures (pre-existing; tracked in
+/// PROGRESS.md).
+///
+/// Delegates to [`retry_claim_with_sleep`] with `tokio::time::sleep` as the
+/// default sleep, so the public signature is unchanged for existing callers.
 pub async fn retry_claim<T, F, Fut>(
     claim: F,
     max_retries: Option<u32>,
     delay_ms: Option<u64>,
+) -> Result<T, LeaseConflictError>
+where
+    F: Fn() -> Fut,
+    Fut: std::future::Future<Output = Result<T, LeaseConflictError>>,
+{
+    let sleep: SleepFn = Arc::new(|d| Box::pin(tokio::time::sleep(d)));
+    retry_claim_with_sleep(claim, max_retries, delay_ms, sleep).await
+}
+
+/// Same as [`retry_claim`] but with an injectable sleep seam. `sleep` is called
+/// with `Duration::from_millis(delay_ms)` between retries; tests pass a no-op
+/// future so the loop is instant and deterministic.
+pub async fn retry_claim_with_sleep<T, F, Fut>(
+    claim: F,
+    max_retries: Option<u32>,
+    delay_ms: Option<u64>,
+    sleep: SleepFn,
 ) -> Result<T, LeaseConflictError>
 where
     F: Fn() -> Fut,
@@ -755,7 +794,7 @@ where
                     }
                 }
                 if attempt < max_retries {
-                    tokio::time::sleep(Duration::from_millis(delay_ms)).await;
+                    sleep(Duration::from_millis(delay_ms)).await;
                 }
             }
         }
@@ -2397,5 +2436,481 @@ mod tests {
         std::fs::write(&cred_path, "not json").expect("write");
         let token = read_credential_token(&cred_path);
         assert!(token.is_none());
+    }
+
+    // -------------------------------------------------------------------------
+    // lease-retry tests — ported from server/src/polytoken/lease-retry.test.ts.
+    // Uses an injectable sleep seam (retry_claim_with_sleep) so the retry loops
+    // are instant and deterministic, mirroring the TS `sleep: async () => {}`.
+    // -------------------------------------------------------------------------
+
+    /// A no-op sleep seam — the Rust analogue of the TS `async () => {}`. The
+    /// retry loop awaits it between attempts but wall-clock never advances, so
+    /// `current_millis()` is effectively frozen across retries.
+    fn no_op_sleep() -> SleepFn {
+        Arc::new(|_d: Duration| Box::pin(async {}) as SleepFuture)
+    }
+
+    /// Build an ISO-8601 expiry `ms_from_now` milliseconds in the future, the
+    /// shape the daemon emits and `parse_iso8601_to_millis` parses. Mirrors the
+    /// `now_iso8601()` formatting but offsets from the current epoch millis.
+    fn iso_expiry(ms_from_now: i64) -> String {
+        let millis = (current_millis() + ms_from_now).max(0) as u64;
+        let secs = millis / 1000;
+        let subsec_millis = (millis % 1000) as u32;
+        let (y, mo, d, h, mi, s) = epoch_to_civil(secs);
+        format!("{y:04}-{mo:02}-{d:02}T{h:02}:{mi:02}:{s:02}.{subsec_millis:03}Z")
+    }
+
+    /// Build a `LeaseConflictError` like `claim_lease` throws on a 409 — the
+    /// Rust analogue of the TS `conflict(expiresAt)`. `held.summary` carries a
+    /// readable holder line; `held.expires_at` carries the ISO timestamp the
+    /// retry loop parses to compute time-to-lapse.
+    fn conflict(summary: &str, expires_at: &str) -> LeaseConflictError {
+        LeaseConflictError {
+            message: format!(
+                "another TUI is attached to this session ({}). Detach it there (/detach) or wait ~30s for its lease to lapse.",
+                summary
+            ),
+            held: Some(LeaseHeldInfo {
+                summary: summary.to_string(),
+                expires_at: Some(expires_at.to_string()),
+            }),
+        }
+    }
+
+    // retryClaim — test 1: succeeds on first try (no retry).
+    #[tokio::test]
+    async fn retry_claim_succeeds_on_first_try() {
+        let calls = std::sync::Arc::new(std::sync::Mutex::new(0u32));
+        let calls_fn = calls.clone();
+        let result: String = retry_claim_with_sleep(
+            move || {
+                let c = calls_fn.clone();
+                Box::pin(async move {
+                    *c.lock().expect("calls") += 1;
+                    Ok::<String, LeaseConflictError>("ok".to_string())
+                })
+            },
+            Some(3),
+            Some(100),
+            no_op_sleep(),
+        )
+        .await
+        .expect("should succeed");
+        assert_eq!(result, "ok");
+        assert_eq!(*calls.lock().expect("calls"), 1);
+    }
+
+    // retryClaim — test 2: retries on 409, succeeds on 2nd attempt.
+    #[tokio::test]
+    async fn retry_claim_retries_then_succeeds() {
+        let calls = std::sync::Arc::new(std::sync::Mutex::new(0u32));
+        let calls_fn = calls.clone();
+        // Expiry ~1ms — lapses well within the retry window so the early-exit
+        // doesn't fire. The no-op sleep means wall-clock barely advances.
+        let expiry = iso_expiry(1);
+        let result: String = retry_claim_with_sleep(
+            move || {
+                let c = calls_fn.clone();
+                let exp = expiry.clone();
+                Box::pin(async move {
+                    let n = {
+                        let mut g = c.lock().expect("calls");
+                        *g += 1;
+                        *g
+                    };
+                    if n == 1 {
+                        return Err(conflict("\"tui\" pid 99999", &exp));
+                    }
+                    Ok::<String, LeaseConflictError>("ok".to_string())
+                })
+            },
+            Some(3),
+            Some(100),
+            no_op_sleep(),
+        )
+        .await
+        .expect("should succeed on 2nd attempt");
+        assert_eq!(result, "ok");
+        assert_eq!(*calls.lock().expect("calls"), 2);
+    }
+
+    // retryClaim — test 3: retries 3x, throws LeaseConflictError after exhaustion.
+    #[tokio::test]
+    async fn retry_claim_exhausts_after_max_retries() {
+        let calls = std::sync::Arc::new(std::sync::Mutex::new(0u32));
+        let calls_fn = calls.clone();
+        // Short expiry (laps within the retry window) so the early-exit doesn't
+        // fire — all 4 attempts run before exhaustion.
+        let expiry = iso_expiry(1);
+        let result: Result<String, LeaseConflictError> = retry_claim_with_sleep(
+            move || {
+                let c = calls_fn.clone();
+                let exp = expiry.clone();
+                Box::pin(async move {
+                    *c.lock().expect("calls") += 1;
+                    Err(conflict("\"tui\" pid 99999", &exp))
+                })
+            },
+            Some(3),
+            Some(100),
+            no_op_sleep(),
+        )
+        .await;
+        assert!(result.is_err(), "should return Err after exhaustion");
+        // retry_claim_with_sleep returns Result<T, LeaseConflictError>, so the
+        // error is statically a LeaseConflictError — the TS instanceof check is
+        // satisfied by the type system; no runtime .is() needed.
+        let err = result.unwrap_err();
+        assert!(
+            err.held.is_some(),
+            "exhausted conflict should carry the holder info"
+        );
+        // 1 initial + 3 retries = 4 attempts total.
+        assert_eq!(*calls.lock().expect("calls"), 4);
+    }
+
+    // retryClaim — test 4: "does NOT retry on non-409 errors".
+    //
+    // DEVNOTE: this test CANNOT be faithfully ported. The TS `retryClaim`'s
+    // claim throws arbitrary `Error`s; a plain (non-LeaseConflictError) is not
+    // retried. The Rust `retry_claim`'s claim returns `Result<T, LeaseConflictError>`
+    // — EVERY error is a `LeaseConflictError`, and `retry_claim` retries on any
+    // `Err` (it never inspects whether the error is actually a 409 vs a 500). A
+    // `LeaseConflictError` with `held: None` (the shape `claim_lease` emits for a
+    // non-409 status, e.g. `"lease claim failed (500): ..."`) therefore IS retried
+    // to exhaustion — there is no expiry to trigger the early-exit. So the TS
+    // intent ("a non-conflict error must not be retried") is not expressible.
+    //
+    // Rather than assert misleading behavior, we assert the ACTUAL Rust behavior
+    // (a `held: None` error retries to exhaustion) and document the divergence.
+    #[tokio::test]
+    async fn retry_claim_non_conflict_error_retries_to_exhaustion() {
+        let calls = std::sync::Arc::new(std::sync::Mutex::new(0u32));
+        let calls_fn = calls.clone();
+        // A non-409 error as claim_lease models it: held: None, status in message.
+        let result: Result<String, LeaseConflictError> = retry_claim_with_sleep(
+            move || {
+                let c = calls_fn.clone();
+                Box::pin(async move {
+                    *c.lock().expect("calls") += 1;
+                    Err(LeaseConflictError {
+                        message: "lease claim failed (500): server error".into(),
+                        held: None,
+                    })
+                })
+            },
+            Some(3),
+            Some(1),
+            no_op_sleep(),
+        )
+        .await;
+        // The Rust model retries ANY Err(LeaseConflictError) — unlike TS, which
+        // only retries LeaseConflictError. So this runs all 4 attempts.
+        assert!(result.is_err(), "should return Err");
+        assert_eq!(*calls.lock().expect("calls"), 4);
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("lease claim failed (409): another TUI is attached"),
+            "exhausted non-409 falls back to the malformed-409 message"
+        );
+    }
+
+    // retryClaim — test 5: stops early when the lease won't lapse within the
+    // retry window.
+    #[tokio::test]
+    async fn retry_claim_stops_early_when_lease_wont_lapse() {
+        let calls = std::sync::Arc::new(std::sync::Mutex::new(0u32));
+        let calls_fn = calls.clone();
+        // Expiry 60s out — far beyond the ~3ms retry window (3 retries × 1ms).
+        let expiry = iso_expiry(60_000);
+        let result: Result<String, LeaseConflictError> = retry_claim_with_sleep(
+            move || {
+                let c = calls_fn.clone();
+                let exp = expiry.clone();
+                Box::pin(async move {
+                    *c.lock().expect("calls") += 1;
+                    Err(conflict("\"tui\" pid 99999", &exp))
+                })
+            },
+            Some(3),
+            Some(1),
+            no_op_sleep(),
+        )
+        .await;
+        assert!(result.is_err(), "should return Err");
+        // Should stop after the FIRST attempt (no retries — the lease won't lapse).
+        assert_eq!(*calls.lock().expect("calls"), 1);
+    }
+
+    // retryClaim — test 6: final error message includes the computed time-to-lapse
+    // (not ~30s).
+    #[tokio::test]
+    async fn retry_claim_final_error_includes_computed_wait() {
+        // Expiry 5s out. With a no-op sleep (clock frozen), the early-exit
+        // condition `ms_until_expiry > remaining_delays` first becomes true at
+        // attempt 1 (5000 > (3-1)*2000 = 4000), so this EARLY-EXITS at attempt 1
+        // — it does NOT exhaust. The early-exit path rebuilds the message via
+        // `format_lease_conflict_message(held, Some(ceil_seconds(5000)))`, so
+        // the wait is the computed ~5s, not the `~30s` fallback.
+        let expiry = iso_expiry(5_000);
+        let exp_for_claim = expiry.clone();
+        let err: LeaseConflictError = retry_claim_with_sleep(
+            move || {
+                let exp = exp_for_claim.clone();
+                Box::pin(async move {
+                    Err::<String, LeaseConflictError>(conflict("\"tui\" pid 99999", &exp))
+                })
+            },
+            Some(3),
+            Some(2_000),
+            no_op_sleep(),
+        )
+        .await
+        .expect_err("should early-exit and return Err");
+        let msg = err.to_string();
+        // The message should contain a computed "Ns" wait, NOT the hardcoded "~30s".
+        assert!(
+            msg.contains("wait ") && msg.contains("s for its lease to lapse"),
+            "message should contain a computed wait: {msg}"
+        );
+        assert!(!msg.contains("~30s"), "message must not use ~30s: {msg}");
+        // The computed wait should be ~5s (within a tolerance for test timing).
+        // Mirrors the TS `/wait [3-7]s for its lease to lapse/` — extract the digit
+        // after "wait " and assert it's in [3, 7].
+        let wait_secs = msg
+            .split("wait ")
+            .nth(1)
+            .and_then(|s| s.chars().next())
+            .and_then(|c| c.to_digit(10))
+            .expect("message should contain a 'wait Ns' segment");
+        assert!(
+            (3..=7).contains(&wait_secs),
+            "computed wait should be in [3,7]s, got {wait_secs}: {msg}"
+        );
+    }
+
+    // retryClaim — test 7: falls back to ~30s when the body lacks an expiry.
+    #[tokio::test]
+    async fn retry_claim_falls_back_to_30s_without_expiry() {
+        // A LeaseConflictError with no held info (malformed 409 body).
+        let result: Result<String, LeaseConflictError> = retry_claim_with_sleep(
+            || {
+                Box::pin(async move {
+                    Err(LeaseConflictError {
+                        message: "lease claim failed (409): malformed body".into(),
+                        held: None,
+                    })
+                })
+            },
+            Some(3),
+            Some(1),
+            no_op_sleep(),
+        )
+        .await;
+        assert!(result.is_err(), "should return Err");
+        let msg = result.unwrap_err().to_string();
+        // A held: None exhaustion hits the `None =>` arm of
+        // format_lease_conflict_message → "lease claim failed (409): another TUI
+        // is attached", OR (for a held summary with no expiry) the "~30s" wait.
+        // The TS regex /~30s|another TUI is attached/ covers both.
+        assert!(
+            msg.contains("~30s") || msg.contains("another TUI is attached"),
+            "message should fall back to ~30s or the attached-TUI line: {msg}"
+        );
+    }
+
+    // Extra coverage (beyond the TS suite): a conflict whose `held` is present
+    // but carries NO expiry timestamp. On exhaustion, retry_claim_with_sleep
+    // computes `seconds_to_lapse = None` (no expiry to parse) → the genuine
+    // "~30s" fallback arm of format_lease_conflict_message. The TS test 7 used
+    // `held: None`, which hits the *other* arm ("...another TUI is attached")
+    // and never actually exercises "~30s" — this test does.
+    #[tokio::test]
+    async fn retry_claim_falls_back_to_30s_when_held_has_no_expiry() {
+        // held present, but expires_at: None (a malformed-but-present 409 body).
+        let conflict_no_expiry = LeaseConflictError {
+            message: "another TUI is attached (no expiry)".into(),
+            held: Some(LeaseHeldInfo {
+                summary: "\"tui\" pid 99999".into(),
+                expires_at: None,
+            }),
+        };
+        // Short delay + no-op sleep so the loop runs fast; `expires_at: None`
+        // means the early-exit condition (which needs an expiry) never fires,
+        // so all 4 attempts run → exhaustion → message rebuilt with ~30s.
+        let err: LeaseConflictError = retry_claim_with_sleep(
+            || {
+                let e = conflict_no_expiry.clone();
+                Box::pin(async move { Err::<String, LeaseConflictError>(e) })
+            },
+            Some(3),
+            Some(1),
+            no_op_sleep(),
+        )
+        .await
+        .expect_err("should exhaust");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("~30s"),
+            "held-without-expiry exhaustion must fall back to ~30s: {msg}"
+        );
+        // The rebuilt message still carries the holder summary.
+        assert!(
+            msg.contains("another TUI is attached"),
+            "message should include the holder summary: {msg}"
+        );
+    }
+
+    // Extra coverage (beyond the TS suite): the genuine EXHAUSTION path with a
+    // held expiry that lapses WITHIN the retry window (so the early-exit never
+    // fires and all 4 attempts run). Test 6 (5s) early-exits at attempt 1 under
+    // a frozen clock; this one uses a sub-second expiry that stays inside the
+    // window at every attempt, so it truly exhausts at 4 calls.
+    #[tokio::test]
+    async fn retry_claim_exhausts_when_expiry_lapses_within_window() {
+        let calls = std::sync::Arc::new(std::sync::Mutex::new(0u32));
+        let calls_fn = calls.clone();
+        // 1ms out: lapses well within the retry window (3 × 1ms = 3ms) at every
+        // attempt under a frozen clock, so the early-exit never fires.
+        let expiry = iso_expiry(1);
+        let exp_for_claim = expiry.clone();
+        let result: Result<String, LeaseConflictError> = retry_claim_with_sleep(
+            move || {
+                let c = calls_fn.clone();
+                let exp = exp_for_claim.clone();
+                Box::pin(async move {
+                    *c.lock().expect("calls") += 1;
+                    Err::<String, LeaseConflictError>(conflict("\"tui\" pid 99999", &exp))
+                })
+            },
+            Some(3),
+            Some(1),
+            no_op_sleep(),
+        )
+        .await;
+        assert!(result.is_err(), "should exhaust and return Err");
+        // 1 initial + 3 retries = 4 attempts total.
+        assert_eq!(
+            *calls.lock().expect("calls"),
+            4,
+            "should run all 4 attempts"
+        );
+        assert!(result.unwrap_err().held.is_some(), "held info preserved");
+    }
+
+    // retryClaim — test 8: sleep is called between retries.
+    #[tokio::test]
+    async fn retry_claim_calls_sleep_between_retries() {
+        let claim_calls = std::sync::Arc::new(std::sync::Mutex::new(0u32));
+        let sleep_calls = std::sync::Arc::new(std::sync::Mutex::new(0u32));
+        let claim_fn = claim_calls.clone();
+        let sleep_fn = sleep_calls.clone();
+        // Short expiry (laps within the retry window) so the early-exit doesn't fire.
+        let expiry = iso_expiry(1);
+        let result: String = retry_claim_with_sleep(
+            move || {
+                let c = claim_fn.clone();
+                let exp = expiry.clone();
+                Box::pin(async move {
+                    let n = {
+                        let mut g = c.lock().expect("calls");
+                        *g += 1;
+                        *g
+                    };
+                    if n < 3 {
+                        return Err(conflict("\"tui\" pid 99999", &exp));
+                    }
+                    Ok::<String, LeaseConflictError>("ok".to_string())
+                })
+            },
+            Some(3),
+            Some(50),
+            {
+                let sc = sleep_fn.clone();
+                Arc::new(move |d: Duration| {
+                    assert_eq!(
+                        d.as_millis(),
+                        50,
+                        "sleep should be invoked with the delay_ms"
+                    );
+                    let sc = sc.clone();
+                    Box::pin(async move {
+                        *sc.lock().expect("sleep") += 1;
+                    }) as SleepFuture
+                })
+            },
+        )
+        .await
+        .expect("should succeed on 3rd attempt");
+        assert_eq!(result, "ok");
+        // Two retries → two sleeps (after attempt 1 and after attempt 2).
+        assert_eq!(*sleep_calls.lock().expect("sleep"), 2);
+        assert_eq!(*claim_calls.lock().expect("calls"), 3);
+    }
+
+    // LeaseConflictError — test 9: is an Error with the right name.
+    #[test]
+    fn lease_conflict_error_is_a_std_error_with_message() {
+        // Rust has no `err.name`; the TS assertion `err.name == "LeaseConflictError"`
+        // is ported as: the value implements std::error::Error, its Display is the
+        // message, and the type name contains "LeaseConflictError".
+        let err = LeaseConflictError {
+            message: "test message".into(),
+            held: None,
+        };
+        // It is a std::error::Error (the trait bound below compiles iff it is).
+        fn _assert_error<T: std::error::Error>(_: &T) {}
+        _assert_error(&err);
+        // Display yields the message.
+        assert_eq!(err.to_string(), "test message");
+        // held is None (no holder info).
+        assert!(err.held.is_none());
+        // The type name carries "LeaseConflictError" (the TS `name` analogue).
+        assert!(
+            std::any::type_name::<LeaseConflictError>().contains("LeaseConflictError"),
+            "type name should contain LeaseConflictError"
+        );
+    }
+
+    // LeaseConflictError — test 10: carries the parsed holder info.
+    #[test]
+    fn lease_conflict_error_carries_holder_info() {
+        let expires_at = iso_expiry(30_000);
+        let held = LeaseHeldInfo {
+            summary: "\"tui\" pid 12345, lease expires 12:00:00".into(),
+            expires_at: Some(expires_at.clone()),
+        };
+        let err = LeaseConflictError {
+            message: "msg".into(),
+            held: Some(held),
+        };
+        let carried = err.held.expect("held should be present");
+        assert_eq!(carried.summary, "\"tui\" pid 12345, lease expires 12:00:00");
+        assert_eq!(carried.expires_at.as_deref(), Some(expires_at.as_str()));
+    }
+
+    // parseLeaseHeldError — test 11: the mock's failsession message matches the
+    // lease-conflict pattern.
+    #[test]
+    fn mock_failsession_message_matches_lease_conflict_pattern() {
+        // The mock driver throws this exact message. classifySwitchError + the
+        // client's LEASE_CONFLICT_RE must both match it.
+        let mock_msg = "another TUI is attached to this session (\"tui\" pid 99999, \
+            lease expires in 30s). Detach it there (/detach) or wait 30s for its lease to lapse.";
+        // classifySwitchError pattern (hub.ts): /another TUI is attached|lease claim failed \(409\)/
+        assert!(
+            mock_msg.contains("another TUI is attached")
+                || mock_msg.contains("lease claim failed (409)"),
+            "hub classifySwitchError pattern should match"
+        );
+        // client LEASE_CONFLICT_RE (store.svelte.ts): /another TUI is attached|lease to lapse/
+        assert!(
+            mock_msg.contains("another TUI is attached") || mock_msg.contains("lease to lapse"),
+            "client LEASE_CONFLICT_RE pattern should match"
+        );
     }
 }
