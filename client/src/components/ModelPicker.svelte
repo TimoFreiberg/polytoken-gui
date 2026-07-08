@@ -14,6 +14,8 @@
   // props it would defeat the dedup. The simple badge+listbox pickers use
   // MenuBadge; this one stays hand-rolled.
   type Open = "none" | "model" | "thinking";
+  type ModelGroup = { provider: string; items: ModelOption[] };
+  const MODEL_GROUP_MIN_ITEMS = 3;
   let open = $state<Open>("none");
 
   // Current selection: the active session's folded config, or — while drafting a new
@@ -50,6 +52,7 @@
     }
     return [...m.entries()].map(([provider, items]) => ({ provider, items }));
   });
+  const groupedProviders = $derived(groups.filter(shouldGroupModels));
 
   const hasModels = $derived(store.models.length > 0);
   const filtering = $derived(store.modelDefaults.favorites.length > 0);
@@ -72,10 +75,13 @@
     }
     return out;
   });
-  // Per-provider collapse. The list grows long with many providers, so groups start
-  // collapsed — only the active model's provider is seeded open (so your current pick stays
-  // visible). A non-empty search query auto-expands every matching group.
+  // Per-provider collapse. Only real groups get headers; one- and two-model
+  // buckets render as plain rows so the menu does not become an accordion of
+  // singletons. A non-empty search query auto-expands every matching real group.
   let expandedProviders = $state<Set<string>>(new Set());
+  function shouldGroupModels(group: ModelGroup): boolean {
+    return group.items.length >= MODEL_GROUP_MIN_ITEMS;
+  }
   function isExpanded(provider: string): boolean {
     return mq !== "" || expandedProviders.has(provider);
   }
@@ -86,10 +92,12 @@
     expandedProviders = next;
     sel = 0; // the visible list changed; keep the highlight valid
   }
-  // Flat list of the VISIBLE model rows (expanded groups only), in render order —
-  // arrow-key navigation walks this, and `sel` indexes into it.
+  // Flat list of the VISIBLE model rows, in render order — arrow-key navigation
+  // walks this, and `sel` indexes into it.
   const flatModelItems = $derived(
-    filteredGroups.flatMap((g) => (isExpanded(g.provider) ? g.items : [])),
+    filteredGroups.flatMap((g) =>
+      !shouldGroupModels(g) || isExpanded(g.provider) ? g.items : [],
+    ),
   );
 
   // Keyboard-highlight index into the open menu's item list (model rows or levels).
@@ -111,12 +119,14 @@
   // provider. Picking a model closes the menu first, so this never re-collapses mid-use.
   $effect(() => {
     if (open !== "model") return;
-    // A favorites-filtered or single-provider list is already short — collapsing it would
-    // hide the very models you curated (or leave just a lone header), so expand everything.
-    if (filtering || groups.length <= 1) {
-      expandedProviders = new Set(groups.map((g) => g.provider));
+    // A favorites-filtered list is already curated; keep grouped favorites open.
+    // If there are no real groups, this is intentionally empty: tiny buckets have
+    // no header and are always visible.
+    if (filtering) {
+      expandedProviders = new Set(groupedProviders.map((g) => g.provider));
     } else {
-      const seed = cfg.provider || groups[0]?.provider;
+      const activeGroup = groupedProviders.find((g) => g.provider === cfg.provider);
+      const seed = activeGroup?.provider || groupedProviders[0]?.provider;
       expandedProviders = new Set(seed ? [seed] : []);
     }
   });
@@ -253,20 +263,23 @@
             onkeydown={onModelKeydown}
           />
           {#each filteredGroups as g (g.provider)}
-            {@const expanded = isExpanded(g.provider)}
-            <button
-              class="group-title"
-              type="button"
-              aria-expanded={expanded}
-              title={expanded
-                ? `Collapse ${g.provider}`
-                : `Expand ${g.provider} (${g.items.length} model${g.items.length === 1 ? "" : "s"})`}
-              onclick={() => toggleProvider(g.provider)}
-            >
-              <Chevron open={expanded} size={10} />
-              <span class="group-name">{g.provider}</span>
-              <span class="group-count">{g.items.length}</span>
-            </button>
+            {@const grouped = shouldGroupModels(g)}
+            {@const expanded = !grouped || isExpanded(g.provider)}
+            {#if grouped}
+              <button
+                class="group-title"
+                type="button"
+                aria-expanded={expanded}
+                title={expanded
+                  ? `Collapse ${g.provider}`
+                  : `Expand ${g.provider} (${g.items.length} models)`}
+                onclick={() => toggleProvider(g.provider)}
+              >
+                <Chevron open={expanded} size={10} />
+                <span class="group-name">{g.provider}</span>
+                <span class="group-count">{g.items.length}</span>
+              </button>
+            {/if}
             {#if expanded}
               {#each g.items as opt (opt.modelId)}
                 {@const active =

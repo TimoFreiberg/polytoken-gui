@@ -21,11 +21,9 @@ test("the model picker lists models and switches the active one", async ({
 
   await modelBadge.click();
 
-  // Providers are collapsible and start collapsed except the active one (anthropic), so a
-  // non-active provider's models are hidden until you expand its header.
+  // Tiny provider buckets render as direct model rows, not one-item accordions.
   const panel = page.locator(".mp .panel");
-  await expect(panel.getByText("DeepSeek V4 Flash")).toHaveCount(0);
-  await panel.locator(".group-title").filter({ hasText: "deepseek" }).click();
+  await expect(panel.locator(".group-title")).toHaveCount(0);
   await expect(panel.getByText("DeepSeek V4 Flash")).toBeVisible();
   await panel.getByText("DeepSeek V4 Flash").click();
 
@@ -35,7 +33,7 @@ test("the model picker lists models and switches the active one", async ({
   ).toBeVisible();
 });
 
-test("provider groups collapse by default and a search auto-expands matches", async ({
+test("small provider buckets stay flat and search filters matches", async ({
   page,
 }) => {
   await page
@@ -44,21 +42,20 @@ test("provider groups collapse by default and a search auto-expands matches", as
     .click();
   const panel = page.locator(".mp .panel");
 
-  // The active provider (anthropic) is seeded open; the others start collapsed.
+  // None of the mock providers has 3+ models, so no group header is worth showing.
+  await expect(panel.locator(".group-title")).toHaveCount(0);
   await expect(panel.getByText("Claude Opus 4.8")).toBeVisible();
-  await expect(panel.getByText("GPT-5")).toHaveCount(0);
-  await expect(
-    panel.locator(".group-title").filter({ hasText: "openai" }),
-  ).toHaveAttribute("aria-expanded", "false");
+  await expect(panel.getByText("GPT-5")).toBeVisible();
 
-  // Typing a query auto-expands every matching group without a manual click.
+  // Typing a query filters the flat rows without introducing headers.
   const search = panel.getByPlaceholder("Search models…");
   await search.fill("gpt");
   await expect(panel.getByText("GPT-5")).toBeVisible();
+  await expect(panel.locator(".group-title")).toHaveCount(0);
 
-  // Clearing the query re-collapses back to the seeded state.
+  // Clearing the query restores the flat list.
   await search.fill("");
-  await expect(panel.getByText("GPT-5")).toHaveCount(0);
+  await expect(panel.getByText("GPT-5")).toBeVisible();
 });
 
 test("the thinking picker switches the level", async ({ page }) => {
