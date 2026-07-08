@@ -259,7 +259,7 @@ fn mime_type(ext: &str) -> Result<&'static str, ()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
+    use axum::http::HeaderValue;
     #[test]
     fn normalize_strips_leading_slash() {
         assert_eq!(normalize_path("/index.html"), "index.html");
@@ -296,6 +296,16 @@ mod tests {
 
     // ── Ported from static.test.ts.bak ──────────────────────────
 
+    fn make_dist() -> tempfile::TempDir {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("index.html"), b"<!doctype html>spa").unwrap();
+        dir
+    }
+
+    fn empty_headers() -> HeaderMap {
+        HeaderMap::new()
+    }
+
     #[tokio::test]
     async fn index_html_falls_back_for_non_hashed_routes() {
         let dir = make_dist();
@@ -311,6 +321,10 @@ mod tests {
     #[tokio::test]
     async fn hashed_assets_get_immutable_cache() {
         let dir = make_dist();
+        // Create a hashed asset file so the server can find it
+        let asset_dir = dir.path().join("assets");
+        std::fs::create_dir_all(&asset_dir).unwrap();
+        std::fs::write(asset_dir.join("app-abc123.js"), b"console.log('hi');").unwrap();
         let server = StaticServer::new(dir.path().to_path_buf());
         let res = server
             .serve("/assets/app-abc123.js", &empty_headers())
