@@ -353,18 +353,28 @@ pub fn fold_event(state: &mut SessionState, ev: &SessionDriverEvent) {
             if let Some(q) = &snapshot.queued_messages {
                 state.queued = q.clone();
             }
-            // Close any open assistant when the turn ends
+            // Settle ALL in-flight state when the turn ends — not just the open
+            // assistant. An idle/failed snapshot means no turn is live, so any
+            // tool still marked "running" is an orphan (e.g. a replayed history
+            // whose tool_result was lost to a context_cleared, or a live
+            // out-of-band re-snapshot mid-turn). Leaving it running would make
+            // `turnActive` (the transcript's in-progress signal) disagree with
+            // `runningIds` (the sidebar's), since the latter is cleared by the
+            // idle snapshot but the former also checks for running tool cards.
+            // This matches the TS fold's behavior. Previously only runCompleted
+            // interrupted running tools; sessionUpdated/sessionOpened did not,
+            // causing the sidebar↔transcript desync (regression `05f4jw-rust`).
             if snapshot.status != SessionStatus::Running {
                 close_open_assistant(&mut state.items, Some(ev.timestamp()));
+                interrupt_running_tools(&mut state.items, ev.timestamp());
             }
-            // runCompleted is an authoritative turn boundary
+            // runCompleted also stamps branch handles (entryIds).
             if let E::RunCompleted {
                 assistant_entry_id,
                 user_entry_id,
                 ..
             } = ev
             {
-                interrupt_running_tools(&mut state.items, ev.timestamp());
                 if let Some(aid) = assistant_entry_id {
                     stamp_last_entry_id(&mut state.items, EntryIdKind::Assistant, aid);
                 }
@@ -1472,7 +1482,14 @@ mod tests {
     // ── sessionUpdated interrupt semantics (parity with state.test.ts) ─────
 
     #[test]
-    fn idle_session_updated_does_not_interrupt_live_tool() {
+    fn idle_session_updated_interrupts_orphaned_running_tool() {
+        // A non-running (idle/failed) snapshot means no turn is live, so any tool
+        // still "running" is an orphan. Interrupting it keeps `turnActive` (the
+        // transcript's in-progress signal) in sync with `runningIds` (the
+        // sidebar's), which is cleared by the idle snapshot.
+        // Regression `05f4jw-rust`: orphaned tool_use whose result was lost to a
+        // context_cleared left the transcript showing Working…/Stop while the
+        // sidebar showed idle.
         let s = fold_all(&[
             E::ToolStarted {
                 base: base(),
@@ -1488,7 +1505,17 @@ mod tests {
             },
         ]);
         match &s.items[0] {
-            TranscriptItem::Tool(t) => assert_eq!(t.status, ToolStatus::Running),
+            TranscriptItem::Tool(t) => {
+                assert_eq!(
+                    t.status,
+                    ToolStatus::Interrupted,
+                    "orphaned tool must be interrupted by an idle snapshot"
+                );
+                assert!(
+                    t.finished_at.is_some(),
+                    "interrupted tool gets a finishedAt"
+                );
+            }
             _ => panic!("expected tool item"),
         }
     }

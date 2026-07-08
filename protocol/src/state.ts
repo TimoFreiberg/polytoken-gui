@@ -296,22 +296,22 @@ export function foldEvent(
       // carries the queue replaces it (including []); an older/partial snapshot that omits
       // the field must not erase live queue state.
       if (s.queuedMessages) state.queued = [...s.queuedMessages];
-      // Close any open assistant when the turn ends. runCompleted always ends a
-      // turn; a sessionUpdated/runCompleted snapshot whose status is no longer
-      // "running" (idle or failed) also ends it. Without this, an idle
-      // transition that arrives only as a sessionUpdated leaves the assistant
-      // item streaming:true forever (the stray blinking caret bug).
-      if (s.status !== "running") closeOpenAssistant(state.items, ev.timestamp);
-      // Unlike sessionUpdated, runCompleted is an authoritative turn boundary.
-      // Settle any tool whose result was never persisted/emitted so replay cannot
-      // leave a historical card "running" forever.
-      if (ev.type === "runCompleted") {
+      // Settle ALL in-flight state when the turn ends — not just the open
+      // assistant. An idle/failed snapshot means no turn is live, so any tool
+      // still "running" is an orphan (a replayed history whose tool_result was
+      // lost to a context_cleared, or a live out-of-band re-snapshot mid-turn).
+      // Leaving it running makes `turnActive` (the transcript's in-progress
+      // signal) disagree with `runningIds` (the sidebar's): the latter is
+      // cleared by the idle snapshot, but the former also checks for running
+      // tool cards. This matches the Rust fold. Previously only runCompleted
+      // interrupted running tools; sessionUpdated/sessionOpened did not,
+      // causing the sidebar↔transcript desync (regression `05f4jw-rust`).
+      if (s.status !== "running") {
+        closeOpenAssistant(state.items, ev.timestamp);
         interruptRunningTools(state.items, ev.timestamp);
-        // Live-path branch handles: the daemon only knows the just-completed turn's entry ids
-        // now that its messages have persisted (they can't ride the deltas). Stamp them
-        // onto the turn-final assistant + this turn's user item so the "branch from here"
-        // buttons light up without a reload. No-op on replay (ids ride the per-message
-        // events there) and when the fields are absent.
+      }
+      // runCompleted also stamps branch handles (entryIds).
+      if (ev.type === "runCompleted") {
         if (ev.assistantEntryId)
           stampLastEntryId(state.items, "assistant", ev.assistantEntryId);
         if (ev.userEntryId)

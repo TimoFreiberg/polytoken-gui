@@ -665,7 +665,15 @@ class PilotStore {
    *  it with three independent in-flight signals a single glitch can't all clear at
    *  once: the server-authoritative running set (tracked separately by the hub from
    *  raw turn/tool events), an open streaming assistant bubble, and any still-running
-   *  tool. A failed run is terminal — never active — even if a tool card is orphaned. */
+   *  tool. A failed run is terminal — never active — even if a tool card is orphaned.
+   *
+   *  INVARIANT: `turnActive` and `sessionStatus()` (the sidebar's running indicator)
+   *  must always agree. Both ultimately derive from the same authoritative signals —
+   *  the server's `runningIds` set and the folded session state. The fold settles ALL
+   *  in-flight state (streaming assistant + running tools) on any non-running
+   *  snapshot, so an idle session can't have orphaned streaming/running items that
+   *  make `turnActive` return true while `runningIds` is clear (regression `05f4jw-rust`:
+   *  an orphaned tool_use whose tool_result was lost to a context_cleared).
   get turnActive(): boolean {
     // When drafting a new session, the main pane shows the new-session form —
     // not any running session. Hide streaming controls so the stop button and

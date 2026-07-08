@@ -2799,6 +2799,131 @@ mod tests {
         );
     }
 
+    /// Regression (`05f4jw-rust`): a session whose daemon history contains an
+    /// orphaned tool_use — one whose `tool_result` was never persisted (here,
+    /// lost to a `context_cleared`) — followed by subsequent turns and a
+    /// `session-resumed` reminder. When replayed through `build_branch_seed`,
+    /// the orphaned tool_use maps to a `toolStarted` (status: running) that
+    /// never gets a matching `toolFinished`. The trailing idle `SessionUpdated`
+    /// re-assert must interrupt that orphan — otherwise `turnActive` (the
+    /// transcript's in-progress signal, which checks for running tool cards)
+    /// returns true while `runningIds` (the sidebar's indicator, cleared by the
+    /// idle snapshot) is empty → the sidebar shows idle but the transcript shows
+    /// "Working…" + a Stop button forever.
+    #[test]
+    fn build_branch_seed_settles_orphaned_tool_use_lost_to_context_cleared() {
+        use pilot_protocol::state::{ToolStatus, TranscriptItem, fold_all};
+
+        let session_ref = SessionRef {
+            workspace_id: "ws".into(),
+            session_id: "s1".into(),
+        };
+        let workspace = WorkspaceRef {
+            workspace_id: "ws".into(),
+            path: "/repo".into(),
+            display_name: None,
+        };
+        let snapshot = event_map::snapshot_from_state(
+            None,
+            &session_ref,
+            &workspace,
+            SessionStatus::Idle,
+            "2025-01-01T00:00:00.000Z",
+            None,
+            None,
+        );
+        // The `05f4jw-rust` shape: turn 1 has a tool_use whose result is lost
+        // (context_cleared follows immediately), then turn 2 completes normally
+        // and a session-resumed reminder trails.
+        let history = vec![
+            serde_json::json!({
+                "type": "user",
+                "content": "do the thing",
+                "prompt_id": "p1",
+                "emitted_at": "2025-01-01T00:00:01.000Z",
+            }),
+            serde_json::json!({
+                "type": "assistant",
+                "prompt_id": "p1",
+                "blocks": [
+                    { "type": "text", "text": "starting the handoff" },
+                    { "type": "tool_use", "id": "call_orphaned", "name": "handoff_plan", "input": {} }
+                ],
+                "emitted_at": "2025-01-01T00:00:02.000Z",
+            }),
+            // context_cleared: the turn was abandoned — NO tool_result follows.
+            serde_json::json!({
+                "type": "context_cleared",
+                "emitted_at": "2025-01-01T00:00:03.000Z",
+            }),
+            // A subsequent turn completes normally.
+            serde_json::json!({
+                "type": "user",
+                "content": "try again",
+                "prompt_id": "p2",
+                "emitted_at": "2025-01-01T00:00:04.000Z",
+            }),
+            serde_json::json!({
+                "type": "assistant",
+                "prompt_id": "p2",
+                "blocks": [
+                    { "type": "text", "text": "All done!" }
+                ],
+                "emitted_at": "2025-01-01T00:00:05.000Z",
+            }),
+            // The session-resumed reminder every cold resume grows.
+            serde_json::json!({
+                "type": "system_reminder",
+                "slug": "session-resumed",
+                "reason": { "type": "session_resumed" },
+                "body": "This session has been resumed from saved history.",
+                "emitted_at": "2025-01-01T00:00:06.000Z",
+            }),
+        ];
+        let seed = PolytokenInner::build_branch_seed(
+            snapshot,
+            &history,
+            &HistoryMapCtx {
+                r#ref: session_ref.clone(),
+            },
+        );
+
+        // The seed must end with an idle SessionUpdated re-assert that settles
+        // the orphaned tool (the fix: interrupt running tools on idle snapshots,
+        // not just on runCompleted).
+        let state = fold_all(&seed);
+        assert!(
+            matches!(state.status, SessionStatus::Idle),
+            "folded seed status should be idle, got {:?}",
+            state.status
+        );
+
+        // The orphaned tool must NOT still be "running" — the idle re-assert
+        // interrupted it. If it's still running, `turnActive` returns true
+        // (phantom in-progress) while `runningIds` is clear (sidebar shows idle).
+        let orphaned = state
+            .items
+            .iter()
+            .find_map(|it| match it {
+                TranscriptItem::Tool(t) if t.id == "call_orphaned" => Some(t),
+                _ => None,
+            })
+            .expect("seed should contain the orphaned tool card");
+        assert_ne!(
+            orphaned.status,
+            ToolStatus::Running,
+            "orphaned tool_use must be interrupted (not still running) after the \
+             idle re-assert — else the sidebar shows idle but the transcript shows \
+             Working…/Stop forever (regression `05f4jw-rust`)"
+        );
+        assert_eq!(
+            orphaned.status,
+            ToolStatus::Interrupted,
+            "orphaned tool should be Interrupted, got {:?}",
+            orphaned.status
+        );
+    }
+
     /// Regression: an SSE reseed (stream_discontinuity / session_rewound /
     /// context_cleared) must rebuild the transcript WITHOUT duplicating it and must
     /// settle status. `build_reseed_events` leads with a `SessionReset` (clears the

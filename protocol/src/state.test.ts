@@ -224,11 +224,19 @@ describe("foldEvent", () => {
     });
   });
 
-  test("an idle sessionUpdated does not interrupt a live tool", () => {
+  test("an idle sessionUpdated interrupts an orphaned running tool", () => {
+    // A non-running (idle/failed) snapshot means no turn is live, so any tool
+    // still marked "running" is an orphan — its tool_result was lost (e.g. to a
+    // context_cleared) or an out-of-band re-snapshot flipped the status to idle
+    // mid-turn. Interrupting it keeps `turnActive` (the transcript's in-progress
+    // signal) in sync with `runningIds` (the sidebar's), which is cleared by the
+    // idle snapshot. Regression `05f4jw-rust`: orphaned handoff_plan tool_use
+    // left the transcript showing Working…/Stop while the sidebar showed idle.
     const s = foldAll([
       base({ type: "toolStarted", callId: "c1", toolName: "bash" }),
       base({
         type: "sessionUpdated",
+        timestamp: "settle-at",
         snapshot: {
           ref,
           workspace: { workspaceId: "w", path: "/p" },
@@ -238,7 +246,11 @@ describe("foldEvent", () => {
         },
       }),
     ]);
-    expect(s.items[0]).toMatchObject({ kind: "tool", status: "running" });
+    expect(s.items[0]).toMatchObject({
+      kind: "tool",
+      status: "interrupted",
+      finishedAt: "settle-at",
+    });
   });
 
   test("runFailed interrupts a tool with no matching result", () => {

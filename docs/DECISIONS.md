@@ -94,3 +94,30 @@ mock suite. Widening it needs conscious live captures (operator + `$DEEPSEEK_API
 of the four-leg cutover gate (ported units → mock e2e → **fake-daemon e2e** → live
 smoke); the mock tier stays the broad UI regression net. (Operator decision,
 2026-07-07: Option 1.)
+
+## D22. Invariant: sidebar running indicator and transcript in-progress display must agree
+
+The sidebar's per-session status indicator (`store.sessionStatus()`, driven by
+the server-pushed `runningIds` set) and the transcript's in-progress display
+(`store.turnActive`, driving the WorkingIndicator spinner + token counter and the
+Composer's Stop button) must always agree: if one shows running, so must the
+other, and vice versa.
+
+These two signals are derived from different views of the same underlying
+truth. `runningIds` is server-authoritative — the hub's `track_running` flips it
+on for turn-bearing events (`userMessage`, `assistantDelta`, `toolStarted`) and
+clears it when an idle/failed snapshot arrives. `turnActive` ORs the folded
+`session.status` with `runningIds` and two item-level in-flight signals (an open
+streaming assistant bubble, any still-running tool card). The item-level signals
+exist as a belt-and-suspenders for live mid-turn glitches, but they must not
+survive past a turn boundary.
+
+The invariant is enforced at the fold: any non-running snapshot
+(`sessionOpened`/`sessionUpdated`/`runCompleted` with `status != running`)
+settles ALL in-flight state — it closes the open assistant bubble AND interrupts
+orphaned running tools. Previously only `runCompleted` interrupted running
+tools; `sessionUpdated`/`sessionOpened` only closed the assistant. That gap
+caused the sidebar↔transcript desync (`05f4jw-rust`): an orphaned `tool_use`
+whose `tool_result` was lost to a `context_cleared` survived the trailing idle
+re-assert `build_branch_seed` appends, leaving `turnActive` true (phantom
+running tool) while `runningIds` was clear (sidebar correctly idle).
