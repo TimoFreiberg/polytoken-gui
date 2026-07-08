@@ -1,6 +1,7 @@
 <script lang="ts">
   import { store } from "../lib/store.svelte.js";
   import { formatWorkedDuration } from "../lib/transcript-view.js";
+  import CoinMark from "./ui/CoinMark.svelte";
 
   // The current turn is in its THINKING phase: the open assistant bubble is
   // accumulating reasoning but hasn't emitted answer text yet. With thinking blocks
@@ -79,8 +80,8 @@
           : "Agent is working"}
     >
       <span class="mark" aria-hidden="true">
-        <span class="pi">π</span>
-        <!-- Only .ring rotates; the π is a static, centered sibling so its
+        <span class="coin"><CoinMark /></span>
+        <!-- Only .ring rotates; the coin is a static, centered sibling so its
              centering transform never collides with the orbit animation. -->
         <span class="ring"><span class="dot"></span></span>
       </span>
@@ -131,15 +132,12 @@
     height: 22px;
     flex-shrink: 0;
   }
-  .pi {
+  .coin {
     position: absolute;
     inset: 0;
     display: flex;
     align-items: center;
     justify-content: center;
-    font-family: var(--font-mono);
-    font-size: 14px;
-    line-height: 1;
     color: var(--accent);
   }
   .ring {

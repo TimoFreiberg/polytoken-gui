@@ -3,6 +3,7 @@
   import { cubicOut } from "svelte/easing";
   import { reveal } from "../lib/transitions.js";
   import Chevron from "./ui/Chevron.svelte";
+  import CoinMark from "./ui/CoinMark.svelte";
   import { store } from "../lib/store.svelte.js";
   import {
     filterHiddenThinking,
@@ -1014,7 +1015,7 @@
 {#if store.openingSession}
   <div class="opening-overlay" data-testid="opening-session-placeholder">
     <span class="opening-mark" aria-hidden="true">
-      <span class="pi">π</span>
+      <CoinMark size={11} strokeWidth={3} />
       <span class="ring"><span class="dot"></span></span>
     </span>
     <span class="opening-label">Opening session…</span>
@@ -1614,12 +1615,6 @@
     position: relative;
     width: 18px;
     height: 18px;
-  }
-  .opening-mark .pi {
-    font-size: 11px;
-    font-weight: 700;
-    color: var(--text-faint);
-    line-height: 1;
   }
   .opening-mark .ring {
     position: absolute;
