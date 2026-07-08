@@ -1,15 +1,16 @@
 # Rust Server Port — Status & Resumption Plan
 
-**Status (2026-07-08):** Phase 5 complete. 485 Rust tests green (5 daemon-types,
-64 protocol, 383 lib [5 `#[ignore]`], 8 corpus, 25 live_path), 761 TS tests
+**Status (2026-07-08):** Phase 5 complete. 498 Rust tests green (5 daemon-types,
+64 protocol, 396 lib [5 `#[ignore]`], 8 corpus, 25 live_path), 761 TS tests
 green, 298/298 Rust-server e2e (0 deterministic failures). `cargo clippy
 --all-targets -- -D warnings` + `cargo fmt --check` clean. Mock-e2e burn-down
 complete (Phase 1); live-path validation parts 1–2 complete (Phases 2, 2.5, 5);
 6 live-path `BUG:` markers resolved (Phase A). Phase 3 `/health` real counts +
 `build_sha` env + web push delivery (VAPID keygen + `/push/*` + hub `notify`)
-done; `sessions-registry` (15) tests ported. Remaining: daemon-client/lease-
-retry test ports (Phase 2 item 4), Phase 3 cutover mechanics (live smoke,
-default flip).
+done; `sessions-registry` (15) + `lease-retry` (11) tests ported. Remaining:
+daemon-client.test.ts subset (needs an HTTP mock seam for setModel/subscribe;
+the spawn-seam + pure-helper + waitForDaemonStartup parts are tractable now);
+Phase 3 cutover mechanics (live smoke, default flip).
 
 ## Goal
 
@@ -83,8 +84,8 @@ I/O-shaped. The remaining gap is the I/O-shaped daemon/hub integration tests:
 |---|---|---|
 | `hub.test.ts` | 64 | 0 |
 | `hub-journal.test.ts` | 14 | 0 (journal unit ≠ hub integration) |
-| `daemon-client.test.ts` | 14 | 0 |
-| `lease-retry.test.ts` | 11 | 0 |
+| `daemon-client.test.ts` | 14 | 0 (subset tractable: pure helpers + spawn seam + waitForDaemonStartup; `setModel` 409 + `subscribe` liveness need an HTTP mock seam in `DaemonClient`, not yet introduced) |
+| `lease-retry.test.ts` | 11 | ✅ 11 + 2 extra (ported 2026-07-08; sleep seam added) |
 | `sessions-registry.test.ts` | 15 | ✅ 15 (ported 2026-07-08) |
 
 The e2e suite runs the **mock driver only** (plus the `e2e/live` corpus-subset
@@ -244,11 +245,21 @@ faithfully.
 - [~] Corpus: 5/6 real captures FROZEN (see "Live corpus capture" above).
 - [x] Fake-daemon harness built (axum router + `spawn_override`; 19 integration
       tests).
-- [ ] **Port `daemon-client.test.ts` + `lease-retry.test.ts` (25).** Introduce a
-      spawn seam (TS's `_setSpawnForTesting` equivalent) — spawn failure / process
-      death can't be expressed on the wire. Lease conflicts and
-      daemon-death-mid-session CAN be wire-expressed (claim rejection, SSE drop)
-      — cover those in the fake-daemon integration tests.
+- [~] **Port `daemon-client.test.ts` + `lease-retry.test.ts` (25).** ✅
+      `lease-retry.test.ts` (11) ported (2026-07-08) + a sleep seam
+      (`retry_claim_with_sleep`). Spawn seam already exists
+      (`spawn_override`/`set_spawn_override`). `daemon-client.test.ts` (14)
+      partially tractable: pure helpers (`parse_spawn_output`,
+      `parse_lease_held_error`) + the spawn seam + `waitForDaemonStartup` (file
+      polling) port directly; the `setModel` 409 + `subscribe` liveness tests
+      need an HTTP mock seam in `DaemonClient` (it uses `reqwest::Client`
+      directly — no trait seam yet). **Open follow-ups surfaced during the
+      lease-retry port:** (a) `retry_claim` retries on ANY `Err` (TS re-throws
+      non-lease errors immediately) — `claim_lease` models non-409s as
+      `LeaseConflictError { held: None }`, so a 500 retries 4×; fix needs a
+      `LeaseError { Conflict, Other }` enum. (b) `claim_lease_with_retry`
+      inlines its own retry loop and doesn't call `retry_claim` — the sleep seam
+      covers the standalone fn, not the production path; dedupe to close the gap.
 - [x] `shared/` modules ported with tests and wired into live driver (Phase 5).
       ✅ `sessions-registry` (15 tests) ported (2026-07-08): the Rust module
       had no tests; all 15 TS cases now mirrored (mtime sort, cold-entry
