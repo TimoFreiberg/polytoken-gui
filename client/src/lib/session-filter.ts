@@ -2,7 +2,7 @@
 // (hide archived and stale sessions). Pure so it can be unit-tested without the DOM; the
 // Sidebar component just renders the result.
 
-import type { SessionListEntry } from "@pilot/protocol";
+import type { SessionListEntry } from "@pantoken/protocol";
 
 /** A session is "stale" once it's gone untouched for over a week. Client-side per the
  *  TODO: `Date.now() - updatedAt > 7d`. */
@@ -95,7 +95,7 @@ export function filterSessions(
   for (const s of sessions) {
     if (isHidden(s, now, showArchived, pinnedIds)) continue;
     if (!matchesQuery(s, q)) continue;
-    // A pilot-created worktree session groups under the repo it was forked from
+    // A pantoken-created worktree session groups under the repo it was forked from
     // (`worktree.base`), not its own worktree-basename cwd — so it interleaves with the
     // parent project's main-tree sessions instead of forming its own group. Hand-made
     // workspaces (no `worktree` field) keep their own group, by design.

@@ -8,7 +8,7 @@ describe("ArchiveStore", () => {
   let dir: string;
   let file: string;
   beforeEach(() => {
-    dir = mkdtempSync(join(tmpdir(), "pilot-archive-"));
+    dir = mkdtempSync(join(tmpdir(), "pantoken-archive-"));
     file = join(dir, "archived.json");
   });
   afterEach(() => rmSync(dir, { recursive: true, force: true }));

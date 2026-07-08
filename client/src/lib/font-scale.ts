@@ -8,7 +8,7 @@
 // those shortcuts are often unavailable and don't persist per-app. This does, and survives
 // reload. Persisted per-device.
 
-const KEY = "pilot.fontScale";
+const KEY = "pantoken.fontScale";
 export const MIN_SCALE = 0.85;
 export const MAX_SCALE = 1.7;
 /** ~1px per step at the 16.5px transcript base; 1/16 keeps values clean (binary fractions). */

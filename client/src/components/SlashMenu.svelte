@@ -1,5 +1,5 @@
 <script lang="ts">
-  import type { CommandInfo } from "@pilot/protocol";
+  import type { CommandInfo } from "@pantoken/protocol";
   import { scrollIndexIntoView } from "../lib/scroll-into-view.js";
 
   // Presentational only: the Composer owns the open/filter/selection state machine and

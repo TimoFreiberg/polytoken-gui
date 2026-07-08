@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import type { CommandInfo } from "@pilot/protocol";
+import type { CommandInfo } from "@pantoken/protocol";
 import { filterCommands, slashQuery } from "./slash.js";
 
 const CMDS: CommandInfo[] = [

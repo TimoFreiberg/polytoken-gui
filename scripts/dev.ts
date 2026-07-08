@@ -1,19 +1,19 @@
-// Brings up the whole dev stack with one command: the Rust WS server (PILOT_PORT,
+// Brings up the whole dev stack with one command: the Rust WS server (PANTOKEN_PORT,
 // default 8787) and the Vite client (VITE_PORT, default 5173, proxying /ws and
-// /debug to PILOT_SERVER). Used by `bun run dev` and by the Claude_Preview launch
+// /debug to PANTOKEN_SERVER). Used by `bun run dev` and by the Claude_Preview launch
 // config so an agent can boot the app in one shot.
 //
-// ISOLATION NOTE: the live pilot desktop app (desktop/Config.swift) exports its own
-// PILOT_PORT + PILOT_DATA_DIR into the environment of every process it spawns — which
+// ISOLATION NOTE: the live pantoken desktop app (desktop/Config.swift) exports its own
+// PANTOKEN_PORT + PANTOKEN_DATA_DIR into the environment of every process it spawns — which
 // includes agent sessions. So a preview/e2e launched from inside the running app inherits
-// those. Auto-port mode (below) deliberately IGNORES the inherited PILOT_PORT/PILOT_DATA_DIR
+// those. Auto-port mode (below) deliberately IGNORES the inherited PANTOKEN_PORT/PANTOKEN_DATA_DIR
 // and self-isolates, so an agent instance never aims at — or fights the lock of — the live
 // app or a concurrent session. Only an explicit, non-auto `bun run dev` honors them.
 //
 // Env vars:
-//   PILOT_PORT   — server listen port (default 8787; ignored in auto-port mode)
+//   PANTOKEN_PORT   — server listen port (default 8787; ignored in auto-port mode)
 //   VITE_PORT    — Vite dev-server port (default 5173)
-//   PILOT_SERVER — WS backend URL that Vite proxies to (default http://localhost:8787)
+//   PANTOKEN_SERVER — WS backend URL that Vite proxies to (default http://localhost:8787)
 
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -21,7 +21,7 @@ import { createServer } from "node:net";
 import type { AddressInfo } from "node:net";
 
 // Ask the OS for an unused TCP port (bind :0, read it back, release). Used on the auto-port
-// paths (Claude_Preview's $PORT, e2e's PILOT_AUTO_PORT) so parallel — or leaked — instances
+// paths (Claude_Preview's $PORT, e2e's PANTOKEN_AUTO_PORT) so parallel — or leaked — instances
 // never fight over one hardcoded port; bare `bun run dev` still pins 8787 below.
 function freePort(): Promise<number> {
   return new Promise((res, rej) => {
@@ -58,68 +58,68 @@ function portInUse(port: number): Promise<boolean> {
 const vitePort = process.env.PORT ?? process.env.VITE_PORT;
 
 // Auto-port is requested when Claude_Preview passes $PORT (for Vite) or the e2e suite sets
-// PILOT_AUTO_PORT=1. Its whole point is an ISOLATED, collision-free instance.
+// PANTOKEN_AUTO_PORT=1. Its whole point is an ISOLATED, collision-free instance.
 const autoPort =
-  process.env.PORT != null || process.env.PILOT_AUTO_PORT === "1";
+  process.env.PORT != null || process.env.PANTOKEN_AUTO_PORT === "1";
 
 // Backend port. In auto-port mode, grab an OS-assigned FREE port and IGNORE any inherited
-// PILOT_PORT: the live desktop app exports its own into the shell (see ISOLATION NOTE), so
+// PANTOKEN_PORT: the live desktop app exports its own into the shell (see ISOLATION NOTE), so
 // honoring it would aim this preview/e2e instance at the LIVE backend (or a concurrent
 // session's) instead of a fresh one — and a free port is also immune to leaked orphans
-// squatting a fixed port. Outside auto-port (bare `bun run dev`) an explicit PILOT_PORT
+// squatting a fixed port. Outside auto-port (bare `bun run dev`) an explicit PANTOKEN_PORT
 // wins, else the 8787 default.
 const backendPort = autoPort
   ? String(await freePort())
-  : (process.env.PILOT_PORT ?? "8787");
+  : (process.env.PANTOKEN_PORT ?? "8787");
 
-// A freePort() result is guaranteed free; a pinned port (explicit/inherited PILOT_PORT, or
+// A freePort() result is guaranteed free; a pinned port (explicit/inherited PANTOKEN_PORT, or
 // the 8787 default) might be held by an orphan or the live app — probe it so we fail loud
 // rather than starting a second listener Vite then proxies to ambiguously. (Skipped in
 // auto-port mode, where the port was just freshly reserved.)
 const usedFreePort = autoPort;
 if (!usedFreePort && (await portInUse(Number(backendPort)))) {
   console.error(
-    `[dev] backend port ${backendPort} is already in use — likely an orphaned pilot ` +
+    `[dev] backend port ${backendPort} is already in use — likely an orphaned pantoken ` +
       `server from an interrupted run, or another dev/preview instance. Find + kill it:\n` +
       `        lsof -ti:${backendPort} | xargs kill`,
   );
   process.exit(1);
 }
 
-const SERVER = process.env.PILOT_SERVER ?? `http://localhost:${backendPort}`;
+const SERVER = process.env.PANTOKEN_SERVER ?? `http://localhost:${backendPort}`;
 // Bun-run Vite can hang proxy WebSocket upgrades; point the client at the backend
 // socket directly while keeping Vite's HTTP proxy for /debug, /health, etc.
 const wsUrl = new URL("/ws", SERVER);
 wsUrl.protocol = wsUrl.protocol === "https:" ? "wss:" : "ws:";
 
 // Each dev/preview/e2e instance gets its OWN data dir, keyed by port. In auto-port mode we
-// IGNORE any inherited PILOT_DATA_DIR for the same reason as the port: the live app exports
+// IGNORE any inherited PANTOKEN_DATA_DIR for the same reason as the port: the live app exports
 // its data dir into the shell, and sharing it means fighting the running app (and other
 // agent sessions) over the single PID lock — "data dir already locked". Keyed by the free
 // port, concurrent previews / e2e runs / the live app never collide. Outside auto-port an
-// explicit PILOT_DATA_DIR still wins (else the same per-port default). The PID lock guards
+// explicit PANTOKEN_DATA_DIR still wins (else the same per-port default). The PID lock guards
 // one data dir against two servers; production `server start` uses the default XDG dir.
 const stateHome =
   process.env.XDG_STATE_HOME?.trim() || join(homedir(), ".local", "state");
 const dataDir =
-  !autoPort && process.env.PILOT_DATA_DIR
-    ? process.env.PILOT_DATA_DIR
-    : join(stateHome, "pilot-dev", backendPort);
+  !autoPort && process.env.PANTOKEN_DATA_DIR
+    ? process.env.PANTOKEN_DATA_DIR
+    : join(stateHome, "pantoken-dev", backendPort);
 
 const viteArgs = ["run", "dev"];
 if (vitePort) viteArgs.push("--port", vitePort);
 
 const backendEnv = {
   ...process.env,
-  PILOT_PORT: backendPort,
-  PILOT_DATA_DIR: dataDir,
+  PANTOKEN_PORT: backendPort,
+  PANTOKEN_DATA_DIR: dataDir,
   // In auto-port mode the instance must be tokenless (auth disabled), like every other
-  // dev/preview/e2e instance. The live desktop app exports its own PILOT_TOKEN into the
-  // shell it spawns (same leak as PILOT_PORT/PILOT_DATA_DIR above); inheriting it would
+  // dev/preview/e2e instance. The live desktop app exports its own PANTOKEN_TOKEN into the
+  // shell it spawns (same leak as PANTOKEN_PORT/PANTOKEN_DATA_DIR above); inheriting it would
   // enable the token gate here, so the tokenless /debug reset + /?dev load in e2e (and a
   // mock preview) hit the TokenGate instead of the app. Outside auto-port an explicit
-  // PILOT_TOKEN still wins, so a real `bun run dev` behind a token keeps it.
-  ...(autoPort ? { PILOT_TOKEN: undefined } : {}),
+  // PANTOKEN_TOKEN still wins, so a real `bun run dev` behind a token keeps it.
+  ...(autoPort ? { PANTOKEN_TOKEN: undefined } : {}),
 };
 
 // Start the backend first and wait until it answers /health before launching Vite.
@@ -156,8 +156,8 @@ const vite = Bun.spawn(["bun", ...viteArgs], {
   cwd: "client",
   env: {
     ...process.env,
-    PILOT_SERVER: SERVER,
-    VITE_PILOT_WS_URL: wsUrl.toString(),
+    PANTOKEN_SERVER: SERVER,
+    VITE_PANTOKEN_WS_URL: wsUrl.toString(),
   },
   stdout: "inherit",
   stderr: "inherit",

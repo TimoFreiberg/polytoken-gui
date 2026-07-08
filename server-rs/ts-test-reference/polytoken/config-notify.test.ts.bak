@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import type { SessionDriverEvent, SessionRef } from "@pilot/protocol";
+import type { SessionDriverEvent, SessionRef } from "@pantoken/protocol";
 import { errorNotify, withErrorNotify } from "./config-notify.js";
 
 const ref: SessionRef = {

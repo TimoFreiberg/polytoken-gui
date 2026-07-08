@@ -1,7 +1,7 @@
 PARITY TEST PROJECT — first line is a known fixed value.
 
 This is a throwaway project used by the GUI⇄TUI parity harness. An agent drives
-sessions here from both the pilot GUI and the polytoken TUI. Nothing here is
+sessions here from both the pantoken GUI and the polytoken TUI. Nothing here is
 precious — `parity project reset` recreates it.
 
 The first line above ("PARITY TEST PROJECT — first line is a known fixed value.") is a

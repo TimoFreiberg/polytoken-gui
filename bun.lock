@@ -3,7 +3,7 @@
   "configVersion": 1,
   "workspaces": {
     "": {
-      "name": "pilot",
+      "name": "pantoken",
       "devDependencies": {
         "@playwright/test": "^1.61.0",
         "@types/bun": "^1.3.14",
@@ -12,11 +12,11 @@
       },
     },
     "client": {
-      "name": "@pilot/client",
+      "name": "@pantoken/client",
       "version": "0.0.0",
       "dependencies": {
         "@pierre/diffs": "^1.2.11",
-        "@pilot/protocol": "workspace:*",
+        "@pantoken/protocol": "workspace:*",
         "markstream-svelte": "^0.0.1",
       },
       "devDependencies": {
@@ -35,7 +35,7 @@
       },
     },
     "protocol": {
-      "name": "@pilot/protocol",
+      "name": "@pantoken/protocol",
       "version": "0.0.0",
     },
   },
@@ -76,9 +76,9 @@
 
     "@pierre/theming": ["@pierre/theming@0.0.1", "", { "peerDependencies": { "@pierre/theme": "^1.0.0", "@shikijs/themes": "^3.0.0 || ^4.0.0", "react": "^18.3.1 || ^19.0.0", "react-dom": "^18.3.1 || ^19.0.0", "shiki": "^3.0.0 || ^4.0.0" }, "optionalPeers": ["@pierre/theme", "@shikijs/themes", "react", "react-dom", "shiki"] }, "sha512-1thlEtJbqdyLzc1ZS2KQa1q7FzDGHT4dTEdKHoyQjOMeWWOmbVG5/ndEfOKfAb5Fzkz8cNJrOjFLiZoDH/A03A=="],
 
-    "@pilot/client": ["@pilot/client@workspace:client"],
+    "@pantoken/client": ["@pantoken/client@workspace:client"],
 
-    "@pilot/protocol": ["@pilot/protocol@workspace:protocol"],
+    "@pantoken/protocol": ["@pantoken/protocol@workspace:protocol"],
 
     "@playwright/test": ["@playwright/test@1.61.0", "", { "dependencies": { "playwright": "1.61.0" }, "bin": { "playwright": "cli.js" } }, "sha512-cKA5B6lpFEMyMGjxF54QihfYpB4FkEGH+qZhtArDEG+wezQAJY8Pq6C7T1SjWz+FFzt3TbyoXBQYk/0292TdJA=="],
 

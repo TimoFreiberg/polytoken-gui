@@ -1,4 +1,4 @@
-import type { ImageContent } from "@pilot/protocol";
+import type { ImageContent } from "@pantoken/protocol";
 
 // Shared full-screen image viewer. Any read-only transcript image — a user
 // attachment, a tool's image output — opens the single ImageLightbox mounted in

@@ -86,7 +86,7 @@ test("tool card expands to show the full arguments", async ({ page }) => {
 });
 
 test("composer is present and idle", async ({ page }) => {
-  await expect(page.getByPlaceholder("Message pilot…")).toBeVisible();
+  await expect(page.getByPlaceholder("Message pantoken…")).toBeVisible();
 });
 
 test("with thinking hidden, all superseded thinking-only items are dropped", async ({

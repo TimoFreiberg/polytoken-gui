@@ -6,7 +6,7 @@ import "./markstream-theme.css";
 import { store } from "./lib/store.svelte.js";
 import { registerServiceWorker } from "./lib/sw.js";
 
-// Pilot doesn't ship the optional @terrastruct/d2 dependency, but markstream
+// Pantoken doesn't ship the optional @terrastruct/d2 dependency, but markstream
 // probes for it on every finalized markdown block — an unhandled rejection per
 // block that also aborts that block's footnote/tooltip enhancement pass. Opt
 // out once at startup; to enable D2 diagrams, install @terrastruct/d2 and

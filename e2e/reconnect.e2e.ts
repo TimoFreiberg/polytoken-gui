@@ -17,7 +17,7 @@ async function gateInitialWebSocket(page: Page) {
       onopen: ((event: Event) => void) | null = null;
       protocol = "";
       readyState: 0 | 1 | 2 | 3 = NativeWebSocket.CONNECTING;
-      url = "ws://pilot-blocked";
+      url = "ws://pantoken-blocked";
 
       constructor() {
         window.setTimeout(() => {
@@ -57,10 +57,10 @@ async function gateInitialWebSocket(page: Page) {
     window.WebSocket = GatedWebSocket as unknown as typeof WebSocket;
 
     Object.assign(window, {
-      __pilotAllowWebSocket: () => {
+      __pantokenAllowWebSocket: () => {
         allow = true;
       },
-      __pilotWebSocketAttempts: () => attempts,
+      __pantokenWebSocketAttempts: () => attempts,
     });
   });
 }
@@ -110,10 +110,10 @@ test("the connection banner can reconnect immediately", async ({ page }) => {
   const reconnect = await gotoWithBlockedWebSocket(page);
   await expect(reconnect).toHaveAttribute("title", "Reconnect now (Alt+R)");
   const before = await page.evaluate(() =>
-    (window as any).__pilotWebSocketAttempts(),
+    (window as any).__pantokenWebSocketAttempts(),
   );
 
-  await page.evaluate(() => (window as any).__pilotAllowWebSocket());
+  await page.evaluate(() => (window as any).__pantokenAllowWebSocket());
   await reconnect.click();
 
   await expect(
@@ -121,14 +121,14 @@ test("the connection banner can reconnect immediately", async ({ page }) => {
   ).toBeVisible();
   await expect(reconnect).toBeHidden();
   const after = await page.evaluate(() =>
-    (window as any).__pilotWebSocketAttempts(),
+    (window as any).__pantokenWebSocketAttempts(),
   );
   expect(after).toBeGreaterThan(before);
 });
 
 test("Alt+R reconnects from the connection banner", async ({ page }) => {
   const reconnect = await gotoWithBlockedWebSocket(page);
-  await page.evaluate(() => (window as any).__pilotAllowWebSocket());
+  await page.evaluate(() => (window as any).__pantokenAllowWebSocket());
   await page.keyboard.press("Alt+R");
 
   await expect(

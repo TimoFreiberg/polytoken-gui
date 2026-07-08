@@ -22,7 +22,7 @@ test("a reconnect keeps you on the session you were viewing", async ({
 
   // Drop the live socket and reconnect — the hub re-snapshots us onto the landing.
   await page.evaluate(() =>
-    window.dispatchEvent(new Event("pilot:test-disconnect")),
+    window.dispatchEvent(new Event("pantoken:test-disconnect")),
   );
   const reconnect = page.getByRole("button", { name: "Reconnect" });
   await expect(reconnect).toBeVisible();

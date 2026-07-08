@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import type { SessionListEntry } from "@pilot/protocol";
+import type { SessionListEntry } from "@pantoken/protocol";
 import { mergeSessionLists } from "./session-list.js";
 
 function entry(

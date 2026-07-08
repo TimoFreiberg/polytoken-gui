@@ -191,8 +191,8 @@ test("no stray working indicator after a turn ends via sessionUpdated (not runCo
 test("tab title mirrors the active session title", async ({ page }) => {
   // The greeting snapshot titles the session "Wire up the WebSocket bridge";
   // document.title should reflect it (suffixed with the app name) rather than
-  // staying the static "pilot".
-  await expect(page).toHaveTitle("Wire up the WebSocket bridge · pilot");
+  // staying the static "pantoken".
+  await expect(page).toHaveTitle("Wire up the WebSocket bridge · pantoken");
 });
 
 test("transcript: full markdown renders (headings, table, code, links)", async ({
@@ -405,7 +405,7 @@ test("sending a prompt while scrolled up jumps the transcript to the bottom", as
     .toBe(0);
 
   // Send a prompt from the composer.
-  const box = page.getByPlaceholder("Message pilot…");
+  const box = page.getByPlaceholder("Message pantoken…");
   await box.fill("jump to the bottom please");
   await box.press("Enter");
 
@@ -596,7 +596,7 @@ test("switching away does not corrupt the leaving session's saved position", asy
     });
   const savedRatio = (id: string) =>
     page.evaluate((sid) => {
-      const raw = localStorage.getItem("pilot.scrollPositions");
+      const raw = localStorage.getItem("pantoken.scrollPositions");
       return raw ? (JSON.parse(raw)[sid]?.ratio ?? null) : null;
     }, id);
 
@@ -671,7 +671,7 @@ test("a session left at the live tail returns to the tail on focus", async ({
   await expect.poll(gap).toBeLessThan(80);
   await page.waitForTimeout(350); // debounced persist
   const atBottom = await page.evaluate(() => {
-    const raw = localStorage.getItem("pilot.scrollPositions");
+    const raw = localStorage.getItem("pantoken.scrollPositions");
     return raw ? JSON.parse(raw)["older-session"]?.atBottom : undefined;
   });
   expect(atBottom).toBe(true);
@@ -697,7 +697,7 @@ test("a session left at the live tail returns to the tail on focus", async ({
 test("PWA update prompt appears and can be dismissed", async ({ page }) => {
   // The ?dev bar's "update" button stands in for a real service-worker update.
   await page.getByRole("button", { name: "update", exact: true }).click();
-  const toast = page.getByText("A new version of pilot is available");
+  const toast = page.getByText("A new version of pantoken is available");
   await expect(toast).toBeVisible();
   await expect(
     page.getByRole("button", { name: "Refresh", exact: true }),

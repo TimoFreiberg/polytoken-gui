@@ -1,7 +1,7 @@
 [package]
-name = "pilot-desktop"
+name = "pantoken-desktop"
 version = "0.2.4"
-description = "Pilot desktop shell — supervises the Bun hub as a sidecar and hosts the web client"
+description = "Pantoken desktop shell — supervises the Bun hub as a sidecar and hosts the web client"
 edition = "2021"
 publish = false
 

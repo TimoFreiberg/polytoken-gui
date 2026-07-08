@@ -1,7 +1,7 @@
 // parity/parity.ts — the ONE entry point the skill teaches.
 //
 //   bun parity/parity.ts doctor [--quick]
-//   bun parity/parity.ts up                 # launch pilot→polytoken GUI (run backgrounded)
+//   bun parity/parity.ts up                 # launch pantoken→polytoken GUI (run backgrounded)
 //   bun parity/parity.ts down [--purge]     # tear everything down
 //   bun parity/parity.ts project <reset|path|ensure>
 //   bun parity/parity.ts tui <new|attach|continue|prompt|type|keys|capture|detach|end|ls|kill> …
@@ -47,7 +47,7 @@ async function main(): Promise<number> {
 
     case "up": {
       // Foreground/blocking. The agent runs this with run_in_background (Bash tool) or via
-      // the Claude_Preview `pilot-parity` config; `parity down` SIGTERMs the recorded pid.
+      // the Claude_Preview `pantoken-parity` config; `parity down` SIGTERMs the recorded pid.
       // The GUI server boots WITHOUT a provider key (daemons spawn lazily on session-open),
       // so we DON'T gate launch on the key/model check — we just warn. Run `parity doctor`
       // for the full model round-trip before driving sessions.
@@ -55,7 +55,7 @@ async function main(): Promise<number> {
       if (!(await commandOnPath(POLYTOKEN_BIN))) {
         console.error(
           `[parity up] polytoken not on PATH (${POLYTOKEN_BIN}) — the GUI would boot but no ` +
-            `session could spawn a daemon. Install polytoken or set PILOT_POLYTOKEN_BIN.`,
+            `session could spawn a daemon. Install polytoken or set PANTOKEN_POLYTOKEN_BIN.`,
         );
         return 1;
       }

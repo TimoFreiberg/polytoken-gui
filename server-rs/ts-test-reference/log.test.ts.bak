@@ -12,14 +12,14 @@ import { join } from "node:path";
 import { Logger, rotateIfNeeded } from "./log.js";
 
 function freshDir(): string {
-  return mkdtempSync(join(tmpdir(), "pilot-log-"));
+  return mkdtempSync(join(tmpdir(), "pantoken-log-"));
 }
 
 describe("rotateIfNeeded", () => {
   test("does nothing when the file is missing", () => {
     const dir = freshDir();
     try {
-      expect(rotateIfNeeded(join(dir, "pilot.log"), 10, 3)).toBe(false);
+      expect(rotateIfNeeded(join(dir, "pantoken.log"), 10, 3)).toBe(false);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
@@ -28,7 +28,7 @@ describe("rotateIfNeeded", () => {
   test("does nothing below the threshold", () => {
     const dir = freshDir();
     try {
-      const file = join(dir, "pilot.log");
+      const file = join(dir, "pantoken.log");
       writeFileSync(file, "abc");
       expect(rotateIfNeeded(file, 1024, 3)).toBe(false);
       expect(existsSync(`${file}.1`)).toBe(false);
@@ -40,7 +40,7 @@ describe("rotateIfNeeded", () => {
   test("rolls to .1 at/over the threshold", () => {
     const dir = freshDir();
     try {
-      const file = join(dir, "pilot.log");
+      const file = join(dir, "pantoken.log");
       writeFileSync(file, "0123456789"); // 10 bytes
       expect(rotateIfNeeded(file, 10, 3)).toBe(true);
       expect(existsSync(file)).toBe(false);
@@ -53,7 +53,7 @@ describe("rotateIfNeeded", () => {
   test("shifts generations and prunes beyond the cap", () => {
     const dir = freshDir();
     try {
-      const file = join(dir, "pilot.log");
+      const file = join(dir, "pantoken.log");
       const cap = 3;
       // Seed an active file + a full set of generations with identifiable bodies.
       writeFileSync(file, "ACTIVE----"); // 10 bytes, over threshold
@@ -80,7 +80,7 @@ describe("Logger", () => {
   test("writes JSON-lines with ts/level/msg/fields and server-id", () => {
     const dir = freshDir();
     try {
-      const file = join(dir, "pilot.log");
+      const file = join(dir, "pantoken.log");
       const log = new Logger({ file, serverId: "srv-1" });
       log.info("hello", { a: 1 });
       log.error("boom");
@@ -106,7 +106,7 @@ describe("Logger", () => {
   test("setServerId stamps later lines", () => {
     const dir = freshDir();
     try {
-      const file = join(dir, "pilot.log");
+      const file = join(dir, "pantoken.log");
       const log = new Logger({ file });
       log.info("before");
       log.setServerId("late-id");
@@ -122,7 +122,7 @@ describe("Logger", () => {
   test("rotates the active file once it crosses maxBytes during logging", () => {
     const dir = freshDir();
     try {
-      const file = join(dir, "pilot.log");
+      const file = join(dir, "pantoken.log");
       // Tiny threshold so a couple of lines trip rotation.
       const log = new Logger({ file, maxBytes: 200, maxGenerations: 2 });
       for (let i = 0; i < 50; i++) {
@@ -142,7 +142,7 @@ describe("Logger", () => {
   test("captureConsole tees console.* into the log file without recursion", () => {
     const dir = freshDir();
     try {
-      const file = join(dir, "pilot.log");
+      const file = join(dir, "pantoken.log");
       const log = new Logger({ file, serverId: "srv-x" });
       log.captureConsole();
       // A console.error from an extension should land in the log file as a
@@ -169,11 +169,11 @@ describe("Logger", () => {
       expect(logLine).toBeDefined();
       expect(logLine.msg).toContain("[polytoken] refocus warm session abc123");
       // No recursion: a recursion bug (mirror re-teed through captureConsole) would
-      // emit [pilot ...] mirror lines as their OWN console lines. Assert none.
-      const pilotMirrorCount = lines.filter(
-        (l) => typeof l.msg === "string" && l.msg.startsWith("[pilot"),
+      // emit [pantoken ...] mirror lines as their OWN console lines. Assert none.
+      const pantokenMirrorCount = lines.filter(
+        (l) => typeof l.msg === "string" && l.msg.startsWith("[pantoken"),
       ).length;
-      expect(pilotMirrorCount).toBe(0);
+      expect(pantokenMirrorCount).toBe(0);
       log.restoreConsole();
     } finally {
       rmSync(dir, { recursive: true, force: true });

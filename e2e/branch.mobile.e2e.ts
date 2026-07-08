@@ -23,6 +23,6 @@ test("rewind button is reachable on touch and rewinds the transcript", async ({
   // Click-twice confirm gate: first tap arms, second tap fires the rewind.
   await branch.tap();
   await branch.tap();
-  await expect(page.getByPlaceholder("Message pilot…")).toHaveValue(PROMPT);
+  await expect(page.getByPlaceholder("Message pantoken…")).toHaveValue(PROMPT);
   await expect(page.getByText("Routes live in")).toHaveCount(0);
 });

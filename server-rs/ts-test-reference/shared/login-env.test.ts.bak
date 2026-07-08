@@ -8,7 +8,7 @@ import {
   setLoginEnvStatus,
 } from "./login-env.js";
 
-// resolveLoginShell decides which shell pilot runs to capture env. Only the resolution
+// resolveLoginShell decides which shell pantoken runs to capture env. Only the resolution
 // ORDER is unit-tested here — the actual capture spawns a real shell (smoke-tested
 // manually + exercised by the server at startup), and persistence rides the e2e suite.
 describe("resolveLoginShell", () => {

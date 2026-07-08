@@ -1,7 +1,7 @@
 # ADR — Desktop shell: Tauri now, Bun hub as supervised sidecar, Rust hub behind go/no-go
 
 Status: **amended** (2026-07-08 — TS server deleted, Rust server is the only
-server; clone mode removed, the desktop app bundles the Rust `pilot-server`
+server; clone mode removed, the desktop app bundles the Rust `pantoken-server`
 binary as its sidecar). Previously **amended** (2026-07-03 — Rust hub GO decision
 recorded below; see "Rust hub: GO decision"). Previously **accepted 2026-07-03**
 (owner sign-off) — **spike complete, all five exit criteria green**; the walking
@@ -34,7 +34,7 @@ actually bites. The component that must never die is the *supervisor*: the thing
 picks the port, spawns the hub, health-checks it, restarts it on crash, and tears it down
 on quit. Under this decision that component **is Rust** (the Tauri/Tokio process), owning:
 
-- spawn with explicit env (`PILOT_PORT`, resolved `PATH` — a Finder-launched app has a
+- spawn with explicit env (`PANTOKEN_PORT`, resolved `PATH` — a Finder-launched app has a
   minimal one, same lesson the Swift shell learned),
 - readiness gate on `GET /health` (already exists, `index.ts:185-194`),
 - liveness loop (poll `/health`; restart on N consecutive failures),
@@ -60,8 +60,8 @@ Two modes, adopted in sequence:
   + clone pull + supervised restart) keeps working unchanged. Tauri replaces only the
   Swift layer; day-one risk is minimal.
 - **Bundled mode (target):** `bun build --compile` produces a single hub binary shipped
-  as `bundle.externalBin` (target-triple naming, e.g. `pilot-hub-aarch64-apple-darwin`),
-  spawned via `ShellExt::shell().sidecar("pilot-hub")`. The client `dist/` ships as
+  as `bundle.externalBin` (target-triple naming, e.g. `pantoken-hub-aarch64-apple-darwin`),
+  spawned via `ShellExt::shell().sidecar("pantoken-hub")`. The client `dist/` ships as
   bundle resources served by the hub (see below). App + hub + client update **atomically**
   through one updater artifact — the clone on disk disappears.
 
@@ -77,7 +77,7 @@ the posture:
   reach (a Tailscale-served directory, or GitHub releases).
 - **Notarization stays skipped.** Ad-hoc signing (the Swift shell's current posture)
   remains right for a personal tool: right-click → Open once per machine. The $99/y
-  Apple Developer question only reopens if pilot is ever distributed to non-technical
+  Apple Developer question only reopens if pantoken is ever distributed to non-technical
   users. The updater is orthogonal to Gatekeeper — self-applied updates don't re-acquire
   the quarantine attribute (spike verifies this on macOS 15+).
 
@@ -88,7 +88,7 @@ has today — inverted). In bundled mode the updater covers everything.
 ## Single-instance, tray, window
 
 - `tauri-plugin-single-instance`: second launch focuses the existing window (and can
-  forward a deep link later, e.g. `pilot://session/<id>`).
+  forward a deep link later, e.g. `pantoken://session/<id>`).
 - Tray (core `tray-icon` feature): closing the window keeps the process — and therefore
   the hub and every phone connection — alive. Tray menu: Open, Copy tailnet URL,
   Restart hub, Quit (real shutdown). macOS: activation policy → Accessory while the
@@ -123,7 +123,7 @@ GO only when **all** hold:
    (the protocol v2 work shipped 2026-07-02). Porting before this means reimplementing
    `foldEvent` in Rust (reviving the dual-fold drift the shared reducer exists to
    prevent) or embedding JS. Hard blocker.
-2. **Hub churn has flattened** — the `PilotDriver` seam and hub.ts have stopped growing
+2. **Hub churn has flattened** — the `PantokenDriver` seam and hub.ts have stopped growing
    weekly (this week alone added MCP management, SSE reconnect, sessionReset, queue
    methods). A rewrite freezes iteration on the most active surface in the repo.
   **human note:** eh, not too convinced, the churn is because we're currently migrating to polytoken. if we rewrite to rust at some point then we continue developing the rust version, seems like a nothingburger
@@ -172,20 +172,20 @@ for test control (reset, scripts, failure injection, trust).
 
 ```
 server-rs/                        # Cargo workspace
-├── pilot-protocol/               # WS protocol types + fold reducer (shared logic)
-├── pilot-daemon-types/           # Daemon wire types (generated from OpenAPI)
-└── pilot-server/                 # The server binary
+├── pantoken-protocol/               # WS protocol types + fold reducer (shared logic)
+├── pantoken-daemon-types/           # Daemon wire types (generated from OpenAPI)
+└── pantoken-server/                 # The server binary
 ```
 
 The TS `protocol/` package stays — the client still imports it. The Rust
-`pilot-protocol` crate is a separate port validated by the e2e suite (byte-compatibility
+`pantoken-protocol` crate is a separate port validated by the e2e suite (byte-compatibility
 of `ServerMessage` JSON).
 
 ## Walking-skeleton spike (1 day, exit criteria explicit)
 
 1. Scaffold Tauri v2 app; tray + single-instance wired.
 2. Supervisor: pick free port → spawn `bun run src/index.ts` (clone mode) with
-   `PILOT_PORT` + resolved PATH → gate on `/health` → load webview.
+   `PANTOKEN_PORT` + resolved PATH → gate on `/health` → load webview.
 3. Kill test: `kill -9` the hub → auto-restart + webview reload within 5s; crash-loop
    breaker demonstrably stops after M rapid failures.
 4. Updater: local static `latest.json` + a version-bumped dummy build → in-place update
@@ -226,7 +226,7 @@ Verified on macOS 15 (Apple Silicon), mock driver + dry-run updater for hermetic
    games by an on-path attacker) doesn't exist inside a tailnet. Use `tailscale serve`
    https if that posture ever changes. (b) A published manifest whose `version`
    mismatches the artifact's baked version causes an update **loop** under
-   `PILOT_SHELL_UPDATE_AUTO=1` — the publish script (follow-up) must derive the
+   `PANTOKEN_SHELL_UPDATE_AUTO=1` — the publish script (follow-up) must derive the
    manifest from the built bundle.
 5. **Measured** (same method both shells: direct exec → first /health 200; `ps` RSS of
    the shell process after 20s idle; mock driver): Tauri release **723ms / ~103MB**,
@@ -261,7 +261,7 @@ replacement, and the Swift shell's simplicity (600 lines, zero deps) retired.
    `dangerousInsecureTransportProtocol` removed (GitHub is https; the https-only rule
    is release-builds-only, so local http updater testing on debug builds still works),
    and the endpoint is baked in as the DEFAULT (`updater.rs`), overridable by
-   `PILOT_SHELL_UPDATE_URL` (literal `off` disables) or a data-dir `shell-update-url`
+   `PANTOKEN_SHELL_UPDATE_URL` (literal `off` disables) or a data-dir `shell-update-url`
    file. Distribution reality check: ad-hoc + notarization-skipped means a *browser*
    download is Gatekeeper-"damaged" — first installs go through
    `curl … | tar xz -C /Applications` (no quarantine xattr; self-updates never

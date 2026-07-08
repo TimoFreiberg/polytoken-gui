@@ -1,5 +1,5 @@
 #!/usr/bin/env bun
-// smoke-test.ts — boot a freshly-built pilot server in isolation and confirm it
+// smoke-test.ts — boot a freshly-built pantoken server in isolation and confirm it
 // actually serves before a deploy flips it live. Run against a *staged* slot by
 // auto-deploy.sh (step 4); also runnable by hand: `bun scripts/smoke-test.ts [dir]`.
 //
@@ -12,12 +12,12 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
 const stageDir = process.argv[2] ?? resolve(import.meta.dir, "..");
-const port = Number(process.env.PILOT_SMOKE_PORT ?? 8799);
+const port = Number(process.env.PANTOKEN_SMOKE_PORT ?? 8799);
 const base = `http://127.0.0.1:${port}`;
 
 const serverDir = join(stageDir, "server-rs");
 const clientDist = join(stageDir, "client", "dist");
-const dataDir = mkdtempSync(join(tmpdir(), "pilot-smoke-"));
+const dataDir = mkdtempSync(join(tmpdir(), "pantoken-smoke-"));
 
 function fail(msg: string): never {
   console.error(`smoke-test: FAIL — ${msg}`);
@@ -46,12 +46,12 @@ proc = Bun.spawn(["cargo", "run"], {
   cwd: serverDir,
   env: {
     ...process.env,
-    PILOT_DRIVER: "mock",
-    PILOT_HOST: "127.0.0.1",
-    PILOT_PORT: String(port),
-    PILOT_DATA_DIR: dataDir,
-    PILOT_CLIENT_DIST: clientDist,
-    PILOT_TOKEN: "", // tokenless: /health and / are open, simplest to probe
+    PANTOKEN_DRIVER: "mock",
+    PANTOKEN_HOST: "127.0.0.1",
+    PANTOKEN_PORT: String(port),
+    PANTOKEN_DATA_DIR: dataDir,
+    PANTOKEN_CLIENT_DIST: clientDist,
+    PANTOKEN_TOKEN: "", // tokenless: /health and / are open, simplest to probe
   },
   stdout: "inherit",
   stderr: "inherit",

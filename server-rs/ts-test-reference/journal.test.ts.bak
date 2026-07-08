@@ -7,7 +7,7 @@ import {
   type SessionDriverEvent,
   type SessionRef,
   type SessionSnapshot,
-} from "@pilot/protocol";
+} from "@pantoken/protocol";
 import {
   appendEvent,
   buildSeed,

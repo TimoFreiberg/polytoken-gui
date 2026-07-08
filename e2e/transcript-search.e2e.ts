@@ -17,7 +17,7 @@ function currentHighlighted(page: Page): Promise<boolean> {
     () =>
       typeof CSS !== "undefined" &&
       "highlights" in CSS &&
-      CSS.highlights.has("pilot-find-current"),
+      CSS.highlights.has("pantoken-find-current"),
   );
 }
 

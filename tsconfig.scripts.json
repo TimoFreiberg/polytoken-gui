@@ -1,7 +1,7 @@
 {
   // Typechecks scripts/ — dev tooling (scripts/dev.ts dev server, scripts/live-*.ts
   // manual Tailscale smoke tools, scripts/smoke-test.ts). Previously un-typechecked
-  // (same blind-spot shape as pilot/extensions before tsconfig.extensions.json): a
+  // (same blind-spot shape as pantoken/extensions before tsconfig.extensions.json): a
   // genuine `target is possibly undefined` in live-switch.ts was hiding here.
   //
   // moduleDetection: "force" — the live-*.ts scripts have no top-level import/export,

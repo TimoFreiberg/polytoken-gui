@@ -23,7 +23,7 @@ describe("WorktreeStore", () => {
   let dir: string;
   let file: string;
   beforeEach(() => {
-    dir = mkdtempSync(join(tmpdir(), "pilot-worktree-"));
+    dir = mkdtempSync(join(tmpdir(), "pantoken-worktree-"));
     file = join(dir, "worktrees.json");
   });
   afterEach(() => rmSync(dir, { recursive: true, force: true }));

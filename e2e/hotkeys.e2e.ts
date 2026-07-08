@@ -18,15 +18,15 @@ function row(page: Page, name: string) {
 test("⌘N opens a new-session draft in the current project", async ({
   page,
 }) => {
-  // Boot lands on the bridge session (project "pilot"); no draft yet.
+  // Boot lands on the bridge session (project "pantoken"); no draft yet.
   await expect(draftBox(page)).toBeHidden();
 
   await page.keyboard.press("Control+n");
 
   await expect(draftBox(page)).toBeVisible();
   await expect(title(page)).toHaveText("New session");
-  // The draft defaults to the focused session's project (pilot).
-  await expect(page.locator("header .sub .path")).toHaveText("pilot");
+  // The draft defaults to the focused session's project (pantoken).
+  await expect(page.locator("header .sub .path")).toHaveText("pantoken");
 });
 
 test("⌘[ and ⌘] step back and forward through visited sessions", async ({
@@ -65,7 +65,7 @@ test("back history reaches a new-session draft", async ({ page }) => {
 test("Ctrl+Tab / Ctrl+Shift+Tab cycle through sessions in sidebar order", async ({
   page,
 }) => {
-  // Boot lands on the active row. Sidebar order: project groups A→Z (pilot, scratch),
+  // Boot lands on the active row. Sidebar order: project groups A→Z (pantoken, scratch),
   // newest-first within a group — so "Wire up…" → "Explore…" → the scratch session.
   await expect(title(page)).toContainText("Wire up the WebSocket bridge");
 

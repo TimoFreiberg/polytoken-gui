@@ -7,7 +7,7 @@
 
 export type ThemeMode = "system" | "light" | "dark";
 
-const KEY = "pilot.theme";
+const KEY = "pantoken.theme";
 
 export function getThemeMode(): ThemeMode {
   if (typeof window === "undefined") return "system";

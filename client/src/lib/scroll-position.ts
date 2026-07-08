@@ -15,7 +15,7 @@
 // want ("I was at the end; put me at the end, newest content and all"). Only a genuinely
 // scrolled-up position restores by ratio.
 
-const KEY = "pilot.scrollPositions";
+const KEY = "pantoken.scrollPositions";
 
 // Distance from the bottom (px) within which we treat the reader as "at the live tail".
 // Matches the `pinned` threshold in Transcript.svelte so the two agree on "at bottom".

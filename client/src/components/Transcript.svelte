@@ -12,7 +12,7 @@
     type TurnGroup,
     workedLabel,
   } from "../lib/transcript-view.js";
-  import type { TranscriptItem } from "@pilot/protocol";
+  import type { TranscriptItem } from "@pantoken/protocol";
   import Markdown from "./Markdown.svelte";
   import ToolCard from "./ToolCard.svelte";
   import ThinkingBlock from "./ThinkingBlock.svelte";

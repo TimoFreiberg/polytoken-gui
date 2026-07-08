@@ -47,9 +47,9 @@ test("the collapse affordance never appears while the final response is still st
     });
     (
       window as Window & {
-        __pilotCollapseProbe?: typeof probe;
+        __pantokenCollapseProbe?: typeof probe;
       }
-    ).__pilotCollapseProbe = probe;
+    ).__pantokenCollapseProbe = probe;
     scan();
   });
 
@@ -64,12 +64,12 @@ test("the collapse affordance never appears while the final response is still st
   const sawLiveToggle = await page.evaluate(() => {
     const probe = (
       window as Window & {
-        __pilotCollapseProbe?: {
+        __pantokenCollapseProbe?: {
           sawLiveToggle: boolean;
           observer: MutationObserver | null;
         };
       }
-    ).__pilotCollapseProbe;
+    ).__pantokenCollapseProbe;
     probe?.observer?.disconnect();
     return probe?.sawLiveToggle ?? false;
   });

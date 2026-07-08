@@ -1,6 +1,6 @@
 <script lang="ts">
   import { tick } from "svelte";
-  import type { ModelOption } from "@pilot/protocol";
+  import type { ModelOption } from "@pantoken/protocol";
   import { store } from "../lib/store.svelte.js";
   import Chevron from "./ui/Chevron.svelte";
 

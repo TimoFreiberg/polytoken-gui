@@ -5,7 +5,7 @@ import type {
   SessionSnapshot,
   SessionStatus,
   WorkspaceRef,
-} from "@pilot/protocol";
+} from "@pantoken/protocol";
 import {
   type FoldAccumulator,
   type MapCtx,

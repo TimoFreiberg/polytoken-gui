@@ -10,7 +10,7 @@ test("transcript and composer fit the mobile viewport", async ({ page }) => {
   await expect(
     page.getByText("Add a /health route to the server"),
   ).toBeVisible();
-  await expect(page.getByPlaceholder("Message pilot…")).toBeVisible();
+  await expect(page.getByPlaceholder("Message pantoken…")).toBeVisible();
 });
 
 test("approval sheet is reachable and tappable on mobile", async ({ page }) => {

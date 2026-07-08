@@ -1,6 +1,6 @@
 <script lang="ts">
   import { store } from "../lib/store.svelte.js";
-  import type { PermissionMonitorMode } from "@pilot/protocol";
+  import type { PermissionMonitorMode } from "@pantoken/protocol";
   import MenuBadge from "./ui/MenuBadge.svelte";
 
   // Permission-monitor mode indicator in the composer toolbar (next to facet/

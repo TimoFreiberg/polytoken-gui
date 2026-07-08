@@ -1,4 +1,4 @@
-// Regenerates server-rs/pilot-daemon-types/src/lib.rs from the polytoken
+// Regenerates server-rs/pantoken-daemon-types/src/lib.rs from the polytoken
 // binary's own self-describing OpenAPI spec (`polytoken openapi`).
 //
 // The generated file contains serde types for all 161 OpenAPI schemas,
@@ -9,16 +9,16 @@
 //
 // Run: `bun run scripts/codegen-polytoken-rs.ts`
 //
-// The binary path is resolved the same way pilot resolves it at runtime:
-// $PATH, or $PILOT_POLYTOKEN_BIN.
+// The binary path is resolved the same way pantoken resolves it at runtime:
+// $PATH, or $PANTOKEN_POLYTOKEN_BIN.
 
 import { mkdtempSync, writeFileSync, rmSync, readFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { resolve, join } from "node:path";
 import { tmpdir } from "node:os";
 
-const BIN_ENV = "PILOT_POLYTOKEN_BIN";
-const OUT_PATH = resolve(import.meta.dir, "../server-rs/pilot-daemon-types/src/lib.rs");
+const BIN_ENV = "PANTOKEN_POLYTOKEN_BIN";
+const OUT_PATH = resolve(import.meta.dir, "../server-rs/pantoken-daemon-types/src/lib.rs");
 
 function resolveBin(): string {
   if (process.env[BIN_ENV]) return process.env[BIN_ENV];

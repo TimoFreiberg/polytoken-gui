@@ -11,7 +11,7 @@ export async function gotoFresh(page: Page): Promise<void> {
   // session-switch assertions. Scoped to this one key (drafts/theme/etc. persist).
   // addInitScript runs before each navigation in this page's lifetime — once per test,
   // no extra reload.
-  page.addInitScript(() => localStorage.removeItem("pilot.scrollPositions"));
+  page.addInitScript(() => localStorage.removeItem("pantoken.scrollPositions"));
   await page.goto("/?dev");
   // The final text starts rendering before the fixture emits runCompleted. Wait for
   // the settled work block instead: its appearance proves the turn finished and the

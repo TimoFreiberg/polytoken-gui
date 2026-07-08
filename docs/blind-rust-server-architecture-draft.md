@@ -203,7 +203,7 @@ Workspace pre-creation hooks go here later.
 **Resume.** `POST /api/sessions/{id}/resume` → spawn a **detached**
 `polytoken daemon --resume --session-id {id} --project-dir {recorded}`
 (new session group / setsid, stdout+stderr to the hub log dir), wait for the
-registry record to reappear with a port. This is the settled path (pilot's TS
+registry record to reappear with a port. This is the settled path (pantoken's TS
 server does exactly this today). The one real caveat applies to `new
 --no-attach` equally: under a service manager, detached grandchildren still
 live in the service's cgroup/process group — systemd needs
@@ -421,7 +421,7 @@ preferences, not history.
    algorithm. Read the TUI source before implementing.
 2. **SSE replay: settled.** No replay on plain connect; `Last-Event-ID: 100`
    with ~8,900 events behind produced no replay burst (0.4.0-unstable.5) —
-   the header is a silent no-op. Pilot's upstream ask #4 should be reframed
+   the header is a silent no-op. Pantoken's upstream ask #4 should be reframed
    from "document resume" to "implement or document that it doesn't exist".
 3. **Subscriber cap value** — the hub uses exactly one subscription per
    session, but knowing the cap informs whether a second (debug) tap is safe.

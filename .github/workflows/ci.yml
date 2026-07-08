@@ -72,7 +72,7 @@ jobs:
 
   web-live:
     name: web — live e2e (fake daemon)
-    # Corpus-backed live tier: the real Rust server (PILOT_DRIVER=fake) over the
+    # Corpus-backed live tier: the real Rust server (PANTOKEN_DRIVER=fake) over the
     # in-process fake daemon. Gated to manual
     # dispatch until the specs have a confirmed green run — they were authored
     # against the corpus + existing DOM selectors but not yet executed in a browser.
@@ -151,7 +151,7 @@ jobs:
   # bundled .app and publish it + latest.json as a GitHub release — but only after
   # both test jobs pass. Same script as a local publish; the minisign key comes from
   # the TAURI_SIGNING_PRIVATE_KEY Actions secret (one-time setup:
-  #   gh secret set TAURI_SIGNING_PRIVATE_KEY < ~/.tauri/pilot-shell.key).
+  #   gh secret set TAURI_SIGNING_PRIVATE_KEY < ~/.tauri/pantoken-shell.key).
   release:
     name: release — build, sign, publish
     if: startsWith(github.ref, 'refs/tags/v')

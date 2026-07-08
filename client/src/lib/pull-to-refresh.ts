@@ -1,5 +1,5 @@
 // Pull-to-refresh: a touch gesture on a scroll container's top edge that triggers a
-// refresh (in pilot: a forced WS reconnect + re-snapshot — "I think this is stale").
+// refresh (in pantoken: a forced WS reconnect + re-snapshot — "I think this is stale").
 // The gesture math lives in a DOM-free `PullTracker` so it's unit-testable; the Svelte
 // action wires touch events and reports snapshots back to the component, which owns the
 // indicator + the refreshing lifecycle (see `createPullRefresh` in the `.svelte.ts`

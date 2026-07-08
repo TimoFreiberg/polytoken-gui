@@ -1,4 +1,4 @@
-import type { ImageContent } from "@pilot/protocol";
+import type { ImageContent } from "@pantoken/protocol";
 
 export const IMAGE_LIMITS = {
   count: 10,

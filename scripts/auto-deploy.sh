@@ -2,15 +2,15 @@
 # auto-deploy.sh — poll origin/main; build, smoke-test & flip if there are new commits.
 #
 # Blue-green: two checkouts behind a symlink.
-#   ~/pilot-blue, ~/pilot-green   — slots (git clones + built client/dist)
-#   ~/pilot-live                  — symlink to the active slot (what the daemon runs)
+#   ~/pantoken-blue, ~/pantoken-green   — slots (git clones + built client/dist)
+#   ~/pantoken-live                  — symlink to the active slot (what the daemon runs)
 #
 # Each tick builds + smoke-tests the INACTIVE slot, and only flips the symlink +
 # restarts if the smoke passes — a bad build never touches the live slot. The restart
-# needs no sudo: the com.pilot.server daemon runs as your user, so we kill its pid
+# needs no sudo: the com.pantoken.server daemon runs as your user, so we kill its pid
 # (recorded by run.sh) and KeepAlive respawns it from the now-flipped slot. After the
 # flip we re-check /health and roll back (re-flip + restart) if the new slot won't come
-# up. Runs as a LaunchDaemon (see deploy/com.pilot.deploy.plist).
+# up. Runs as a LaunchDaemon (see deploy/com.pantoken.deploy.plist).
 #
 # Usage: auto-deploy.sh [--force [--allow-stale-checkout]]
 #   --force                 skip the fetch/diff check, just build & restart current HEAD
@@ -28,23 +28,23 @@ while [[ $# -gt 0 ]]; do
   shift
 done
 
-BLUE_DIR="$HOME/pilot-blue"
-GREEN_DIR="$HOME/pilot-green"
-LIVE_LINK="$HOME/pilot-live"
+BLUE_DIR="$HOME/pantoken-blue"
+GREEN_DIR="$HOME/pantoken-green"
+LIVE_LINK="$HOME/pantoken-live"
 
-DATA_DIR="${PILOT_DATA_DIR:-$HOME/.local/state/pilot}"
-ENV_FILE="$DATA_DIR/pilot.env"
-# Source the same env the server uses, so we agree on PILOT_PORT (post-flip health
-# check) and pick up PILOT_VERIFY_SIGNATURES if you set it there.
+DATA_DIR="${PANTOKEN_DATA_DIR:-$HOME/.local/state/pantoken}"
+ENV_FILE="$DATA_DIR/pantoken.env"
+# Source the same env the server uses, so we agree on PANTOKEN_PORT (post-flip health
+# check) and pick up PANTOKEN_VERIFY_SIGNATURES if you set it there.
 if [[ -f "$ENV_FILE" ]]; then
   set -a
   # shellcheck disable=SC1090
   source "$ENV_FILE"
   set +a
 fi
-LIVE_PORT="${PILOT_PORT:-8787}"
-PIDFILE="$DATA_DIR/pilot.pid"
-EVENTS_LOG="$HOME/Library/Logs/pilot-deploy-events.jsonl"
+LIVE_PORT="${PANTOKEN_PORT:-8787}"
+PIDFILE="$DATA_DIR/pantoken.pid"
+EVENTS_LOG="$HOME/Library/Logs/pantoken-deploy-events.jsonl"
 
 mkdir -p "$DATA_DIR" "$(dirname "$EVENTS_LOG")"
 
@@ -70,7 +70,7 @@ log_event() {
 }
 trap 'log_event "error" "Unexpected failure (line $LINENO, exit $?)"' ERR
 
-# pilot.pid is written either as a bare integer (deploy/run.sh's pre-exec echo) or as
+# pantoken.pid is written either as a bare integer (deploy/run.sh's pre-exec echo) or as
 # JSON {"pid":N,"serverId":"..."} (the Rust server's pidlock). A bare `tr -d
 # '[:space:]'` returns the whole JSON object as one token, and `kill -0
 # '{"pid":...}'` always fails — which silently breaks restart detection and rolls
@@ -109,7 +109,7 @@ restart_and_wait() {
     kill "$old" 2>/dev/null || true
   else
     # No live pid recorded — fall back to matching the server process directly.
-    pkill -U "$(id -u)" -f 'target/release/pilot-server' 2>/dev/null || true
+    pkill -U "$(id -u)" -f 'target/release/pantoken-server' 2>/dev/null || true
   fi
   while (( i < timeout )); do
     new="$(read_pid)"
@@ -151,7 +151,7 @@ if [[ "$FORCE" == false ]]; then
 
   # Optional commit-signature gate (off by default; tangled.org isn't GitHub, so this
   # verifies YOUR ssh-signed commits via scripts/allowed-signers, not web-flow keys).
-  if [[ "${PILOT_VERIFY_SIGNATURES:-false}" == "true" ]]; then
+  if [[ "${PANTOKEN_VERIFY_SIGNATURES:-false}" == "true" ]]; then
     git config gpg.ssh.allowedSignersFile "$ACTIVE/scripts/allowed-signers"
     NEW_COMMITS=$(git rev-list --first-parent "$ACTIVE_HEAD"..origin/main)
     [[ -n "$NEW_COMMITS" ]] || { log_event "error" "No commits in range $ACTIVE_HEAD..origin/main — possible force-push?"; exit 1; }
@@ -182,7 +182,7 @@ fi
 bun install --frozen-lockfile
 bun run build
 # Build the Rust server binary (run.sh execs it).
-(cd server-rs && cargo build --release --bin pilot-server)
+(cd server-rs && cargo build --release --bin pantoken-server)
 
 SMOKE="$STAGE_DIR/scripts/smoke-test.ts"
 if [[ -f "$SMOKE" ]]; then
@@ -207,6 +207,6 @@ flip_to "$ACTIVE"
 if restart_and_wait 90; then
   log_event "info" "Rollback succeeded — previous slot is live again."
 else
-  log_event "error" "Rollback also failed — pilot is DOWN, manual intervention required."
+  log_event "error" "Rollback also failed — pantoken is DOWN, manual intervention required."
 fi
 exit 1

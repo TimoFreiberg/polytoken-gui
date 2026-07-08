@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onDestroy } from "svelte";
   import { reveal } from "../lib/transitions.js";
-  import type { ToolItem } from "@pilot/protocol";
+  import type { ToolItem } from "@pantoken/protocol";
   import Chevron from "./ui/Chevron.svelte";
   import { imageViewer } from "../lib/image-viewer.svelte.js";
   import { store } from "../lib/store.svelte.js";

@@ -12,7 +12,7 @@ import {
 } from "./pidlock.js";
 
 function freshDir(): string {
-  return mkdtempSync(join(tmpdir(), "pilot-pidlock-"));
+  return mkdtempSync(join(tmpdir(), "pantoken-pidlock-"));
 }
 
 // A pid that is essentially never live. 2^30 is far above any real pid on

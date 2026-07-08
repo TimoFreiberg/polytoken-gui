@@ -1,4 +1,4 @@
-// The pilot WebSocket envelope. Wraps the vendored session-driver event stream
+// The pantoken WebSocket envelope. Wraps the vendored session-driver event stream
 // with connection bootstrap (seed-on-connect + tail resume) and client commands.
 //
 // Events carry their own `sessionRef`. Client commands optionally carry a
@@ -19,17 +19,17 @@ import type {
 } from "./session-driver.js";
 export const PROTOCOL_VERSION = 2;
 
-/** Pilot-local settings (distinct from the daemon's global/session config). Persisted
- *  server-side in `pilot-settings.json`, broadcast to every client, edited from the
+/** Pantoken-local settings (distinct from the daemon's global/session config). Persisted
+ *  server-side in `pantoken-settings.json`, broadcast to every client, edited from the
  *  Settings panel. */
-export interface PilotSettings {
-  /** Explicit login shell pilot runs at startup to reconstruct your interactive
+export interface PantokenSettings {
+  /** Explicit login shell pantoken runs at startup to reconstruct your interactive
    *  environment (PATH, language-manager shims, exported vars) — the env a TUI tool
    *  inherits when launched from a terminal. `null` = use `$SHELL` / the OS login
-   *  shell. A launchd daemon / GUI `.app` has no interactive-shell ancestor, so pilot
+   *  shell. A launchd daemon / GUI `.app` has no interactive-shell ancestor, so pantoken
    *  captures this once at boot; changing it applies on the NEXT server restart. */
   loginShell: string | null;
-  /** Cheap "background model" spec for the tasks pilot's own extensions run
+  /** Cheap "background model" spec for the tasks pantoken's own extensions run
    *  (session auto-naming, the answer tool's structured-extraction) — the model those
    *  out-of-band LLM calls use, separate from the session's primary model. Replaces
    *  the dotfiles `_lib/roles.mjs` per-role resolver.
@@ -43,13 +43,13 @@ export interface PilotSettings {
   backgroundModel: string | null;
 }
 
-/** Runtime status of pilot's startup login-shell env capture, so the Settings panel
+/** Runtime status of pantoken's startup login-shell env capture, so the Settings panel
  *  can show what's ACTIVE now vs. what's configured (→ "restart to apply"). */
 export interface LoginEnvStatus {
-  /** Shell pilot actually captured env from at startup, or null if capture was
+  /** Shell pantoken actually captured env from at startup, or null if capture was
    *  skipped (mock/dev) or never ran. */
   activeShell: string | null;
-  /** Did the capture succeed? false → pilot kept its minimal launch PATH. */
+  /** Did the capture succeed? false → pantoken kept its minimal launch PATH. */
   ok: boolean;
   /** Human-readable outcome (var count, skip reason, or failure), for the panel. */
   detail?: string;
@@ -107,7 +107,7 @@ export type ServerMessage =
       serverId: string;
       dataDir: string;
       /** Full commit sha of the client bundle the server is SERVING (from
-       *  dist/.pilot-built-sha). A running client compares it against its own
+       *  dist/.pantoken-built-sha). A running client compares it against its own
        *  baked sha to detect that the server updated underneath it — the SW is
        *  byte-identical across builds, so `updatefound` alone never fires.
        *  Empty/absent when no build marker exists (dev). */
@@ -193,18 +193,18 @@ export type ServerMessage =
    *  favorites subset the header picker filters to. Distinct from a session's
    *  `config` (the CURRENT selection). See {@link ModelDefaults}. */
   | { type: "modelDefaults"; defaults: ModelDefaults }
-  /** Pilot-local settings + the live login-env capture status, for the Settings
+  /** Pantoken-local settings + the live login-env capture status, for the Settings
    *  panel. Sent on connect and re-sent after `setLoginShell`/`setBackgroundModel`.
    *  `pendingRestart` is server-computed (the client can't resolve the server's default
-   *  `$SHELL`): true when the shell pilot WOULD use now differs from the one it actually
+   *  `$SHELL`): true when the shell pantoken WOULD use now differs from the one it actually
    *  captured with at boot — i.e. a restart is needed to apply the configured change.
    *  `backgroundModelWarning` is the server's resolution of `settings.backgroundModel`
    *  against the live model registry: present (non-empty) when the spec is bad or
    *  doesn't resolve — the Settings "Models" section surfaces it as a loud red error.
    *  Absent when the spec is unset or resolves cleanly. */
   | {
-      type: "pilotSettings";
-      settings: PilotSettings;
+      type: "pantokenSettings";
+      settings: PantokenSettings;
       env: LoginEnvStatus;
       pendingRestart: boolean;
       backgroundModelWarning?: string;
@@ -241,7 +241,7 @@ export type ServerMessage =
       steering: readonly string[];
       followUp: readonly string[];
     }
-  /** After archiving a session whose cwd was a pilot worktree, the server tried to reap
+  /** After archiving a session whose cwd was a pantoken worktree, the server tried to reap
    *  it but kept it (it was dirty — uncommitted changes). Sent ONLY to the archiving
    *  client so its archived toast can explain the leftover and offer a force-delete.
    *  `path` == the worktree dir (== the session's cwd), the key `cleanupWorktree` takes. */
@@ -323,15 +323,15 @@ export type ClientMessage =
       action: "enable" | "disable" | "disconnect" | "reconnect";
       sessionId?: SessionId;
     }
-  /** Set the explicit login shell pilot captures env from at startup (null = the
+  /** Set the explicit login shell pantoken captures env from at startup (null = the
    *  `$SHELL` / OS-login-shell default). Persists server-side; the env is captured
    *  once at boot, so it applies on the next server restart. The server re-broadcasts
-   *  `pilotSettings`. */
+   *  `pantokenSettings`. */
   | { type: "setLoginShell"; path: string | null }
-  /** Set the background-model spec pilot's own extensions run their cheap out-of-band
+  /** Set the background-model spec pantoken's own extensions run their cheap out-of-band
    *  LLM calls against (null = unset; extensions fall back). A `provider/model[:thinking]`
    *  spec OR a `script:`-prefixed path. Persists server-side; the server resolves +
-   *  re-broadcasts `pilotSettings` (carrying any validation `warning` for a bad spec). */
+   *  re-broadcasts `pantokenSettings` (carrying any validation `warning` for a bad spec). */
   | { type: "setBackgroundModel"; spec: string | null }
   /** Switch the active session to this .jsonl path. */
   | { type: "openSession"; path: string }
@@ -341,10 +341,10 @@ export type ClientMessage =
    *  transcript as closely as possible; in-memory-only state (an undelivered steer/followUp
    *  queue, an un-persisted branch jump) is lost. The recovery path for when an extension
    *  bug wedges a session: fix the extension elsewhere, then reload here to continue without
-   *  restarting pilot. The server re-seeds every client viewing the session. */
+   *  restarting pantoken. The server re-seeds every client viewing the session. */
   | { type: "reloadSession"; path: string }
   /** Jump the session to a prior tree entry and branch from it (the daemon's /tree). `entryId`
-   *  is a pilot transcript item's `entryId` (a daemon tree node). The server calls
+   *  is a pantoken transcript item's `entryId` (a daemon tree node). The server calls
    *  navigateTree, then re-seeds every client's transcript to the new branch; if the
    *  target was a user prompt, the requester also gets an `editorPrefill` with its text.
    *  `summarize` asks the daemon to summarize the abandoned branch first (an LLM call) — the UI
@@ -383,16 +383,16 @@ export type ClientMessage =
   /** Ask the server to re-scan disk and re-broadcast the session list. */
   | { type: "listSessions" }
   /** Archive or unarchive a session (by its .jsonl `path`, the stable switch key).
-   *  The flag is pilot-side state (D-archive); the server persists it and re-broadcasts
+   *  The flag is pantoken-side state (D-archive); the server persists it and re-broadcasts
    *  the session list so every client's active-only filter updates. Archiving a session
-   *  whose cwd is a pilot-created worktree also reaps that worktree when it's clean. */
+   *  whose cwd is a pantoken-created worktree also reaps that worktree when it's clean. */
   | { type: "setArchived"; path: string; archived: boolean }
   /** Rename a session (by its .jsonl `path`). Writes the daemon's session display name (a
    *  `session_info` entry); the server re-broadcasts the session list so every client's
    *  sidebar updates, and a warm session's header title updates live. Empty `name` is a
    *  no-op server-side (the client shouldn't submit one). */
   | { type: "renameSession"; path: string; name: string }
-  /** Remove a pilot-created worktree (by its `path` == the session's cwd). `force`
+  /** Remove a pantoken-created worktree (by its `path` == the session's cwd). `force`
    *  discards uncommitted changes; without it the server refuses a dirty worktree and
    *  reports back. The server re-broadcasts the session list (clearing the indicator). */
   | { type: "cleanupWorktree"; path: string; force?: boolean }

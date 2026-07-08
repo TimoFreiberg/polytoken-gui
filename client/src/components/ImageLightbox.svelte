@@ -1,5 +1,5 @@
 <script lang="ts">
-  import type { ImageContent } from "@pilot/protocol";
+  import type { ImageContent } from "@pantoken/protocol";
 
   // Full-screen preview of an attached image. Modal scrim over everything (z 90, below
   // tooltips at 1000); click the backdrop or press Escape to dismiss, ←/→ to walk a

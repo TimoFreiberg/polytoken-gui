@@ -1,4 +1,4 @@
-/* markstream-svelte theming — map the renderer onto pilot's warm-paper palette
+/* markstream-svelte theming — map the renderer onto pantoken's warm-paper palette
    (app.css). The library ships shadcn-style HSL-triplet vars scoped under
    `.markstream-svelte`; we re-point the handful that matter and override a few
    semantic elements to match the prose look in Transcript/Composer.
@@ -220,9 +220,9 @@
 /* ── Streaming reveal animation ──────────────────────────────────────────────
    markstream wraps every freshly-mounted BLOCK node (paragraph, list item, heading,
    code block) in `.fade-node`/`.typewriter-node` when its `fade` prop is on — but the
-   keyframes that animate them live in the library's index.css, which pilot deliberately
+   keyframes that animate them live in the library's index.css, which pantoken deliberately
    doesn't import (we theme via this file instead). So we redefine the one we need here,
-   scoped under pilot's root selector. Markdown.svelte passes `fade` only for the live
+   scoped under pantoken's root selector. Markdown.svelte passes `fade` only for the live
    streaming turn, so each new block softly fades in as the stream produces it while
    history / settled turns render statically.
    Tuned short (~160ms) so it reads as "quick", per the request.
@@ -232,12 +232,12 @@
    classed as an appended delta. Hence block-level only; no point styling that span.
    prefers-reduced-motion disables the fade (no opacity start → content is just there). */
 .markstream-svelte.markdown-renderer :where(.fade-node, .typewriter-node) {
-  animation: pilot-stream-fade 160ms cubic-bezier(0.33, 0, 0.67, 1) both;
+  animation: pantoken-stream-fade 160ms cubic-bezier(0.33, 0, 0.67, 1) both;
   /* No will-change here: it forced a compositor layer PER PARAGRAPH for the
      whole streaming turn (layer explosion); browsers self-promote for a
      one-shot 160ms animation just fine. */
 }
-@keyframes pilot-stream-fade {
+@keyframes pantoken-stream-fade {
   from {
     opacity: 0;
   }

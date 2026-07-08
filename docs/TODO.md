@@ -1,4 +1,4 @@
-# Pilot — TODO
+# Pantoken — TODO
 
 Backlog. Items marked [ ] are open; ~~[x]~~ notes are kept only where the
 resolution is non-obvious or likely to bite again. Otherwise see `jj log`.
@@ -25,7 +25,7 @@ are REAL but **provisional** — they embed local `/Users/timo/...` paths from t
       (a) rewrite inner event `emitted_at` (not just `timestamp`) in
       `canonicalize_frame`; (b) DECIDE the `/state` redaction scope (recommend
       `env`→`{}`, `used_tokens`→`0`, absolute paths normalized) in `canonicalize_http`.
-      Mirror BOTH `server-rs/pilot-server/tests/corpus.rs` AND
+      Mirror BOTH `server-rs/pantoken-server/tests/corpus.rs` AND
       `scripts/capture-daemon-corpus.ts`, then re-canonicalize the committed captures
       and re-run `cargo test --test corpus`. THEN the captures are freezable.
 - [ ] **Capture `tool-call-approval`:** regenerate the isolated parity config with
@@ -51,13 +51,13 @@ are REAL but **provisional** — they embed local `/Users/timo/...` paths from t
       invariant the fold depends on); a channel switch flushes then re-buffers;
       journal-identity changes (reseed/reload, `sessionClosed` deletion,
       `reset()`) DROP the pending delta rather than leak it into a new epoch.
-      Tunable at runtime via **`PILOT_DELTA_FLUSH_MS`** (config `deltaFlushMs`):
+      Tunable at runtime via **`PANTOKEN_DELTA_FLUSH_MS`** (config `deltaFlushMs`):
       default **50**, **0 disables** (every delta ships immediately — the exact
       pre-N1 behavior, and the default the unit tests construct with). The knob
       exists precisely because "chunkier reveal vs token-smooth" was the feel
       question that got N1 deferred — now it's a live dial, not a rebuild.
       Buffering lives in `SessionHub.ingest` (wrapping the un-buffered
-      `ingestNow`); see `server-rs/pilot-server/src/hub.rs` + the "assistantDelta coalescing (N1)"
+      `ingestNow`); see `server-rs/pantoken-server/src/hub.rs` + the "assistantDelta coalescing (N1)"
       block in `hub.test.ts`.
 - [ ] **Client markdown re-parse is O(n²) per streamed message (C1).**
       `Markdown.svelte` re-parses full content on every content change; the
@@ -73,7 +73,7 @@ are REAL but **provisional** — they embed local `/Users/timo/...` paths from t
       structural event. Memoize per-turn so only the active turn recomputes;
       real windowing after that.
 - [ ] **Re-enable WS compression (permessage-deflate) when safe.** Disabled
-      2026-07-03 (`perMessageDeflate: false`, `server-rs/pilot-server/src/main.rs`) because it
+      2026-07-03 (`perMessageDeflate: false`, `server-rs/pantoken-server/src/main.rs`) because it
       killed the desktop app: Bun's WS compressor emits a BFINAL-terminated
       deflate stream whenever a message's compressed output is small (observed
       ≤ ~1.6KB; bigger output gets the normal open-ended sync-flush form), and
@@ -108,19 +108,19 @@ are REAL but **provisional** — they embed local `/Users/timo/...` paths from t
         as the dev loop.
   - [x] **Updater hosting live (2026-07-03):** public releases repo
         `TimoFreiberg/polytoken-gui`, v0.2.0 published; endpoint baked into the shell
-        as the default (env/file overrides remain, `PILOT_SHELL_UPDATE_URL=off`
+        as the default (env/file overrides remain, `PANTOKEN_SHELL_UPDATE_URL=off`
         disables), `dangerousInsecureTransportProtocol` dropped. First installs use
         `curl … | tar xz -C /Applications` — browser downloads of ad-hoc apps hit
         Gatekeeper's "damaged" refusal (see desktop/README.md "Installing a
         release").
-- [ ] **Decompose the hub (god object).** `server-rs/pilot-server/src/hub.rs` owns the per-session
+- [ ] **Decompose the hub (god object).** `server-rs/pantoken-server/src/hub.rs` owns the per-session
       journals, running/attention maps, clients map, live ticker, OAuth pending,
       prompt-results ledger; `handleClient` is one giant switch. Extract
       collaborators the hub delegates to. Deferred — touches the app's central
       nervous system; wants its own change with the full e2e suite as the net.
 - [ ] **Flatten the per-feature fan-out (the CAUSE of hub/driver growth).** A
       simple daemon toggle costs six touches: wire variant → hub case →
-      `PilotDriver` method (~30 methods, half optional behind `?.`) → two driver
+      `PantokenDriver` method (~30 methods, half optional behind `?.`) → two driver
       impls → store method → component. The pass-through class (compact,
       clearContext, setMcpServer, toggleAdventurousHandoff,
       setNotificationAutodrain, …) shares one shape — POST → refresh → snapshot;
@@ -200,7 +200,7 @@ are REAL but **provisional** — they embed local `/Users/timo/...` paths from t
 - [ ] Font-size / density control
 
 ### Branding
-- [ ] **Rename: Pilot → Polyscope** (2025-07-03 candidate). "Polyscope" is a
+- [ ] **Rename: Pantoken → Polyscope** (2025-07-03 candidate). "Polyscope" is a
       real word — an optical instrument that magnifies / shows many colors —
       and contains "poly" as a nod to the polytoken driver. Rename touches:
       project name, docs, app icon, spinner/loading visuals, PWA manifest,

@@ -15,8 +15,8 @@
   let matches = $state<Range[]>([]);
   let current = $state(0);
 
-  const HL_ALL = "pilot-find";
-  const HL_CURRENT = "pilot-find-current";
+  const HL_ALL = "pantoken-find";
+  const HL_CURRENT = "pantoken-find-current";
   const supported =
     typeof CSS !== "undefined" &&
     "highlights" in CSS &&

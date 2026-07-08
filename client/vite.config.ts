@@ -4,7 +4,7 @@ import { resolve } from "node:path";
 import { svelte } from "@sveltejs/vite-plugin-svelte";
 import { type Plugin, defineConfig } from "vite";
 
-const SERVER = process.env.PILOT_SERVER ?? "http://localhost:8787";
+const SERVER = process.env.PANTOKEN_SERVER ?? "http://localhost:8787";
 
 // Stamp the build with the last commit's short hash + date, surfaced in the UI as an
 // unobtrusive version string. Resolves via git in a normal checkout (and the deploy
@@ -45,7 +45,7 @@ function gitInfo(): { hash: string; date: string; fullHash: string } {
 }
 const BUILD = gitInfo();
 
-// Write the built commit's full sha into <outDir>/.pilot-built-sha after a production
+// Write the built commit's full sha into <outDir>/.pantoken-built-sha after a production
 // build. The server reads this — NOT git HEAD — to decide whether the running app is
 // current: HEAD can advance without a rebuild (a manual `git pull`, an apply interrupted
 // before its build, a build that failed after the pull), and only the stamped bundle sha
@@ -55,7 +55,7 @@ function stampBuiltSha(fullHash: string): Plugin {
   let root = process.cwd();
   let outDir = "dist";
   return {
-    name: "pilot-build-sha-stamp",
+    name: "pantoken-build-sha-stamp",
     apply: "build",
     configResolved(c) {
       root = c.root;
@@ -64,7 +64,7 @@ function stampBuiltSha(fullHash: string): Plugin {
     closeBundle() {
       if (!fullHash) return; // git unreachable at build time — skip rather than stamp junk
       try {
-        writeFileSync(resolve(root, outDir, ".pilot-built-sha"), fullHash);
+        writeFileSync(resolve(root, outDir, ".pantoken-built-sha"), fullHash);
       } catch {
         // best-effort — never fail a build over the marker
       }
@@ -81,7 +81,7 @@ export default defineConfig({
     __BUILD_DATE__: JSON.stringify(BUILD.date),
     // Full sha, compared against hello.buildSha (the sha of the bundle the
     // server is SERVING) to detect that the server updated underneath a
-    // long-lived tab/PWA. Matches the .pilot-built-sha marker by construction.
+    // long-lived tab/PWA. Matches the .pantoken-built-sha marker by construction.
     __BUILD_FULL_HASH__: JSON.stringify(BUILD.fullHash),
   },
   server: {

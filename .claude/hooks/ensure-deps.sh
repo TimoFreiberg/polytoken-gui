@@ -19,11 +19,11 @@ cd "${CLAUDE_PROJECT_DIR:-.}" || exit 0
 BUN="$(command -v bun || true)"
 [ -z "$BUN" ] && [ -x "$HOME/.bun/bin/bun" ] && BUN="$HOME/.bun/bin/bun"
 if [ -z "$BUN" ]; then
-  echo "[pilot] node_modules missing and bun not found on PATH — run 'bun install' yourself." >&2
+  echo "[pantoken] node_modules missing and bun not found on PATH — run 'bun install' yourself." >&2
   exit 0
 fi
 
-echo "[pilot] node_modules missing — running 'bun install' (fresh worktree setup)…" >&2
+echo "[pantoken] node_modules missing — running 'bun install' (fresh worktree setup)…" >&2
 "$BUN" install >&2 \
-  || echo "[pilot] bun install failed — run it manually before building/testing." >&2
+  || echo "[pantoken] bun install failed — run it manually before building/testing." >&2
 exit 0

@@ -1,5 +1,5 @@
 {
-  "name": "@pilot/client",
+  "name": "@pantoken/client",
   "private": true,
   "type": "module",
   "version": "0.0.0",
@@ -11,7 +11,7 @@
   },
   "dependencies": {
     "@pierre/diffs": "^1.2.11",
-    "@pilot/protocol": "workspace:*",
+    "@pantoken/protocol": "workspace:*",
     "markstream-svelte": "^0.0.1"
   },
   "devDependencies": {

@@ -4,15 +4,15 @@
 # runs, over SSH, as your user — no sudo, and the single-flight lock keeps it from
 # colliding with a concurrent timer tick. Output streams back to you.
 #
-#   PILOT_DEPLOY_HOST=<mac-mini-tailnet-name> bun run deploy:now
+#   PANTOKEN_DEPLOY_HOST=<mac-mini-tailnet-name> bun run deploy:now
 set -euo pipefail
 
-HOST="${PILOT_DEPLOY_HOST:-}"
+HOST="${PANTOKEN_DEPLOY_HOST:-}"
 if [[ -z "$HOST" ]]; then
-  echo "Set PILOT_DEPLOY_HOST to your Mac Mini's tailnet hostname, e.g.:" >&2
-  echo "  PILOT_DEPLOY_HOST=mac-mini.tailnet.ts.net bun run deploy:now" >&2
+  echo "Set PANTOKEN_DEPLOY_HOST to your Mac Mini's tailnet hostname, e.g.:" >&2
+  echo "  PANTOKEN_DEPLOY_HOST=mac-mini.tailnet.ts.net bun run deploy:now" >&2
   exit 1
 fi
 
 echo "Triggering deploy on $HOST…"
-ssh "$HOST" 'bash "$HOME/pilot-live/scripts/auto-deploy.sh"'
+ssh "$HOST" 'bash "$HOME/pantoken-live/scripts/auto-deploy.sh"'

@@ -2,22 +2,22 @@
   "version": "0.0.1",
   "configurations": [
     {
-      "name": "pilot",
+      "name": "pantoken",
       "runtimeExecutable": "bash",
       "runtimeArgs": [
         "-c",
-        "PILOT_DRIVER=mock bun run scripts/dev.ts"
+        "PANTOKEN_DRIVER=mock bun run scripts/dev.ts"
       ],
       "autoPort": true
     },
     {
-      "name": "pilot-real",
+      "name": "pantoken-real",
       "runtimeExecutable": "bun",
       "runtimeArgs": ["run", "dev"],
       "port": 5173
     },
     {
-      "name": "pilot-parity",
+      "name": "pantoken-parity",
       "runtimeExecutable": "bun",
       "runtimeArgs": ["run", "parity/launch.ts"],
       "autoPort": true

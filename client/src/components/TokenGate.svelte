@@ -11,7 +11,7 @@
 <div class="gate">
   <div class="card">
     <div class="mark">π</div>
-    <h1>pilot</h1>
+    <h1>pantoken</h1>
     {#if expired}
       <p>Your access token was rejected or expired — re-enter it to reconnect.</p>
     {:else}

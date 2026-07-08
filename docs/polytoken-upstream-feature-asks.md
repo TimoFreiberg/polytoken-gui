@@ -19,7 +19,7 @@
 comment: yep seems obviously good. want to confirm hard that it doesn't already exist, would feel silly if it doesn't.
 
 +-------+--------------------------------------+------------------------------------------------+----------------+
-| 2     | Images on POST /prompt               | Unblocks pilot's entire finished image | medium         |
+| 2     | Images on POST /prompt               | Unblocks pantoken's entire finished image | medium         |
 |       | (images?: [{data, media_type}])      | pipeline; the schema's own comment says |                |
 |       |                                      | additive fields are planned there, and |                |
 |       |                                      | image_reference_resolved half-exists. |                |
@@ -28,7 +28,7 @@ comment: yep if missing we need it
 
 +-------+--------------------------------------+------------------------------------------------+----------------+
 | 3 ⛔  | mode: "steer" | "follow_up"           | The distinction is real operator semantics     | medium         |
-|       | on /turn/input                       | the TUI wants too; pilot's toggle is currently |                |
+|       | on /turn/input                       | the TUI wants too; pantoken's toggle is currently |                |
 |       |                                      | fiction. |                |
 
 commetn: nope not necessary. just follow_up is fine, if i want to steer i send and then cancel the current turn
@@ -49,7 +49,7 @@ comment: hmm i'll take your word for it
 
 comment: can we know for sure from the api description that it works like that? if so, yeah
 +-------+--------------------------------------+------------------------------------------------+----------------+
-| 6     | queue_if_busy on /prompt             | Kills the TOCTOU where pilot routes on a       | small          |
+| 6     | queue_if_busy on /prompt             | Kills the TOCTOU where pantoken routes on a       | small          |
 |       | (atomic prompt-or-queue)             | cached turn_in_flight — 409 ghost rows or      |                |
 |       |                                      | messages queued into an idle session. |                |
 comment: hmm i'll take your word for it
@@ -61,7 +61,7 @@ comment: hmm i'll take your word for it
 +-------+--------------------------------------+------------------------------------------------+----------------+
 | 8     | Per-turn token usage on              | The internal TurnChunk.usage variant has the   | small–medium   |
 |       | message_complete                     | counts and never reaches the wire; kills       |                |
-|       |                                      | pilot's 1s polling ticker + chars/4 estimate.  |                |
+|       |                                      | pantoken's 1s polling ticker + chars/4 estimate.  |                |
 comment: how can you know what the internal data has? polytoken's internals aren't visible, or did you decompile the binary?
 +-------+--------------------------------------+------------------------------------------------+----------------+
 | 9 ⛔  | custom history item kind             | Live custom messages vanish on reload, | small          |
@@ -120,14 +120,14 @@ re-confirmed in the fresh unstable.4 dump. Bonus on-disk evidence: the daemon wr
 ask is only "surface it on SSE/state". Ask stands.
 
 **#9 custom history kind — WITHDRAWN, my agents got this one wrong.** "Live custom
-messages" = pilot's `customMessage` transcript events, which come from the daemon's
+messages" = pantoken's `customMessage` transcript events, which come from the daemon's
 `system_reminder` SSE events (event-map.ts:1077-1094; plan-review ones render as visible
 inject pills, the rest are invisible turn-boundary markers for `groupTurns`). The claim was
 that these vanish on reload because history has no such kind — **false**: `system_reminder`
 IS a persisted history item kind, in unstable.4 AND in our own vendored wire-types (line
-1922). The real bug is pilot-side: `history-seed.ts` replays only `user`/`assistant`/
+1922). The real bug is pantoken-side: `history-seed.ts` replays only `user`/`assistant`/
 `tool_result` and silently drops the other NINE kinds (system_reminder, compaction_fencepost,
-model_switch, facet_switch, context_cleared, ...). Filed as a pilot todo instead — it also
+model_switch, facet_switch, context_cleared, ...). Filed as a pantoken todo instead — it also
 explains reloaded transcripts losing turn grouping and compaction rows.
 
 **#10 session_title — ask STANDS, and your counter-observation is explained.** Surveyed all

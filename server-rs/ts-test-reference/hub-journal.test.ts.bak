@@ -15,8 +15,8 @@ import {
   type SessionDriverEvent,
   type SessionState,
   type SessionUsage,
-} from "@pilot/protocol";
-import type { PilotDriver } from "./driver.js";
+} from "@pantoken/protocol";
+import type { PantokenDriver } from "./driver.js";
 import { SCRIPTS, SESSION_REF } from "./fixtures.js";
 import { SessionHub } from "./hub.js";
 
@@ -54,7 +54,7 @@ const s2Seed = (title: string): SessionDriverEvent[] => [
 ];
 
 /** Just enough driver to emit fixture events into a hub by hand. */
-class ScriptedDriver implements PilotDriver {
+class ScriptedDriver implements PantokenDriver {
   private listener?: (e: SessionDriverEvent) => void;
   usage: SessionUsage | undefined;
   reloadCount = 0;

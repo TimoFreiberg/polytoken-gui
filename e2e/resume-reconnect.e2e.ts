@@ -37,7 +37,7 @@ test("a mid-stream reconnect resumes (no re-seed) without duplicated bubbles", a
 
   // …cut the transport mid-stream. The mock keeps emitting server-side.
   await page.evaluate(() =>
-    window.dispatchEvent(new Event("pilot:test-disconnect")),
+    window.dispatchEvent(new Event("pantoken:test-disconnect")),
   );
   await expect(
     page.getByText("Offline — the agent keeps running"),

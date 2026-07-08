@@ -1,4 +1,4 @@
-import type { ImageContent } from "@pilot/protocol";
+import type { ImageContent } from "@pantoken/protocol";
 
 export interface PendingPrompt {
   promptId: string;
@@ -19,14 +19,14 @@ export interface PendingPrompt {
     model?: { provider: string; modelId: string };
     thinking?: string;
     facet?: string;
-    permissionMonitor?: import("@pilot/protocol").PermissionMonitorMode;
+    permissionMonitor?: import("@pantoken/protocol").PermissionMonitorMode;
   };
   createdAt: string;
   state: "queued" | "sending" | "rejected";
   error?: string;
 }
 
-const DB_NAME = "pilot-client";
+const DB_NAME = "pantoken-client";
 const STORE_NAME = "prompt-outbox";
 const DB_VERSION = 1;
 

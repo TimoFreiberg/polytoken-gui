@@ -27,7 +27,7 @@
   import { STEP as FONT_STEP } from "./lib/font-scale.js";
   import { edgeSwipe } from "./lib/edge-swipe.js";
   import { createEdgeSwipe } from "./lib/edge-swipe.svelte.js";
-  import type { PermissionMonitorMode } from "@pilot/protocol";
+  import type { PermissionMonitorMode } from "@pantoken/protocol";
 
   // Dev affordance: ?dev shows buttons that drive the mock to any UI state, so the
   // screenshot harness can reach approval/ambient/error states deterministically.
@@ -43,7 +43,7 @@
   // just warns server-side and the flow never renders → the spec fails loud.
   onMount(() => {
     if (!dev) return;
-    (window as unknown as { __pilotMock?: (script: string) => void }).__pilotMock =
+    (window as unknown as { __pantokenMock?: (script: string) => void }).__pantokenMock =
       (script: string) => store.mock(script);
   });
 
@@ -102,7 +102,7 @@
   // watching doesn't sleep mid-run. Released the moment the turn settles.
   $effect(() => wakeLock.set(store.turnActive));
 
-  // Buzz the user (when pilot is unfocused) for every session, not just the focused
+  // Buzz the user (when pantoken is unfocused) for every session, not just the focused
   // transcript. The first sessionStatus message is a reconnect baseline, not a live event.
   let prevAttention = new Map<string, string>();
   let prevAttentionVersion = 0;
@@ -139,7 +139,7 @@
           ? "Approval needed"
           : item.phase === "failed"
             ? "Run failed"
-            : "pilot";
+            : "pantoken";
       const detail =
         item.phase === "waiting"
           ? (item.pendingTitle ?? "Waiting on you")
@@ -147,7 +147,7 @@
             ? (item.activity ?? "The run failed")
             : "Agent finished its turn";
       notifyIfUnfocused(title, `${session}: ${detail}`, {
-        tag: `pilot-${item.phase}-${item.sessionId}`,
+        tag: `pantoken-${item.phase}-${item.sessionId}`,
         onClick: () => store.openSessionById(item.sessionId),
       });
     }
@@ -156,11 +156,11 @@
   });
 
   // Reflect the active session's title in the browser tab so it's legible from the
-  // tab strip / app switcher instead of always reading "pilot" (DESIGN.md SHOULD).
+  // tab strip / app switcher instead of always reading "pantoken" (DESIGN.md SHOULD).
   // Ambient title wins over the folded snapshot title, mirroring StatusHeader.
   $effect(() => {
     const t = store.session.ambient.title || store.session.title;
-    document.title = t ? `${t} · pilot` : "pilot";
+    document.title = t ? `${t} · pantoken` : "pantoken";
   });
 
   // When ⌘\ cycles to transcript (home), refocus the composer textarea.
@@ -178,7 +178,7 @@
   // component-local handlers own the ⇧-modified combos (⌘⇧M/E/J) and arrow nav, so we
   // take only the unshifted, alt-free set here — plus ⌘⇧C (facet cycle) and ⌘⇧P
   // (permission monitor cycle), which are app-global. (⌘N is browser-reserved in a
-  // plain tab but free in the installed PWA / desktop app, pilot's primary surface;
+  // plain tab but free in the installed PWA / desktop app, pantoken's primary surface;
   // ⌘[ / ⌘] cancel the browser's history nav, which is unused since the app routes
   // views client-side.)
   function onGlobalKeydown(e: KeyboardEvent) {
@@ -187,7 +187,7 @@
     // Handled before the generic guard because it's the one combo that *wants* Shift,
     // and it's gated on Ctrl specifically (Cmd+Tab is the OS app switcher and never
     // reaches us). Like ⌘N, the browser eats it in a plain tab but leaves it for the
-    // page in the installed PWA / desktop app, pilot's primary surface. We deliberately
+    // page in the installed PWA / desktop app, pantoken's primary surface. We deliberately
     // don't use Cmd+←/→: in any focused text field (the composer, almost always) those
     // are move-to-line-start/end, and the app already maps history nav to ⌘[ / ⌘].
     if (e.key === "Tab" && e.ctrlKey && !e.metaKey && !e.altKey) {
@@ -200,7 +200,7 @@
     // consumes for reverse-focus traversal in form fields). Known trade-off:
     // ⌘⇧C is the browser's Inspect Element shortcut, so like ⌘N it mostly
     // won't reach us in a plain tab, and the installed PWA / desktop app —
-    // pilot's primary surface — deliberately gives it to the page (devtools
+    // pantoken's primary surface — deliberately gives it to the page (devtools
     // stay reachable via menu / ⌘⌥I there). Cycles through all available
     // facets from the facet list, not just execute↔plan. While drafting a
     // new session, composerFacet/setFacet target the DRAFT's facet pick —
@@ -358,7 +358,7 @@
 {/if}
 {#if store.swUpdateReady}
   <div class="update-toast" role="status">
-    <span class="update-msg">A new version of pilot is available.</span>
+    <span class="update-msg">A new version of pantoken is available.</span>
     <button
       class="update-refresh"
       title="Reload to update to the new version"

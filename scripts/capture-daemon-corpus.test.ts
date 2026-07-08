@@ -1,6 +1,6 @@
 // Cross-language canon parity — TS side.
 //
-// The Rust test `canon_matches_ts_golden` (server-rs/pilot-server/tests/corpus.rs)
+// The Rust test `canon_matches_ts_golden` (server-rs/pantoken-server/tests/corpus.rs)
 // compares Rust's `canonicalize_scenario` output to a committed, frozen
 // TS-produced golden. That catches Rust drift, but it cannot see a TS-only edit
 // to `canonicalizeValue` that diverges from Rust until the golden is regenerated.

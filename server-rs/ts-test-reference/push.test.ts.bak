@@ -22,7 +22,7 @@ describe("PushSubscriptionStore", () => {
   let dir: string;
   let file: string;
   beforeEach(() => {
-    dir = mkdtempSync(join(tmpdir(), "pilot-push-store-"));
+    dir = mkdtempSync(join(tmpdir(), "pantoken-push-store-"));
     file = join(dir, "subs.json");
   });
   afterEach(() => rmSync(dir, { recursive: true, force: true }));

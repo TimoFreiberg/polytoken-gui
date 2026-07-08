@@ -1,4 +1,4 @@
-# bunfig.toml — supply-chain cooldown backbone for the pilot monorepo.
+# bunfig.toml — supply-chain cooldown backbone for the pantoken monorepo.
 # Bun enforces this on EVERY install in the workspace (one root lockfile).
 # Project-local on purpose: Bun ignores a *global* bunfig for these keys
 # (bun #28726), and the cooldown is what dodges fresh npm malware.

@@ -21,7 +21,7 @@
   // Escape closes the panel as before (section searches still clear on the first Esc).
   //
   // Active section persists across close/reopen AND reload, mirroring the app's other
-  // per-device localStorage prefs (pilot.sidebarOpen, pilot.theme, …). So reopening
+  // per-device localStorage prefs (pantoken.sidebarOpen, pantoken.theme, …). So reopening
   // lands you on the section you last viewed — e.g. tweak an API key, Esc, reopen →
   // back on Providers. Defaults to Appearance when no pref is stored (or on SSR/tests).
   type SectionId =
@@ -39,7 +39,7 @@
     { id: "mcp", label: "MCP" },
     { id: "token", label: "Access token" },
   ];
-  const ACTIVE_SECTION_KEY = "pilot.settingsSection";
+  const ACTIVE_SECTION_KEY = "pantoken.settingsSection";
   function initialSection(): SectionId {
     if (typeof window === "undefined") return "appearance";
     const stored = localStorage.getItem(ACTIVE_SECTION_KEY);
@@ -83,14 +83,14 @@
     unsupported: "Not supported on this device",
   };
 
-  // Environment: the login shell pilot captures your PATH/tools from at startup, the live
+  // Environment: the login shell pantoken captures your PATH/tools from at startup, the live
   // status of that capture, and whether a config change is still waiting on a restart.
   const loginEnv = $derived(store.loginEnv);
   const shellPending = $derived(store.loginShellPendingRestart);
   // Draft for the shell-path field; seeded from the configured value on panel open.
   let shellDraft = $state("");
   const shellDirty = $derived(
-    shellDraft.trim() !== (store.pilotSettings.loginShell ?? ""),
+    shellDraft.trim() !== (store.pantokenSettings.loginShell ?? ""),
   );
   function saveLoginShell(): void {
     store.setLoginShell(shellDraft.trim() || null);
@@ -100,14 +100,14 @@
     store.setLoginShell(null);
   }
 
-  // Background model: the cheap model spec pilot's own extensions run their out-of-band
+  // Background model: the cheap model spec pantoken's own extensions run their out-of-band
   // LLM calls against (session auto-naming, the answer tool's structured-extraction).
   // A `provider/model[:thinking]` spec OR a `script:`-prefixed path. Draft seeded from
   // the server's configured value each open; the resolved `warning` (bad/unresolvable
   // spec) surfaces as a loud red error under the field.
   let bgModelDraft = $state("");
   const bgModelDirty = $derived(
-    bgModelDraft.trim() !== (store.pilotSettings.backgroundModel ?? ""),
+    bgModelDraft.trim() !== (store.pantokenSettings.backgroundModel ?? ""),
   );
   const bgModelWarning = $derived(store.backgroundModelWarning);
   function saveBackgroundModel(): void {
@@ -123,9 +123,9 @@
   $effect(() => {
     if (open && !prevOpen) {
       // Seed the login-shell field from the server's configured value each open.
-      shellDraft = store.pilotSettings.loginShell ?? "";
+      shellDraft = store.pantokenSettings.loginShell ?? "";
       // Seed the background-model field likewise.
-      bgModelDraft = store.pilotSettings.backgroundModel ?? "";
+      bgModelDraft = store.pantokenSettings.backgroundModel ?? "";
     }
     prevOpen = open;
   });
@@ -347,7 +347,7 @@
           <div class="rinfo">
             <div class="rlabel">Background model</div>
             <div class="rdesc">
-              The cheap model pilot's own extensions use for out-of-band tasks (session
+              The cheap model pantoken's own extensions use for out-of-band tasks (session
               auto-naming, the answer tool's extraction) — separate from the session's
               primary model. A <code>provider/model[:thinking]</code> spec, or a
               <code>script:</code>-prefixed path whose stdout is one. Blank = unset
@@ -380,7 +380,7 @@
             title="Save the background model spec"
             disabled={!bgModelDirty}>Save</Button
           >
-          {#if store.pilotSettings.backgroundModel}
+          {#if store.pantokenSettings.backgroundModel}
             <Button
               type="button"
               title="Clear the background model spec (extensions fall back)"
@@ -404,7 +404,7 @@
           <div class="rinfo">
             <div class="rlabel">Login shell</div>
             <div class="rdesc">
-              Pilot runs this shell at startup to load your PATH and tools, so the agent's
+              Pantoken runs this shell at startup to load your PATH and tools, so the agent's
               commands see what your terminal does. Leave blank for your default
               (<code>$SHELL</code>). Applies on the next restart.
             </div>
@@ -421,7 +421,7 @@
             bind:value={shellDraft}
             type="text"
             placeholder="Default ($SHELL) — e.g. /opt/homebrew/bin/fish"
-            title="Absolute path to the login shell pilot captures your environment from"
+            title="Absolute path to the login shell pantoken captures your environment from"
             aria-label="Login shell path"
             spellcheck="false"
             autocapitalize="off"
@@ -435,7 +435,7 @@
             title="Save the login shell (applies after a restart)"
             disabled={!shellDirty}>Save</Button
           >
-          {#if store.pilotSettings.loginShell}
+          {#if store.pantokenSettings.loginShell}
             <Button
               type="button"
               title="Use the default login shell ($SHELL)"
@@ -453,7 +453,7 @@
         </p>
         {#if shellPending}
           <p class="note warn" data-testid="login-shell-restart">
-            Restart Pilot to apply the new login shell.
+            Restart Pantoken to apply the new login shell.
           </p>
         {/if}
       </section>
@@ -559,7 +559,7 @@
           <div class="rinfo">
             <div class="rlabel">Data directory</div>
             <div class="rdesc">
-              Where pilot.log, settings, and the session archive live on this server.
+              Where pantoken.log, settings, and the session archive live on this server.
               <code data-testid="data-dir-path">{store.dataDir || "unknown"}</code>
             </div>
           </div>

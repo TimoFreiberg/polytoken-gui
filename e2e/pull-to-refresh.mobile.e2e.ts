@@ -52,7 +52,7 @@ test("pulling the transcript down forces a reconnect + re-snapshot", async ({
   // Drop the transport without taking Vite offline (same hook the delivery specs use);
   // the offline banner is our connected/offline probe.
   await page.evaluate(() =>
-    window.dispatchEvent(new Event("pilot:test-disconnect")),
+    window.dispatchEvent(new Event("pantoken:test-disconnect")),
   );
   await expect(offline(page)).toBeVisible();
 
@@ -73,7 +73,7 @@ test("pulling the transcript down forces a reconnect + re-snapshot", async ({
 
 test("a pull short of the threshold does not reconnect", async ({ page }) => {
   await page.evaluate(() =>
-    window.dispatchEvent(new Event("pilot:test-disconnect")),
+    window.dispatchEvent(new Event("pantoken:test-disconnect")),
   );
   await expect(offline(page)).toBeVisible();
 

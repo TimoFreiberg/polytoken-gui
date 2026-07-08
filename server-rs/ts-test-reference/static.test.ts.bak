@@ -17,7 +17,7 @@ describe("serveStatic", () => {
   const origClientDist = config.clientDist;
 
   beforeEach(() => {
-    dir = mkdtempSync(join(tmpdir(), "pilot-static-"));
+    dir = mkdtempSync(join(tmpdir(), "pantoken-static-"));
     config.clientDist = dir;
     writeFileSync(join(dir, "index.html"), "<!doctype html>spa");
     writeFileSync(join(dir, "app.js"), "console.log('app');");
@@ -43,7 +43,7 @@ describe("serveStatic", () => {
 
   test("returns null when no build is present (dev — caller returns a hint)", async () => {
     // Point at an empty dir: neither the asset nor index.html exists.
-    const empty = mkdtempSync(join(tmpdir(), "pilot-static-empty-"));
+    const empty = mkdtempSync(join(tmpdir(), "pantoken-static-empty-"));
     try {
       config.clientDist = empty;
       expect(await serveStatic("/anything")).toBeNull();
@@ -87,7 +87,7 @@ describe("serveStatic delivery policy", () => {
 
   beforeEach(() => {
     if (dist) return; // one shared dist for the describe (see doc comment)
-    dist = mkdtempSync(join(tmpdir(), "pilot-static-policy-"));
+    dist = mkdtempSync(join(tmpdir(), "pantoken-static-policy-"));
     writeFileSync(join(dist, "index.html"), `<html>${"p".repeat(3000)}</html>`);
     mkdirSync(join(dist, "assets"));
     writeFileSync(join(dist, "assets", "app-abc123.js"), BIG_JS);
@@ -104,7 +104,7 @@ describe("serveStatic delivery policy", () => {
   });
 
   const req = (headers: Record<string, string> = {}) =>
-    new Request("http://pilot.test/", { headers });
+    new Request("http://pantoken.test/", { headers });
 
   test("hashed assets get an immutable year-long cache", async () => {
     const res = await serveStatic("/assets/app-abc123.js", req());

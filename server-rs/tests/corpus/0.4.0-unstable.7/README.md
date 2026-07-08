@@ -2,15 +2,15 @@
 
 This directory holds the **golden daemon corpus**: deterministic, canonicalized
 recordings of real daemon (SSE `DaemonEvent` sequences + matching HTTP
-request/response pairs) used to validate the pilot Rust server's
-`map_daemon_event` accumulator (`server-rs/pilot-server/src/polytoken/event_map.rs`).
+request/response pairs) used to validate the pantoken Rust server's
+`map_daemon_event` accumulator (`server-rs/pantoken-server/src/polytoken/event_map.rs`).
 
 The files here are **seed fixtures** hand-authored from
 `polytoken event-schema` (the authoritative `DaemonEvent` JSON Schema). They are
 designed to be **replaced by real captures** later — but until then they MUST
 deserialize into the real Rust `SseEnvelope` / `DaemonEvent` types. The loader
-test (`server-rs/pilot-server/tests/corpus.rs`) enforces that bar: it parses
-every `sse[]` entry into `Vec<pilot_daemon_types::SseEnvelope>` and asserts
+test (`server-rs/pantoken-server/tests/corpus.rs`) enforces that bar: it parses
+every `sse[]` entry into `Vec<pantoken_daemon_types::SseEnvelope>` and asserts
 canonicalization is deterministic.
 
 ## Format

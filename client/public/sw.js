@@ -1,4 +1,4 @@
-// Minimal service worker — enough to make pilot installable as a PWA and to host
+// Minimal service worker — enough to make pantoken installable as a PWA and to host
 // future Web Push handlers (see OPEN-QUESTIONS OQ5). Deliberately NOT caching the
 // app shell yet: Vite emits hashed asset names, so a precache list would go stale
 // every build. Network-first passthrough keeps it correct until we add Workbox.
@@ -13,7 +13,7 @@ self.addEventListener("fetch", () => {
 // Web Push: deliver a notification even when every tab is closed. Payload is the
 // JSON the server sends in PushService.sendToAll ({title, body, tag, url}).
 //
-// Foreground suppression: if a pilot window is already focused/visible, the user is
+// Foreground suppression: if a pantoken window is already focused/visible, the user is
 // looking at the app — an OS notification would be redundant (and on desktop it
 // double-buzzes alongside the in-tab notify.ts path and the terminal pi notify
 // extension). So when foreground we SKIP the OS notification and let the live WS
@@ -34,7 +34,7 @@ self.addEventListener("fetch", () => {
 // the `if (foreground)` branch below to show a near-silent minimal notification
 // instead of fully skipping (renotify:false, silent:true). See followups.
 self.addEventListener("push", (event) => {
-  let data = { title: "pilot", body: "" };
+  let data = { title: "pantoken", body: "" };
   try {
     if (event.data) data = event.data.json();
   } catch {
@@ -48,7 +48,7 @@ self.addEventListener("push", (event) => {
         includeUncontrolled: true,
       });
 
-      // Foreground = at least one pilot window is focused or visible. focused is the
+      // Foreground = at least one pantoken window is focused or visible. focused is the
       // strongest signal; visibilityState === "visible" covers a foreground tab that
       // doesn't currently hold OS focus (e.g. focus is in a devtools pane) but is
       // still on-screen for the user.
@@ -66,9 +66,9 @@ self.addEventListener("push", (event) => {
         return;
       }
 
-      await self.registration.showNotification(data.title || "pilot", {
+      await self.registration.showNotification(data.title || "pantoken", {
         body: data.body || "",
-        tag: data.tag || "pilot",
+        tag: data.tag || "pantoken",
         icon: "/icon.svg",
         data: { url: data.url || "/" },
       });

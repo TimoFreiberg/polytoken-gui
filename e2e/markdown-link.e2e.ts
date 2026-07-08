@@ -4,18 +4,18 @@ import { drive, gotoFresh } from "./helpers.js";
 // Regression for the desktop-app bug where a markdown link's hover tooltip stuck
 // around forever and intercepted clicks. Root cause: markstream-svelte's built-in
 // link tooltip (`.ms-tooltip`, via its singletonTooltip) is styled entirely by the
-// renderer's base dist/index.css, which pilot deliberately does NOT import (we theme
+// renderer's base dist/index.css, which pantoken deliberately does NOT import (we theme
 // via markstream-theme.css). Without that CSS the singleton has no opacity binding
 // (hideTooltip only flips data-visible) and no `pointer-events:none`, so it rendered
 // as unstyled plain text that never hid and, at z-index 9999, ate clicks on links
 // beneath it. The fix passes showTooltips={false} to MarkdownRender, which (a) stops
 // markstream from ever creating `.ms-tooltip` and (b) makes LinkNode emit a plain
-// `title={href}` that pilot's single delegated Tooltip.svelte renders instead.
+// `title={href}` that pantoken's single delegated Tooltip.svelte renders instead.
 test.beforeEach(async ({ page }) => {
   await gotoFresh(page);
 });
 
-test("markdown links route through pilot's tooltip, not markstream's stuck one", async ({
+test("markdown links route through pantoken's tooltip, not markstream's stuck one", async ({
   page,
 }) => {
   await drive(page, "markdown");

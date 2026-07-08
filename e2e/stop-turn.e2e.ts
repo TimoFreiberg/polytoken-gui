@@ -31,7 +31,7 @@ test("the Stop pill disables while offline (a remote turn can't be stopped)", as
   // Drop the socket: the turn keeps running server-side, so the pill stays visible but
   // goes inert (a dead click would silently no-op) with an explanatory tooltip.
   await page.evaluate(() =>
-    window.dispatchEvent(new Event("pilot:test-disconnect")),
+    window.dispatchEvent(new Event("pantoken:test-disconnect")),
   );
   await expect(stop).toBeDisabled();
   await expect(stop).toHaveAttribute(

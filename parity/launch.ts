@@ -1,19 +1,19 @@
-// parity/launch.ts — bring up pilot (real polytoken driver) on fresh ports + isolated
-// polytoken/pilot state. Foreground; the caller keeps it alive (Claude_Preview manages it
-// for `preview_start("pilot-parity")`; `parity up` backgrounds it for the Playwright path).
+// parity/launch.ts — bring up pantoken (real polytoken driver) on fresh ports + isolated
+// polytoken/pantoken state. Foreground; the caller keeps it alive (Claude_Preview manages it
+// for `preview_start("pantoken-parity")`; `parity up` backgrounds it for the Playwright path).
 //
 // Self-contained on purpose (not delegating to scripts/dev.ts): dev.ts couples autoPort to
-// "$PORT is set", and in autoPort mode it IGNORES PILOT_DATA_DIR (per-port dir instead). We
-// want PILOT_DATA_DIR under PARITY_ROOT for one-rm-rf teardown, AND we want to record BOTH
+// "$PORT is set", and in autoPort mode it IGNORES PANTOKEN_DATA_DIR (per-port dir instead). We
+// want PANTOKEN_DATA_DIR under PARITY_ROOT for one-rm-rf teardown, AND we want to record BOTH
 // ports for the TUI side + `parity down`. So we own the spawn here. Mirrors dev.ts's
 // health-gating, NODE_PATH fix-up, and child-cleanup.
 //
 // Isolation applied here:
-//   PILOT_DRIVER=polytoken         — the live daemon driver
-//   PILOT_AUTO_PORT unset, explicit PILOT_PORT=<free>  — fresh backend, our own free port
-//   PILOT_DATA_DIR=<root>/pilot-data                   — under PARITY_ROOT
-//   PILOT_TOKEN deleted             — tokenless (so /debug + the page are open)
-//   PILOT_IDLE_REAP_MS=<short>      — frees a session's exclusive TUI lease promptly so a
+//   PANTOKEN_DRIVER=polytoken         — the live daemon driver
+//   PANTOKEN_AUTO_PORT unset, explicit PANTOKEN_PORT=<free>  — fresh backend, our own free port
+//   PANTOKEN_DATA_DIR=<root>/pantoken-data                   — under PARITY_ROOT
+//   PANTOKEN_TOKEN deleted             — tokenless (so /debug + the page are open)
+//   PANTOKEN_IDLE_REAP_MS=<short>      — frees a session's exclusive TUI lease promptly so a
 //                                     GUI→TUI handoff works without a 10-min wait
 //   XDG_DATA_HOME / XDG_CACHE_HOME (+ XDG_CONFIG_HOME if isolating) — polytoken footprint
 
@@ -32,7 +32,7 @@ const REPO_ROOT = join(import.meta.dir, "..");
 
 /** Default short idle-reap for the harness (ms). Frees the exclusive lease ~quickly on an
  *  un-focused, idle session so GUI→TUI handoff via the reaper works (see flow 4b). */
-const DEFAULT_REAP_MS = process.env.PILOT_PARITY_IDLE_REAP_MS ?? "20000";
+const DEFAULT_REAP_MS = process.env.PANTOKEN_PARITY_IDLE_REAP_MS ?? "20000";
 
 async function waitForHealth(
   base: string,
@@ -60,12 +60,12 @@ export async function launch(p: Paths = paths()): Promise<void> {
   // We NEVER let Vite fall back to 5173 (the agent-harness's own protected dev server).
   const vitePort = Number(
     process.env.PORT ??
-      process.env.PILOT_PARITY_VITE_PORT ??
+      process.env.PANTOKEN_PARITY_VITE_PORT ??
       (await freePort()),
   );
-  // Backend is always our own free port — immune to the desktop app's leaked PILOT_PORT.
+  // Backend is always our own free port — immune to the desktop app's leaked PANTOKEN_PORT.
   const backendPort = Number(
-    process.env.PILOT_PARITY_BACKEND_PORT ?? (await freePort()),
+    process.env.PANTOKEN_PARITY_BACKEND_PORT ?? (await freePort()),
   );
   // Use 127.0.0.1 everywhere: the backend binds 127.0.0.1 (config.host default), so a
   // `localhost` proxy/WS target could resolve to ::1 and miss it. Vite is bound to
@@ -77,13 +77,13 @@ export async function launch(p: Paths = paths()): Promise<void> {
   const backendEnv: Record<string, string | undefined> = {
     ...process.env,
     ...isolationEnv(p),
-    PILOT_DRIVER: "polytoken",
-    PILOT_PORT: String(backendPort),
-    PILOT_DATA_DIR: p.pilotData,
-    PILOT_IDLE_REAP_MS: DEFAULT_REAP_MS,
+    PANTOKEN_DRIVER: "polytoken",
+    PANTOKEN_PORT: String(backendPort),
+    PANTOKEN_DATA_DIR: p.pantokenData,
+    PANTOKEN_IDLE_REAP_MS: DEFAULT_REAP_MS,
     // Neutralize the desktop app's env leaks + force a tokenless, non-auto instance.
-    PILOT_AUTO_PORT: undefined,
-    PILOT_TOKEN: undefined,
+    PANTOKEN_AUTO_PORT: undefined,
+    PANTOKEN_TOKEN: undefined,
     PORT: undefined,
   };
 
@@ -142,8 +142,8 @@ export async function launch(p: Paths = paths()): Promise<void> {
       cwd: join(REPO_ROOT, "client"),
       env: {
         ...process.env,
-        PILOT_SERVER: serverUrl,
-        VITE_PILOT_WS_URL: wsUrl,
+        PANTOKEN_SERVER: serverUrl,
+        VITE_PANTOKEN_WS_URL: wsUrl,
       },
       stdout: "inherit",
       stderr: "inherit",
@@ -153,7 +153,7 @@ export async function launch(p: Paths = paths()): Promise<void> {
 
   writeRunEnv(
     {
-      pilotPid: process.pid,
+      pantokenPid: process.pid,
       backendPort,
       vitePort,
       guiUrl,

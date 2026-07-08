@@ -1,5 +1,5 @@
 <script lang="ts">
-  // Global tooltip override. Every clickable element in pilot carries a `title`
+  // Global tooltip override. Every clickable element in pantoken carries a `title`
   // (a project convention — see AGENTS.md), but the browser's native title tooltip
   // is slow (~1.5s) and unstyled. This single delegated listener reuses those same
   // `title` strings to render a themed tooltip after a short delay instead.
@@ -125,7 +125,7 @@
       }
       // Node was removed by a re-render. Re-acquire only if the element now under
       // the resting pointer is plausibly the SAME control re-rendered — not merely
-      // a neighbour sharing the title string (pilot has many: per-row "Worktree: …",
+      // a neighbour sharing the title string (pantoken has many: per-row "Worktree: …",
       // action buttons, …). Match the title plus the identity a re-render preserves
       // (tag + aria-label + testid); anything else means the content changed → close.
       const under = document.elementFromPoint(px, py);

@@ -1,7 +1,7 @@
 import { expect, test } from "@playwright/test";
 import { driveLive, gotoFreshLive } from "./helpers.js";
 
-// LIVE tier (PILOT_DRIVER=fake). Structural assertions only — the corpus content
+// LIVE tier (PANTOKEN_DRIVER=fake). Structural assertions only — the corpus content
 // differs from the mock fixtures, so we assert the shape of the rendered turn, not
 // its text. NOTE: authored against the corpus + existing mock DOM selectors but not
 // executed in a browser in this session; the CI live job is their first real run.

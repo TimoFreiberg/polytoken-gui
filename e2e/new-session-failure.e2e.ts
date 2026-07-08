@@ -37,7 +37,7 @@ test("a failed new session offers a restore toast when another draft is in progr
   // newSession is queued (not yet attempted) and we can set up a competing draft.
   await drive(page, "failnewsession");
   await page.evaluate(() =>
-    window.dispatchEvent(new Event("pilot:test-disconnect")),
+    window.dispatchEvent(new Event("pantoken:test-disconnect")),
   );
   await expect(
     page.getByText("Offline — the agent keeps running"),
@@ -71,7 +71,7 @@ test("a failed new session overwrites an empty competing draft without a toast",
   await openSidebar(page);
   await drive(page, "failnewsession");
   await page.evaluate(() =>
-    window.dispatchEvent(new Event("pilot:test-disconnect")),
+    window.dispatchEvent(new Event("pantoken:test-disconnect")),
   );
   await expect(
     page.getByText("Offline — the agent keeps running"),

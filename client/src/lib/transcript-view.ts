@@ -15,7 +15,7 @@ import type {
   InjectItem,
   ToolItem,
   TranscriptItem,
-} from "@pilot/protocol";
+} from "@pantoken/protocol";
 
 // Tools whose result the USER is meant to read, not the agent's scratch work. They
 // render as a visible, in-order block (see TurnGroup.visible) instead of collapsing

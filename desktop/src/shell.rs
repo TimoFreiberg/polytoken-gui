@@ -1,6 +1,6 @@
 //! The visible shell: main window (chromeless, hosting the hub-served web client), tray
 //! (close-to-tray keeps the hub — and any phone connection — alive), the "Updating
-//! Pilot…" overlay, notifications, and the fatal-error dialog.
+//! Pantoken…" overlay, notifications, and the fatal-error dialog.
 
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
@@ -17,14 +17,14 @@ use crate::state::AppState;
 
 pub const MAIN_WINDOW: &str = "main";
 
-/// Build the main window on the bundled "Starting Pilot…" page. The supervisor navigates
+/// Build the main window on the bundled "Starting Pantoken…" page. The supervisor navigates
 /// it to the hub URL once /health answers. Chromeless: transparent titlebar, traffic
 /// lights floating over the client's own header — same look as the Swift shell.
 pub fn create_main_window(app: &AppHandle) -> tauri::Result<()> {
     let handle = app.clone();
     let mut builder =
         WebviewWindowBuilder::new(app, MAIN_WINDOW, WebviewUrl::App("index.html".into()))
-            .title("Pilot")
+            .title("Pantoken")
             .inner_size(1100.0, 760.0)
             .center()
             .on_navigation(move |url| {
@@ -167,13 +167,13 @@ pub fn navigate_main(app: &AppHandle, url: &str) {
 /// on its own thread so the CALLER never blocks: the supervisor thread reports fatal and
 /// returns, which keeps quit-teardown's thread-join deadlock-free even with the dialog up.
 pub fn present_fatal(app: &AppHandle, message: &str) {
-    eprintln!("pilot: fatal: {message}");
+    eprintln!("pantoken: fatal: {message}");
     let app = app.clone();
     let message = message.to_string();
     std::thread::spawn(move || {
         app.dialog()
             .message(&message)
-            .title("Pilot can't start")
+            .title("Pantoken can't start")
             .kind(MessageDialogKind::Error)
             .blocking_show();
         app.exit(1);
@@ -185,7 +185,7 @@ pub fn notify(app: &AppHandle, title: &str, body: &str) {
 }
 
 // ───────────────────────────── update overlay ─────────────────────────────
-// The frosted "Updating Pilot…" scrim, painted INTO the page via eval rather than as a
+// The frosted "Updating Pantoken…" scrim, painted INTO the page via eval rather than as a
 // native view: the DOM freezes during the apply (the client's WS is dying anyway), the
 // post-update navigation replaces the document — which tears the scrim down for free —
 // and a failsafe timer catches an apply that never completes. Shell-owned, not served:
@@ -209,7 +209,7 @@ impl Overlay {
         let generation = self.generation.fetch_add(1, Ordering::SeqCst) + 1;
         if let Some(w) = app.get_webview_window(MAIN_WINDOW) {
             let label_js =
-                serde_json::to_string(label).unwrap_or_else(|_| "\"Updating Pilot…\"".into());
+                serde_json::to_string(label).unwrap_or_else(|_| "\"Updating Pantoken…\"".into());
             let _ = w.eval(raise_js(&label_js));
         }
         // Failsafe: drop the overlay if the teardown signal never arrives, so a modal
@@ -221,7 +221,7 @@ impl Overlay {
         std::thread::spawn(move || {
             std::thread::sleep(Duration::from_secs(300));
             if pending.load(Ordering::SeqCst) && gen_ref.load(Ordering::SeqCst) == generation {
-                eprintln!("pilot: update overlay failsafe fired — tearing it down");
+                eprintln!("pantoken: update overlay failsafe fired — tearing it down");
                 pending.store(false, Ordering::SeqCst);
                 if let Some(w) = app.get_webview_window(MAIN_WINDOW) {
                     let _ = w.eval(HIDE_JS);
@@ -249,22 +249,22 @@ impl Overlay {
 fn raise_js(label_json: &str) -> String {
     format!(
         r#"(() => {{
-  let o = document.getElementById('pilot-native-overlay');
+  let o = document.getElementById('pantoken-native-overlay');
   if (!o) {{
     o = document.createElement('div');
-    o.id = 'pilot-native-overlay';
+    o.id = 'pantoken-native-overlay';
     o.innerHTML = '<div class="pno-spin"></div><div class="pno-label"></div>';
     const st = document.createElement('style');
     st.textContent = `
-      #pilot-native-overlay {{ position: fixed; inset: 0; z-index: 2147483647;
+      #pantoken-native-overlay {{ position: fixed; inset: 0; z-index: 2147483647;
         display: flex; flex-direction: column; align-items: center; justify-content: center;
         gap: 18px; background: rgba(30,30,28,.45);
         backdrop-filter: blur(22px) saturate(120%); -webkit-backdrop-filter: blur(22px) saturate(120%);
         opacity: 0; transition: opacity .18s ease; }}
-      #pilot-native-overlay .pno-spin {{ width: 30px; height: 30px; border-radius: 50%;
+      #pantoken-native-overlay .pno-spin {{ width: 30px; height: 30px; border-radius: 50%;
         border: 3px solid rgba(255,255,255,.25); border-top-color: rgba(255,255,255,.85);
         animation: pno-rot .8s linear infinite; }}
-      #pilot-native-overlay .pno-label {{ color: rgba(255,255,255,.82);
+      #pantoken-native-overlay .pno-label {{ color: rgba(255,255,255,.82);
         font: 500 13px -apple-system, system-ui, sans-serif; }}
       @keyframes pno-rot {{ to {{ transform: rotate(360deg); }} }}`;
     o.appendChild(st);
@@ -279,19 +279,19 @@ fn raise_js(label_json: &str) -> String {
 }
 
 const HIDE_JS: &str = r#"(() => {
-  const o = document.getElementById('pilot-native-overlay');
+  const o = document.getElementById('pantoken-native-overlay');
   if (o) { o.style.opacity = '0'; setTimeout(() => o.remove(), 220); }
 })();"#;
 
 // ───────────────────────────────── tray ─────────────────────────────────
 
 pub fn create_tray(app: &AppHandle) -> tauri::Result<()> {
-    let open = MenuItemBuilder::with_id("open", "Open Pilot").build(app)?;
+    let open = MenuItemBuilder::with_id("open", "Open Pantoken").build(app)?;
     let copy_url = MenuItemBuilder::with_id("copy-url", "Copy App URL").build(app)?;
     let restart = MenuItemBuilder::with_id("restart-hub", "Restart Hub").build(app)?;
     let updates =
         MenuItemBuilder::with_id("check-updates", "Check for Shell Updates…").build(app)?;
-    let quit = MenuItemBuilder::with_id("quit", "Quit Pilot").build(app)?;
+    let quit = MenuItemBuilder::with_id("quit", "Quit Pantoken").build(app)?;
     let menu = MenuBuilder::new(app)
         .items(&[&open])
         .item(&PredefinedMenuItem::separator(app)?)
@@ -300,9 +300,9 @@ pub fn create_tray(app: &AppHandle) -> tauri::Result<()> {
         .items(&[&quit])
         .build()?;
 
-    TrayIconBuilder::with_id("pilot-tray")
+    TrayIconBuilder::with_id("pantoken-tray")
         .icon(app.default_window_icon().expect("bundled icon").clone())
-        .tooltip("Pilot")
+        .tooltip("Pantoken")
         .menu(&menu)
         .show_menu_on_left_click(true)
         .on_menu_event(|app, event| {

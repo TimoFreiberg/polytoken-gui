@@ -1,13 +1,13 @@
 // Reconnecting WebSocket singleton with reactive Svelte 5 state.
 // Ported near-verbatim from KellerComm (frontend/src/lib/ws.svelte.ts), retyped
-// to pilot's ClientMessage/ServerMessage envelope.
+// to pantoken's ClientMessage/ServerMessage envelope.
 
 import {
   type ClientMessage,
   parseServerMessage,
   type ResumeToken,
   type ServerMessage,
-} from "@pilot/protocol";
+} from "@pantoken/protocol";
 import { getToken } from "./auth.js";
 
 export type ConnectionState =
@@ -54,7 +54,7 @@ function getReconnectDelay(): number {
 }
 
 function buildWsUrl(): string {
-  const configured = import.meta.env.VITE_PILOT_WS_URL;
+  const configured = import.meta.env.VITE_PANTOKEN_WS_URL;
   if (configured) return configured;
   const proto = window.location.protocol === "https:" ? "wss:" : "ws:";
   return `${proto}//${window.location.host}/ws`;
@@ -226,12 +226,12 @@ if (typeof document !== "undefined") {
   // Deterministic e2e hook: simulate a transport loss without taking HTTP/Vite
   // offline, so the test can close and reopen the page around a durable queued prompt.
   if (import.meta.env.DEV)
-    window.addEventListener("pilot:test-disconnect", () => disconnect());
+    window.addEventListener("pantoken:test-disconnect", () => disconnect());
   // Deterministic e2e hook: freeze the socket in "reconnecting" (dropped but actively
   // retrying) so a queued prompt renders "Sending when reconnected…". Suppress the real
   // retry/online/visibility auto-reconnect so the state holds for the assertion.
   if (import.meta.env.DEV)
-    window.addEventListener("pilot:test-reconnecting", () => {
+    window.addEventListener("pantoken:test-reconnecting", () => {
       intentionalClose = true;
       if (reconnectTimer !== null) {
         clearTimeout(reconnectTimer);

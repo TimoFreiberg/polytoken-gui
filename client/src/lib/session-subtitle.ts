@@ -1,6 +1,6 @@
 /** The header subtitle's "where am I" line under the session title: the project
  *  name (basename of the session cwd), plus the worktree directory when the
- *  session runs in a pilot-created worktree — there its cwd is the worktree and
+ *  session runs in a pantoken-created worktree — there its cwd is the worktree and
  *  `worktreeBase` is the repo it forked from, so we show `project · worktree` to
  *  flag that it's a different checkout. Pure + DOM-free so it's unit-testable; the
  *  component feeds it the active session's list entry (the folded snapshot doesn't

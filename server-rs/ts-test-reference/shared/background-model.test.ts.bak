@@ -123,7 +123,7 @@ describe("resolveBackgroundModel — bad spec (loud warning)", () => {
 
 describe("resolveBackgroundModel — script: path", () => {
   test("runs the script, parses stdout as a spec", () => {
-    const dir = mkdtempSync(join(tmpdir(), "pilot-bg-"));
+    const dir = mkdtempSync(join(tmpdir(), "pantoken-bg-"));
     const scriptPath = join(dir, "resolve.sh");
     writeFileSync(
       scriptPath,
@@ -137,7 +137,7 @@ describe("resolveBackgroundModel — script: path", () => {
   });
 
   test("script that prints a bad spec → warning (loud, not silent)", () => {
-    const dir = mkdtempSync(join(tmpdir(), "pilot-bg-"));
+    const dir = mkdtempSync(join(tmpdir(), "pantoken-bg-"));
     const scriptPath = join(dir, "bad.sh");
     writeFileSync(scriptPath, `#!/bin/sh\necho "anthropic/nope-not-a-model"\n`, {
       mode: 0o755,
@@ -148,7 +148,7 @@ describe("resolveBackgroundModel — script: path", () => {
   });
 
   test("script that exits non-zero → warning naming the script + exit code", () => {
-    const dir = mkdtempSync(join(tmpdir(), "pilot-bg-"));
+    const dir = mkdtempSync(join(tmpdir(), "pantoken-bg-"));
     const scriptPath = join(dir, "fail.sh");
     writeFileSync(scriptPath, `#!/bin/sh\necho "oops" >&2\nexit 3\n`, {
       mode: 0o755,
@@ -160,7 +160,7 @@ describe("resolveBackgroundModel — script: path", () => {
 
   test("missing script → warning (no crash)", () => {
     const r = resolveBackgroundModel(
-      `script:${join(tmpdir(), "pilot-does-not-exist-" + process.pid)}.sh`,
+      `script:${join(tmpdir(), "pantoken-does-not-exist-" + process.pid)}.sh`,
       registry(),
     );
     expect(r.model).toBeUndefined();
@@ -168,7 +168,7 @@ describe("resolveBackgroundModel — script: path", () => {
   });
 
   test("script that prints nothing → warning", () => {
-    const dir = mkdtempSync(join(tmpdir(), "pilot-bg-"));
+    const dir = mkdtempSync(join(tmpdir(), "pantoken-bg-"));
     const scriptPath = join(dir, "empty.sh");
     writeFileSync(scriptPath, `#!/bin/sh\ntrue\n`, { mode: 0o755 });
     const r = resolveBackgroundModel(`script:${scriptPath}`, registry());

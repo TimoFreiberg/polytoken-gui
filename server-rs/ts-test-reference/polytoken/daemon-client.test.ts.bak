@@ -23,7 +23,7 @@ describe("waitForDaemonStartup stale-startup.json guard", () => {
   let sessionsDir: string;
 
   beforeEach(() => {
-    sessionsDir = mkdtempSync(join(tmpdir(), "pilot-daemon-test-"));
+    sessionsDir = mkdtempSync(join(tmpdir(), "pantoken-daemon-test-"));
   });
 
   afterEach(() => {

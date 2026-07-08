@@ -3,12 +3,12 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
-use crate::config::PilotConfig;
+use crate::config::PantokenConfig;
 use crate::shell::Overlay;
 use crate::supervisor::Supervisor;
 
 pub struct AppState {
-    pub config: Arc<PilotConfig>,
+    pub config: Arc<PantokenConfig>,
     pub supervisor: Mutex<Option<Supervisor>>,
     pub overlay: Overlay,
     /// Target version of the last update-deferred notification — the updater loop
@@ -20,7 +20,7 @@ pub struct AppState {
 }
 
 impl AppState {
-    pub fn new(config: PilotConfig) -> Self {
+    pub fn new(config: PantokenConfig) -> Self {
         Self {
             config: Arc::new(config),
             supervisor: Mutex::new(None),

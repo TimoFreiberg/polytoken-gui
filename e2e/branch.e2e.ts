@@ -33,7 +33,7 @@ test("an earlier turn's answer offers 'Rewind from here' once it's no longer the
   page,
 }) => {
   // Send a second prompt so the greeting's answer stops being the active-path tip.
-  const box = page.getByPlaceholder("Message pilot…");
+  const box = page.getByPlaceholder("Message pantoken…");
   await box.fill("now make it return JSON");
   await box.press("Enter");
   await waitForSettledWorkBlocks(page, 2);
@@ -63,7 +63,7 @@ test("rewinding from a user prompt rewinds the transcript and prefills the compo
   await btn.click();
 
   // The re-edit gesture: the prompt text comes back in the composer…
-  await expect(page.getByPlaceholder("Message pilot…")).toHaveValue(PROMPT);
+  await expect(page.getByPlaceholder("Message pantoken…")).toHaveValue(PROMPT);
   // …and the rewind dropped the old turn, so the answer is gone.
   await expect(page.getByText("Routes live in")).toHaveCount(0);
   await expect(page.getByText("No messages yet")).toBeVisible();
@@ -72,6 +72,6 @@ test("rewinding from a user prompt rewinds the transcript and prefills the compo
 test("Cmd/Ctrl+Shift+↑ rewinds from the last prompt", async ({ page }) => {
   // The hotkey bypasses the click-twice confirm gate (it's a deliberate keyboard gesture).
   await page.keyboard.press("Control+Shift+ArrowUp");
-  await expect(page.getByPlaceholder("Message pilot…")).toHaveValue(PROMPT);
+  await expect(page.getByPlaceholder("Message pantoken…")).toHaveValue(PROMPT);
   await expect(page.getByText("Routes live in")).toHaveCount(0);
 });

@@ -14,7 +14,7 @@
 <script lang="ts">
   import { untrack } from "svelte";
   import { reveal } from "../lib/transitions.js";
-  import type { HostUiRequest, QnaAnswer } from "@pilot/protocol";
+  import type { HostUiRequest, QnaAnswer } from "@pantoken/protocol";
   import Button from "./ui/Button.svelte";
   import Chevron from "./ui/Chevron.svelte";
 

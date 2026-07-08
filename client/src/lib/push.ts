@@ -122,7 +122,7 @@ async function ensurePushSubscriptionUncached(): Promise<PushState> {
       const { publicKey } = (await res.json()) as { publicKey: string };
       // userVisibleOnly:true is mandatory (Chrome rejects silent subscriptions) and
       // contractually obliges the SW to show a notification for every push. sw.js's
-      // push handler deliberately skips the OS notification when a pilot window is
+      // push handler deliberately skips the OS notification when a pantoken window is
       // focused/visible to avoid double-buzzing (in-tab notify + terminal agent notify
       // extension fire for the same event). See the trade-off note in sw.js — Chrome
       // may show a generic fallback or penalize the subscription for repeated

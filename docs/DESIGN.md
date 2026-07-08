@@ -1,7 +1,7 @@
-# Pilot — Design
+# Pantoken — Design
 
 A personal, single-user remote-control GUI for a **polytoken** coding agent.
-polytoken runs as out-of-process daemons (one per session); pilot drives it
+polytoken runs as out-of-process daemons (one per session); pantoken drives it
 from a desktop GUI/browser/phone over Tailscale. Default look/feel mirrors Codex desktop/Claude app.
 
 ## Architecture
@@ -39,14 +39,14 @@ At the protocol level.
 
 ## The driver seam
 
-`PilotDriver` is the contract for swapping mock ↔ polytoken. The hub never
+`PantokenDriver` is the contract for swapping mock ↔ polytoken. The hub never
 changes between them:
 
 - **`mock`** — deterministic fixture driver for dev/e2e. No daemon needed.
 - **`polytoken`** — the live driver. HTTP+SSE client that maps the daemon's
-  event vocabulary onto pilot's. One child daemon per warm session.
+  event vocabulary onto pantoken's. One child daemon per warm session.
 
-`PILOT_DRIVER=pi` is a hard error (the in-process agent SDK driver was removed;
+`PANTOKEN_DRIVER=pi` is a hard error (the in-process agent SDK driver was removed;
 polytoken replaced it).
 
 ## Protocol (the WS contract)

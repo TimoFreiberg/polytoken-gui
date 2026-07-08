@@ -12,7 +12,7 @@
 //!   "Update now"/force click. Never restarts mid-turn (/health `busy` gates it).
 //!
 //! Endpoint resolution order (re-resolved every cycle, so overrides apply live):
-//!   1. PILOT_SHELL_UPDATE_URL env var (`off` disables checks — hermetic test runs)
+//!   1. PANTOKEN_SHELL_UPDATE_URL env var (`off` disables checks — hermetic test runs)
 //!   2. a `shell-update-url` file in the data dir (one URL, trimmed)
 //!   3. the baked-in default: the public releases repo (see DEFAULT_ENDPOINT).
 
@@ -37,11 +37,11 @@ static CHECK_IN_FLIGHT: AtomicBool = AtomicBool::new(false);
 const DEFAULT_ENDPOINT: &str =
     "https://github.com/TimoFreiberg/polytoken-gui/releases/latest/download/latest.json";
 
-/// Endpoint resolution: PILOT_SHELL_UPDATE_URL env (the literal `off` disables checks
+/// Endpoint resolution: PANTOKEN_SHELL_UPDATE_URL env (the literal `off` disables checks
 /// entirely — hermetic test runs), then a `shell-update-url` file in the data dir
 /// (per-machine override), then the baked-in releases repo. None only via `off`.
 pub fn endpoint(app: &AppHandle) -> Option<String> {
-    if let Ok(url) = std::env::var("PILOT_SHELL_UPDATE_URL") {
+    if let Ok(url) = std::env::var("PANTOKEN_SHELL_UPDATE_URL") {
         let url = url.trim();
         if url == "off" {
             return None;
@@ -78,7 +78,7 @@ fn run_check(app: &AppHandle, manual: bool) {
         if manual {
             app.dialog()
                 .message(
-                    "Update checks are disabled (PILOT_SHELL_UPDATE_URL=off). Unset it \
+                    "Update checks are disabled (PANTOKEN_SHELL_UPDATE_URL=off). Unset it \
                      to check against the releases repo again.",
                 )
                 .title("Shell updates disabled")
@@ -87,7 +87,7 @@ fn run_check(app: &AppHandle, manual: bool) {
         return;
     };
     let Ok(url) = url::Url::parse(&endpoint) else {
-        eprintln!("pilot: invalid shell update endpoint: {endpoint}");
+        eprintln!("pantoken: invalid shell update endpoint: {endpoint}");
         return;
     };
 
@@ -95,12 +95,12 @@ fn run_check(app: &AppHandle, manual: bool) {
         Ok(b) => match b.build() {
             Ok(u) => u,
             Err(e) => {
-                eprintln!("pilot: updater build failed: {e}");
+                eprintln!("pantoken: updater build failed: {e}");
                 return;
             }
         },
         Err(e) => {
-            eprintln!("pilot: updater endpoint rejected: {e}");
+            eprintln!("pantoken: updater endpoint rejected: {e}");
             return;
         }
     };
@@ -114,13 +114,13 @@ fn run_check(app: &AppHandle, manual: bool) {
                         "You're on the latest shell ({}).",
                         app.package_info().version
                     ))
-                    .title("Pilot is up to date")
+                    .title("Pantoken is up to date")
                     .blocking_show();
             }
             return;
         }
         Err(e) => {
-            eprintln!("pilot: update check failed: {e}");
+            eprintln!("pantoken: update check failed: {e}");
             if manual {
                 app.dialog()
                     .message(format!("Couldn't check for updates:\n{e}"))
@@ -132,15 +132,15 @@ fn run_check(app: &AppHandle, manual: bool) {
         }
     };
 
-    // PILOT_SHELL_UPDATE_AUTO=1 installs startup-check updates without asking — the
+    // PANTOKEN_SHELL_UPDATE_AUTO=1 installs startup-check updates without asking — the
     // unattended dogfood posture (apply-when-idle).
     // Manual tray checks always ask.
-    let auto = !manual && std::env::var("PILOT_SHELL_UPDATE_AUTO").as_deref() == Ok("1");
+    let auto = !manual && std::env::var("PANTOKEN_SHELL_UPDATE_AUTO").as_deref() == Ok("1");
     if !auto {
         let install = app
             .dialog()
             .message(format!(
-                "Pilot shell {} is available (you have {}). Install and relaunch?\n\nThe \
+                "Pantoken shell {} is available (you have {}). Install and relaunch?\n\nThe \
                  hub restarts with it; your phone reconnects automatically.",
                 update.version,
                 app.package_info().version
@@ -157,7 +157,7 @@ fn run_check(app: &AppHandle, manual: bool) {
     }
 
     let state = app.state::<AppState>();
-    state.overlay.raise(app, "Updating Pilot shell…");
+    state.overlay.raise(app, "Updating Pantoken shell…");
     let result = tauri::async_runtime::block_on(update.download_and_install(|_, _| {}, || {}));
     match result {
         Ok(()) => {
@@ -182,7 +182,7 @@ fn run_check(app: &AppHandle, manual: bool) {
 
 /// Manifest re-check cadence while up to date. Overridable for testing.
 fn check_interval() -> Duration {
-    let ms = std::env::var("PILOT_SHELL_UPDATE_INTERVAL_MS")
+    let ms = std::env::var("PANTOKEN_SHELL_UPDATE_INTERVAL_MS")
         .ok()
         .and_then(|v| v.parse::<u64>().ok())
         .unwrap_or(60_000);
@@ -236,7 +236,7 @@ fn run_cycle_locked(app: &AppHandle, port: u16, endpoint: &str) -> Duration {
         Err(e) => {
             // Transient (offline, host down): keep the last reported card state and
             // retry at the slow cadence. Never clear the card on a flaky check.
-            eprintln!("pilot: shell update check failed: {e}");
+            eprintln!("pantoken: shell update check failed: {e}");
             return check_interval();
         }
         Ok(None) => {
@@ -269,9 +269,9 @@ fn run_cycle_locked(app: &AppHandle, port: u16, endpoint: &str) -> Duration {
     if state.updater_stop.load(Ordering::SeqCst) {
         return PENDING_POLL;
     }
-    state.overlay.raise(app, "Updating Pilot…");
+    state.overlay.raise(app, "Updating Pantoken…");
     eprintln!(
-        "pilot: installing shell update {version} ({})",
+        "pantoken: installing shell update {version} ({})",
         if unattended {
             "unattended"
         } else {
@@ -286,7 +286,7 @@ fn run_cycle_locked(app: &AppHandle, port: u16, endpoint: &str) -> Duration {
             PENDING_POLL // unreached in practice; the event loop is exiting
         }
         Err(e) => {
-            eprintln!("pilot: shell update install failed: {e}");
+            eprintln!("pantoken: shell update install failed: {e}");
             state.overlay.hide(app);
             // applyFailed un-sticks the card's "Updating…" state so it offers retry.
             report_update_state(port, Some(&version), true);
@@ -319,9 +319,9 @@ fn notify_once(app: &AppHandle, version: &str) {
         *last = Some(version.to_string());
         crate::shell::notify(
             app,
-            "Pilot update ready",
+            "Pantoken update ready",
             &format!(
-                "Pilot {version} is ready — it installs when your session is idle, or \
+                "Pantoken {version} is ready — it installs when your session is idle, or \
                  use the sidebar's Update now."
             ),
         );

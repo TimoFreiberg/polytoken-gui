@@ -17,7 +17,7 @@ test("the context meter climbs live while a turn runs", async ({ page }) => {
   await expect(meter).toHaveText(/24%/); // MOCK_USAGE baseline: 47,200 / 200,000
 
   await drive(page, "streamhold"); // a turn that goes running and stays running
-  // The ticker polls the (growing) mock usage every PILOT_LIVE_REFRESH_MS, so the meter
+  // The ticker polls the (growing) mock usage every PANTOKEN_LIVE_REFRESH_MS, so the meter
   // climbs past its frozen baseline without waiting for the turn to end.
   await expect(meter).toHaveText(/2[5-9]%|[3-9]\d%/);
 });

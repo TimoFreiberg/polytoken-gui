@@ -1,4 +1,4 @@
-//! Pilot desktop shell (Tauri). Boots a local pilot server (bundled Rust sidecar
+//! Pantoken desktop shell (Tauri). Boots a local pantoken server (bundled Rust sidecar
 //! binary), gates on /health, then shows the hub-served web client in a chromeless
 //! window. See desktop/README.md and docs/ADR-desktop-shell.md.
 
@@ -16,7 +16,7 @@ mod updater;
 
 use tauri::{AppHandle, Manager, RunEvent};
 
-use crate::config::{free_port, PilotConfig};
+use crate::config::{free_port, PantokenConfig};
 use std::sync::OnceLock;
 
 use crate::state::AppState;
@@ -47,12 +47,12 @@ fn main() {
             let port = free_port()?;
             let resource_dir = app.path().resource_dir()?;
             let handle = app.handle().clone();
-            let (config, fatal) = match PilotConfig::resolve(port, &resource_dir) {
+            let (config, fatal) = match PantokenConfig::resolve(port, &resource_dir) {
                 Ok(c) => (c, None),
                 // A resolve failure still wants the window + tray up so the fatal
                 // dialog has an app to hang off — park a harmless fallback config
                 // (nothing gets started; the dialog exits on dismiss).
-                Err(message) => (PilotConfig::fallback(port), Some(message)),
+                Err(message) => (PantokenConfig::fallback(port), Some(message)),
             };
             app.manage(AppState::new(config));
 
@@ -77,7 +77,7 @@ fn main() {
             Ok(())
         })
         .build(tauri::generate_context!())
-        .expect("error while building Pilot")
+        .expect("error while building Pantoken")
         .run_with_signals(term_signals);
 }
 
@@ -91,7 +91,7 @@ impl RunWithSignals for tauri::App {
         std::thread::spawn(move || {
             let mut sig: libc::c_int = 0;
             unsafe { libc::sigwait(&signals, &mut sig) };
-            eprintln!("pilot: received signal {sig}, shutting down");
+            eprintln!("pantoken: received signal {sig}, shutting down");
             // Routes into RunEvent::Exit below — the same teardown as a normal quit.
             handle.exit(0);
         });
@@ -123,7 +123,7 @@ fn on_supervisor_event(app: &AppHandle, event: SupervisorEvent) {
             if first_time {
                 if let Some(t0) = LAUNCHED.get() {
                     eprintln!(
-                        "pilot: hub healthy {}ms after launch",
+                        "pantoken: hub healthy {}ms after launch",
                         t0.elapsed().as_millis()
                     );
                 }

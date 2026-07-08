@@ -91,7 +91,7 @@ test("the model menu has a search that filters the list", async ({ page }) => {
 test("⌘⇧M focuses the model search; keyboard select returns focus to composer", async ({
   page,
 }) => {
-  const composer = page.getByPlaceholder("Message pilot…");
+  const composer = page.getByPlaceholder("Message pantoken…");
   await composer.click();
   await expect(composer).toBeFocused();
 
@@ -117,7 +117,7 @@ test("⌘⇧M focuses the model search; keyboard select returns focus to compose
 test("⌘⇧E focuses the thinking menu; arrow+enter selects and returns focus", async ({
   page,
 }) => {
-  const composer = page.getByPlaceholder("Message pilot…");
+  const composer = page.getByPlaceholder("Message pantoken…");
   await composer.click();
 
   await page.keyboard.press("Control+Shift+E");
@@ -139,7 +139,7 @@ test("⌘⇧E focuses the thinking menu; arrow+enter selects and returns focus",
 test("Esc closes the picker and returns focus to the composer", async ({
   page,
 }) => {
-  const composer = page.getByPlaceholder("Message pilot…");
+  const composer = page.getByPlaceholder("Message pantoken…");
   await composer.click();
 
   await page.keyboard.press("Control+Shift+M");

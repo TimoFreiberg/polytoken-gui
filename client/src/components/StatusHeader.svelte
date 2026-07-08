@@ -29,7 +29,7 @@
   const statuses = $derived(Object.entries(s.ambient.statuses));
   // A just-submitted new session, warming up server-side before its first snapshot. The
   // session slot was reset to empty on submit, so without special-casing this the header
-  // would flash "pilot" / "no session" until the snapshot lands. Treat it like the draft.
+  // would flash "pantoken" / "no session" until the snapshot lands. Treat it like the draft.
   const creating = $derived(store.creatingSession !== null);
   // An existing-session switch whose seed hasn't landed yet — show the target's
   // title immediately instead of the prior session's.
@@ -56,7 +56,7 @@
       ? "New session"
       : opening
         ? "Opening session"
-        : s.ambient.title || s.title || "pilot",
+        : s.ambient.title || s.title || "pantoken",
   );
 
   // The "where am I" subtitle. The folded snapshot carries no cwd/worktree, so we

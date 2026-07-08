@@ -1,16 +1,16 @@
-# Pilot desktop shell (Tauri)
+# Pantoken desktop shell (Tauri)
 
-The macOS desktop app: a Tauri v2 shell that supervises a **local pilot server** as a
+The macOS desktop app: a Tauri v2 shell that supervises a **local pantoken server** as a
 sidecar and hosts the server-served web client in a chromeless window. It replaced the
 hand-rolled Swift/AppKit shell (now deleted — see `docs/ADR-desktop-shell.md` for the
 decision and the spike results).
 
-The hub is a **compiled Rust binary** (`pilot-server`, built from `server-rs/`),
-shipped as `Contents/MacOS/pilot-server` in the packaged .app. It serves the bundled
+The hub is a **compiled Rust binary** (`pantoken-server`, built from `server-rs/`),
+shipped as `Contents/MacOS/pantoken-server` in the packaged .app. It serves the bundled
 client (`Contents/Resources/client-dist`). The updater swaps shell + server + client
 **atomically**. No `bun`, no clone, no external checkout needed on the machine.
 
-`PILOT_HUB_MODE=bundled` forces the bundled path (useful for testing a debug binary as
+`PANTOKEN_HUB_MODE=bundled` forces the bundled path (useful for testing a debug binary as
 if it were packaged). A .app missing its server/client payload fails with a fatal
 dialog, never a silent fallback. What's new over Swift:
 
@@ -31,8 +31,8 @@ On launch:
 1. Picks a free loopback port.
 2. Resolves config: data dir, hub binary path, client-dist path
    (`src/config.rs`).
-3. Shows the bundled "Starting Pilot…" page, spawns the `pilot-server` sidecar
-   with `PILOT_CLIENT_DIST` pointing at the bundled client, and gates on
+3. Shows the bundled "Starting Pantoken…" page, spawns the `pantoken-server` sidecar
+   with `PANTOKEN_CLIENT_DIST` pointing at the bundled client, and gates on
    `GET /health`.
 4. Navigates the webview to `http://127.0.0.1:<port>/`, then starts the shell's
    periodic update loop.
@@ -55,7 +55,7 @@ Rust toolchain required (`rustup`); everything else comes through the Bun worksp
 `cargo check` / `cargo clippy` in this directory for fast iteration.
 
 Both commands first compile the server sidecar (`scripts/desktop/build-hub.ts` →
-`binaries/pilot-server-<triple>`, gitignored) because tauri-build stages `externalBin`
+`binaries/pantoken-server-<triple>`, gitignored) because tauri-build stages `externalBin`
 next to the binary and errors when it's missing; `bun run build` additionally builds
 the client (bundled as the `client-dist` resource).
 
@@ -63,7 +63,7 @@ Release builds want the updater signing key in the environment, or they can't pr
 updater artifacts:
 
 ```bash
-TAURI_SIGNING_PRIVATE_KEY="$(cat ~/.tauri/pilot-shell.key)" \
+TAURI_SIGNING_PRIVATE_KEY="$(cat ~/.tauri/pantoken-shell.key)" \
 TAURI_SIGNING_PRIVATE_KEY_PASSWORD="" \
 bun run build
 ```
@@ -72,44 +72,44 @@ bun run build
 
 The bundle is **ad-hoc signed, not notarized** (personal tool posture, same as the
 Swift shell). That means a **browser-downloaded** copy carries the quarantine xattr
-and Gatekeeper refuses it outright — the misleading *"Pilot.app is damaged and can't
+and Gatekeeper refuses it outright — the misleading *"Pantoken.app is damaged and can't
 be opened"* dialog, with no Open-Anyway path on current macOS (the right-click → Open
 bypass no longer applies to ad-hoc apps). Install without a browser instead:
 
 ```bash
-curl -sSL https://github.com/TimoFreiberg/polytoken-gui/releases/latest/download/Pilot.app.tar.gz \
+curl -sSL https://github.com/TimoFreiberg/polytoken-gui/releases/latest/download/Pantoken.app.tar.gz \
   | tar xz -C /Applications
 ```
 
 curl sets no quarantine attribute, so the app opens normally. Already downloaded a
-"damaged" copy? Un-quarantine it: `xattr -cr /path/to/Pilot.app`. After the first
+"damaged" copy? Un-quarantine it: `xattr -cr /path/to/Pantoken.app`. After the first
 launch the app updates itself (self-applied updates never re-acquire quarantine —
 verified in the ADR spike).
 
 ### Test/dev launches
 
 The shell honors override vars the server never exports (so a launch from inside a
-pilot-spawned agent shell can't be hijacked by inherited config):
+pantoken-spawned agent shell can't be hijacked by inherited config):
 
-- `PILOT_HUB_MODE` — `bundled`, forcing the bundled path on a non-.app binary
-- `PILOT_APP_DATA_DIR` — the data dir (default `~/Library/Application Support/Pilot`)
+- `PANTOKEN_HUB_MODE` — `bundled`, forcing the bundled path on a non-.app binary
+- `PANTOKEN_APP_DATA_DIR` — the data dir (default `~/Library/Application Support/Pantoken`)
 
 Everything else in the environment passes through to the spawned server, so
-`PILOT_DRIVER=mock PILOT_UPDATE_DRY_RUN=1` gives a fully hermetic instance:
+`PANTOKEN_DRIVER=mock PANTOKEN_UPDATE_DRY_RUN=1` gives a fully hermetic instance:
 
 ```bash
-PILOT_APP_DATA_DIR=$(mktemp -d) \
-PILOT_DRIVER=mock PILOT_UPDATE_DRY_RUN=1 ./target/debug/pilot-desktop
+PANTOKEN_APP_DATA_DIR=$(mktemp -d) \
+PANTOKEN_DRIVER=mock PANTOKEN_UPDATE_DRY_RUN=1 ./target/debug/pantoken-desktop
 ```
 
-Agent-legible probes: stderr logs `pilot: hub healthy <N>ms after launch` and
-`pilot: fatal: …`; the server's `/health` + `/debug/state` work as always.
+Agent-legible probes: stderr logs `pantoken: hub healthy <N>ms after launch` and
+`pantoken: fatal: …`; the server's `/health` + `/debug/state` work as always.
 
 ## Updates
 
 One updater artifact is the whole app (shell + server + client), so the shell's own
 periodic loop (`src/updater.rs`) owns updates, checked every minute
-(`PILOT_SHELL_UPDATE_INTERVAL_MS`):
+(`PANTOKEN_SHELL_UPDATE_INTERVAL_MS`):
 
 - unattended & idle (no client connected, no turn running per `/health`) → install +
   relaunch silently;
@@ -124,7 +124,7 @@ card (`applyFailed`) so it offers retry.
 
 **Endpoint**, resolved at runtime, re-checked every cycle:
 
-1. `PILOT_SHELL_UPDATE_URL` env var — the literal `off` disables checks (hermetic runs)
+1. `PANTOKEN_SHELL_UPDATE_URL` env var — the literal `off` disables checks (hermetic runs)
 2. a `shell-update-url` file in the data dir (one URL on a line)
 3. the baked-in default: the public releases repo,
    `https://github.com/TimoFreiberg/polytoken-gui/releases/latest/download/latest.json`
@@ -148,7 +148,7 @@ apps pick the release up within a minute. One-time setup: the minisign key as an
 Actions secret —
 
 ```bash
-gh secret set TAURI_SIGNING_PRIVATE_KEY < ~/.tauri/pilot-shell.key
+gh secret set TAURI_SIGNING_PRIVATE_KEY < ~/.tauri/pantoken-shell.key
 ```
 
 (Owner call, 2026-07-03: the key lives in Actions secrets. Fork PRs never see
@@ -157,7 +157,7 @@ tool, and it doubles as a key backup.)
 
 `publish.ts` also works standalone from this machine (`--repo
 TimoFreiberg/polytoken-gui`, `--dry-run` to inspect): it builds signed (key from
-`TAURI_SIGNING_PRIVATE_KEY` or `~/.tauri/pilot-shell.key`), **derives `latest.json`
+`TAURI_SIGNING_PRIVATE_KEY` or `~/.tauri/pantoken-shell.key`), **derives `latest.json`
 from the built bundle's Info.plist** — a hand-typed manifest version over an older
 artifact makes every relaunch "update" again, an infinite install loop under the
 unattended policy — and publishes tar.gz + sig + manifest as a GitHub release,
@@ -170,7 +170,7 @@ signature, not the transport. **Remove the flag once hosting lands on https** (G
 releases would do it): the plugin's https-only rule is release-builds-only, so local
 updater testing on debug builds keeps working either way.
 
-**Keys:** the minisign keypair lives at `~/.tauri/pilot-shell.key` (+`.pub`),
+**Keys:** the minisign keypair lives at `~/.tauri/pantoken-shell.key` (+`.pub`),
 passwordless — it never leaves this machine. The public key is baked into
 `tauri.conf.json`. Losing the private key means shipping one manual reinstall with a
 new keypair; **regenerating it invalidates every installed app's update path**, so
@@ -188,7 +188,7 @@ shell (`desktop/README.md` has the original checklist):
 | `target=_blank` / `window.open` | not used by the client (no handler wired) | ⬜ add if the client ever emits them |
 | Downloads | `on_download` → auto-save to ~/Downloads + notification (no save panel: the hook runs on the main thread, and Chrome-style auto-save is the better default anyway) | ✅ wired |
 | Web Notifications / Push | native, via the notification plugin | ✅ wired |
-| `pilotUpdate` JS bridge (early overlay raise) | not wired — the overlay raises on the updater's first apply event instead, ≤5s after the click | ⬜ optional follow-up |
+| `pantokenUpdate` JS bridge (early overlay raise) | not wired — the overlay raises on the updater's first apply event instead, ≤5s after the click | ⬜ optional follow-up |
 
 ## Not done yet
 

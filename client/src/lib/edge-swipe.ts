@@ -1,5 +1,5 @@
 // Edge swipe: a touch gesture that starts within a narrow strip at the screen's left
-// edge and drags rightward — the universal mobile "open the drawer" gesture. In pilot
+// edge and drags rightward — the universal mobile "open the drawer" gesture. In pantoken
 // it slides the session sidebar in (the phone drawer lives off-screen until opened).
 //
 // The gesture math lives in a DOM-free `EdgeSwipeTracker` so it's unit-testable; the

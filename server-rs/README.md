@@ -1,6 +1,6 @@
-# Pilot Rust Server
+# Pantoken Rust Server
 
-The pilot server, in Rust. Same WS protocol, HTTP endpoints, and driver behavior.
+The pantoken server, in Rust. Same WS protocol, HTTP endpoints, and driver behavior.
 Axum-based WS bridge + HTTP routes + static file serving.
 
 ## Crate structure
@@ -8,16 +8,16 @@ Axum-based WS bridge + HTTP routes + static file serving.
 ```
 server-rs/
 ├── Cargo.toml                # workspace
-├── pilot-protocol/           # WS protocol types + fold reducer (shared logic)
+├── pantoken-protocol/           # WS protocol types + fold reducer (shared logic)
 │   └── src/
 │       ├── lib.rs
 │       ├── wire.rs           # ClientMessage, ServerMessage
 │       ├── state.rs          # SessionState, foldEvent, foldAll
 │       └── session_driver.rs # SessionDriverEvent, SessionSnapshot
-├── pilot-daemon-types/       # Daemon wire types (generated from OpenAPI)
+├── pantoken-daemon-types/       # Daemon wire types (generated from OpenAPI)
 │   └── src/
 │       └── lib.rs            # generated via scripts/codegen-polytoken-rs.ts
-├── pilot-server/             # The server binary
+├── pantoken-server/             # The server binary
 │   └── src/
 │       ├── main.rs           # entrypoint (axum router)
 │       ├── config.rs         # env-based config
@@ -25,14 +25,14 @@ server-rs/
 │       ├── journal.rs        # per-session append-only event journal
 │       ├── push.rs           # Web Push (VAPID, subscription store)
 │       ├── pidlock.rs        # PID lock + server identity
-│       ├── settings_store.rs # pilot-settings.json read/write
+│       ├── settings_store.rs # pantoken-settings.json read/write
 │       ├── static_serve.rs   # gzip-cached static file serving
 │       ├── ws_send.rs        # backpressure-aware WS send
 │       └── polytoken/        # polytoken driver modules
 │           ├── daemon_client.rs  # HTTP+SSE+process-lifecycle client
-│           ├── event_map.rs      # daemon→pilot event mapping
+│           ├── event_map.rs      # daemon→pantoken event mapping
 │           ├── history_seed.rs   # history→seed conversion
-│           ├── driver.rs         # DaemonDriver (implements PilotDriver)
+│           ├── driver.rs         # DaemonDriver (implements PantokenDriver)
 │           ├── ui_bridge.rs      # interrogative response builder
 │           ├── models.rs         # model registry
 │           ├── commands.rs       # slash command parsing
@@ -48,7 +48,7 @@ server-rs/
 ```bash
 cargo build       # build the server
 cargo test        # run all tests
-cargo run         # run the server (reads PILOT_PORT, PILOT_DATA_DIR, etc.)
+cargo run         # run the server (reads PANTOKEN_PORT, PANTOKEN_DATA_DIR, etc.)
 ```
 
 CI enforces `cargo fmt --check` + `cargo clippy --locked --all-targets -- -D
@@ -63,7 +63,7 @@ Daemon wire types are auto-generated from the polytoken binary's OpenAPI spec:
 bun run scripts/codegen-polytoken-rs.ts
 ```
 
-This runs `polytoken openapi` and generates `pilot-daemon-types/src/lib.rs` with
+This runs `polytoken openapi` and generates `pantoken-daemon-types/src/lib.rs` with
 161 serde types including the 60-variant `DaemonEvent` discriminated union.
 
 ## E2E integration
@@ -71,10 +71,10 @@ This runs `polytoken openapi` and generates `pilot-daemon-types/src/lib.rs` with
 The Rust server is the only server — `bun run dev` and `bun run test:e2e` spawn
 it directly via `cargo run` in `server-rs/`. No env var needed.
 
-Mock mode (`PILOT_DRIVER=mock`) uses `mock_driver.rs` — a deterministic fixture
+Mock mode (`PANTOKEN_DRIVER=mock`) uses `mock_driver.rs` — a deterministic fixture
 driver serving `SessionDriverEvent`s, used for dev and the e2e suite.
 
-A third mode, `PILOT_DRIVER=fake`, runs the real `PolytokenDriver` over an
+A third mode, `PANTOKEN_DRIVER=fake`, runs the real `PolytokenDriver` over an
 in-process, corpus-backed fake daemon: deterministic like the mock, but it
 exercises the live driver stack end-to-end. Run it with `bun run test:e2e:live`.
 

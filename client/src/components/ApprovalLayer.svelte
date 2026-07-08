@@ -1,6 +1,6 @@
 <script lang="ts">
   import { reveal } from "../lib/transitions.js";
-  import { isDialogRequest } from "@pilot/protocol";
+  import { isDialogRequest } from "@pantoken/protocol";
   import { store } from "../lib/store.svelte.js";
   import { attention } from "../lib/attention-cycle.svelte.js";
   import Button from "./ui/Button.svelte";

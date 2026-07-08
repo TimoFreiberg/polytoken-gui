@@ -107,7 +107,7 @@ test("disabling Hide thinking reveals the expandable thinking block", async ({
 });
 
 test("typing a prompt then sending clears the composer", async ({ page }) => {
-  const box = page.getByPlaceholder("Message pilot…");
+  const box = page.getByPlaceholder("Message pantoken…");
   await box.fill("hello there");
   await box.press("Enter");
   await expect(page.getByText("hello there")).toBeVisible();
@@ -129,7 +129,7 @@ test("run-failed shows an error card whose Resume sends continue", async ({
   page,
 }) => {
   // Send a prompt so the scenario reflects a real accepted-then-failed turn.
-  const box = page.getByPlaceholder("Message pilot…");
+  const box = page.getByPlaceholder("Message pantoken…");
   await box.fill("run the failing thing");
   await box.press("Enter");
   await expect(page.getByText("run the failing thing")).toHaveCount(1);

@@ -2,7 +2,7 @@ import { expect, test } from "@playwright/test";
 import { gotoFresh, openSettings } from "./helpers.js";
 
 // Playwright gives each test a fresh BrowserContext (empty localStorage), so there's
-// no cross-spec bleed of the persisted pilot.settingsSection — each spec opens the
+// no cross-spec bleed of the persisted pantoken.settingsSection — each spec opens the
 // section it exercises via openSettings() anyway. (An earlier beforeEach cleared the
 // pref after gotoFresh, but the component had already read it at mount, so it was a
 // no-op; removed.)
@@ -22,7 +22,7 @@ test("settings panel opens from the header gear and lists its sections", async (
   await expect(panel.getByText("Models", { exact: true })).toBeVisible();
   await expect(panel.getByText("Environment", { exact: true })).toBeVisible();
   await expect(panel.getByText("Access token", { exact: true })).toBeVisible();
-  // The dev/mock server runs without PILOT_TOKEN, so no token is saved client-side.
+  // The dev/mock server runs without PANTOKEN_TOKEN, so no token is saved client-side.
   // Only the active section renders, so jump to the Access token tab to see its body.
   await page.getByTestId("settings-tab-token").click();
   await expect(panel.getByText("No token saved")).toBeVisible();
@@ -42,7 +42,7 @@ test("the Environment section shows login-shell status and persists an override"
   await env.getByTestId("login-shell-input").fill("/opt/homebrew/bin/fish");
   await env.getByRole("button", { name: "Save" }).click();
 
-  // Round-trips through the server's pilotSettings broadcast, which reads back the
+  // Round-trips through the server's pantokenSettings broadcast, which reads back the
   // persisted file. Reload (a fresh WS connection) + reopen: the field is re-seeded
   // from disk, proving it persisted server-side.
   await page.reload();
@@ -272,7 +272,7 @@ test("the background-model spec round-trips and warns loud on a bad spec", async
   await openSettings(page, "models");
   const settings = page.getByTestId("settings-panel");
 
-  // Starts unset (the e2e's reset wipes pilot-settings to defaults).
+  // Starts unset (the e2e's reset wipes pantoken-settings to defaults).
   await expect(settings.getByTestId("background-model-input")).toHaveValue("");
 
   // Set a spec that RESOLVES against the mock's model list (claude-sonnet-4-6 is in
@@ -285,7 +285,7 @@ test("the background-model spec round-trips and warns loud on a bad spec", async
   // No warning: the spec resolved cleanly.
   await expect(settings.getByTestId("background-model-warning")).toHaveCount(0);
 
-  // Round-trips through the server's pilotSettings broadcast (which re-reads the
+  // Round-trips through the server's pantokenSettings broadcast (which re-reads the
   // persisted file). Reload + reopen: the field is re-seeded from disk.
   await page.reload();
   await openSettings(page, "models");

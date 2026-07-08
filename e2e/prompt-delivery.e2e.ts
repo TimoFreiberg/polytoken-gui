@@ -7,14 +7,14 @@ test("an offline prompt survives page loss and sends once after reconnect", asyn
 }) => {
   await gotoFresh(page);
   await page.evaluate(() =>
-    window.dispatchEvent(new Event("pilot:test-disconnect")),
+    window.dispatchEvent(new Event("pantoken:test-disconnect")),
   );
   await expect(
     page.getByText("Offline — the agent keeps running"),
   ).toBeVisible();
 
   const prompt = "deliver this exactly once after reconnect";
-  const composer = page.getByPlaceholder("Message pilot…");
+  const composer = page.getByPlaceholder("Message pantoken…");
   await composer.fill(prompt);
   await page.getByRole("button", { name: "Send" }).click();
 
@@ -42,11 +42,11 @@ test("a prompt sent mid-reconnect reads 'Sending when reconnected…', not 'Queu
   // Freeze the socket in "reconnecting" (dropped but actively retrying) so the queued
   // prompt is about-to-send, not truly stranded.
   await page.evaluate(() =>
-    window.dispatchEvent(new Event("pilot:test-reconnecting")),
+    window.dispatchEvent(new Event("pantoken:test-reconnecting")),
   );
 
   const prompt = "this goes out the instant the socket is back";
-  const composer = page.getByPlaceholder("Message pilot…");
+  const composer = page.getByPlaceholder("Message pantoken…");
   await composer.fill(prompt);
   await page.getByRole("button", { name: "Send" }).click();
 
@@ -63,8 +63,8 @@ test("a rejected prompt stays visible and can be returned to the composer", asyn
   page,
 }) => {
   await gotoFresh(page);
-  const prompt = "__pilot_reject_prompt__";
-  const composer = page.getByPlaceholder("Message pilot…");
+  const prompt = "__pantoken_reject_prompt__";
+  const composer = page.getByPlaceholder("Message pantoken…");
   await composer.fill(prompt);
   await page.getByRole("button", { name: "Send" }).click();
 

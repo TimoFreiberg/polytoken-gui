@@ -54,7 +54,7 @@ test("Cmd+Shift+C cycles facets even when the composer is focused", async ({
   await expect(badge).toHaveText("Execute");
 
   // Focus the composer textarea — the key fix: the hotkey must fire even here.
-  await page.getByPlaceholder("Message pilot…").focus();
+  await page.getByPlaceholder("Message pantoken…").focus();
 
   // Cmd+Shift+C → switch to plan mode.
   await page.keyboard.press("Meta+Shift+C");

@@ -1,5 +1,5 @@
 <script lang="ts">
-  import type { ToolItem } from "@pilot/protocol";
+  import type { ToolItem } from "@pantoken/protocol";
   import { parseQnaResult, toolOutputText } from "../lib/transcript-view.js";
 
   // The `answer` tool's result, rendered visibly in the transcript (not buried in a

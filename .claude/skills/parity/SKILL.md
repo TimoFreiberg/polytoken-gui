@@ -1,24 +1,24 @@
 ---
 name: parity
 description: >-
-  Drive the pilot→polytoken GUI and the polytoken TUI against one shared, isolated test
-  project to exercise GUI⇄TUI parity. Use when asked to test/compare pilot-vs-TUI
+  Drive the pantoken→polytoken GUI and the polytoken TUI against one shared, isolated test
+  project to exercise GUI⇄TUI parity. Use when asked to test/compare pantoken-vs-TUI
   behavior, reproduce a dogfood discrepancy between the GUI and the TUI, drive a live
-  polytoken session from a browser and/or tmux, or run the parity harness. Spins pilot up
+  polytoken session from a browser and/or tmux, or run the parity harness. Spins pantoken up
   on FRESH ports with an isolated polytoken sessions registry, so it can never touch prod
-  or other pilot/daemon instances. Requires provider auth in the env (see preconditions).
+  or other pantoken/daemon instances. Requires provider auth in the env (see preconditions).
 ---
 
 # parity — GUI ⇄ TUI parity harness
 
 One test project, driven from two surfaces:
-- **GUI:** the pilot web app backed by the **real polytoken daemon driver**, on fresh ports.
+- **GUI:** the pantoken web app backed by the **real polytoken daemon driver**, on fresh ports.
 - **TUI:** the **polytoken TUI** inside a dedicated tmux server.
 
-Everything lives under one isolation root (`$PILOT_PARITY_ROOT`, default
-`~/.local/state/pilot-parity`) — fresh pilot ports, an isolated polytoken sessions
+Everything lives under one isolation root (`$PANTOKEN_PARITY_ROOT`, default
+`~/.local/state/pantoken-parity`) — fresh pantoken ports, an isolated polytoken sessions
 registry (`XDG_DATA_HOME`), an isolated cache, and a dedicated `tmux -L` server. It
-**cannot** touch prod pilot/daemon state. Tear down with one command.
+**cannot** touch prod pantoken/daemon state. Tear down with one command.
 
 One entry point: `bun parity/parity.ts <cmd>`. See `.claude/skills/parity/SKILL.md`
 for the full runbook.
@@ -31,7 +31,7 @@ live-attached to one daemon at once**. The daemon's `/history`+`/state` is the s
 source of truth; the GUI and TUI are *projections* of it. Parity = each live projection
 agrees with that ground truth. Clean handoff between surfaces goes **through session
 history**: fully release a session on side A before opening it on side B (there is no
-per-session "close" in pilot — see flow GUI→TUI below).
+per-session "close" in pantoken — see flow GUI→TUI below).
 
 ## The test config (prefilled, cheap model) + preconditions
 
@@ -39,13 +39,13 @@ The harness generates an **isolated `config.yaml`** under the root pinning a **c
 (full, mini) model pair** so test runs never use the prod default. polytoken requires
 `defaults.full` to be a **Full-tier** model (the agent's main model) and `defaults.mini` a
 **Mini-tier** one — so a single cheap model like `deepseek-v4-flash` can only be the *mini*.
-`$PILOT_PARITY_MODEL` selects a preset (each a matched same-provider pair, so only **one**
+`$PANTOKEN_PARITY_MODEL` selects a preset (each a matched same-provider pair, so only **one**
 key is needed):
 - **`deepseek`** (default) — full `deepseek/deepseek-v4-pro`, mini `deepseek/deepseek-v4-flash`. Needs `$DEEPSEEK_API_KEY`. Metered but cheap; owner's reliability pick.
 - **`umans`** — full `umans/umans-glm-5.2`, mini `umans/umans-flash`. Needs `$UMANS_API_KEY`. Flat-rate/unlimited (cost-free, just slower TTFT).
 
-For a custom same-provider pair set both `$PILOT_PARITY_FULL` + `$PILOT_PARITY_MINI`
-(`provider/model` refs). Override the whole config via `$PILOT_PARITY_CONFIG_DIR`. The keys
+For a custom same-provider pair set both `$PANTOKEN_PARITY_FULL` + `$PANTOKEN_PARITY_MINI`
+(`provider/model` refs). Override the whole config via `$PANTOKEN_PARITY_CONFIG_DIR`. The keys
 are env-refs like the real config — the live desktop app has them; a bare shell may not.
 
 **Always run `bun parity/parity.ts doctor` first.** It generates the config, checks the
@@ -57,11 +57,11 @@ failing loud with the exact remediation (which key to export / how to switch mod
 ```bash
 bun parity/parity.ts doctor            # PREFLIGHT — run first (config + key + real exec)
 bun parity/parity.ts doctor --quick    # skip the real exec (plumbing + key check only)
-PILOT_PARITY_MODEL=umans bun parity/parity.ts doctor   # swap to the flat-rate provider
+PANTOKEN_PARITY_MODEL=umans bun parity/parity.ts doctor   # swap to the flat-rate provider
 bun parity/parity.ts project reset     # recreate the isolated test project (git repo)
 
-# GUI (pilot → polytoken). Either:
-#   (a) preview_start("pilot-parity")   ← easiest; gives you preview_* tools (RECOMMENDED)
+# GUI (pantoken → polytoken). Either:
+#   (a) preview_start("pantoken-parity")   ← easiest; gives you preview_* tools (RECOMMENDED)
 #   (b) bun parity/parity.ts up         ← run BACKGROUNDED; writes run/env.json (GUI url + ports)
 
 bun parity/parity.ts tui new           # fresh TUI session in the test project → prints session id
@@ -77,7 +77,7 @@ bun parity/parity.ts tui ls            # list live ISOLATED sessions
 bun parity/parity.ts oracle daemon <id>  # ground-truth transcript text (live or via resume)
 bun parity/parity.ts assert <id> <needle># needle present in daemon history (+ TUI pane)?
 
-bun parity/parity.ts down              # SIGTERM pilot + /terminate isolated daemons + kill tmux
+bun parity/parity.ts down              # SIGTERM pantoken + /terminate isolated daemons + kill tmux
 bun parity/parity.ts down --purge      # + rm -rf the whole isolation root
 ```
 
@@ -91,10 +91,10 @@ edit-custom. `tui prompt`/`tui type`/`tui detach`/`tui end` wrap the common ones
 
 **0. Preflight + project (always):** `doctor` → `project reset`.
 
-**1. Drive the GUI:** `preview_start("pilot-parity")` → new session in the test project
+**1. Drive the GUI:** `preview_start("pantoken-parity")` → new session in the test project
 (approve the **trust** card on first use) → prompt → verify with `preview_snapshot`. The
 GUI oracle is the **rendered DOM** (preview_snapshot / Playwright) — NOT `/debug/state`,
-which only returns pilot's landing default, not the session you're driving.
+which only returns pantoken's landing default, not the session you're driving.
 
 **2. Drive the TUI:** `tui new` (prints id) → if a trust prompt shows, `tui keys Y` →
 `tui prompt "..."` → `tui capture`.
@@ -108,19 +108,19 @@ and confirm the GUI DOM via `preview_snapshot`.
 **4. Parity GUI→TUI:** new session in the GUI → prompt `PARITY-OK-2` → **free the GUI's
 daemon** with `down` (SIGTERM frees the exclusive lease; session goes cold) — *this is the
 robust path* — then `tui continue <id>` → `tui capture` shows `PARITY-OK-2`. (There is no
-GUI "close session" button; the harness sets a short `PILOT_IDLE_REAP_MS` so an *un-focused,
+GUI "close session" button; the harness sets a short `PANTOKEN_IDLE_REAP_MS` so an *un-focused,
 idle* session also self-frees, but you must focus away first for the reaper to act — `down`
 is simpler.)
 
 **5. Coexistence / the 409 (reproduces TODO.md #1):** `tui new` (lease held) → open the
-SAME session in the GUI **without detaching** → observe pilot's 409 → `tui detach` → retry
+SAME session in the GUI **without detaching** → observe pantoken's 409 → `tui detach` → retry
 the GUI open → recovery (or wait ~30s for the lease to lapse).
 
 ## Teardown (always, when done)
 
 `bun parity/parity.ts down` (add `--purge` to wipe the root). If you launched the GUI via
 `preview_start`, also `preview_stop`. `down` only ever touches the isolated registry +
-the dedicated tmux server + the pilot pid it recorded — it can't reach prod.
+the dedicated tmux server + the pantoken pid it recorded — it can't reach prod.
 
 ## Gotchas
 

@@ -6,7 +6,7 @@ test.beforeEach(async ({ page }) => {
 });
 
 /** Open the project chip's directory browser and choose `/Users/timo/src/<name>`. The
- *  picker opens at the active fixture session's cwd (`/Users/timo/src/pilot` — a stable
+ *  picker opens at the active fixture session's cwd (`/Users/timo/src/pantoken` — a stable
  *  path regardless of the suite's $HOME), so we step up to `.../src` and into `name`.
  *
  *  The picker has no `..` row anymore (commit plktoqunywtt dropped it): "up" is the
@@ -27,7 +27,7 @@ async function chooseProjectDir(
   // populated (every fixture cwd is /Users/timo/src/...) is the readiness signal.
   await expect(picker.locator(".bc")).toContainText("src");
   // The filter input is auto-focused on open; Backspace with it empty goes up one dir
-  // (/Users/timo/src/pilot -> /Users/timo/src).
+  // (/Users/timo/src/pantoken -> /Users/timo/src).
   await picker.locator(".filter-input").press("Backspace");
   await picker.locator(".row[data-i]", { hasText: name }).click(); // -> .../<name>
   await picker.locator(".use").click();
@@ -45,11 +45,11 @@ test("the sidebar groups sessions by project and switches the active one", async
   await openSidebar(page);
   const sidebar = page.getByTestId("sidebar");
   // scope to the session list so we match project-group headers, not the
-  // "pilot" that also shows up as the header subtitle / composer placeholder
+  // "pantoken" that also shows up as the header subtitle / composer placeholder
   const list = sidebar.locator(".list");
 
   // sessions are grouped under their project dir (basename of cwd)
-  await expect(list.getByText("pilot", { exact: true })).toBeVisible();
+  await expect(list.getByText("pantoken", { exact: true })).toBeVisible();
   await expect(list.getByText("scratch", { exact: true })).toBeVisible();
 
   // the other mock sessions are listed (one named, one preview-only)
@@ -75,9 +75,9 @@ test("the header subtitle shows the active session's project (cwd basename)", as
   page,
 }) => {
   const subtitle = page.locator("header .sub .path");
-  // The greeting session lives in /Users/timo/src/pilot → project "pilot",
-  // proving the subtitle reads the cwd rather than the old hardcoded "pilot".
-  await expect(subtitle).toHaveText("pilot");
+  // The greeting session lives in /Users/timo/src/pantoken → project "pantoken",
+  // proving the subtitle reads the cwd rather than the old hardcoded "pantoken".
+  await expect(subtitle).toHaveText("pantoken");
 
   // Switching to a session in a different project updates the subtitle.
   await openSidebar(page);
@@ -98,7 +98,7 @@ test("an empty launch restores this client's last-focused session", async ({
       page.evaluate(() =>
         Object.entries(localStorage).some(
           ([key, value]) =>
-            key.startsWith("pilot.lastSession.") && value === "older-session",
+            key.startsWith("pantoken.lastSession.") && value === "older-session",
         ),
       ),
     )
@@ -122,7 +122,7 @@ test("a stale last-focused session falls back to the home draft", async ({
 }) => {
   const key = await page.evaluate(() => {
     const found = Object.keys(localStorage).find((k) =>
-      k.startsWith("pilot.lastSession."),
+      k.startsWith("pantoken.lastSession."),
     );
     if (!found) throw new Error("last-session preference was not persisted");
     localStorage.setItem(found, "missing-session");
@@ -138,13 +138,13 @@ test("a stale last-focused session falls back to the home draft", async ({
   expect(await page.evaluate((k) => localStorage.getItem(k), key)).toBeNull();
 });
 
-test("a pilot-created worktree session groups under its parent project, interleaved by recency", async ({
+test("a pantoken-created worktree session groups under its parent project, interleaved by recency", async ({
   page,
 }) => {
   await openSidebar(page);
   const sidebar = page.getByTestId("sidebar");
-  // Start a new session in a worktree of the pilot project (the active session's cwd is
-  // the pilot repo). The mock isolates it as a sibling "-worktree" dir.
+  // Start a new session in a worktree of the pantoken project (the active session's cwd is
+  // the pantoken repo). The mock isolates it as a sibling "-worktree" dir.
   await sidebar.getByText("New session…").click();
   await page.getByRole("button", { name: "worktree" }).click();
   const composer = page.getByPlaceholder("Describe a task or ask a question…");
@@ -154,25 +154,25 @@ test("a pilot-created worktree session groups under its parent project, interlea
   await openSidebar(page);
   const list = sidebar.locator(".list");
 
-  // The worktree session (cwd /Users/timo/src/pilot-worktree) groups under its PARENT
-  // project (the pilot repo, its `base`) — NOT a separate "pilot-worktree" group.
-  await expect(list.getByText("pilot-worktree", { exact: true })).toHaveCount(
+  // The worktree session (cwd /Users/timo/src/pantoken-worktree) groups under its PARENT
+  // project (the pantoken repo, its `base`) — NOT a separate "pantoken-worktree" group.
+  await expect(list.getByText("pantoken-worktree", { exact: true })).toHaveCount(
     0,
   );
 
-  const pilotGroup = list
+  const pantokenGroup = list
     .locator(".group")
-    .filter({ has: page.locator(".proj", { hasText: "pilot" }) });
-  // The new worktree session is the newest (just created), so it sits atop the pilot
+    .filter({ has: page.locator(".proj", { hasText: "pantoken" }) });
+  // The new worktree session is the newest (just created), so it sits atop the pantoken
   // group — interleaved by recency with the main-tree sessions, not segregated into
   // its own group. The row carries the worktree badge.
-  const firstRow = pilotGroup.locator("li.row-wrap").first();
+  const firstRow = pantokenGroup.locator("li.row-wrap").first();
   await expect(firstRow.locator(".wt")).toBeVisible();
   // The main-tree sessions remain in the same group beneath it.
   await expect(
-    pilotGroup.getByText("Wire up the WebSocket bridge"),
+    pantokenGroup.getByText("Wire up the WebSocket bridge"),
   ).toBeVisible();
-  await expect(pilotGroup.getByText("Explore the fold reducer")).toBeVisible();
+  await expect(pantokenGroup.getByText("Explore the fold reducer")).toBeVisible();
 });
 
 test("rows show a relative last-activity timestamp; the count appears only when collapsed", async ({
@@ -191,14 +191,14 @@ test("rows show a relative last-activity timestamp; the count appears only when 
   );
 
   // The session count is hidden while a group is expanded…
-  const pilotGroup = sidebar
+  const pantokenGroup = sidebar
     .locator(".group")
-    .filter({ has: page.locator(".proj", { hasText: "pilot" }) });
-  await expect(pilotGroup.locator(".count")).toHaveCount(0);
+    .filter({ has: page.locator(".proj", { hasText: "pantoken" }) });
+  await expect(pantokenGroup.locator(".count")).toHaveCount(0);
 
   // …and revealed once it's collapsed (the rows themselves disappear).
-  await pilotGroup.locator(".group-toggle").click();
-  await expect(pilotGroup.locator(".count")).toBeVisible();
+  await pantokenGroup.locator(".group-toggle").click();
+  await expect(pantokenGroup.locator(".count")).toBeVisible();
   await expect(demoRow).toHaveCount(0);
 });
 
@@ -231,13 +231,13 @@ test("a project's + button opens a new-session draft for that dir", async ({
   await openSidebar(page);
   await page
     .getByTestId("sidebar")
-    .getByRole("button", { name: "New session in pilot" })
+    .getByRole("button", { name: "New session in pantoken" })
     .click();
   // Deferred creation: the draft hero shows (nothing is created until you send), and
   // it's prefilled with that group's dir + the default model.
   const hero = page.getByTestId("new-session");
   await expect(hero).toBeVisible();
-  await expect(hero).toContainText("/Users/timo/src/pilot");
+  await expect(hero).toContainText("/Users/timo/src/pantoken");
   await expect(
     page.getByText("Nothing is created until you send"),
   ).toBeVisible();

@@ -1,5 +1,5 @@
 <script lang="ts">
-  import type { SessionUsage } from "@pilot/protocol";
+  import type { SessionUsage } from "@pantoken/protocol";
   import { contextTone } from "../lib/context-tone.js";
 
   // A color-coded context-window gauge: a fill ring + optional % label. Shared by the

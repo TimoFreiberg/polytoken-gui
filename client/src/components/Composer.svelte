@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import type { CommandInfo, FileInfo } from "@pilot/protocol";
+  import type { CommandInfo, FileInfo } from "@pantoken/protocol";
   import { store } from "../lib/store.svelte.js";
   import { extractAtQuery, filterFiles } from "../lib/file-autocomplete.js";
   import {
@@ -922,7 +922,7 @@
           ? "Describe a task or ask a question…"
           : streaming
             ? "Queue a message…"
-            : "Message pilot…"}
+            : "Message pantoken…"}
         rows="1"
         role="combobox"
         aria-expanded={slashOpen || fileOpen}

@@ -8,7 +8,7 @@ const REAL_OUTPUT = `{"categories":[{"id":"immediate","title":"Immediate command
 
 test("parseSlashCommands > parses the real observed output", () => {
   const cmds = parseSlashCommands(REAL_OUTPUT);
-  // 16 canonicals total, minus /model (omitted — pilot's ModelPicker covers it).
+  // 16 canonicals total, minus /model (omitted — pantoken's ModelPicker covers it).
   // /models is an alias of /model, never a separate canonical, so it's not subtracted.
   expect(cmds).toHaveLength(15);
   const clear = cmds.find((c) => c.name === "clear");
@@ -23,7 +23,7 @@ test("parseSlashCommands > strips the leading slash from canonical", () => {
   }
 });
 
-test("parseSlashCommands > omits /model and /models (pilot has native ModelPicker)", () => {
+test("parseSlashCommands > omits /model and /models (pantoken has native ModelPicker)", () => {
   const cmds = parseSlashCommands(REAL_OUTPUT);
   expect(cmds.find((c) => c.name === "model")).toBeUndefined();
   expect(cmds.find((c) => c.name === "models")).toBeUndefined();

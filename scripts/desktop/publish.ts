@@ -6,7 +6,7 @@
 //
 // The repo is a GitHub RELEASES repo (public: installed apps download from it without
 // credentials) — it does NOT have to be the code remote. Override via
-// PILOT_RELEASE_REPO instead of --repo if you prefer env config.
+// PANTOKEN_RELEASE_REPO instead of --repo if you prefer env config.
 //
 // Safety properties, learned from the spike (docs/ADR-desktop-shell.md):
 // - **latest.json's `version` is read from the BUILT bundle's Info.plist**, never from
@@ -14,13 +14,13 @@
 //   again — an infinite install loop under the unattended policy.
 // - Refuses to overwrite an existing release tag: bump `version` in
 //   desktop/tauri.conf.json (keep Cargo.toml in step) and rebuild instead.
-// - Signing key comes from TAURI_SIGNING_PRIVATE_KEY or ~/.tauri/pilot-shell.key —
+// - Signing key comes from TAURI_SIGNING_PRIVATE_KEY or ~/.tauri/pantoken-shell.key —
 //   missing key fails BEFORE the (multi-minute) build, not after.
 //
 // Apps consume releases via the stable endpoint
 //   https://github.com/<owner/name>/releases/latest/download/latest.json
 // (each release carries its own latest.json asset; GitHub's `latest` alias serves the
-// newest release's copy). Put that URL in PILOT_SHELL_UPDATE_URL or the data dir's
+// newest release's copy). Put that URL in PANTOKEN_SHELL_UPDATE_URL or the data dir's
 // `shell-update-url` file — see desktop/README.md "Updates".
 
 import { existsSync } from "node:fs";
@@ -98,11 +98,11 @@ function parseArgs(argv: string[]): {
   const flagIdx = argv.indexOf("--repo");
   const repo =
     (flagIdx >= 0 ? argv[flagIdx + 1] : undefined) ??
-    process.env.PILOT_RELEASE_REPO ??
+    process.env.PANTOKEN_RELEASE_REPO ??
     "";
   if (!/^[\w.-]+\/[\w.-]+$/.test(repo)) {
     fail(
-      "no release repo. Pass --repo <owner/name> or set PILOT_RELEASE_REPO — the " +
+      "no release repo. Pass --repo <owner/name> or set PANTOKEN_RELEASE_REPO — the " +
         "public GitHub repo that hosts release artifacts (not necessarily the code remote).",
     );
   }
@@ -122,7 +122,7 @@ function signingEnv(): Record<string, string> {
         process.env.TAURI_SIGNING_PRIVATE_KEY_PASSWORD ?? "",
     };
   }
-  const keyfile = join(homedir(), ".tauri", "pilot-shell.key");
+  const keyfile = join(homedir(), ".tauri", "pantoken-shell.key");
   if (!existsSync(keyfile)) {
     fail(
       `no updater signing key: set TAURI_SIGNING_PRIVATE_KEY or create ${keyfile} ` +
@@ -181,8 +181,8 @@ if (import.meta.main) {
   }
 
   // ── locate + validate artifacts ──
-  const app = join(bundleDir, "Pilot.app");
-  const tar = join(bundleDir, "Pilot.app.tar.gz");
+  const app = join(bundleDir, "Pantoken.app");
+  const tar = join(bundleDir, "Pantoken.app.tar.gz");
   const sig = `${tar}.sig`;
   for (const p of [app, tar, sig]) {
     if (!existsSync(p))
@@ -221,7 +221,7 @@ if (import.meta.main) {
     pub_date: new Date().toISOString(),
     platforms: {
       [platformKey()]: {
-        url: `https://github.com/${repo}/releases/download/${tag}/Pilot.app.tar.gz`,
+        url: `https://github.com/${repo}/releases/download/${tag}/Pantoken.app.tar.gz`,
         signature,
       },
     },
@@ -268,7 +268,7 @@ if (import.meta.main) {
     "--repo",
     repo,
     "--title",
-    `Pilot ${version}`,
+    `Pantoken ${version}`,
     "--notes",
     `Bundled desktop release (shell + hub + client) from ${sha}.`,
     tar,
@@ -279,6 +279,6 @@ if (import.meta.main) {
     `\npublished ${tag}. Running apps poll ${endpoint} and update within a minute.\n` +
       `First install on a new machine (curl sets no quarantine xattr — a BROWSER\n` +
       `download of an ad-hoc-signed app gets Gatekeeper's "damaged" refusal):\n` +
-      `  curl -sSL https://github.com/${repo}/releases/latest/download/Pilot.app.tar.gz | tar xz -C /Applications`,
+      `  curl -sSL https://github.com/${repo}/releases/latest/download/Pantoken.app.tar.gz | tar xz -C /Applications`,
   );
 }

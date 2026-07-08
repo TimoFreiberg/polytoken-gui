@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { shouldNotify } from "./notify.js";
 
-// Focus-based gating (Part A): notify whenever pilot isn't the focused window —
+// Focus-based gating (Part A): notify whenever pantoken isn't the focused window —
 // including a desktop window that's visible but not the active OS window. The pure
 // predicate is the testable core; notifyIfUnfocused just feeds it document.hasFocus().
 describe("shouldNotify", () => {
@@ -17,7 +17,7 @@ describe("shouldNotify", () => {
     expect(shouldNotify(ok)).toBe(true);
   });
 
-  test("stays quiet while pilot has focus", () => {
+  test("stays quiet while pantoken has focus", () => {
     expect(shouldNotify({ ...ok, focused: true })).toBe(false);
   });
 

@@ -1,12 +1,12 @@
 #!/usr/bin/env bun
-// build-hub.ts — compile the Rust pilot server into a binary for the bundled
+// build-hub.ts — compile the Rust pantoken server into a binary for the bundled
 // desktop app.
 //
-// The output lands in desktop/binaries/pilot-server-<target-triple> — the
+// The output lands in desktop/binaries/pantoken-server-<target-triple> — the
 // target-triple suffix is Tauri's externalBin convention (the bundler strips it
-// and ships the binary as Contents/MacOS/pilot-server). At runtime the binary
+// and ships the binary as Contents/MacOS/pantoken-server). At runtime the binary
 // only needs the external tools the hub always shelled out to (polytoken,
-// git/jj, fd) plus PILOT_CLIENT_DIST pointing at a built client bundle (in the
+// git/jj, fd) plus PANTOKEN_CLIENT_DIST pointing at a built client bundle (in the
 // .app: the client-dist resource).
 //
 // Run from anywhere: `bun scripts/desktop/build-hub.ts`. Used as the Tauri
@@ -49,7 +49,7 @@ if (import.meta.main) {
 
   // Build the Rust server in release mode for the host target.
   const build = Bun.spawn(
-    ["cargo", "build", "--release", "--bin", "pilot-server"],
+    ["cargo", "build", "--release", "--bin", "pantoken-server"],
     { cwd: join(repoRoot, "server-rs"), stdout: "inherit", stderr: "inherit" },
   );
   const code = await build.exited;
@@ -61,9 +61,9 @@ if (import.meta.main) {
     "server-rs",
     "target",
     "release",
-    "pilot-server",
+    "pantoken-server",
   );
-  const outfile = join(outDir, `pilot-server-${triple}`);
+  const outfile = join(outDir, `pantoken-server-${triple}`);
   if (!existsSync(built)) {
     console.error(`cargo build succeeded but ${built} is missing`);
     process.exit(1);

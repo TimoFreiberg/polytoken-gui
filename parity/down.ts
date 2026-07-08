@@ -1,8 +1,8 @@
 // parity/down.ts — tear the harness down. Idempotent and SAFE: it only ever touches the
-// ISOLATED registry + the dedicated tmux server + the recorded pilot pid.
+// ISOLATED registry + the dedicated tmux server + the recorded pantoken pid.
 //
 // Order:
-//   1. SIGTERM the pilot launcher we recorded (if alive AND it looks like ours). SIGTERM —
+//   1. SIGTERM the pantoken launcher we recorded (if alive AND it looks like ours). SIGTERM —
 //      never SIGKILL — so the server's shutdown handler runs and gracefully /terminates its
 //      warm daemons + releases their leases. (If the GUI was started via Claude_Preview,
 //      stop it with preview_stop instead; this no-ops on a dead/foreign pid.)
@@ -21,10 +21,10 @@ import {
   type Paths,
 } from "./lib.ts";
 
-/** Is `pid` alive and does its command line look like OUR pilot launcher (guards pid reuse)?
+/** Is `pid` alive and does its command line look like OUR pantoken launcher (guards pid reuse)?
  *  Matches only the specific launcher/server entry points — NOT a bare `bun`, which would
  *  match any bun process (the agent harness, other dev servers) reusing a recycled pid. */
-async function isOurPilot(pid: number): Promise<boolean> {
+async function isOurPantoken(pid: number): Promise<boolean> {
   const proc = Bun.spawn({
     cmd: ["ps", "-p", String(pid), "-o", "command="],
     stdout: "pipe",
@@ -41,13 +41,13 @@ export async function down(
   opts: { purge?: boolean } = {},
   p: Paths = paths(),
 ): Promise<void> {
-  // 1. graceful pilot shutdown
+  // 1. graceful pantoken shutdown
   const run = readRunEnv(p);
-  if (run?.pilotPid) {
-    if (await isOurPilot(run.pilotPid)) {
+  if (run?.pantokenPid) {
+    if (await isOurPantoken(run.pantokenPid)) {
       try {
-        process.kill(run.pilotPid, "SIGTERM");
-        console.error(`[parity down] SIGTERM pilot pid ${run.pilotPid}`);
+        process.kill(run.pantokenPid, "SIGTERM");
+        console.error(`[parity down] SIGTERM pantoken pid ${run.pantokenPid}`);
       } catch {
         /* already gone */
       }
@@ -55,7 +55,7 @@ export async function down(
       await Bun.sleep(1500);
     } else {
       console.error(
-        `[parity down] recorded pid ${run.pilotPid} not ours/alive — skipping`,
+        `[parity down] recorded pid ${run.pantokenPid} not ours/alive — skipping`,
       );
     }
   }

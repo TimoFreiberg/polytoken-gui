@@ -2,7 +2,7 @@
 // one-tap link), which we persist to localStorage and then scrub from the URL so it
 // doesn't linger in history. Sent to the server in the WS hello.
 
-const KEY = "pilot_token";
+const KEY = "pantoken_token";
 
 /** The pure core of {@link getToken}: given a URL + a KV-like store, decide the token
  *  to use AND whether the URL needs scrubbing (because it carried `?token=`). Split

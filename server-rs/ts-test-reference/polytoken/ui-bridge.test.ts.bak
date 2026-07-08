@@ -1,6 +1,6 @@
 // Round-trip tests for the host-UI bridge: the forward mapping (event-map.ts)
 // captures PendingInterrogative metadata + emits a hostUiRequest card; the
-// reverse mapping (ui-bridge.ts) consumes that metadata + a pilot HostUiResponse
+// reverse mapping (ui-bridge.ts) consumes that metadata + a pantoken HostUiResponse
 // to build the daemon's InterrogativeResponse. These tests assert the index↔key
 // mappings line up across the round trip — the single most error-prone part.
 //
@@ -9,7 +9,7 @@
 // + the cancel short-circuit + misroute defense.
 
 import { describe, expect, test } from "bun:test";
-import type { HostUiResponse } from "@pilot/protocol";
+import type { HostUiResponse } from "@pantoken/protocol";
 import {
   PERMISSION_APPROVAL_CHOICES,
   PERMISSION_APPROVAL_LABELS,

@@ -9,7 +9,7 @@ test("Ctrl+R opens prompt history popup and fills the composer on Enter", async 
   page,
 }) => {
   // Send a few prompts so there's history to recall.
-  const composer = page.getByPlaceholder("Message pilot…");
+  const composer = page.getByPlaceholder("Message pantoken…");
   for (let i = 0; i < 3; i++) {
     await drive(page, "reply");
     await expect(
@@ -37,7 +37,7 @@ test("Ctrl+R opens prompt history popup and fills the composer on Enter", async 
 });
 
 test("Escape closes the prompt history popup without filling", async ({ page }) => {
-  const composer = page.getByPlaceholder("Message pilot…");
+  const composer = page.getByPlaceholder("Message pantoken…");
   await drive(page, "reply");
   await expect(
     page.getByText("That confirms it", { exact: false }),

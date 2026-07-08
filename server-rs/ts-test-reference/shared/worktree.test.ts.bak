@@ -8,7 +8,7 @@ import {
 describe("planWorktree", () => {
   test("jj: workspace add at a sibling path with a unique name", () => {
     const p = planWorktree("/Users/x/repo", "jj", "abc");
-    // Dir is `<repo>-<slug>` (no doubled `pilot-`); the workspace name keeps the marker.
+    // Dir is `<repo>-<slug>` (no doubled `pantoken-`); the workspace name keeps the marker.
     expect(p.path).toBe("/Users/x/repo-abc");
     expect(p.command).toBe("jj");
     expect(p.args).toEqual([
@@ -17,7 +17,7 @@ describe("planWorktree", () => {
       "workspace",
       "add",
       "--name",
-      "pilot-abc",
+      "pantoken-abc",
       "/Users/x/repo-abc",
     ]);
   });
@@ -39,7 +39,7 @@ describe("planWorktree", () => {
 
   test("create plan exposes name + base for the worktree index", () => {
     const p = planWorktree("/Users/x/repo", "jj", "abc");
-    expect(p.name).toBe("pilot-abc");
+    expect(p.name).toBe("pantoken-abc");
     expect(p.base).toBe("/Users/x/repo");
   });
 });
@@ -49,13 +49,13 @@ describe("planWorktreeRemoval", () => {
     path: "/Users/x/repo-abc",
     base: "/Users/x/repo",
     vcs: "jj",
-    name: "pilot-abc",
+    name: "pantoken-abc",
   };
   const gitMeta: WorktreeMeta = {
     path: "/Users/x/repo-xy",
     base: "/Users/x/repo",
     vcs: "git",
-    name: "pilot-xy",
+    name: "pantoken-xy",
   };
 
   test("jj: forget the workspace by name, then the caller removes the dir", () => {
@@ -66,7 +66,7 @@ describe("planWorktreeRemoval", () => {
       "/Users/x/repo",
       "workspace",
       "forget",
-      "pilot-abc",
+      "pantoken-abc",
     ]);
     // jj leaves the dir behind, so the caller must rm it.
     expect(p.removeDir).toBe(true);

@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "Pilot",
+  "productName": "Pantoken",
   "version": "0.2.4",
-  "identifier": "dev.pilot.app",
+  "identifier": "dev.pantoken.app",
   "build": {
     "frontendDist": "ui",
     "beforeDevCommand": "bun ../scripts/desktop/build-hub.ts",
@@ -20,7 +20,7 @@
     "createUpdaterArtifacts": true,
     "category": "DeveloperTool",
     "icon": ["icons/icon.icns"],
-    "externalBin": ["binaries/pilot-server"],
+    "externalBin": ["binaries/pantoken-server"],
     "resources": {
       "../client/dist": "client-dist"
     },

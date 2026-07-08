@@ -4,7 +4,7 @@ import {
   foldEvent,
   initialSessionState,
   PROTOCOL_VERSION,
-} from "@pilot/protocol";
+} from "@pantoken/protocol";
 import type {
   CommandInfo,
   FileInfo,
@@ -18,8 +18,8 @@ import type {
   SessionRef,
   SessionSnapshot,
   SessionState,
-} from "@pilot/protocol";
-import type { PilotDriver } from "./driver.js";
+} from "@pantoken/protocol";
+import type { PantokenDriver } from "./driver.js";
 import { SessionHub } from "./hub.js";
 
 const ref: SessionRef = { workspaceId: "w", sessionId: "s" };
@@ -48,7 +48,7 @@ const seedState = (m: ServerMessage | undefined): SessionState | null =>
   m?.type === "seed" ? foldAll([...m.events]) : null;
 
 /** A driver we can emit into by hand, for deterministic hub tests. */
-class FakeDriver implements PilotDriver {
+class FakeDriver implements PantokenDriver {
   private listener?: (e: SessionDriverEvent) => void;
   readonly responded: HostUiResponse[] = [];
   /** Captured viewed-session predicate (the hub wires it at construction). */
@@ -67,7 +67,7 @@ class FakeDriver implements PilotDriver {
     _text?: string,
     _deliverAs?: "steer" | "followUp",
     _sessionId?: string,
-    _images?: readonly import("@pilot/protocol").ImageContent[],
+    _images?: readonly import("@pantoken/protocol").ImageContent[],
     _promptId?: string,
   ) {
     return Promise.resolve();
@@ -199,12 +199,12 @@ class FakeDriver implements PilotDriver {
     return [{ path: "README.md", isDirectory: false }];
   }
   readonly listDirCalls: (string | undefined)[] = [];
-  async listDir(path?: string): Promise<import("@pilot/protocol").DirListing> {
+  async listDir(path?: string): Promise<import("@pantoken/protocol").DirListing> {
     this.listDirCalls.push(path);
     return { path: path ?? "/home", parent: null, entries: [] };
   }
   readonly statPathCalls: string[] = [];
-  async statPath(path: string): Promise<import("@pilot/protocol").PathStat> {
+  async statPath(path: string): Promise<import("@pantoken/protocol").PathStat> {
     this.statPathCalls.push(path);
     return { path, exists: false, isDir: false };
   }
@@ -824,7 +824,7 @@ describe("SessionHub", () => {
     d.emit(evFor("s2", { type: "runCompleted", snapshot: snap("s2") }));
     expect(notes).toContainEqual(
       expect.objectContaining({
-        tag: "pilot-run-s2",
+        tag: "pantoken-run-s2",
         url: "/?session=s2",
         body: expect.stringContaining("t finished"),
       }),
@@ -1341,7 +1341,7 @@ describe("SessionHub", () => {
         _t: string,
         _d?: "steer" | "followUp",
         sessionId?: string,
-        _images?: readonly import("@pilot/protocol").ImageContent[],
+        _images?: readonly import("@pantoken/protocol").ImageContent[],
         _promptId?: string,
       ) {
         calls.push(sessionId);
@@ -1364,7 +1364,7 @@ describe("SessionHub", () => {
         _t: string,
         _d?: "steer" | "followUp",
         _sessionId?: string,
-        _images?: readonly import("@pilot/protocol").ImageContent[],
+        _images?: readonly import("@pantoken/protocol").ImageContent[],
         _promptId?: string,
       ) {
         calls++;
@@ -1473,7 +1473,7 @@ describe("assistantDelta coalescing (N1)", () => {
   // Wait past a flush window so any armed timer has fired.
   const settle = () => new Promise((r) => setTimeout(r, FLUSH_MS * 3));
   // Construct a hub with coalescing enabled (deltaFlushMs is the trailing 9th param).
-  const coalescingHub = (d: PilotDriver) =>
+  const coalescingHub = (d: PantokenDriver) =>
     new SessionHub(
       d,
       undefined,
@@ -1892,13 +1892,13 @@ describe("desktop update relay", () => {
       undefined,
       1000,
       "stable-server-id",
-      "/tmp/pilot-data",
+      "/tmp/pantoken-data",
       (dir) => opened.push(dir),
     );
     const a = client();
     hub.addClient(a.send);
     hub.handleClient(a.send, { type: "openDataDir" });
-    expect(opened).toEqual(["/tmp/pilot-data"]);
+    expect(opened).toEqual(["/tmp/pantoken-data"]);
     // No error surfaced: the opener ran, the graceful-degrade path stayed silent.
     expect(a.received.some((m) => m.type === "error")).toBe(false);
   });

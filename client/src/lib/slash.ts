@@ -2,7 +2,7 @@
 // be unit-tested directly: `slashQuery` decides whether the draft is in "command-name"
 // mode, `filterCommands` ranks the matches.
 
-import type { CommandInfo } from "@pilot/protocol";
+import type { CommandInfo } from "@pantoken/protocol";
 
 /**
  * The active command-name query, or null when the draft isn't a bare slash token.

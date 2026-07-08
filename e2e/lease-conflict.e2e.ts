@@ -60,7 +60,7 @@ test("a non-lease session-switch error does NOT get a Retry button", async ({
   // newSession is queued (not yet attempted) and we can set up a competing draft.
   await drive(page, "failnewsession");
   await page.evaluate(() =>
-    window.dispatchEvent(new Event("pilot:test-disconnect")),
+    window.dispatchEvent(new Event("pantoken:test-disconnect")),
   );
   await expect(
     page.getByText("Offline — the agent keeps running"),

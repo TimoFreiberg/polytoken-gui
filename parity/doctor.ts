@@ -73,9 +73,9 @@ export async function preflight(
     detail: p.generateConfig
       ? keySet
         ? `${spec.label} (full ${spec.full}) → $${spec.keyEnv} present`
-        : `${spec.label} needs $${spec.keyEnv} — export it, or set PILOT_PARITY_MODEL/` +
-          `PILOT_PARITY_CONFIG_DIR`
-      : `using external config ($PILOT_PARITY_CONFIG_DIR) — auth is its own concern`,
+        : `${spec.label} needs $${spec.keyEnv} — export it, or set PANTOKEN_PARITY_MODEL/` +
+          `PANTOKEN_PARITY_CONFIG_DIR`
+      : `using external config ($PANTOKEN_PARITY_CONFIG_DIR) — auth is its own concern`,
   });
 
   // 5. real prompt round-trips (the auth/config-load check)
@@ -133,7 +133,7 @@ async function execProbe(p: Paths): Promise<{ ok: boolean; detail: string }> {
     const spec = p.model;
     const hint = /env var \$\w+ referenced/.test(stderr)
       ? `\n      → provider key unset: export $${spec.keyEnv} (for ${spec.label}), switch with ` +
-        `PILOT_PARITY_MODEL, or point $PILOT_PARITY_CONFIG_DIR at a working config.`
+        `PANTOKEN_PARITY_MODEL, or point $PANTOKEN_PARITY_CONFIG_DIR at a working config.`
       : "";
     return {
       ok: false,

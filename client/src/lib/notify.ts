@@ -1,5 +1,5 @@
 // Tab-open Web Notifications: buzz the user when the agent finishes or needs an
-// approval while pilot ISN'T the focused window. Web Push (tab fully closed) is
+// approval while pantoken ISN'T the focused window. Web Push (tab fully closed) is
 // deferred — see OPEN-QUESTIONS OQ5. Permission is requested lazily on a user gesture.
 
 export function notificationsSupported(): boolean {
@@ -29,7 +29,7 @@ export function shouldNotify(opts: {
   return opts.supported && opts.permission === "granted" && !opts.focused;
 }
 
-/** Fire a notification when pilot is unfocused and permission is granted. */
+/** Fire a notification when pantoken is unfocused and permission is granted. */
 export function notifyIfUnfocused(
   title: string,
   body: string,
@@ -49,7 +49,7 @@ export function notifyIfUnfocused(
     const n = new Notification(title, {
       body,
       icon: "/icon.svg",
-      tag: opts.tag ?? "pilot",
+      tag: opts.tag ?? "pantoken",
     });
     n.onclick = () => {
       window.focus();

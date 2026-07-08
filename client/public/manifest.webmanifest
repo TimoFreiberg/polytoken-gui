@@ -1,6 +1,6 @@
 {
-  "name": "pilot",
-  "short_name": "pilot",
+  "name": "pantoken",
+  "short_name": "pantoken",
   "description": "Remote control for the pi coding agent",
   "start_url": "/",
   "display": "standalone",

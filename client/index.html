@@ -9,17 +9,17 @@
     <meta name="theme-color" content="#f7f6f2" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="default" />
-    <meta name="apple-mobile-web-app-title" content="pilot" />
+    <meta name="apple-mobile-web-app-title" content="pantoken" />
     <link rel="manifest" href="/manifest.webmanifest" />
     <link rel="icon" type="image/svg+xml" href="/icon.svg" />
     <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
-    <title>pilot</title>
+    <title>pantoken</title>
     <script>
       // Pre-paint theme: resolve the persisted mode (lib/theme.ts owns the key) to a
       // concrete data-theme on <html> before the bundle loads, so an explicit override
       // — or OS dark for a "system" user — paints with no flash.
       try {
-        var m = localStorage.getItem("pilot.theme");
+        var m = localStorage.getItem("pantoken.theme");
         if (m !== "light" && m !== "dark")
           m = matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
         document.documentElement.setAttribute("data-theme", m);
@@ -30,7 +30,7 @@
         if (tc) tc.setAttribute("content", m === "dark" ? "#242522" : "#f7f6f2");
         // Pre-paint the transcript text-size knob (lib/font-scale.ts owns the key) so a
         // zoomed-in reader doesn't see a reflow on load.
-        var fs = parseFloat(localStorage.getItem("pilot.fontScale"));
+        var fs = parseFloat(localStorage.getItem("pantoken.fontScale"));
         if (fs >= 0.85 && fs <= 1.7)
           document.documentElement.style.setProperty("--font-scale", String(fs));
       } catch (e) {}

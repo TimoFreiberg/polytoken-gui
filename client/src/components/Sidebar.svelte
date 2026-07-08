@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onDestroy, tick } from "svelte";
-  import type { SessionListEntry } from "@pilot/protocol";
+  import type { SessionListEntry } from "@pantoken/protocol";
   import { reveal } from "../lib/transitions.js";
   import { store } from "../lib/store.svelte.js";
   import { filterSessions } from "../lib/session-filter.js";
@@ -869,7 +869,7 @@
       <Button
         variant="primary"
         size="sm"
-        title="Install the update and relaunch Pilot"
+        title="Install the update and relaunch Pantoken"
         disabled={store.appUpdate.applying}
         onclick={() => store.requestAppUpdate()}
       >
@@ -886,8 +886,8 @@
     class="version"
     data-testid="version"
     title={(buildDate
-      ? `pilot build ${buildHash} · committed ${buildDate}`
-      : `pilot build ${buildHash}`) + " — right-click for build actions"}
+      ? `pantoken build ${buildHash} · committed ${buildDate}`
+      : `pantoken build ${buildHash}`) + " — right-click for build actions"}
     oncontextmenu={openBuildMenu}
   >
     {buildLabel}

@@ -1,4 +1,4 @@
-/* Pilot theme — mirrors the Claude app's warm-paper palette and quiet typography.
+/* Pantoken theme — mirrors the Claude app's warm-paper palette and quiet typography.
    Light by default (Claude's default); the warm-charcoal dark palette lives in the
    single `[data-theme="dark"]` block below. The theme mode (system/light/dark) is
    resolved to a concrete `data-theme` attribute on <html> — pre-paint by an inline
@@ -158,13 +158,13 @@ a {
 }
 
 /* In-transcript find (⌘F) highlights. Painted via the CSS Custom Highlight API from
-   TranscriptSearch.svelte (CSS.highlights.set("pilot-find"…)). These must be global —
+   TranscriptSearch.svelte (CSS.highlights.set("pantoken-find"…)). These must be global —
    ::highlight() is registered document-wide and a component's scoped class selector
    would never match it. */
-::highlight(pilot-find) {
+::highlight(pantoken-find) {
   background-color: var(--find-match);
 }
-::highlight(pilot-find-current) {
+::highlight(pantoken-find-current) {
   background-color: var(--find-current);
 }
 

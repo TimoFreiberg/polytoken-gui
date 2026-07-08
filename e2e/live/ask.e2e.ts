@@ -1,7 +1,7 @@
 import { expect, test } from "@playwright/test";
 import { driveLive, gotoFreshLive } from "./helpers.js";
 
-// LIVE tier (PILOT_DRIVER=fake). See streaming.e2e.ts for the structural-only +
+// LIVE tier (PANTOKEN_DRIVER=fake). See streaming.e2e.ts for the structural-only +
 // unrun-in-session caveats.
 
 test.beforeEach(async ({ page }) => {

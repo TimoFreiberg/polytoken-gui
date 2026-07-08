@@ -11,7 +11,7 @@ description: >-
 
 # dep-bump
 
-On-demand, manually-triggered dependency bumping for the pilot monorepo.
+On-demand, manually-triggered dependency bumping for the pantoken monorepo.
 
 The cooldown backbone lives in the committed `bunfig.toml` (`minimumReleaseAge`,
 with the four `@earendil-works/pi-*` packages excluded). This skill drives the

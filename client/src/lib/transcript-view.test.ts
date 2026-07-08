@@ -3,7 +3,7 @@ import type {
   InjectItem,
   ToolItem,
   TranscriptItem,
-} from "@pilot/protocol";
+} from "@pantoken/protocol";
 import { describe, expect, test } from "bun:test";
 import {
   filterHiddenThinking,
@@ -309,7 +309,7 @@ describe("groupTurns", () => {
 
 // Regression for the queued-follow-up position bug: a follow-up sent mid-run is delivered
 // by the agent only once the agent would stop, so it belongs AFTER the prior turn's final
-// response. pilot used to insert it at SEND time (mid-work), which split the turn early
+// response. pantoken used to insert it at SEND time (mid-work), which split the turn early
 // and pushed the real final response into a later turn's collapsible work — it vanished
 // behind "Worked for Ns". The driver fix repositions the bubble to its delivery point;
 // these two cases pin both halves of that contract.

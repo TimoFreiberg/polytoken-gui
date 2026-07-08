@@ -21,7 +21,7 @@ test("a background approval stays obvious and opens the right session", async ({
   // row's hover tooltip; the visible attention signal is the waiting badge above.
   await expect(row).toHaveAttribute("title", /Review background change/);
 
-  const project = sidebar.locator(".group", { hasText: "pilot" });
+  const project = sidebar.locator(".group", { hasText: "pantoken" });
   await project.locator(".group-toggle").click();
   await expect(project.locator(".group-attention")).toHaveAttribute(
     "data-state",

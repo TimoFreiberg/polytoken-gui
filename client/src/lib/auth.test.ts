@@ -26,7 +26,7 @@ describe("captureTokenFromUrl (pure)", () => {
     const result = captureTokenFromUrl(url, store);
     expect(result.token).toBe("secret123");
     expect(result.scrubbedUrl).toBe("https://app.example/"); // token stripped
-    expect(store.getItem("pilot_token")).toBe("secret123"); // persisted
+    expect(store.getItem("pantoken_token")).toBe("secret123"); // persisted
   });
 
   test("the scrubbed URL preserves other query params (only token is removed)", () => {
@@ -40,7 +40,7 @@ describe("captureTokenFromUrl (pure)", () => {
 
   test("a URL with no ?token= returns the persisted token + no scrub (scrubbedUrl null)", () => {
     const store = kv();
-    store.setItem("pilot_token", "already-here");
+    store.setItem("pantoken_token", "already-here");
     const result = captureTokenFromUrl(new URL("https://app.example/"), store);
     expect(result.token).toBe("already-here");
     expect(result.scrubbedUrl).toBeNull(); // no scrub needed
@@ -58,26 +58,26 @@ describe("captureTokenFromUrl (pure)", () => {
     // Pins the actual behavior: an empty token param doesn't overwrite a stored token
     // and triggers no scrub. (Arguable either way — pinning reality, not a preference.)
     const store = kv();
-    store.setItem("pilot_token", "existing");
+    store.setItem("pantoken_token", "existing");
     const result = captureTokenFromUrl(
       new URL("https://app.example/?token="),
       store,
     );
     expect(result.token).toBe("existing"); // fell through to stored
     expect(result.scrubbedUrl).toBeNull(); // no scrub
-    expect(store.getItem("pilot_token")).toBe("existing"); // not overwritten
+    expect(store.getItem("pantoken_token")).toBe("existing"); // not overwritten
   });
 
   test("a ?token= URL overwrites a previously-persisted token (re-auth via link)", () => {
     // A fresh one-tap link with a new token must replace the old stored one, not be
     // ignored because something was already persisted.
     const store = kv();
-    store.setItem("pilot_token", "old");
+    store.setItem("pantoken_token", "old");
     const result = captureTokenFromUrl(
       new URL("https://app.example/?token=new"),
       store,
     );
     expect(result.token).toBe("new");
-    expect(store.getItem("pilot_token")).toBe("new"); // overwritten
+    expect(store.getItem("pantoken_token")).toBe("new"); // overwritten
   });
 });

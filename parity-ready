@@ -41,15 +41,15 @@ bun parity/parity.ts up               # boots isolated daemon + Bun server + cli
 bun parity/parity.ts parity           # runs the parity comparisons
 bun parity/parity.ts down             # idempotent, safe teardown
 
-# Then vs the RUST server (PILOT_SERVER_IMPL=rust):
-PILOT_SERVER_IMPL=rust bun parity/parity.ts up
+# Then vs the RUST server (PANTOKEN_SERVER_IMPL=rust):
+PANTOKEN_SERVER_IMPL=rust bun parity/parity.ts up
 bun parity/parity.ts parity
 bun parity/parity.ts down
 ```
 
-`parity/launch.ts:97` keys the Rust backend off `PILOT_SERVER_IMPL=rust`. The
+`parity/launch.ts:97` keys the Rust backend off `PANTOKEN_SERVER_IMPL=rust`. The
 harness is ISOLATED (`parity/lib.ts` `isolationEnv`: XDG + `--sessions-dir` under
-`/Users/timo/.local/state/pilot-parity`), so it can't see or kill prod daemons.
+`/Users/timo/.local/state/pantoken-parity`), so it can't see or kill prod daemons.
 Known caveat: `parity doctor --quick` skips the real prompt round-trip — run
 `bun parity/parity.ts doctor` (no `--quick`) once for the real model-usable check
 (it spends one cheap deepseek call). Provider is `deepseek/deepseek-v4-pro`
@@ -80,7 +80,7 @@ script the POSTs against the seed fixture's shapes when you run them. Each is a
 real model turn = billed deepseek spend (a few cents each).
 
 **Canonicalization parity is load-bearing:** `scripts/capture-daemon-corpus.ts`
-MUST mirror `server-rs/pilot-server/tests/corpus.rs` exactly (session_id→SESSION,
+MUST mirror `server-rs/pantoken-server/tests/corpus.rs` exactly (session_id→SESSION,
 prompt ids→PROMPT_N deduped first-seen with HTTP-before-SSE, timestamps→monotonic
 epoch HH:MM:SS). If you change one, change both + update the "mirrors EXACTLY"
 contract. There's a known limitation (flagged in both files): wall-clock

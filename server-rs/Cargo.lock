@@ -1694,6 +1694,56 @@ dependencies = [
 ]
 
 [[package]]
+name = "pantoken-daemon-types"
+version = "0.1.0"
+dependencies = [
+ "pantoken-protocol",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "pantoken-protocol"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "pantoken-server"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "axum",
+ "chrono",
+ "ct-codecs",
+ "filetime",
+ "flate2",
+ "futures-util",
+ "http 0.2.12",
+ "ignore",
+ "jwt-simple",
+ "libc",
+ "pantoken-daemon-types",
+ "pantoken-protocol",
+ "parking_lot",
+ "rand 0.9.4",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "tokio-stream",
+ "tower",
+ "tower-http",
+ "tracing",
+ "tracing-subscriber",
+ "urlencoding",
+ "web-push",
+]
+
+[[package]]
 name = "parking_lot"
 version = "0.12.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1751,56 +1801,6 @@ name = "percent-encoding"
 version = "2.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9b4f627cb1b25917193a259e49bdad08f671f8d9708acfd5fe0a8c1455d87220"
-
-[[package]]
-name = "pilot-daemon-types"
-version = "0.1.0"
-dependencies = [
- "pilot-protocol",
- "serde",
- "serde_json",
-]
-
-[[package]]
-name = "pilot-protocol"
-version = "0.1.0"
-dependencies = [
- "serde",
- "serde_json",
-]
-
-[[package]]
-name = "pilot-server"
-version = "0.1.0"
-dependencies = [
- "async-trait",
- "axum",
- "chrono",
- "ct-codecs",
- "filetime",
- "flate2",
- "futures-util",
- "http 0.2.12",
- "ignore",
- "jwt-simple",
- "libc",
- "parking_lot",
- "pilot-daemon-types",
- "pilot-protocol",
- "rand 0.9.4",
- "reqwest",
- "serde",
- "serde_json",
- "tempfile",
- "tokio",
- "tokio-stream",
- "tower",
- "tower-http",
- "tracing",
- "tracing-subscriber",
- "urlencoding",
- "web-push",
-]
 
 [[package]]
 name = "pin-project-lite"

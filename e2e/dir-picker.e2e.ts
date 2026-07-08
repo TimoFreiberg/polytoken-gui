@@ -33,7 +33,7 @@ test("the project chip browses the server's directories and picks one", async ({
 
   // Descend into src; its children include the project dirs.
   await picker(page).locator(".row[data-i]", { hasText: "src" }).click();
-  await expect(rows.filter({ hasText: "pilot" })).toBeVisible();
+  await expect(rows.filter({ hasText: "pantoken" })).toBeVisible();
 
   // "Use this folder" commits the dir we're standing in and closes the picker.
   await picker(page).locator(".use").click();
@@ -163,7 +163,7 @@ test("Enter with an empty filter uses the directory you're standing in", async (
   // Descend into src so we're standing in a concrete dir, then commit it with Enter
   // (no filter text) instead of clicking "Use this folder".
   await picker(page).locator(".row[data-i]", { hasText: "src" }).click();
-  await expect(rows.filter({ hasText: "pilot" })).toBeVisible();
+  await expect(rows.filter({ hasText: "pantoken" })).toBeVisible();
   await expect(filterInput(page)).toHaveValue("");
   await filterInput(page).press("Enter");
 
@@ -189,7 +189,7 @@ test("Tab autocompletes by descending into the filtered match", async ({
 
   // We're now inside src: its children are visible and the filter has reset.
   await expect(picker(page).locator(".bc")).toContainText("src");
-  await expect(rows.filter({ hasText: "pilot" })).toBeVisible();
+  await expect(rows.filter({ hasText: "pantoken" })).toBeVisible();
   await expect(filterInput(page)).toHaveValue("");
 });
 

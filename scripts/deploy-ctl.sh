@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# deploy-ctl.sh — manage pilot's blue-green deploy on the Mac Mini.
+# deploy-ctl.sh — manage pantoken's blue-green deploy on the Mac Mini.
 #
 #   setup-live   clone the two slots + symlink, build blue            (one-time, as you)
 #   install      render + install both LaunchDaemons (sudo for those bits)
@@ -22,16 +22,16 @@ fi
 
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 USER_NAME="$(id -un)"
-LIVE_LINK="$HOME/pilot-live"
-BLUE_DIR="$HOME/pilot-blue"
-GREEN_DIR="$HOME/pilot-green"
+LIVE_LINK="$HOME/pantoken-live"
+BLUE_DIR="$HOME/pantoken-blue"
+GREEN_DIR="$HOME/pantoken-green"
 LOG_DIR="$HOME/Library/Logs"
-DATA_DIR="${PILOT_DATA_DIR:-$HOME/.local/state/pilot}"
-ENV_FILE="$DATA_DIR/pilot.env"
+DATA_DIR="${PANTOKEN_DATA_DIR:-$HOME/.local/state/pantoken}"
+ENV_FILE="$DATA_DIR/pantoken.env"
 LAUNCH_DAEMONS="/Library/LaunchDaemons"
 
-SERVER_LABEL="com.pilot.server"
-DEPLOY_LABEL="com.pilot.deploy"
+SERVER_LABEL="com.pantoken.server"
+DEPLOY_LABEL="com.pantoken.deploy"
 
 render_plist() { # $1 = template path
   sed -e "s|@@LIVE@@|$LIVE_LINK|g" \
@@ -43,8 +43,8 @@ render_plist() { # $1 = template path
 
 template_for() { # $1 = label  ->  echoes the template path
   case "$1" in
-    "$SERVER_LABEL") echo "$REPO/deploy/com.pilot.server.plist" ;;
-    "$DEPLOY_LABEL") echo "$REPO/deploy/com.pilot.deploy.plist" ;;
+    "$SERVER_LABEL") echo "$REPO/deploy/com.pantoken.server.plist" ;;
+    "$DEPLOY_LABEL") echo "$REPO/deploy/com.pantoken.deploy.plist" ;;
     *) echo "unknown label: $1" >&2; return 1 ;;
   esac
 }
@@ -53,7 +53,7 @@ install_one() { # $1 = label
   local label="$1" src dest tmp
   src="$(template_for "$label")"
   dest="$LAUNCH_DAEMONS/$label.plist"
-  tmp="$(mktemp -t pilot-plist)"
+  tmp="$(mktemp -t pantoken-plist)"
   render_plist "$src" > "$tmp"
   plutil -lint "$tmp" >/dev/null   # lints by content, extension-agnostic
   sudo cp "$tmp" "$dest"
@@ -80,9 +80,9 @@ cmd_setup_live() {
   echo
   echo "Slots ready: $LIVE_LINK -> $BLUE_DIR (built)."
   echo "Next:"
-  echo "  1. create $ENV_FILE (chmod 600) with PILOT_TOKEN + PILOT_VAPID_SUBJECT"
+  echo "  1. create $ENV_FILE (chmod 600) with PANTOKEN_TOKEN + PANTOKEN_VAPID_SUBJECT"
   echo "  2. $0 install      # installs both daemons (sudo)"
-  echo "  3. tailscale serve --bg ${PILOT_PORT:-8787}"
+  echo "  3. tailscale serve --bg ${PANTOKEN_PORT:-8787}"
 }
 
 cmd_install() {
@@ -104,12 +104,12 @@ cmd_uninstall() {
 
 cmd_restart() {
   local pid
-  # pilot.pid may be a bare int (deploy/run.sh) or JSON {"pid":N,...} (pidlock.ts).
+  # pantoken.pid may be a bare int (deploy/run.sh) or JSON {"pid":N,...} (pidlock.ts).
   # `tr -d '[:space:]'` leaves the JSON object whole, which `kill -0` rejects as a
   # pid — so a restart never lands. Pull the digits out of either form.
   pid="$(
-    [[ -f "$DATA_DIR/pilot.pid" ]] || exit 0
-    raw=$(< "$DATA_DIR/pilot.pid")
+    [[ -f "$DATA_DIR/pantoken.pid" ]] || exit 0
+    raw=$(< "$DATA_DIR/pantoken.pid")
     pat='"pid"[[:space:]]*:[[:space:]]*([0-9]+)'
     if [[ "$raw" =~ $pat ]]; then
       printf '%s' "${BASH_REMATCH[1]}"
@@ -136,19 +136,19 @@ cmd_status() {
     fi
   done
   echo -n "live slot: "; readlink "$LIVE_LINK" 2>/dev/null || echo "(no symlink)"
-  if curl -fsS --max-time 3 "http://127.0.0.1:${PILOT_PORT:-8787}/health" >/dev/null 2>&1; then
-    echo "health: ok (:${PILOT_PORT:-8787})"
+  if curl -fsS --max-time 3 "http://127.0.0.1:${PANTOKEN_PORT:-8787}/health" >/dev/null 2>&1; then
+    echo "health: ok (:${PANTOKEN_PORT:-8787})"
   else
-    echo "health: DOWN (:${PILOT_PORT:-8787})"
+    echo "health: DOWN (:${PANTOKEN_PORT:-8787})"
   fi
-  if [[ -f "$LOG_DIR/pilot-deploy-events.jsonl" ]]; then
-    echo "recent deploy events:"; tail -n 5 "$LOG_DIR/pilot-deploy-events.jsonl"
+  if [[ -f "$LOG_DIR/pantoken-deploy-events.jsonl" ]]; then
+    echo "recent deploy events:"; tail -n 5 "$LOG_DIR/pantoken-deploy-events.jsonl"
   fi
 }
 
 cmd_logs() {
-  touch "$LOG_DIR/pilot.err.log" "$LOG_DIR/pilot-deploy.log" 2>/dev/null || true
-  tail -n 40 -f "$LOG_DIR/pilot.out.log" "$LOG_DIR/pilot.err.log" "$LOG_DIR/pilot-deploy.log"
+  touch "$LOG_DIR/pantoken.err.log" "$LOG_DIR/pantoken-deploy.log" 2>/dev/null || true
+  tail -n 40 -f "$LOG_DIR/pantoken.out.log" "$LOG_DIR/pantoken.err.log" "$LOG_DIR/pantoken-deploy.log"
 }
 
 cmd_render() {

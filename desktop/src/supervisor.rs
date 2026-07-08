@@ -1,4 +1,4 @@
-//! Owns the lifecycle of the local pilot server process, plus the liveness loop the ADR
+//! Owns the lifecycle of the local pantoken server process, plus the liveness loop the ADR
 //! asked for: spawn, gate on /health, poll for liveness, respawn on crash with a
 //! crash-loop breaker, SIGTERM → bounded wait → SIGKILL on teardown.
 
@@ -9,7 +9,7 @@ use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use crate::config::PilotConfig;
+use crate::config::PantokenConfig;
 
 pub enum SupervisorEvent {
     /// Server answered /health. `first_time` → initial boot (load the web client);
@@ -35,7 +35,7 @@ pub struct Supervisor {
 
 impl Supervisor {
     pub fn start(
-        config: Arc<PilotConfig>,
+        config: Arc<PantokenConfig>,
         on_event: impl Fn(SupervisorEvent) + Send + 'static,
     ) -> Self {
         let stop = Arc::new(AtomicBool::new(false));
@@ -76,7 +76,7 @@ impl Supervisor {
 }
 
 fn run_loop(
-    config: &PilotConfig,
+    config: &PantokenConfig,
     stop: &AtomicBool,
     child_pid: &AtomicI32,
     on_event: &(impl Fn(SupervisorEvent) + Send),
@@ -96,7 +96,7 @@ fn run_loop(
             Ok(c) => c,
             Err(e) => {
                 let what = format!(
-                    "Couldn't launch the pilot server at {}: {e}",
+                    "Couldn't launch the pantoken server at {}: {e}",
                     config.hub_bin.display()
                 );
                 on_event(SupervisorEvent::Unrecoverable(what));
@@ -126,10 +126,10 @@ fn run_loop(
             let hint = format!(
                 "Check the hub log at {} — the bundled hub may be refusing a locked \
                  data dir or crashing at startup.",
-                config.data_dir.join("pilot.log").display()
+                config.data_dir.join("pantoken.log").display()
             );
             on_event(SupervisorEvent::Unrecoverable(format!(
-                "The pilot server keeps exiting right after launch. {hint}"
+                "The pantoken server keeps exiting right after launch. {hint}"
             )));
             return;
         }
@@ -145,7 +145,7 @@ fn run_loop(
 /// there), report healthy, then run the liveness loop until the child exits or a hung
 /// server earns a SIGTERM. Returns when the child is gone (caller reaps + respawns).
 fn supervise_one(
-    config: &PilotConfig,
+    config: &PantokenConfig,
     stop: &AtomicBool,
     child: &mut Child,
     started: &mut bool,
@@ -191,7 +191,7 @@ fn supervise_one(
                 // Still waiting for the first health of this child.
                 if !*started && Instant::now() > boot_deadline {
                     on_event(SupervisorEvent::Unrecoverable(format!(
-                        "The pilot server didn't become healthy within {}s.",
+                        "The pantoken server didn't become healthy within {}s.",
                         BOOT_HEALTH_TIMEOUT.as_secs()
                     )));
                     terminate(child);

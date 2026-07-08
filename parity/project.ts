@@ -2,7 +2,7 @@
 //
 // The project is the session cwd shared by the GUI and the TUI. It's a git repo (so
 // VCS-aware features — trust, worktrees — have a repo to work in) and lives OUTSIDE the
-// pilot checkout (under PARITY_ROOT) so a driven session never nests in or mutates pilot.
+// pantoken checkout (under PARITY_ROOT) so a driven session never nests in or mutates pantoken.
 
 import { cpSync, existsSync, rmSync } from "node:fs";
 import { join } from "node:path";

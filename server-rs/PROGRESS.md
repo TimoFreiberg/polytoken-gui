@@ -41,14 +41,14 @@ review-approved.
 
 ### What is done and trustworthy
 
-- `pilot-protocol` — wire types, fold reducer, session-driver types; ported with
+- `pantoken-protocol` — wire types, fold reducer, session-driver types; ported with
   tests (36 vs TS's 38).
 - `journal.rs` (17 tests), `pidlock.rs` (18), `history_seed.rs` (21 vs TS 18),
   `settings_store`, `static_serve`, `config` — ported with tests. ⚠
   `history_seed`: the ported timestamp fabrication is deletable on the next
   daemon bump (unstable.6 ships `emitted_at`); don't extend it. Also note the
   known TS bug that only 3 of 12 history kinds are replayed.
-- `pilot-daemon-types` — codegen from `polytoken openapi` (161 types).
+- `pantoken-daemon-types` — codegen from `polytoken openapi` (161 types).
 - `daemon_client.rs` — 1:1 method-surface port including lease retry.
   **Untested** — dedicated test ports still open (Phase 2 item 4). SSE liveness
   is heartbeat-based (Phase 2.0).
@@ -63,7 +63,7 @@ review-approved.
   unit tests. I/O-shaped live-path handlers (SSE, daemon effects) covered by
   `live_path` integration tests (Phase 2).
 - `background_model.rs` — port of `resolveBackgroundModel`; 10 tests. `script:`
-  path is a fail-loud stub. Only `.warning` is wired into `pilot_settings_msg`;
+  path is a fail-loud stub. Only `.warning` is wired into `pantoken_settings_msg`;
   background-model *application* to turns is separate follow-up.
 - `mock_driver.rs` — direct port of TS MockDriver; all fixture scripts present;
   e2e wiring works end-to-end.
@@ -73,7 +73,7 @@ review-approved.
   `PolytokenDriver` (Phase 5). `set_archived` + `login_env_status` also wired
   (2026-07-07 "leg 1" cleanup).
 - `fake_daemon.rs` — runtime-controllable in-process fake daemon
-  (`PILOT_DRIVER=fake`); corpus-backed dev surface (`/debug/reset` + `mock` WS
+  (`PANTOKEN_DRIVER=fake`); corpus-backed dev surface (`/debug/reset` + `mock` WS
   message); `e2e/live` Playwright tier (5 specs, corpus subset — D21).
 
 **The load-bearing caveat:** test-porting stopped where the code became
@@ -139,7 +139,7 @@ structural knot. 19 live-path integration tests cover the ACs.
 1. **Fake-daemon architecture — resolved.** The original fake daemon was buried
    (Phase 0.1), rebuilt in Phase 2 as a corpus-replaying axum router speaking
    real `DaemonEvent`s, and promoted in Phase 2.5 to a runtime-controllable dev
-   surface (`PILOT_DRIVER=fake`, `src/polytoken/fake_daemon.rs`) + `e2e/live`
+   surface (`PANTOKEN_DRIVER=fake`, `src/polytoken/fake_daemon.rs`) + `e2e/live`
    Playwright tier (D21).
 
 2. **Live-path bugs — all resolved.** SSE per-event spawning, FetchState/
@@ -156,7 +156,7 @@ structural knot. 19 live-path integration tests cover the ACs.
      still manual (same as TS).
    - ✅ `/health` returns real client/running/initializing/busy counts
      (Phase 3, 2026-07-07).
-   - ✅ `build_sha` reads `PILOT_BUILD_SHA` via `option_env!` (Phase 3,
+   - ✅ `build_sha` reads `PANTOKEN_BUILD_SHA` via `option_env!` (Phase 3,
      2026-07-07); still needs a build step to set the var.
    - ✅ `POST /update/state`, error-message parity, `OpenDataDir` spawn error,
      blanket `#![allow]` — all fixed.
@@ -267,13 +267,13 @@ faithfully.
 
 ### Phase 2.5 — fake-daemon e2e tier — COMPLETE
 
-- [x] Dev surface: `PILOT_DRIVER=fake` boots the real `PolytokenDriver` over an
+- [x] Dev surface: `PANTOKEN_DRIVER=fake` boots the real `PolytokenDriver` over an
       in-process, corpus-backed fake daemon. `/debug/reset` → `driver.reset`
       (keeps bootstrap warm for synchronous `seed_default`); `mock` WS message →
       `driver.run_script(name)` (maps script → corpus scenario, pushes SSE
       frames). Integration tests cover boot, reset, and script-push.
 - [x] Playwright live tier: separate `playwright.live.config.ts` runs
-      `e2e/live/*.e2e.ts` (5 specs) against `PILOT_DRIVER=fake` via
+      `e2e/live/*.e2e.ts` (5 specs) against `PANTOKEN_DRIVER=fake` via
       `bun run test:e2e:live`. Corpus SUBSET (D21), not the full mock suite.
       First run found + fixed a bootstrap bug (idle scenario synthesized;
       `run_script` arms HTTP override). All 5 pass locally. CI job `web-live`
@@ -301,7 +301,7 @@ faithfully.
       validation (same as TS — the crypto/HTTP path can't be unit-tested
       without a mock push service; `is_dead_status`/`classify_send_result`
       are the tested pure helpers).
-- [~] `build_sha` from the dist marker — reads `PILOT_BUILD_SHA` at compile
+- [~] `build_sha` from the dist marker — reads `PANTOKEN_BUILD_SHA` at compile
       time via `option_env!` (empty in dev). Still needs a build step (CI /
       `build.rs`) to actually set the var; the read path is wired.
 - [x] Flip the default server impl — **done (2026-07-08):** TS server deleted,

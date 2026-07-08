@@ -3,7 +3,7 @@
 //
 // This is the deliberate, separate "live capture" step behind the golden corpus
 // (server-rs/tests/corpus/<version>/). The committed seed fixtures ship
-// pre-canonicalized and the Rust loader (server-rs/pilot-server/tests/corpus.rs)
+// pre-canonicalized and the Rust loader (server-rs/pantoken-server/tests/corpus.rs)
 // validates their shape; THIS script is how you (re-)ground them against what the
 // daemon actually emits — on first capture and on every daemon bump (the drift
 // canary: re-capture, diff, adopt).
@@ -38,7 +38,7 @@
 // ─── DETERMINISM ─────────────────────────────────────────────────────────────
 // Real output carries non-deterministic session/prompt ids and wall-clock
 // timestamps, and /state machine-specific data. `canonicalizeScenario` rewrites
-// them to stable placeholders, MIRRORING server-rs/pilot-server/tests/corpus.rs
+// them to stable placeholders, MIRRORING server-rs/pantoken-server/tests/corpus.rs
 // EXACTLY (session_id→SESSION, UUID prompt ids→PROMPT_N in first-seen order with
 // HTTP walked before SSE, emitted_at/timestamp→monotonic epoch, /state leak fields
 // → type-preserving placeholders). KNOWN LIMITATION (shared with the Rust loader):
@@ -90,7 +90,7 @@ const CORPUS_DIR = join(
   CORPUS_VERSION,
 );
 
-// ─── Canonicalization (mirrors server-rs/pilot-server/tests/corpus.rs) ────────
+// ─── Canonicalization (mirrors server-rs/pantoken-server/tests/corpus.rs) ────────
 
 const isPromptPlaceholder = (s: string) => /^PROMPT_\d+$/.test(s);
 const isSessionPlaceholder = (s: string) => s === "SESSION";
@@ -412,13 +412,13 @@ async function spawnFreshDaemon(
 }> {
   ensureEnv(p);
   // The permission matcher is baked into config.yaml BEFORE spawn and governs
-  // whether the daemon prompts for tool execution. If $PILOT_PARITY_CONFIG_DIR
+  // whether the daemon prompts for tool execution. If $PANTOKEN_PARITY_CONFIG_DIR
   // points at a hand-maintained config (generateConfig=false), we can't control
   // it — fail loud rather than silently capture against the wrong matcher (e.g.
   // an unattended `bypass_plus` that would auto-approve `tool-call-approval`).
   if (!p.generateConfig) {
     throw new Error(
-      `$PILOT_PARITY_CONFIG_DIR is set, so the capture harness cannot guarantee ` +
+      `$PANTOKEN_PARITY_CONFIG_DIR is set, so the capture harness cannot guarantee ` +
         `default_permission_matcher=${permissionMatcher} for this scenario. Unset it to ` +
         `let the harness generate an isolated capture config, or point it at a config that ` +
         `uses the right matcher.`,

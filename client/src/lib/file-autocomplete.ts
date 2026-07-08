@@ -4,7 +4,7 @@
 // `filterFiles` ranks the prefetched file index against a query for instant local
 // matching (no server round-trip).
 
-import type { FileInfo } from "@pilot/protocol";
+import type { FileInfo } from "@pantoken/protocol";
 
 /** Characters that delimit a token boundary — a `@` is only a mention prefix when
  *  it starts a new token (i.e. preceded by whitespace / start of line, NOT in the

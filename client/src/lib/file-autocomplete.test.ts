@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import type { FileInfo } from "@pilot/protocol";
+import type { FileInfo } from "@pantoken/protocol";
 import { extractAtQuery, filterFiles } from "./file-autocomplete.js";
 
 describe("extractAtQuery", () => {

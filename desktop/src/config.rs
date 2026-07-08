@@ -1,24 +1,24 @@
 //! Resolved launch configuration — the Rust port of the Swift shell's `Config.swift`.
 //!
 //! The hub is a compiled Rust sidecar binary inside the bundle
-//! (Contents/MacOS/pilot-server) serving the bundled client (Resources/client-dist).
+//! (Contents/MacOS/pantoken-server) serving the bundled client (Resources/client-dist).
 //! Fully self-contained — the Tauri updater updates shell + hub + client atomically
 //! (updater.rs owns the loop).
 //!
-//! `PILOT_HUB_MODE=bundled` overrides the default detection; a bundled resolution
+//! `PANTOKEN_HUB_MODE=bundled` overrides the default detection; a bundled resolution
 //! with a missing sidecar/client is a FATAL config error, never a silent fallback.
 
 use std::net::TcpListener;
 use std::path::{Path, PathBuf};
 
-pub struct PilotConfig {
+pub struct PantokenConfig {
     /// The hub binary path and client dist dir.
     pub hub_bin: PathBuf,
     pub client_dist: PathBuf,
-    /// Server state (VAPID key, archive index, pilot.pid). Same dir as the Swift shell so
+    /// Server state (VAPID key, archive index, pantoken.pid). Same dir as the Swift shell so
     /// the two apps share one identity — but never run both at once (the pidlock refuses).
-    /// Override: PILOT_APP_DATA_DIR (a name the server never exports into spawned shells,
-    /// unlike PILOT_DATA_DIR — so a test launch can't be hijacked by an inherited value).
+    /// Override: PANTOKEN_APP_DATA_DIR (a name the server never exports into spawned shells,
+    /// unlike PANTOKEN_DATA_DIR — so a test launch can't be hijacked by an inherited value).
     pub data_dir: PathBuf,
     /// Free loopback port chosen at launch; passed to the server.
     pub server_port: u16,
@@ -27,7 +27,7 @@ pub struct PilotConfig {
     pub augmented_path: String,
 }
 
-impl PilotConfig {
+impl PantokenConfig {
     /// `resource_dir`: the app's resource dir from Tauri's path resolver (bundle:
     /// Contents/Resources; dev: the staging dir next to the target binary). Passed in
     /// rather than resolved here so this stays a dumb, testable struct.
@@ -51,9 +51,9 @@ impl PilotConfig {
 
     fn build(server_port: u16, resolution: HubResolution) -> Self {
         let home = home_dir();
-        let data_dir = std::env::var("PILOT_APP_DATA_DIR")
+        let data_dir = std::env::var("PANTOKEN_APP_DATA_DIR")
             .map(PathBuf::from)
-            .unwrap_or_else(|_| home.join("Library/Application Support/Pilot"));
+            .unwrap_or_else(|_| home.join("Library/Application Support/Pantoken"));
 
         let path_dirs = [
             home.join(".bun/bin"),
@@ -83,22 +83,22 @@ impl PilotConfig {
     }
 
     /// Environment for the spawned server: inherit the app's (Command does that), then
-    /// force a usable PATH and pin host/port/data dir. No PILOT_TOKEN — loopback +
+    /// force a usable PATH and pin host/port/data dir. No PANTOKEN_TOKEN — loopback +
     /// single-user means auth off, and nothing is exposed off-device.
     ///
-    /// PILOT_CLIENT_DIST points the Rust server at the bundled client (it can't
+    /// PANTOKEN_CLIENT_DIST points the Rust server at the bundled client (it can't
     /// resolve the client relative to its own source — it has none).
     pub fn server_env(&self) -> Vec<(String, String)> {
         vec![
             ("PATH".into(), self.augmented_path.clone()),
-            ("PILOT_HOST".into(), "127.0.0.1".into()),
-            ("PILOT_PORT".into(), self.server_port.to_string()),
+            ("PANTOKEN_HOST".into(), "127.0.0.1".into()),
+            ("PANTOKEN_PORT".into(), self.server_port.to_string()),
             (
-                "PILOT_DATA_DIR".into(),
+                "PANTOKEN_DATA_DIR".into(),
                 self.data_dir.to_string_lossy().into_owned(),
             ),
             (
-                "PILOT_CLIENT_DIST".into(),
+                "PANTOKEN_CLIENT_DIST".into(),
                 self.client_dist.to_string_lossy().into_owned(),
             ),
         ]
@@ -110,18 +110,18 @@ struct HubResolution {
     client_dist: PathBuf,
 }
 
-/// The sidecar lands next to the main exe: Contents/MacOS/pilot-server in the bundle,
-/// target/<profile>/pilot-server when tauri-build stages it for a dev/debug run.
+/// The sidecar lands next to the main exe: Contents/MacOS/pantoken-server in the bundle,
+/// target/<profile>/pantoken-server when tauri-build stages it for a dev/debug run.
 fn resolve_hub_mode(resource_dir: &Path) -> Result<HubResolution, String> {
     let exe = std::env::current_exe().map_err(|e| format!("current_exe failed: {e}"))?;
 
-    // PILOT_HUB_MODE=bundled forces the bundled path (useful for testing a debug
+    // PANTOKEN_HUB_MODE=bundled forces the bundled path (useful for testing a debug
     // binary as if it were packaged). Any other value is rejected.
-    match std::env::var("PILOT_HUB_MODE").as_deref() {
+    match std::env::var("PANTOKEN_HUB_MODE").as_deref() {
         Ok("bundled") => {}
         Ok(other) => {
             return Err(format!(
-                "PILOT_HUB_MODE must be 'bundled' (got '{other}'); clone mode was removed when the TS server was deleted"
+                "PANTOKEN_HUB_MODE must be 'bundled' (got '{other}'); clone mode was removed when the TS server was deleted"
             ))
         }
         Err(_) => {
@@ -130,12 +130,12 @@ fn resolve_hub_mode(resource_dir: &Path) -> Result<HubResolution, String> {
                 && exe.parent().is_some_and(|p| p.ends_with("MacOS")))
             {
                 // Dev mode: look for the binary tauri-build staged next to the
-                // dev binary (target/<profile>/pilot-server), or fall back to the
+                // dev binary (target/<profile>/pantoken-server), or fall back to the
                 // repo's cargo build output.
                 let dev_bin = exe
                     .parent()
                     .ok_or("exe has no parent dir")?
-                    .join("pilot-server");
+                    .join("pantoken-server");
                 if dev_bin.is_file() {
                     let client_dist = resource_dir.join("client-dist");
                     if !client_dist.join("index.html").is_file() {
@@ -164,7 +164,7 @@ fn resolve_hub_mode(resource_dir: &Path) -> Result<HubResolution, String> {
     let hub_bin = exe
         .parent()
         .ok_or("exe has no parent dir")?
-        .join("pilot-server");
+        .join("pantoken-server");
     let client_dist = resource_dir.join("client-dist");
     // Loud precondition checks: a packaged app missing its payload is a broken build —
     // crash with specifics rather than limping along.
@@ -207,23 +207,23 @@ mod tests {
 
     #[test]
     fn server_env_always_includes_client_dist() {
-        let cfg = PilotConfig::build(
+        let cfg = PantokenConfig::build(
             12345,
             HubResolution {
-                hub_bin: PathBuf::from("/tmp/pilot-server"),
+                hub_bin: PathBuf::from("/tmp/pantoken-server"),
                 client_dist: PathBuf::from("/tmp/client-dist"),
             },
         );
         let env = cfg.server_env();
         let has_client_dist = env
             .iter()
-            .any(|(k, v)| k == "PILOT_CLIENT_DIST" && v == "/tmp/client-dist");
-        assert!(has_client_dist, "PILOT_CLIENT_DIST must always be set");
+            .any(|(k, v)| k == "PANTOKEN_CLIENT_DIST" && v == "/tmp/client-dist");
+        assert!(has_client_dist, "PANTOKEN_CLIENT_DIST must always be set");
     }
 
     #[test]
     fn server_env_has_port_and_host() {
-        let cfg = PilotConfig::build(
+        let cfg = PantokenConfig::build(
             9999,
             HubResolution {
                 hub_bin: PathBuf::new(),
@@ -231,9 +231,9 @@ mod tests {
             },
         );
         let env = cfg.server_env();
-        assert!(env.iter().any(|(k, v)| k == "PILOT_PORT" && v == "9999"));
+        assert!(env.iter().any(|(k, v)| k == "PANTOKEN_PORT" && v == "9999"));
         assert!(env
             .iter()
-            .any(|(k, v)| k == "PILOT_HOST" && v == "127.0.0.1"));
+            .any(|(k, v)| k == "PANTOKEN_HOST" && v == "127.0.0.1"));
     }
 }
