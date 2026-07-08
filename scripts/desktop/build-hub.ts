@@ -6,13 +6,17 @@
 // target-triple suffix is Tauri's externalBin convention (the bundler strips it
 // and ships the binary as Contents/MacOS/pantoken-server). At runtime the binary
 // only needs the external tools the hub always shelled out to (polytoken,
-// git/jj, fd) plus PANTOKEN_CLIENT_DIST pointing at a built client bundle (in the
+// git/jj) plus PANTOKEN_CLIENT_DIST pointing at a built client bundle (in the
 // .app: the client-dist resource).
 //
 // Run from anywhere: `bun scripts/desktop/build-hub.ts`. Used as the Tauri
 // beforeDevCommand/beforeBuildCommand (desktop/tauri.conf.json) — dev
 // needs the file to exist because tauri-build stages externalBin next to the
 // dev binary and errors when it's missing, even though dev never spawns it.
+//
+// Pass --debug to build without --release (faster, unoptimized). CI's desktop
+// lint job uses this — tauri-build's copy_binaries just needs the file to exist,
+// not a real release binary. Dev and release-prepare keep the default --release.
 
 import { copyFileSync, existsSync, mkdirSync } from "node:fs";
 import { join, resolve } from "node:path";
@@ -41,17 +45,24 @@ export function hostTriple(
 }
 
 if (import.meta.main) {
+  const debug = process.argv.includes("--debug");
+  const profile = debug ? "debug" : "release";
   const outDir = join(repoRoot, "desktop", "binaries");
   mkdirSync(outDir, { recursive: true });
   // tauri.conf.json maps ../client/dist as a bundle resource; guarantee the dir
   // exists so a fresh checkout can `tauri dev` before any client build.
   mkdirSync(join(repoRoot, "client", "dist"), { recursive: true });
 
-  // Build the Rust server in release mode for the host target.
-  const build = Bun.spawn(
-    ["cargo", "build", "--release", "--bin", "pantoken-server"],
-    { cwd: join(repoRoot, "server-rs"), stdout: "inherit", stderr: "inherit" },
-  );
+  // Build the Rust server for the host target. --release for shippable builds
+  // (dev, release-prepare); --debug for CI lint where the binary just needs
+  // to exist for tauri-build's externalBin staging.
+  const cargoArgs = ["cargo", "build", "--bin", "pantoken-server"];
+  if (!debug) cargoArgs.push("--release");
+  const build = Bun.spawn(cargoArgs, {
+    cwd: join(repoRoot, "server-rs"),
+    stdout: "inherit",
+    stderr: "inherit",
+  });
   const code = await build.exited;
   if (code !== 0) process.exit(code);
 
@@ -60,7 +71,7 @@ if (import.meta.main) {
     repoRoot,
     "server-rs",
     "target",
-    "release",
+    profile,
     "pantoken-server",
   );
   const outfile = join(outDir, `pantoken-server-${triple}`);

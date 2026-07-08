@@ -77,13 +77,6 @@ jobs:
           workspaces: server-rs
       - run: cargo build
         working-directory: server-rs
-      # The file-mention e2e drives the server's file search, which spawns `fd`.
-      # Ubuntu packages it as `fdfind` — shim the name the server expects.
-      - name: Install fd (as fdfind, shimmed to fd)
-        run: |
-          sudo apt-get update -q
-          sudo apt-get install -yq fd-find
-          sudo ln -sf "$(command -v fdfind)" /usr/local/bin/fd
       - name: Cache Playwright browsers
         uses: actions/cache@v4
         with:
@@ -162,7 +155,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: server-rs
-      - run: bun scripts/desktop/build-hub.ts
+      - run: bun scripts/desktop/build-hub.ts --debug
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: desktop
