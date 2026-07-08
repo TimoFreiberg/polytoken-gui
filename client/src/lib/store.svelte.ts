@@ -673,7 +673,7 @@ class PilotStore {
    *  in-flight state (streaming assistant + running tools) on any non-running
    *  snapshot, so an idle session can't have orphaned streaming/running items that
    *  make `turnActive` return true while `runningIds` is clear (regression `05f4jw-rust`:
-   *  an orphaned tool_use whose tool_result was lost to a context_cleared).
+   *  an orphaned tool_use whose tool_result was lost to a context_cleared). */
   get turnActive(): boolean {
     // When drafting a new session, the main pane shows the new-session form —
     // not any running session. Hide streaming controls so the stop button and
