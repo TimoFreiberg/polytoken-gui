@@ -855,6 +855,7 @@ describe("foldEvent", () => {
         description: "Add unit tests for the fold",
         status: "in_progress" as const,
         dependencies: [] as readonly number[],
+        createdAt: "2025-07-09T10:00:00Z",
       },
     ];
     const s = foldAll([
@@ -881,6 +882,7 @@ describe("foldEvent", () => {
         description: "Add unit tests",
         status: "pending" as const,
         dependencies: [] as readonly number[],
+        createdAt: "2025-07-09T10:00:00Z",
       },
     ];
     const s = initialSessionState();

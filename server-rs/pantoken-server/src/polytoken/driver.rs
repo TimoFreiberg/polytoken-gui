@@ -49,10 +49,11 @@ use std::sync::Arc;
 
 use pantoken_daemon_types::*;
 use pantoken_protocol::session_driver::{
-    CommandInfo, DirListing, FileInfo, HostUiRequest, HostUiResponse, ImageContent, ModelDefaults,
-    ModelOption, NotifyLevel, PathStat, PermissionMonitorMode, SessionClosedReason,
-    SessionDriverEvent, SessionEventBase, SessionId, SessionListEntry, SessionRef, SessionSnapshot,
-    SessionStatus, SessionUsage, WorkspaceId, WorkspaceRef, WorktreeInfo,
+    BackgroundJob, CommandInfo, DirListing, FileInfo, HostUiRequest, HostUiResponse, ImageContent,
+    JobKind, JobStatusKind, ModelDefaults, ModelOption, NotifyLevel, PathStat,
+    PermissionMonitorMode, SessionClosedReason, SessionDriverEvent, SessionEventBase, SessionId,
+    SessionListEntry, SessionRef, SessionSnapshot, SessionStatus, SessionUsage, WorkspaceId,
+    WorkspaceRef, WorktreeInfo,
 };
 use pantoken_protocol::wire::{DeliveryMode, LoginEnvStatus, McpAction};
 use parking_lot::{Mutex, RwLock};
@@ -64,7 +65,7 @@ use async_trait::async_trait;
 use crate::archive_store::ArchiveStore;
 use crate::driver::{
     ArchiveResult, BranchResult, ClearQueueResult, NewSessionOptsData, PantokenDriver,
-    WorktreeCleanupResult, WorktreeRetained,
+    TodoDeleteDependent, TodoDeleteError, WorktreeCleanupResult, WorktreeRetained,
 };
 use crate::polytoken::daemon_client::{
     DaemonClient, SpawnDaemonOpts, SseSubscription, default_global_config_dir,
@@ -2097,6 +2098,117 @@ impl PantokenDriver for PolytokenDriver {
         }
     }
 
+    async fn list_jobs(&self, session_id: Option<SessionId>) -> Vec<BackgroundJob> {
+        let Some(sid) = &session_id else {
+            return vec![];
+        };
+        let Some(ws) = self.inner.get_warm(sid) else {
+            return vec![];
+        };
+        let res = ws.client.jobs().await;
+        if res.status != 200 {
+            tracing::warn!(
+                "GET /jobs failed ({}): {}",
+                res.status,
+                res.error.as_deref().unwrap_or("")
+            );
+            return vec![];
+        }
+        let Some(snapshots) = res.data else {
+            return vec![];
+        };
+        snapshots
+            .iter()
+            .map(|j| {
+                let kind = match j.kind {
+                    pantoken_daemon_types::JobKind::Shell => JobKind::Shell,
+                    pantoken_daemon_types::JobKind::Subagent => JobKind::Subagent,
+                };
+                let status = parse_job_status(&j.status);
+                let (output_tail, output_bytes) = j
+                    .output_channels
+                    .as_ref()
+                    .map(|channels| {
+                        let tails: Vec<&str> =
+                            channels.iter().filter_map(|c| c.tail.as_deref()).collect();
+                        let joined = tails.join("\n");
+                        let bytes: i64 = channels.iter().filter_map(|c| c.bytes).sum();
+                        let truncated = if joined.chars().count() > 500 {
+                            joined.chars().take(500).collect()
+                        } else {
+                            joined
+                        };
+                        (Some(truncated), Some(bytes))
+                    })
+                    .unwrap_or((None, None));
+                BackgroundJob {
+                    handle: j.handle.clone(),
+                    kind,
+                    status,
+                    tool_name: j.tool_name.clone(),
+                    created_at: j.created_at.clone(),
+                    ended_at: j.ended_at.clone(),
+                    started_at: j.started_at.clone(),
+                    updated_at: j.updated_at.clone(),
+                    subagent_type: j.subagent_type.clone(),
+                    model: j.model.clone(),
+                    subagent_handle: j.subagent_handle.clone(),
+                    expiring: j.expiring,
+                    output_tail,
+                    output_bytes,
+                }
+            })
+            .collect()
+    }
+
+    async fn delete_todo(
+        &self,
+        session_id: Option<SessionId>,
+        id: i64,
+    ) -> Result<(), TodoDeleteError> {
+        let Some(sid) = &session_id else {
+            return Err(TodoDeleteError::Other("no session focused".into()));
+        };
+        let Some(ws) = self.inner.get_warm(sid) else {
+            return Err(TodoDeleteError::Other("no warm session".into()));
+        };
+        let res = ws.client.delete_todo(id).await;
+        match res.status {
+            204 | 200 => Ok(()),
+            404 => Err(TodoDeleteError::NotFound),
+            409 => {
+                if let Some(conflict) = res.data {
+                    match conflict {
+                        TodoDeleteConflictResponse::DependentsExist { dependents, .. } => {
+                            Err(TodoDeleteError::DependentsExist(
+                                dependents
+                                    .iter()
+                                    .map(|d| TodoDeleteDependent {
+                                        id: d.id,
+                                        title: d.title.clone(),
+                                    })
+                                    .collect(),
+                            ))
+                        }
+                        TodoDeleteConflictResponse::TurnInFlight { .. } => {
+                            Err(TodoDeleteError::TurnInFlight)
+                        }
+                    }
+                } else {
+                    Err(TodoDeleteError::Other(
+                        res.error.unwrap_or_else(|| "409 conflict".into()),
+                    ))
+                }
+            }
+            s => Err(TodoDeleteError::Other(format!(
+                "DELETE /todos/{} failed ({}): {}",
+                id,
+                s,
+                res.error.as_deref().unwrap_or("")
+            ))),
+        }
+    }
+
     fn set_model(&self, _provider: String, model_id: String, session_id: Option<SessionId>) {
         if let Some(sid) = &session_id {
             if let Some(ws) = self.inner.get_warm(sid) {
@@ -2308,6 +2420,32 @@ impl PantokenDriver for PolytokenDriver {
             },
             snapshot,
         }])
+    }
+}
+
+/// Parse the daemon's `JobStatus` (a `serde_json::Value` oneOf) into pantoken's
+/// string enum. The daemon sends it as `{"status": "running", ...}` or just
+/// `"running"`; we try the object's `status` field first, then a bare string.
+/// Unknown variants default to `Running` (a safe non-terminal guess) + a warning.
+fn parse_job_status(val: &serde_json::Value) -> JobStatusKind {
+    let status_str = val
+        .get("status")
+        .and_then(|v| v.as_str())
+        .or_else(|| val.as_str());
+    match status_str {
+        Some("reserved") => JobStatusKind::Reserved,
+        Some("running") => JobStatusKind::Running,
+        Some("completed") => JobStatusKind::Completed,
+        Some("failed") => JobStatusKind::Failed,
+        Some("cancelled") => JobStatusKind::Cancelled,
+        Some(other) => {
+            tracing::warn!("unknown job status variant: {other}, defaulting to Running");
+            JobStatusKind::Running
+        }
+        None => {
+            tracing::warn!("unparseable job status: {val}, defaulting to Running");
+            JobStatusKind::Running
+        }
     }
 }
 

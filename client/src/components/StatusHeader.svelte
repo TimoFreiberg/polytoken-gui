@@ -18,7 +18,7 @@
       e.preventDefault();
       store.hotkeyAction = { which: "thinking", n: ++hotkeyN };
     } else if (e.key === "j" || e.key === "J") {
-      // ⌘⇧J — the right context panel (flagged files + todos).
+      // ⌘⇧J — the right context panel (todos, jobs, flagged files).
       e.preventDefault();
       store.toggleRightSidebar();
     }
@@ -179,7 +179,7 @@
     {/if}
     <IconButton
       data-testid="context-toggle"
-      title="Context panel — flagged files & todos (⌘⇧J)"
+      title="Context panel — todos, jobs & flagged files (⌘⇧J)"
       aria-label="Toggle context panel"
       onclick={() => store.toggleRightSidebar()}
     >

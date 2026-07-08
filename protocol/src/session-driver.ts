@@ -154,7 +154,9 @@ export interface FlaggedFile {
 }
 
 /** A todo item tracked by the agent. JSON-safe projection of the daemon's
- *  TodoSnapshot — trimmed to the fields the UI needs (emitted_at omitted). */
+ *  TodoSnapshot. `createdAt` threads the daemon's `emitted_at` (ISO datetime)
+ *  through; it's when the todo was last emitted (created or updated), not
+ *  strictly creation time (R4 in the plan). */
 export interface TodoItem {
   /** Stable integer ID (the daemon's todo id). */
   readonly id: number;
@@ -166,6 +168,43 @@ export interface TodoItem {
   readonly status: "pending" | "in_progress" | "done" | "blocked";
   /** IDs of other todos this one depends on. */
   readonly dependencies: readonly number[];
+  /** ISO datetime when the todo was last emitted (created or updated). */
+  readonly createdAt?: string;
+}
+
+/** A background job (subagent or shell) running in the daemon. Projected from
+ *  the daemon's `GET /jobs` `JobSnapshot`. The output tail is the primary
+ *  summary (condensed output lines); `resultSummary` from `SubagentCompleted`
+ *  is a follow-up not included in the MVP. */
+export interface BackgroundJob {
+  /** The job's handle (e.g. "general-purpose:my-name"). */
+  readonly handle: string;
+  /** Whether this is a subagent or shell background job. */
+  readonly kind: "shell" | "subagent";
+  /** Lifecycle state. */
+  readonly status: "reserved" | "running" | "completed" | "failed" | "cancelled";
+  /** The tool name that started the job (e.g. "subagent" or "shell_exec"). */
+  readonly toolName: string;
+  /** ISO datetime when the job was created. */
+  readonly createdAt: string;
+  /** ISO datetime when the job ended, if terminal. */
+  readonly endedAt?: string;
+  /** ISO datetime when the job started running, if started. */
+  readonly startedAt?: string;
+  /** ISO datetime of the last update. */
+  readonly updatedAt: string;
+  /** Subagent type (e.g. "general-purpose"), if this is a subagent job. */
+  readonly subagentType?: string;
+  /** Model override, if any. */
+  readonly model?: string;
+  /** The subagent's handle, if different from the job handle. */
+  readonly subagentHandle?: string;
+  /** Whether the job is expiring (about to be reaped). */
+  readonly expiring?: boolean;
+  /** Condensed output tail (joined from output channels, truncated ~500 chars). */
+  readonly outputTail?: string;
+  /** Total output bytes across all channels. */
+  readonly outputBytes?: number;
 }
 
 export interface SessionSnapshot {

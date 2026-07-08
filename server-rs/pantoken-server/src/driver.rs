@@ -6,8 +6,9 @@
 
 use async_trait::async_trait;
 use pantoken_protocol::session_driver::{
-    CommandInfo, DirListing, FileInfo, HostUiResponse, ImageContent, ModelDefaults, ModelOption,
-    PathStat, PermissionMonitorMode, SessionDriverEvent, SessionId, SessionListEntry, SessionUsage,
+    BackgroundJob, CommandInfo, DirListing, FileInfo, HostUiResponse, ImageContent, ModelDefaults,
+    ModelOption, PathStat, PermissionMonitorMode, SessionDriverEvent, SessionId, SessionListEntry,
+    SessionUsage,
 };
 use pantoken_protocol::wire::{DeliveryMode, LoginEnvStatus, McpAction};
 
@@ -203,6 +204,24 @@ pub trait PantokenDriver: Send + Sync {
     /// Quick existence + type check for a path.
     async fn stat_path(&self, path: String) -> PathStat;
 
+    /// Background jobs (subagent + shell) running in the daemon. The hub calls
+    /// this on every snapshot refresh and broadcasts `JobsList`.
+    async fn list_jobs(&self, _session_id: Option<SessionId>) -> Vec<BackgroundJob> {
+        vec![]
+    }
+
+    /// Delete a todo by its integer ID. Returns `Err` with a `TodoDeleteError`
+    /// on failure (not found, dependents exist, turn in flight).
+    async fn delete_todo(
+        &self,
+        _session_id: Option<SessionId>,
+        _id: i64,
+    ) -> Result<(), TodoDeleteError> {
+        Err(TodoDeleteError::Other(
+            "not supported by this driver".into(),
+        ))
+    }
+
     /// Switch a session's model.
     fn set_model(&self, provider: String, model_id: String, session_id: Option<SessionId>);
 
@@ -253,4 +272,22 @@ pub trait PantokenDriver: Send + Sync {
 
     /// Dev/test-only reset.
     fn reset(&self, _bootstrap: bool) {}
+}
+
+/// Error from deleting a todo. The hub surfaces these to the client as an
+/// `Error` message so the UI can show "X todos depend on this" etc.
+#[derive(Debug, Clone)]
+pub enum TodoDeleteError {
+    NotFound,
+    DependentsExist(Vec<TodoDeleteDependent>),
+    TurnInFlight,
+    Other(String),
+}
+
+/// A dependent todo that blocks deletion (mirrors the daemon's
+/// `TodoDeleteDependent`).
+#[derive(Debug, Clone)]
+pub struct TodoDeleteDependent {
+    pub id: i64,
+    pub title: String,
 }

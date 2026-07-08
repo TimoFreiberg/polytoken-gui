@@ -431,6 +431,7 @@ pub fn snapshot_from_state(
                     pantoken_daemon_types::TodoStatus::Blocked => PantokenTodoStatus::Blocked,
                 },
                 dependencies: t.dependencies.clone(),
+                created_at: t.emitted_at.clone(),
             })
             .collect::<Vec<_>>()
     });
@@ -1935,8 +1936,6 @@ pub fn map_daemon_event(
         | DaemonEvent::ToolReveal { .. }
         | DaemonEvent::ClassifierDecision { .. }
         | DaemonEvent::ExtensionRegistered { .. }
-        | DaemonEvent::SubagentStarted { .. }
-        | DaemonEvent::SubagentCompleted { .. }
         | DaemonEvent::ImageReferenceResolved { .. }
         | DaemonEvent::JobPromoted { .. }
         | DaemonEvent::JobCompleted { .. }
@@ -1944,6 +1943,18 @@ pub fn map_daemon_event(
         | DaemonEvent::JobCancelled { .. }
         | DaemonEvent::JobUpdated { .. }
         | DaemonEvent::UsageThrottle { .. } => FoldResult::default(),
+
+        // Subagent lifecycle: refresh state so the hub re-fetches the jobs list
+        // (the hub broadcasts JobsList on every SessionUpdated). Low-frequency,
+        // acceptable cost. result_summary / outcome.kind are NOT plumbed into
+        // jobs in the MVP — the output tail from GET /jobs is the summary.
+        DaemonEvent::SubagentStarted { .. } | DaemonEvent::SubagentCompleted { .. } => fold_result(
+            vec![],
+            vec![DaemonEffect::FetchState {
+                emit: FetchEmit::SessionUpdated,
+                prompt_id: None,
+            }],
+        ),
 
         // ===== MCP server lifecycle =====
         DaemonEvent::McpServerConnected { server_name, .. } => {
@@ -3831,7 +3842,7 @@ mod tests {
         use pantoken_protocol::session_driver::{TodoItem, TodoStatus};
         let mut st = base_state();
         st.todos = serde_json::from_value(json!([
-            { "id": 1, "title": "Write tests", "description": "Add unit tests", "status": "in_progress", "dependencies": [2] },
+            { "id": 1, "title": "Write tests", "description": "Add unit tests", "status": "in_progress", "dependencies": [2], "emitted_at": "2025-01-01T00:00:00Z" },
         ]))
         .expect("valid todo entries");
         assert_eq!(
@@ -3842,6 +3853,7 @@ mod tests {
                 description: "Add unit tests".to_string(),
                 status: TodoStatus::InProgress,
                 dependencies: vec![2],
+                created_at: Some("2025-01-01T00:00:00Z".to_string()),
             }])
         );
     }
@@ -3898,17 +3910,35 @@ mod tests {
     }
 
     #[test]
-    fn subagent_started_empty() {
-        assert_empty(
+    fn subagent_started_emits_fetch_state() {
+        let out = fold_fresh(
             json!({ "type": "subagent_started", "handle": "h1", "model": "m", "subagent_type": "general" }),
         );
+        assert!(out.events.is_empty());
+        assert_eq!(out.effects.len(), 1);
+        assert!(matches!(
+            out.effects[0],
+            DaemonEffect::FetchState {
+                emit: FetchEmit::SessionUpdated,
+                prompt_id: None,
+            }
+        ));
     }
 
     #[test]
-    fn subagent_completed_empty() {
-        assert_empty(
+    fn subagent_completed_emits_fetch_state() {
+        let out = fold_fresh(
             json!({ "type": "subagent_completed", "handle": "h1", "outcome": { "kind": "success" }, "result_summary": "done" }),
         );
+        assert!(out.events.is_empty());
+        assert_eq!(out.effects.len(), 1);
+        assert!(matches!(
+            out.effects[0],
+            DaemonEffect::FetchState {
+                emit: FetchEmit::SessionUpdated,
+                prompt_id: None,
+            }
+        ));
     }
 
     #[test]

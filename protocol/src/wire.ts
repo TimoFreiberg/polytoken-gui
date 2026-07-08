@@ -6,6 +6,7 @@
 // server applies the command to the currently-focused session.
 
 import type {
+  BackgroundJob,
   CommandInfo,
   FileInfo,
   HostUiResponse,
@@ -169,6 +170,10 @@ export type ServerMessage =
   /** The available facets for the focused session's cwd (for the FacetBadge picker).
    *  Pushed on connect + session switch like {@link commandList}. */
   | { type: "facetList"; facets: readonly string[] }
+  /** Background jobs (subagent + shell) for the focused session. Broadcast on
+   *  every snapshot refresh and on explicit {@link fetchJobs}. See
+   *  {@link BackgroundJob}. */
+  | { type: "jobsList"; jobs: readonly BackgroundJob[] }
   /** The full file index for the focused session's cwd, pushed on connect + session
    *  switch (like {@link commandList}). The client fuzzy-matches it locally so the
    *  @-mention menu is instant (no per-keystroke round-trip). Capped server-side;
@@ -401,6 +406,12 @@ export type ClientMessage =
   /** Ask the server to re-read the focused session's available facets and
    *  re-broadcast them (reload affordance for the FacetBadge picker). */
   | { type: "listFacets" }
+  /** Ask the server to re-fetch the daemon's background jobs list and
+   *  re-broadcast it (reload affordance for the RightSidebar jobs section). */
+  | { type: "fetchJobs" }
+  /** Delete a todo by its integer ID. The daemon returns 409 if other todos
+   *  depend on it or a turn is in flight; the server surfaces that as an error. */
+  | { type: "deleteTodo"; id: number }
   /** Fallback file search for a composer @-mention query (the text after `@`). Only sent
    *  when the {@link fileIndex} was truncated and local matches are thin — the common case
    *  is served entirely client-side from the index. The server responds with {@link fileList}.

@@ -7,7 +7,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::session_driver::{
-    CommandInfo, FileInfo, HostUiResponse, ImageContent, ModelDefaults, ModelOption,
+    BackgroundJob, CommandInfo, FileInfo, HostUiResponse, ImageContent, ModelDefaults, ModelOption,
     PermissionMonitorMode, SessionDriverEvent, SessionId, SessionListEntry,
 };
 
@@ -161,6 +161,9 @@ pub enum ServerMessage {
     },
     FacetList {
         facets: Vec<String>,
+    },
+    JobsList {
+        jobs: Vec<BackgroundJob>,
     },
     FileIndex {
         files: Vec<FileInfo>,
@@ -383,6 +386,10 @@ pub enum ClientMessage {
     },
     ListCommands,
     ListFacets,
+    FetchJobs,
+    DeleteTodo {
+        id: i64,
+    },
     QueryFiles {
         query: String,
         #[serde(skip_serializing_if = "Option::is_none", default)]

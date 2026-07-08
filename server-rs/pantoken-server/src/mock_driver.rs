@@ -17,7 +17,7 @@ use tracing::warn;
 
 use crate::driver::{
     ArchiveResult, BranchResult, ClearQueueResult, NewSessionOptsData, PantokenDriver,
-    WorktreeCleanupResult, WorktreeRetained,
+    TodoDeleteError, WorktreeCleanupResult, WorktreeRetained,
 };
 use async_trait::async_trait;
 
@@ -426,6 +426,100 @@ fn mock_default_config() -> SessionConfig {
             "high".into(),
         ]),
     }
+}
+
+/// Default fixture jobs for the RightSidebar jobs section. Empty by default
+/// (the empty-state test checks "No background jobs"); the `context` script
+/// and the `jobs` script populate them.
+fn mock_default_jobs() -> Vec<BackgroundJob> {
+    vec![]
+}
+
+/// Fixture jobs for the `context` script — three jobs covering the main UI
+/// states: a running subagent, a completed shell job, and a completed
+/// subagent with output.
+fn mock_context_jobs() -> Vec<BackgroundJob> {
+    vec![
+        BackgroundJob {
+            handle: "general-purpose:code-reviewer".into(),
+            kind: JobKind::Subagent,
+            status: JobStatusKind::Running,
+            tool_name: "subagent".into(),
+            created_at: "2025-07-09T10:00:00Z".into(),
+            started_at: Some("2025-07-09T10:00:01Z".into()),
+            ended_at: None,
+            updated_at: "2025-07-09T10:02:00Z".into(),
+            subagent_type: Some("general-purpose".into()),
+            model: Some("anthropic/claude-sonnet-4-20250514".into()),
+            subagent_handle: Some("general-purpose:code-reviewer".into()),
+            expiring: None,
+            output_tail: Some("Reviewing src/store.svelte.ts...\nChecking type safety...\nFound 2 issues".into()),
+            output_bytes: Some(1024),
+        },
+        BackgroundJob {
+            handle: "shell:lint-check".into(),
+            kind: JobKind::Shell,
+            status: JobStatusKind::Completed,
+            tool_name: "shell_exec".into(),
+            created_at: "2025-07-09T09:30:00Z".into(),
+            started_at: Some("2025-07-09T09:30:01Z".into()),
+            ended_at: Some("2025-07-09T09:30:15Z".into()),
+            updated_at: "2025-07-09T09:30:15Z".into(),
+            subagent_type: None,
+            model: None,
+            subagent_handle: None,
+            expiring: None,
+            output_tail: Some("cargo clippy --all-targets\n    Finished in 14.2s\n0 warnings, 0 errors".into()),
+            output_bytes: Some(512),
+        },
+        BackgroundJob {
+            handle: "researcher:api-docs".into(),
+            kind: JobKind::Subagent,
+            status: JobStatusKind::Completed,
+            tool_name: "subagent".into(),
+            created_at: "2025-07-09T08:00:00Z".into(),
+            started_at: Some("2025-07-09T08:00:01Z".into()),
+            ended_at: Some("2025-07-09T08:05:30Z".into()),
+            updated_at: "2025-07-09T08:05:30Z".into(),
+            subagent_type: Some("researcher".into()),
+            model: Some("anthropic/claude-sonnet-4-20250514".into()),
+            subagent_handle: Some("researcher:api-docs".into()),
+            expiring: None,
+            output_tail: Some("Searched 5 sources for OpenAI Responses API tool calling.\nKey finding: tool_choice parameter accepts 'auto' | 'required' | specific tool.".into()),
+            output_bytes: Some(2048),
+        },
+    ]
+}
+
+/// Default fixture todos for the delete path. Matches the `context` script's
+/// snapshot todos so the sidebar is consistent.
+fn mock_default_todos() -> Vec<TodoItem> {
+    vec![
+        TodoItem {
+            id: 1,
+            title: "Wire up the right sidebar".into(),
+            description: "Add protocol types, event-map threading, and the drawer component".into(),
+            status: TodoStatus::InProgress,
+            dependencies: vec![],
+            created_at: Some("2025-07-09T10:00:00Z".into()),
+        },
+        TodoItem {
+            id: 2,
+            title: "Add e2e tests".into(),
+            description: "Assert flagged files + todos render, toggle opens/closes".into(),
+            status: TodoStatus::Pending,
+            dependencies: vec![1],
+            created_at: Some("2025-07-09T10:05:00Z".into()),
+        },
+        TodoItem {
+            id: 3,
+            title: "Review with subagent".into(),
+            description: "Check type safety, overwrite-guard consistency, tooltips".into(),
+            status: TodoStatus::Pending,
+            dependencies: vec![2],
+            created_at: Some("2025-07-09T10:10:00Z".into()),
+        },
+    ]
 }
 
 // mock_snapshot is defined above ( delegates to snap() with no overrides).
@@ -1402,6 +1496,12 @@ pub struct MockDriver {
     /// The mock's current model selection, mutated by set_model/set_thinking so
     /// the picker reflects config changes. Mirrors TS MockDriver.config.
     config: Arc<Mutex<SessionConfig>>,
+    /// Mutable fixture jobs for the jobs sidebar section. Seeded with default
+    /// fixtures; `run_script("jobs")` can swap them for e2e testing.
+    jobs: Arc<Mutex<Vec<BackgroundJob>>>,
+    /// Mutable fixture todos for the todo delete path. Seeded from the `context`
+    /// script's snapshot; `delete_todo` removes from here.
+    todos: Arc<Mutex<Vec<TodoItem>>>,
 }
 
 /// Handle to a currently-running script, so the next `play_script` can flush it.
@@ -1466,6 +1566,8 @@ impl MockDriver {
             reaped_worktrees: Arc::new(Mutex::new(std::collections::HashSet::new())),
             queues: Arc::new(Mutex::new(HashMap::new())),
             config: Arc::new(Mutex::new(mock_default_config())),
+            jobs: Arc::new(Mutex::new(mock_default_jobs())),
+            todos: Arc::new(Mutex::new(mock_default_todos())),
         }
     }
 
@@ -2265,6 +2367,51 @@ impl PantokenDriver for MockDriver {
         }
     }
 
+    async fn list_jobs(&self, _session_id: Option<SessionId>) -> Vec<BackgroundJob> {
+        self.jobs.lock().clone()
+    }
+
+    async fn delete_todo(
+        &self,
+        _session_id: Option<SessionId>,
+        id: i64,
+    ) -> Result<(), TodoDeleteError> {
+        let mut todos = self.todos.lock();
+        if let Some(pos) = todos.iter().position(|t| t.id == id) {
+            // Check if any other todo depends on this one
+            let dependents: Vec<&TodoItem> = todos
+                .iter()
+                .filter(|t| t.dependencies.contains(&id))
+                .collect();
+            if !dependents.is_empty() {
+                return Err(TodoDeleteError::DependentsExist(
+                    dependents
+                        .iter()
+                        .map(|t| crate::driver::TodoDeleteDependent {
+                            id: t.id,
+                            title: t.title.clone(),
+                        })
+                        .collect(),
+                ));
+            }
+            todos.remove(pos);
+            drop(todos);
+            // Emit a snapshot update so the sidebar reflects the removal.
+            // The real daemon emits SessionStateChanged { domains: ["todos"] }
+            // which triggers a FetchState → SessionUpdated. The mock shortcuts
+            // by emitting the SessionUpdated directly.
+            let mut snap = mock_snapshot(SessionStatus::Idle);
+            snap.todos = Some(self.todos.lock().clone());
+            self.emit(SessionDriverEvent::SessionUpdated {
+                base: base(),
+                snapshot: snap,
+            });
+            Ok(())
+        } else {
+            Err(TodoDeleteError::NotFound)
+        }
+    }
+
     fn set_model(&self, provider: String, model_id: String, _session_id: Option<SessionId>) {
         let mut config = self.config.lock();
         config.provider = Some(provider);
@@ -2508,7 +2655,13 @@ impl PantokenDriver for MockDriver {
                     level: Some(NotifyLevel::Info),
                 } } },
             ],
-            "context" => vec![
+            "context" => {
+                // Populate the mock's job + todo fixtures so the hub's
+                // SessionUpdated → list_jobs() broadcast carries the jobs, and
+                // delete_todo has the right baseline.
+                *self.jobs.lock() = mock_context_jobs();
+                *self.todos.lock() = mock_default_todos();
+                vec![
                 ScriptStep { wait_ms: 0, event: SessionDriverEvent::SessionUpdated { base: base(), snapshot: snap(
                     SessionStatus::Idle, None, None, None,
                     Some(vec![
@@ -2517,12 +2670,13 @@ impl PantokenDriver for MockDriver {
                         FlaggedFile { path: "README.md".into(), mode: FlaggedFileMode::Referenced },
                     ]),
                     Some(vec![
-                        TodoItem { id: 1, title: "Wire up the right sidebar".into(), description: "Add protocol types, event-map threading, and the drawer component".into(), status: TodoStatus::InProgress, dependencies: vec![] },
-                        TodoItem { id: 2, title: "Add e2e tests".into(), description: "Assert flagged files + todos render, toggle opens/closes".into(), status: TodoStatus::Pending, dependencies: vec![1] },
-                        TodoItem { id: 3, title: "Review with subagent".into(), description: "Check type safety, overwrite-guard consistency, tooltips".into(), status: TodoStatus::Pending, dependencies: vec![2] },
+                        TodoItem { id: 1, title: "Wire up the right sidebar".into(), description: "Add protocol types, event-map threading, and the drawer component".into(), status: TodoStatus::InProgress, dependencies: vec![], created_at: Some("2025-07-09T10:00:00Z".into()) },
+                        TodoItem { id: 2, title: "Add e2e tests".into(), description: "Assert flagged files + todos render, toggle opens/closes".into(), status: TodoStatus::Pending, dependencies: vec![1], created_at: Some("2025-07-09T10:05:00Z".into()) },
+                        TodoItem { id: 3, title: "Review with subagent".into(), description: "Check type safety, overwrite-guard consistency, tooltips".into(), status: TodoStatus::Pending, dependencies: vec![2], created_at: Some("2025-07-09T10:10:00Z".into()) },
                     ]),
                 ) } },
-            ],
+                ]
+            }
             // ── Session state scripts ─────────────────────────────────────
             "goalactive" => vec![
                 ScriptStep { wait_ms: 0, event: SessionDriverEvent::SessionUpdated { base: base(), snapshot: snap(
@@ -3017,6 +3171,29 @@ impl PantokenDriver for MockDriver {
                 self.fail_next_session.store(true, Ordering::SeqCst);
                 return;
             }
+            "jobs" => {
+                // Swap the job fixtures so e2e can test the client-side refresh
+                // path (FetchJobs → JobsList → UI updates).
+                let mut jobs = self.jobs.lock();
+                jobs.clear();
+                jobs.push(BackgroundJob {
+                    handle: "general-purpose:new-job".into(),
+                    kind: JobKind::Subagent,
+                    status: JobStatusKind::Running,
+                    tool_name: "subagent".into(),
+                    created_at: "2025-07-09T11:00:00Z".into(),
+                    started_at: Some("2025-07-09T11:00:01Z".into()),
+                    ended_at: None,
+                    updated_at: "2025-07-09T11:01:00Z".into(),
+                    subagent_type: Some("general-purpose".into()),
+                    model: None,
+                    subagent_handle: Some("general-purpose:new-job".into()),
+                    expiring: None,
+                    output_tail: Some("Investigating the codebase...\nReading protocol types".into()),
+                    output_bytes: Some(256),
+                });
+                return;
+            }
             _ => {
                 warn!("[mock] run_script: {name} (not yet implemented)");
                 return;
@@ -3042,6 +3219,8 @@ impl PantokenDriver for MockDriver {
         *self.sessions.lock() = mock_session_list();
         *self.worktrees.lock() = seed_worktrees(&mock_session_list());
         *self.config.lock() = mock_default_config();
+        *self.jobs.lock() = mock_default_jobs();
+        *self.todos.lock() = mock_default_todos();
         self.queues.lock().clear();
         self.dirty_worktrees.lock().clear();
         self.reaped_worktrees.lock().clear();

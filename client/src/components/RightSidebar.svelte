@@ -1,14 +1,17 @@
 <script lang="ts">
   import { store } from "../lib/store.svelte.js";
   import IconButton from "./ui/IconButton.svelte";
+  import TodoDetail from "./TodoDetail.svelte";
+  import JobDetail from "./JobDetail.svelte";
 
-  // The right context panel: flagged files + todos from the active session's
-  // folded state. Mirrors the left Sidebar's drawer pattern (scrim on mobile,
-  // fixed column on desktop). Toggled by the StatusHeader button or ⌘J.
+  // The right context panel: todos, background jobs, and flagged files from
+  // the active session. Mirrors the left Sidebar's drawer pattern (scrim on
+  // mobile, fixed column on desktop). Toggled by the StatusHeader button or ⌘⇧J.
 
   const s = $derived(store.session);
   const flags = $derived(s.flags);
   const todos = $derived(s.todos);
+  const jobs = $derived(store.jobs);
   const open = $derived(store.rightSidebarOpen);
 
   const STATUS_ICON: Record<string, string> = {
@@ -23,6 +26,22 @@
     done: "Done",
     blocked: "Blocked",
   };
+
+  const JOB_KIND_ICON: Record<string, string> = {
+    subagent: "◇",
+    shell: "□",
+  };
+  const JOB_STATUS_ICON: Record<string, string> = {
+    reserved: "◌",
+    running: "◐",
+    completed: "●",
+    failed: "✕",
+    cancelled: "⊘",
+  };
+
+  function copyPath(path: string): void {
+    void store.copyToClipboard(path);
+  }
 </script>
 
 {#if open}
@@ -48,6 +67,75 @@
   </div>
 
   <div class="content">
+    <!-- Todos -->
+    <section class="section" data-testid="todos">
+      <div class="section-head">
+        <span class="section-title">Todos</span>
+        {#if todos.length > 0}
+          <span class="section-count">{todos.length}</span>
+        {/if}
+      </div>
+      {#if todos.length === 0}
+        <p class="empty">No todos</p>
+      {:else}
+        <ul class="todo-list">
+          {#each todos as t (t.id)}
+            <li class="todo-item {t.status}">
+              <button
+                class="todo-btn"
+                title={`${STATUS_LABEL[t.status] ?? t.status}${t.dependencies.length > 0 ? ` (depends on ${t.dependencies.length})` : ""} — click for details`}
+                onclick={() => (store.selectedTodoId = t.id)}
+              >
+                <span class="todo-icon">{STATUS_ICON[t.status] ?? "?"}</span>
+                <div class="todo-body">
+                  <span class="todo-title">{t.title}</span>
+                  {#if t.description}
+                    <span class="todo-desc">{t.description}</span>
+                  {/if}
+                </div>
+              </button>
+            </li>
+          {/each}
+        </ul>
+      {/if}
+    </section>
+
+    <!-- Background jobs -->
+    <section class="section" data-testid="background-jobs">
+      <div class="section-head">
+        <span class="section-title">Background jobs</span>
+        {#if jobs.length > 0}
+          <span class="section-count">{jobs.length}</span>
+        {/if}
+      </div>
+      {#if jobs.length === 0}
+        <p class="empty">No background jobs</p>
+      {:else}
+        <ul class="job-list">
+          {#each jobs as j (j.handle)}
+            <li class="job-item {j.status}">
+              <button
+                class="job-btn"
+                title={`${j.kind === "subagent" ? "Subagent" : "Shell"} — ${j.status} — click for details`}
+                onclick={() => (store.selectedJobHandle = j.handle)}
+              >
+                <span class="job-kind-icon">{JOB_KIND_ICON[j.kind] ?? "?"}</span>
+                <div class="job-body">
+                  <div class="job-head">
+                    <span class="job-name">{j.subagentType ?? j.toolName}</span>
+                    <span class="job-status-icon">{JOB_STATUS_ICON[j.status] ?? "?"}</span>
+                  </div>
+                  {#if j.outputTail}
+                    <span class="job-tail">{j.outputTail}</span>
+                  {/if}
+                </div>
+              </button>
+            </li>
+          {/each}
+        </ul>
+      {/if}
+    </section>
+
     <!-- Flagged files -->
     <section class="section" data-testid="flagged-files">
       <div class="section-head">
@@ -64,33 +152,13 @@
             <li class="file-item" title={`${f.mode === "included" ? "Included in context" : "Referenced"}: ${f.path}`}>
               <span class="file-mode {f.mode}">{f.mode === "included" ? "I" : "R"}</span>
               <span class="file-path">{f.path}</span>
-            </li>
-          {/each}
-        </ul>
-      {/if}
-    </section>
-
-    <!-- Todos -->
-    <section class="section" data-testid="todos">
-      <div class="section-head">
-        <span class="section-title">Todos</span>
-        {#if todos.length > 0}
-          <span class="section-count">{todos.length}</span>
-        {/if}
-      </div>
-      {#if todos.length === 0}
-        <p class="empty">No todos</p>
-      {:else}
-        <ul class="todo-list">
-          {#each todos as t (t.id)}
-            <li class="todo-item {t.status}" title={`${STATUS_LABEL[t.status] ?? t.status}${t.dependencies.length > 0 ? ` (depends on ${t.dependencies.length})` : ""}`}>
-              <span class="todo-icon">{STATUS_ICON[t.status] ?? "?"}</span>
-              <div class="todo-body">
-                <span class="todo-title">{t.title}</span>
-                {#if t.description}
-                  <span class="todo-desc">{t.description}</span>
-                {/if}
-              </div>
+              <button
+                class="copy-btn"
+                title="Copy path to clipboard"
+                aria-label="Copy {f.path} to clipboard"
+                data-testid="copy-path-{f.path}"
+                onclick={() => copyPath(f.path)}
+              >⎘</button>
             </li>
           {/each}
         </ul>
@@ -98,6 +166,9 @@
     </section>
   </div>
 </aside>
+
+<TodoDetail />
+<JobDetail />
 
 <style>
   .right-sidebar {
@@ -161,7 +232,8 @@
     padding: 4px 0;
   }
   .file-list,
-  .todo-list {
+  .todo-list,
+  .job-list {
     list-style: none;
     padding: 0;
     margin: 0;
@@ -202,13 +274,61 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+    flex: 1;
+    min-width: 0;
+  }
+  .copy-btn {
+    flex-shrink: 0;
+    width: 20px;
+    height: 20px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 12px;
+    color: var(--text-faint);
+    background: none;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+    padding: 0;
+    opacity: 0;
+    transition: opacity 0.1s ease, color 0.1s ease;
+  }
+  .file-item:hover .copy-btn {
+    opacity: 1;
+  }
+  .copy-btn:hover {
+    color: var(--accent);
+    background: var(--surface-sunken);
   }
   .todo-item {
     display: flex;
     align-items: flex-start;
     gap: 6px;
-    padding: 4px 0;
+    padding: 0;
     font-size: 12px;
+  }
+  .todo-btn {
+    display: flex;
+    align-items: flex-start;
+    gap: 6px;
+    padding: 4px 6px;
+    font-size: 12px;
+    width: 100%;
+    border: none;
+    background: none;
+    text-align: left;
+    cursor: pointer;
+    color: inherit;
+    border-radius: 6px;
+    transition: background 0.1s ease;
+  }
+  .todo-btn:hover {
+    background: var(--surface-sunken);
+  }
+  .todo-btn:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: -2px;
   }
   .todo-icon {
     flex-shrink: 0;
@@ -242,6 +362,83 @@
   .todo-desc {
     color: var(--text-muted);
     font-size: 11px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .job-item {
+    display: flex;
+    align-items: flex-start;
+    gap: 6px;
+    padding: 0;
+    font-size: 12px;
+  }
+  .job-btn {
+    display: flex;
+    align-items: flex-start;
+    gap: 6px;
+    padding: 4px 6px;
+    font-size: 12px;
+    width: 100%;
+    border: none;
+    background: none;
+    text-align: left;
+    cursor: pointer;
+    color: inherit;
+    border-radius: 6px;
+    transition: background 0.1s ease;
+  }
+  .job-btn:hover {
+    background: var(--surface-sunken);
+  }
+  .job-btn:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: -2px;
+  }
+  .job-kind-icon {
+    flex-shrink: 0;
+    font-size: 13px;
+    line-height: 1.3;
+    color: var(--text-muted);
+  }
+  .job-body {
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+    min-width: 0;
+    flex: 1;
+  }
+  .job-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 4px;
+  }
+  .job-name {
+    color: var(--text);
+    font-weight: 500;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .job-status-icon {
+    flex-shrink: 0;
+    font-size: 12px;
+    color: var(--text-muted);
+  }
+  .job-item.running .job-status-icon {
+    color: var(--accent);
+  }
+  .job-item.completed .job-status-icon {
+    color: var(--ok);
+  }
+  .job-item.failed .job-status-icon {
+    color: var(--danger);
+  }
+  .job-tail {
+    color: var(--text-muted);
+    font-size: 11px;
+    font-family: var(--font-mono, monospace);
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;

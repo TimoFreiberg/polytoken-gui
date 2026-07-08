@@ -56,7 +56,7 @@ use parking_lot::Mutex;
 use tokio::sync::mpsc;
 use tracing::error;
 
-use crate::driver::{NewSessionOptsData, PantokenDriver};
+use crate::driver::{NewSessionOptsData, PantokenDriver, TodoDeleteError};
 use crate::journal::{
     SessionJournal, append_event, build_seed, bump_epoch, create_journal, meta_seed_events,
     tail_covers, try_merge,
@@ -594,6 +594,27 @@ impl SessionHub {
         {
             self.drop_pending(&sid);
             self.journals.remove(&sid);
+        }
+
+        // On snapshot refresh (sessionUpdated/runCompleted), re-fetch jobs and
+        // broadcast to all clients viewing this session. The hub owns the
+        // broadcast because the driver can only emit SessionDriverEvents.
+        if disc == "sessionUpdated" || disc == "runCompleted" {
+            let driver = self.driver.clone();
+            let session_id = sid.clone();
+            self.hub_ops.enqueue(
+                "fetch_jobs_on_update",
+                Box::new(move |hub| {
+                    Box::pin(async move {
+                        let jobs = driver.list_jobs(Some(session_id.clone())).await;
+                        let h = hub.lock();
+                        let senders = h.clients_focused(&session_id);
+                        for send in senders {
+                            let _ = send.try_send(ServerMessage::JobsList { jobs: jobs.clone() });
+                        }
+                    })
+                }),
+            );
         }
 
         self.maybe_notify(&ev);
@@ -1803,6 +1824,90 @@ impl SessionHub {
                             let facets = driver.list_facets(focused).await;
                             let h = hub.lock();
                             h.send_to_client(client_key, ServerMessage::FacetList { facets });
+                        })
+                    }),
+                );
+            }
+            ClientMessage::FetchJobs => {
+                let driver = self.driver.clone();
+                let focused = focused_id.clone();
+                self.hub_ops.enqueue(
+                    "fetch_jobs",
+                    Box::new(move |hub| {
+                        Box::pin(async move {
+                            let jobs = driver.list_jobs(focused).await;
+                            let h = hub.lock();
+                            h.send_to_client(client_key, ServerMessage::JobsList { jobs });
+                        })
+                    }),
+                );
+            }
+            ClientMessage::DeleteTodo { id } => {
+                let driver = self.driver.clone();
+                let focused = focused_id.clone();
+                let id = *id;
+                self.hub_ops.enqueue(
+                    "delete_todo",
+                    Box::new(move |hub| {
+                        Box::pin(async move {
+                            match driver.delete_todo(focused, id).await {
+                                Ok(()) => {
+                                    // The daemon emits SessionStateChanged { domains: ["todos"] }
+                                    // after a delete, which triggers a FetchState → snapshot
+                                    // refresh. No hub-side action needed — the todo list
+                                    // updates through the event stream.
+                                }
+                                Err(TodoDeleteError::NotFound) => {
+                                    let h = hub.lock();
+                                    h.send_to_client(
+                                        client_key,
+                                        ServerMessage::Error {
+                                            message: format!("Todo #{} not found", id),
+                                            kind: None,
+                                        },
+                                    );
+                                }
+                                Err(TodoDeleteError::DependentsExist(deps)) => {
+                                    let titles: Vec<&str> =
+                                        deps.iter().map(|d| d.title.as_str()).collect();
+                                    let h = hub.lock();
+                                    h.send_to_client(
+                                        client_key,
+                                        ServerMessage::Error {
+                                            message: format!(
+                                                "Cannot delete todo #{}: {} todo(s) depend on it ({})",
+                                                id,
+                                                deps.len(),
+                                                titles.join(", ")
+                                            ),
+                                            kind: None,
+                                        },
+                                    );
+                                }
+                                Err(TodoDeleteError::TurnInFlight) => {
+                                    let h = hub.lock();
+                                    h.send_to_client(
+                                        client_key,
+                                        ServerMessage::Error {
+                                            message: format!(
+                                                "Cannot delete todo #{}: a turn is in flight",
+                                                id
+                                            ),
+                                            kind: None,
+                                        },
+                                    );
+                                }
+                                Err(TodoDeleteError::Other(msg)) => {
+                                    let h = hub.lock();
+                                    h.send_to_client(
+                                        client_key,
+                                        ServerMessage::Error {
+                                            message: msg,
+                                            kind: None,
+                                        },
+                                    );
+                                }
+                            }
                         })
                     }),
                 );

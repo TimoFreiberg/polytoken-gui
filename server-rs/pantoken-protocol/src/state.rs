@@ -1498,6 +1498,7 @@ mod tests {
             description: "do it".into(),
             status: crate::session_driver::TodoStatus::Pending,
             dependencies: vec![],
+            created_at: None,
         }];
         let mut s = initial_session_state();
         let mut snap1 = snapshot(SessionStatus::Idle);

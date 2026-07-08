@@ -59,7 +59,7 @@
       typeof window !== "undefined" &&
       window.matchMedia(PHONE_MQ).matches,
   );
-  const scripts = ["reply", "reset", "markdown", "search", "thinkingtools", "skill", "confirm", "input", "qna", "answercard", "answerleadup", "ambient", "compat", "bgrun", "bgwait", "queue", "deliverqueue", "initializing", "editdiff", "images", "error", "idle", "streamhold", "staleidle", "pendinghold", "timeout", "yesno", "journalnudge", "contextfull", "longoutput", "selectmany", "planhandoff", "planhandofftimeout", "planfacet", "planview", "goalactive", "goalclear", "context", "permission", "failnewsession", "failsession", "goal", "unknown"];
+  const scripts = ["reply", "reset", "markdown", "search", "thinkingtools", "skill", "confirm", "input", "qna", "answercard", "answerleadup", "ambient", "compat", "bgrun", "bgwait", "queue", "deliverqueue", "initializing", "editdiff", "images", "error", "idle", "streamhold", "staleidle", "pendinghold", "timeout", "yesno", "journalnudge", "contextfull", "longoutput", "selectmany", "planhandoff", "planhandofftimeout", "planfacet", "planview", "goalactive", "goalclear", "context", "permission", "failnewsession", "failsession", "goal", "unknown", "jobs"];
 
   // The agent-driven attention surfaces currently active, in cycle order. The ⌘\
   // hotkey advances focus through these; each cycled-away-from surface collapses to

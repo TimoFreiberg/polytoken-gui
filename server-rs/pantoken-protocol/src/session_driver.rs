@@ -247,6 +247,8 @@ pub struct TodoItem {
     pub description: String,
     pub status: TodoStatus,
     pub dependencies: Vec<i64>,
+    #[serde(skip_serializing_if = "Option::is_none", default, rename = "createdAt")]
+    pub created_at: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -256,6 +258,75 @@ pub enum TodoStatus {
     InProgress,
     Done,
     Blocked,
+}
+
+// ── Background jobs ─────────────────────────────────────────────────────
+
+/// A background job (subagent or shell) running in the daemon. Projected from
+/// the daemon's `GET /jobs` `JobSnapshot`. The output tail is the primary
+/// summary; `resultSummary` from `SubagentCompleted` is a follow-up not in the
+/// MVP.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct BackgroundJob {
+    pub handle: String,
+    pub kind: JobKind,
+    pub status: JobStatusKind,
+    #[serde(rename = "toolName")]
+    pub tool_name: String,
+    #[serde(rename = "createdAt")]
+    pub created_at: String,
+    #[serde(skip_serializing_if = "Option::is_none", default, rename = "endedAt")]
+    pub ended_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none", default, rename = "startedAt")]
+    pub started_at: Option<String>,
+    #[serde(rename = "updatedAt")]
+    pub updated_at: String,
+    #[serde(
+        skip_serializing_if = "Option::is_none",
+        default,
+        rename = "subagentType"
+    )]
+    pub subagent_type: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub model: Option<String>,
+    #[serde(
+        skip_serializing_if = "Option::is_none",
+        default,
+        rename = "subagentHandle"
+    )]
+    pub subagent_handle: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub expiring: Option<bool>,
+    #[serde(
+        skip_serializing_if = "Option::is_none",
+        default,
+        rename = "outputTail"
+    )]
+    pub output_tail: Option<String>,
+    #[serde(
+        skip_serializing_if = "Option::is_none",
+        default,
+        rename = "outputBytes"
+    )]
+    pub output_bytes: Option<i64>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum JobKind {
+    Shell,
+    Subagent,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum JobStatusKind {
+    Reserved,
+    Running,
+    Completed,
+    Failed,
+    Cancelled,
 }
 
 // ── Session snapshot ────────────────────────────────────────────────────

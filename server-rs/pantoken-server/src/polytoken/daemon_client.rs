@@ -1952,6 +1952,58 @@ impl DaemonClient {
         Ok(())
     }
 
+    /// `GET /jobs` — list background jobs (subagent + shell).
+    pub async fn jobs(&self) -> DaemonResponse<Vec<JobSnapshot>> {
+        self.get::<Vec<JobSnapshot>>("/jobs").await
+    }
+
+    /// `DELETE /todos/{id}` — delete a todo. Returns the raw status + error text
+    /// so the caller can distinguish 204 (ok), 404 (not found), 409 (conflict).
+    /// On 409, the response body is a `TodoDeleteConflictResponse` JSON — returned
+    /// in `data` when deserializable.
+    pub async fn delete_todo(&self, id: i64) -> DaemonResponse<TodoDeleteConflictResponse> {
+        let url = format!("{}/todos/{}", self.base_url, id);
+        match self
+            .safe_fetch(&url, reqwest::Method::DELETE, None, 10_000)
+            .await
+        {
+            Err(_) => DaemonResponse {
+                status: 0,
+                data: None,
+                error: Some("request failed (connection error or timeout)".into()),
+            },
+            Ok((status, text, fetch_err)) => {
+                if status == 0 {
+                    return DaemonResponse {
+                        status: 0,
+                        data: None,
+                        error: fetch_err,
+                    };
+                }
+                let text = text.unwrap_or_default();
+                let data: Option<TodoDeleteConflictResponse> = if !text.is_empty() {
+                    serde_json::from_str(&text).ok()
+                } else {
+                    None
+                };
+                let error = if status < 400 {
+                    None
+                } else if !text.is_empty() {
+                    // Truncate by chars (not bytes) to avoid panicking on
+                    // multi-byte UTF-8 boundaries.
+                    Some(text.chars().take(500).collect())
+                } else {
+                    None
+                };
+                DaemonResponse {
+                    status,
+                    data,
+                    error,
+                }
+            }
+        }
+    }
+
     /// `POST /compact` — trigger context compaction.
     pub async fn compact(&self, request: Option<&CompactRequest>) -> Result<(), String> {
         let body_str = match request {

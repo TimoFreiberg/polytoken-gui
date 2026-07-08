@@ -38,6 +38,7 @@ export default defineConfig({
   use: {
     baseURL: `http://localhost:${VITE_PORT}`,
     trace: "on-first-retry",
+    permissions: ["clipboard-read", "clipboard-write"],
   },
   webServer: {
     command:

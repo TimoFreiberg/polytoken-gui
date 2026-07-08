@@ -4,6 +4,7 @@
 // never sent upstream.
 
 import {
+  type BackgroundJob,
   type CommandInfo,
   type DirListing,
   type PathStat,
@@ -174,6 +175,16 @@ class PantokenStore {
   // Available facets for the focused session's cwd (from `polytoken vfs ls
   // polytoken://facets`). Pushed on connect + session switch like `commands`.
   facets = $state<string[]>(["execute", "plan"]);
+  // Background jobs (subagent + shell) for the focused session. Broadcast by
+  // the server on every snapshot refresh and on explicit fetchJobs. Drives
+  // the RightSidebar jobs section.
+  jobs = $state<BackgroundJob[]>([]);
+  // The todo currently selected for the detail view (its id). Cleared when
+  // the detail modal closes.
+  selectedTodoId = $state<number | null>(null);
+  // The job currently selected for the detail view (its handle). Cleared when
+  // the detail modal closes.
+  selectedJobHandle = $state<string | null>(null);
   // The focused session's full file index (cwd-scoped), pushed by the server on connect +
   // session switch. The composer fuzzy-matches this locally so the @-mention menu is
   // instant — no per-keystroke round-trip. `truncated` is true when the cwd overflowed the
@@ -881,6 +892,10 @@ class PantokenStore {
         // Dev-only: time how long this full transcript render takes. The signal for
         // "is it time to build JS windowing?" (see docs/DESIGN.md).
         this.logRenderTiming(built.items.length);
+        // Request the jobs list for this session — the server broadcasts
+        // JobsList on snapshot refresh, but a seed (replay) doesn't go through
+        // on_event, so the client may not have received jobs yet.
+        this.fetchJobs();
         break;
       }
       case "event": {
@@ -967,6 +982,9 @@ class PantokenStore {
         break;
       case "facetList":
         this.facets = [...msg.facets];
+        break;
+      case "jobsList":
+        this.jobs = [...msg.jobs];
         break;
       case "fileIndex":
         this.fileIndex = { files: [...msg.files], truncated: msg.truncated };
@@ -2065,6 +2083,19 @@ class PantokenStore {
    *  facet files change on disk while a session is open). */
   refreshFacets(): void {
     send({ type: "listFacets" });
+  }
+
+  /** Ask the server to re-fetch the daemon's background jobs list and
+   *  re-broadcast it (reload affordance for the RightSidebar jobs section). */
+  fetchJobs(): void {
+    send({ type: "fetchJobs" });
+  }
+
+  /** Delete a todo by its integer ID. The server surfaces a 409 conflict
+   *  (dependents / turn in flight) as an error message. On success, the todo
+   *  list refreshes through the daemon's event stream. */
+  deleteTodo(id: number): void {
+    send({ type: "deleteTodo", id });
   }
 
   /** Switch the active permission-monitor mode (standard/bypass/autonomous). While a
