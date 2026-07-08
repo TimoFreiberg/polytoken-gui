@@ -15,7 +15,9 @@
 //! - All endpoints are flat (no `/session/{id}/…`) — the daemon IS the session.
 
 use std::collections::HashMap;
+use std::fs::OpenOptions;
 use std::future::Future;
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
 use std::sync::{Arc, OnceLock};
@@ -196,6 +198,111 @@ pub fn read_credential_token(credential_file_path: &Path) -> Option<String> {
     let text = std::fs::read_to_string(credential_file_path).ok()?;
     let json: serde_json::Value = serde_json::from_str(&text).ok()?;
     json.get("token")?.as_str().map(String::from)
+}
+
+fn generate_daemon_auth_token() -> String {
+    let bytes: [u8; 32] = rand::random();
+    bytes.iter().map(|b| format!("{b:02x}")).collect()
+}
+
+#[cfg(unix)]
+fn set_private_session_dir_mode(path: &Path) -> Result<(), String> {
+    use std::os::unix::fs::PermissionsExt;
+    let mut perms = std::fs::metadata(path)
+        .map_err(|e| {
+            format!(
+                "failed to stat credential file parent {}: {e}",
+                path.display()
+            )
+        })?
+        .permissions();
+    perms.set_mode(0o700);
+    std::fs::set_permissions(path, perms).map_err(|e| {
+        format!(
+            "failed to chmod credential file parent {} to 0700: {e}",
+            path.display()
+        )
+    })
+}
+
+#[cfg(not(unix))]
+fn set_private_session_dir_mode(_path: &Path) -> Result<(), String> {
+    Ok(())
+}
+
+fn prepare_resume_credential_file(credential_file: &Path) -> Result<String, String> {
+    let credential_parent = credential_file.parent().ok_or_else(|| {
+        format!(
+            "credential file has no parent: {}",
+            credential_file.display()
+        )
+    })?;
+    std::fs::create_dir_all(credential_parent).map_err(|e| {
+        format!(
+            "failed to create credential file parent {}: {e}",
+            credential_parent.display()
+        )
+    })?;
+    set_private_session_dir_mode(credential_parent)?;
+
+    let token = generate_daemon_auth_token();
+    let credential_json = serde_json::json!({
+        "version": 1,
+        "kind": "daemon_auth",
+        "token": token,
+    })
+    .to_string();
+
+    #[cfg(unix)]
+    let options = {
+        use std::os::unix::fs::OpenOptionsExt;
+        let mut options = OpenOptions::new();
+        options.write(true).create(true).truncate(true).mode(0o600);
+        options
+    };
+    #[cfg(not(unix))]
+    let options = {
+        let mut options = OpenOptions::new();
+        options.write(true).create(true).truncate(true);
+        options
+    };
+
+    let mut file = options.open(credential_file).map_err(|e| {
+        format!(
+            "failed to create credential file {}: {e}",
+            credential_file.display()
+        )
+    })?;
+    file.write_all(credential_json.as_bytes())
+        .and_then(|_| file.sync_all())
+        .map_err(|e| {
+            format!(
+                "failed to write credential file {}: {e}",
+                credential_file.display()
+            )
+        })?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut perms = file
+            .metadata()
+            .map_err(|e| {
+                format!(
+                    "failed to stat credential file {}: {e}",
+                    credential_file.display()
+                )
+            })?
+            .permissions();
+        perms.set_mode(0o600);
+        std::fs::set_permissions(credential_file, perms).map_err(|e| {
+            format!(
+                "failed to chmod credential file {} to 0600: {e}",
+                credential_file.display()
+            )
+        })?;
+    }
+
+    Ok(token)
 }
 
 /// Wait for a `polytoken daemon` (foreground) to write a `ready` startup.json,
@@ -434,24 +541,14 @@ async fn spawn_resume_daemon(
     let sessions_dir = opts.sessions_dir.as_ref().unwrap().clone();
     let global_config_dir = opts.global_config_dir.as_ref().unwrap().clone();
 
-    // The 0.5.0+ daemon requires --credential-file <path> (it writes a bearer
-    // token there at startup, and every HTTP endpoint enforces auth). Use the
-    // conventional location the daemon itself uses: <session_dir>/credential.json.
+    // The 0.5.0+ daemon requires --credential-file <path>. The CLI validates
+    // that this file already exists with mode 0600 and that its parent directory
+    // is private (0700). Older session dirs can be 0755, so normalize them before
+    // spawning the resume daemon.
     let credential_file = PathBuf::from(&sessions_dir)
         .join(&session_id)
         .join("credential.json");
-    let credential_parent = credential_file.parent().ok_or_else(|| {
-        format!(
-            "credential file has no parent: {}",
-            credential_file.display()
-        )
-    })?;
-    std::fs::create_dir_all(credential_parent).map_err(|e| {
-        format!(
-            "failed to create credential file parent {}: {e}",
-            credential_parent.display()
-        )
-    })?;
+    let prepared_auth_token = prepare_resume_credential_file(&credential_file)?;
 
     let args = build_resume_args(
         &cwd,
@@ -493,7 +590,8 @@ async fn spawn_resume_daemon(
             let auth_token = startup
                 .credential_file_path
                 .as_deref()
-                .and_then(|p| read_credential_token(Path::new(p)));
+                .and_then(|p| read_credential_token(Path::new(p)))
+                .or(Some(prepared_auth_token));
             Ok((
                 SpawnedDaemon {
                     session_id,
@@ -2352,7 +2450,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_spawn_resume_creates_credential_parent_before_launch() {
+    async fn test_spawn_resume_prepares_private_credential_before_launch() {
         let dir = tempfile::tempdir().expect("tempdir");
         let bin = dir.path().join("fake-polytoken-daemon");
         std::fs::write(
@@ -2379,7 +2477,10 @@ if [ ! -d "$credential_parent" ]; then
   echo "credential parent missing: $credential_parent" >&2
   exit 3
 fi
-printf '{"version":1,"kind":"daemon_auth","token":"resume-token"}' > "$credential_file"
+if [ ! -f "$credential_file" ]; then
+  echo "credential file missing: $credential_file" >&2
+  exit 4
+fi
 printf '{"state":"ready","session_id":"%s","pid":%s,"port":4567,"credential_file_path":"%s"}' \
   "$session_id" "$$" "$credential_file" > "$sessions_dir/$session_id/startup.json"
 sleep 30
@@ -2407,18 +2508,39 @@ sleep 30
             },
         )
         .await
-        .expect("resume spawn should succeed after creating credential parent");
+        .expect("resume spawn should succeed after preparing private credential file");
 
         assert_eq!(spawned.session_id, session_id);
         assert_eq!(spawned.port, 4567);
-        assert_eq!(spawned.auth_token.as_deref(), Some("resume-token"));
+        let token = spawned
+            .auth_token
+            .as_deref()
+            .expect("prepared credential token should be returned");
+        assert_eq!(token.len(), 64, "token should be 32 random bytes as hex");
+        assert!(token.chars().all(|c| c.is_ascii_hexdigit()));
+
+        let credential_file = sessions_dir.join(session_id).join("credential.json");
+        let credential_text = std::fs::read_to_string(&credential_file).expect("credential file");
         assert!(
-            sessions_dir
-                .join(session_id)
-                .join("credential.json")
-                .exists(),
-            "fake daemon should have been able to write credential.json"
+            credential_text.contains(token),
+            "credential file should contain the token used for auth"
         );
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let parent_mode = std::fs::metadata(sessions_dir.join(session_id))
+                .expect("credential parent metadata")
+                .permissions()
+                .mode()
+                & 0o777;
+            let file_mode = std::fs::metadata(&credential_file)
+                .expect("credential metadata")
+                .permissions()
+                .mode()
+                & 0o777;
+            assert_eq!(parent_mode, 0o700);
+            assert_eq!(file_mode, 0o600);
+        }
 
         if let Some(child) = child.as_mut() {
             cleanup_child(child).await;
