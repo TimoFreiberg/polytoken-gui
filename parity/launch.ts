@@ -74,16 +74,9 @@ export async function launch(p: Paths = paths()): Promise<void> {
   const guiUrl = `http://127.0.0.1:${vitePort}`;
   const wsUrl = `ws://127.0.0.1:${backendPort}/ws`;
 
-  // Bun resolves some CJS provider deps from the cache; NODE_PATH must point at this
-  // workspace's symlink forest before Bun starts (mirrors scripts/dev.ts).
-  const bunNodePath = join(REPO_ROOT, "node_modules", ".bun", "node_modules");
-
   const backendEnv: Record<string, string | undefined> = {
     ...process.env,
     ...isolationEnv(p),
-    NODE_PATH: process.env.NODE_PATH
-      ? `${bunNodePath}:${process.env.NODE_PATH}`
-      : bunNodePath,
     PILOT_DRIVER: "polytoken",
     PILOT_PORT: String(backendPort),
     PILOT_DATA_DIR: p.pilotData,
@@ -94,20 +87,12 @@ export async function launch(p: Paths = paths()): Promise<void> {
     PORT: undefined,
   };
 
-  const useRustBackend = process.env.PILOT_SERVER_IMPL === "rust";
-  const server = useRustBackend
-    ? Bun.spawn(["cargo", "run"], {
-        cwd: join(REPO_ROOT, "server-rs"),
-        env: backendEnv,
-        stdout: "inherit",
-        stderr: "inherit",
-      })
-    : Bun.spawn(["bun", "run", "--hot", "src/index.ts"], {
-        cwd: join(REPO_ROOT, "server"),
-        env: backendEnv,
-        stdout: "inherit",
-        stderr: "inherit",
-      });
+  const server = Bun.spawn(["cargo", "run"], {
+    cwd: join(REPO_ROOT, "server-rs"),
+    env: backendEnv,
+    stdout: "inherit",
+    stderr: "inherit",
+  });
 
   let shuttingDown = false;
   const procs = [server];

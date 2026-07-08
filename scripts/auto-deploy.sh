@@ -71,10 +71,10 @@ log_event() {
 trap 'log_event "error" "Unexpected failure (line $LINENO, exit $?)"' ERR
 
 # pilot.pid is written either as a bare integer (deploy/run.sh's pre-exec echo) or as
-# JSON {"pid":N,"serverId":"..."} (server/src/pidlock.ts acquirePidLock). A bare
-# `tr -d '[:space:]'` returns the whole JSON object as one token, and `kill -0
-# '{"pid":...}'` always fails — which silently breaks restart detection and rolls every
-# deploy back. Parse the pid out of either format instead.
+# JSON {"pid":N,"serverId":"..."} (the Rust server's pidlock). A bare `tr -d
+# '[:space:]'` returns the whole JSON object as one token, and `kill -0
+# '{"pid":...}'` always fails — which silently breaks restart detection and rolls
+# every deploy back. Parse the pid out of either format instead.
 read_pid() {
   [[ -f "$PIDFILE" ]] || return 0
   local raw pat
@@ -109,7 +109,7 @@ restart_and_wait() {
     kill "$old" 2>/dev/null || true
   else
     # No live pid recorded — fall back to matching the server process directly.
-    pkill -U "$(id -u)" -f 'bun run src/index.ts' 2>/dev/null || true
+    pkill -U "$(id -u)" -f 'target/release/pilot-server' 2>/dev/null || true
   fi
   while (( i < timeout )); do
     new="$(read_pid)"
@@ -181,6 +181,8 @@ fi
 # ── Build + smoke-test the staged slot (live slot still untouched) ──
 bun install --frozen-lockfile
 bun run build
+# Build the Rust server binary (run.sh execs it).
+(cd server-rs && cargo build --release --bin pilot-server)
 
 SMOKE="$STAGE_DIR/scripts/smoke-test.ts"
 if [[ -f "$SMOKE" ]]; then

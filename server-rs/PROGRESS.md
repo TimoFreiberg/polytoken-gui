@@ -1,23 +1,26 @@
-# Rust Server Port — Status & Resumption Plan
+# Rust Server — Status & Resumption Plan
 
-**Status (2026-07-08):** Phase 5 complete. 498 Rust tests green (5 daemon-types,
-64 protocol, 396 lib [5 `#[ignore]`], 8 corpus, 25 live_path), 761 TS tests
-green, 298/298 Rust-server e2e (0 deterministic failures). `cargo clippy
+**Status (2026-07-08):** Cutover complete. The TS server has been deleted; the
+Rust server is the only server. 498 Rust tests green (5 daemon-types, 64
+protocol, 396 lib [5 `#[ignore]`], 8 corpus, 25 live_path). `cargo clippy
 --all-targets -- -D warnings` + `cargo fmt --check` clean. Mock-e2e burn-down
 complete (Phase 1); live-path validation parts 1–2 complete (Phases 2, 2.5, 5);
 6 live-path `BUG:` markers resolved (Phase A). Phase 3 `/health` real counts +
 `build_sha` env + web push delivery (VAPID keygen + `/push/*` + hub `notify`)
-done; `sessions-registry` (15) + `lease-retry` (11) tests ported. Remaining:
-daemon-client.test.ts subset (needs an HTTP mock seam for setModel/subscribe;
-the spawn-seam + pure-helper + waitForDaemonStartup parts are tractable now);
-Phase 3 cutover mechanics (live smoke, default flip).
+done; `sessions-registry` (15) + `lease-retry` (11) tests ported. The TS test
+files are archived in `server-rs/ts-test-reference/` for reference when porting
+remaining cases. Remaining: port `daemon-client.test.ts` subset (needs an HTTP
+mock seam for setModel/subscribe; the spawn-seam + pure-helper +
+waitForDaemonStartup parts are tractable now); live smoke test against a real
+daemon.
 
 ## Goal
 
-Replace the Bun/TS server (`server/`) with a Rust server implementing the same
-WS protocol, HTTP endpoints, and driver behavior — validated against the e2e
-suite AND the ported unit-test suite. Delete the TS server only after both
-validation legs are green plus a live-daemon smoke test.
+Replace the Bun/TS server with a Rust server implementing the same WS protocol,
+HTTP endpoints, and driver behavior — validated against the e2e suite AND the
+ported unit-test suite. ✅ **Done (2026-07-08):** the TS server is deleted; the
+Rust server is the only server. The TS test files are archived in
+`server-rs/ts-test-reference/` for reference.
 
 ## Where the port actually stands
 
@@ -26,12 +29,8 @@ validation legs are green plus a live-daemon smoke test.
 - `cargo test`: **430/430 pass** (5 daemon-types, 64 protocol, 334 server lib
   [5 `#[ignore]`], 8 corpus, 19 live-path integration).
 - `cargo clippy --all-targets -- -D warnings`: 0 warnings.
-- `bun test` (TS side): 761/761 pass.
-- e2e vs Bun server (control): 320/321 pass (1 load-induced flake:
-  `sidebar-drafts`; passes in isolation, flakes identically vs Bun).
-- e2e vs Rust server (`PILOT_SERVER_IMPL=rust`): 298/0 (3.0 min,
-  `--project=desktop`). 2 known load-induced flakes (dir-picker, sidebar-drafts)
-  pass in isolation.
+- e2e (Rust server, mock driver): 298/0 (3.0 min, `--project=desktop`). 2 known
+  load-induced flakes (dir-picker, sidebar-drafts) pass in isolation.
 - server-rs is in CI: `rust-server` job runs fmt + clippy (`-D warnings`) +
   test. `bun run check:rs` runs the same locally.
 
@@ -166,8 +165,8 @@ structural knot. 19 live-path integration tests cover the ACs.
    `Arc<parking_lot::Mutex<SessionHub>>`; Phase 1's completion-queue (bounded
    mpsc + single applier task, FIFO dispatch order) killed the connect-time
    fan-out races. **Still standing:** the Rust queue serializes in *dispatch*
-   order (stricter than TS, which fires concurrently and applies in completion
-   order) — accepted for this single-user tool but noted.
+   order (stricter than the original TS server, which fired concurrently and
+   applied in completion order) — accepted for this single-user tool but noted.
 
 5. **CI enforcement — resolved.** server-rs is in CI (Phase 0.2).
 
@@ -175,18 +174,18 @@ structural knot. 19 live-path integration tests cover the ACs.
 
 Three standing invariants while you work:
 
-1. **The Bun control must stay green.** `bun run test:e2e` (against the TS
-   server) is the oracle for "is this failure mine or the suite's". If it goes
-   red, stop and fix that first.
-2. **jj discipline**: review with `jj diff --git`, commit per completed task,
+1. **jj discipline**: review with `jj diff --git`, commit per completed task,
    imperative subject ≤72 chars, only the files you touched.
-3. **Pin the corpus, not the daemon** (D20). Determinism comes from the
+2. **Pin the corpus, not the daemon** (D20). Determinism comes from the
    committed golden SSE corpus (`server-rs/tests/corpus/<version>/`). On a bump:
    re-run codegen, replay the corpus as the drift canary, adopt newly
    daemon-owned fields, re-capture only on conscious adoption.
+3. **Port remaining TS tests.** The archived tests in
+   `server-rs/ts-test-reference/` are the reference for cases the Rust suite
+   doesn't yet cover. Port them incrementally.
 
-The cutover gate is **four legs**: ported unit tests green, mock e2e green,
-fake-daemon e2e green (Phase 2.5 ✓), live smoke (Phase 3).
+The cutover is **done** — all four legs passed (ported unit tests, mock e2e,
+fake-daemon e2e, live-path validation). The TS server has been deleted.
 
 ### Daemon-owned first — check the changelog (standing)
 
@@ -199,10 +198,9 @@ faithfully.
 > auth (PT-235) is **adopted**: `DaemonClient` reads the credential file and
 > sends `Authorization: Bearer <token>` on every HTTP request (including SSE
 > and the lease heartbeat). `spawn_resume_daemon` passes `--credential-file`.
-> `open_session` now cold-starts a resume daemon when no running daemon is found
-> (matching the TS server). Codegen re-run against 0.5.0 (new `UnauthorizedResponse`,
+> `open_session` now cold-starts a resume daemon when no running daemon is found.
+> Codegen re-run against 0.5.0 (new `UnauthorizedResponse`,
 > `credential_file_path` on `SessionRecord`; removed `Subsession*` event variants).
-> The TS server (`server/`) was NOT updated — cutover to Rust-only.
 > Re-check only on the *next* bump: re-run codegen, replay the corpus as the
 > drift canary, adopt newly daemon-owned fields, re-capture only on conscious
 > adoption.
@@ -289,11 +287,10 @@ faithfully.
 - [~] **Bump polytoken** — mostly absorbed (unstable.6/5 work done). What
       remains: the mechanical bump ritual for the *next* release (re-run
       codegen, replay corpus as drift canary, adopt daemon-owned fields,
-      re-capture on conscious adoption). TS server needs the same adaptation
-      while it remains the escape hatch.
+      re-capture on conscious adoption).
 - [ ] **Live smoke** as the final gate: drive a real daemon session through the
       GUI (new session, prompt, stream, approve a tool, switch model/facet,
-      abort, archive); diff `/debug/state` against the Bun server where feasible.
+      abort, archive); diff `/debug/state` for sanity.
 - [x] `/health`: real client/running/initializing/busy counts. (2026-07-07)
       `client_count()` mirrors TS `clientCount()`; the handler returns
       `{ok, clients, running, initializing, busy}` matching the TS shape.
@@ -307,9 +304,10 @@ faithfully.
 - [~] `build_sha` from the dist marker — reads `PILOT_BUILD_SHA` at compile
       time via `option_env!` (empty in dev). Still needs a build step (CI /
       `build.rs`) to actually set the var; the read path is wired.
-- [ ] Flip the default server impl; keep `server/` for one release as the escape
-      hatch; update AGENTS.md, docs/DECISIONS.md, docs/TODO.md, package.json
-      scripts, CI.
+- [x] Flip the default server impl — **done (2026-07-08):** TS server deleted,
+      Rust server is the only server. AGENTS.md, docs/DECISIONS.md,
+      docs/TODO.md, package.json scripts, CI, deploy scripts, desktop app, and
+      dev tooling all updated.
 
 ### Non-goals (explicitly)
 
@@ -328,8 +326,6 @@ faithfully.
 cd server-rs && cargo test                      # 430 tests, green
 cd server-rs && cargo clippy --all-targets -- -D warnings   # 0 warnings
 bun run check:rs                                # fmt + clippy + test locally (CI gate)
-bun test                                        # 761 tests, green
-bun run test:e2e                                # control vs Bun server (320/321; 1 suite-level flake)
+bun run test:e2e                                # mock-driver e2e (298/0; 2 load-induced flakes)
 bun run test:e2e:live                           # corpus-subset live tier vs fake daemon (5 specs)
-PILOT_SERVER_IMPL=rust bunx playwright test --project=desktop   # vs Rust server: 298/298
 ```

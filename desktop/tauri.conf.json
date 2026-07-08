@@ -20,7 +20,7 @@
     "createUpdaterArtifacts": true,
     "category": "DeveloperTool",
     "icon": ["icons/icon.icns"],
-    "externalBin": ["binaries/pilot-hub"],
+    "externalBin": ["binaries/pilot-server"],
     "resources": {
       "../client/dist": "client-dist"
     },

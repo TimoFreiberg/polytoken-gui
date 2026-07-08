@@ -4,7 +4,7 @@ Settled architectural calls. Each is reversible unless noted. Numbers kept
 for cross-reference with git history.
 
 ## D1. Monorepo: GUI + remote infra in one repo
-`protocol/` (shared types + fold reducer, no runtime deps) · `server/` (Bun
+`protocol/` (shared types + fold reducer, no runtime deps) · `server-rs/` (Rust
 WS hub + drivers) · `client/` (Svelte 5 PWA) · `deploy/`. The server *is* the
 protocol contract — WS schema, server-side fold, and client reducer must evolve
 together, so splitting now forces premature version coordination.

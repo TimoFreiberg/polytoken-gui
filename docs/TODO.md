@@ -57,7 +57,7 @@ are REAL but **provisional** — they embed local `/Users/timo/...` paths from t
       exists precisely because "chunkier reveal vs token-smooth" was the feel
       question that got N1 deferred — now it's a live dial, not a rebuild.
       Buffering lives in `SessionHub.ingest` (wrapping the un-buffered
-      `ingestNow`); see `server/src/hub.ts` + the "assistantDelta coalescing (N1)"
+      `ingestNow`); see `server-rs/pilot-server/src/hub.rs` + the "assistantDelta coalescing (N1)"
       block in `hub.test.ts`.
 - [ ] **Client markdown re-parse is O(n²) per streamed message (C1).**
       `Markdown.svelte` re-parses full content on every content change; the
@@ -73,7 +73,7 @@ are REAL but **provisional** — they embed local `/Users/timo/...` paths from t
       structural event. Memoize per-turn so only the active turn recomputes;
       real windowing after that.
 - [ ] **Re-enable WS compression (permessage-deflate) when safe.** Disabled
-      2026-07-03 (`perMessageDeflate: false`, `server/src/index.ts`) because it
+      2026-07-03 (`perMessageDeflate: false`, `server-rs/pilot-server/src/main.rs`) because it
       killed the desktop app: Bun's WS compressor emits a BFINAL-terminated
       deflate stream whenever a message's compressed output is small (observed
       ≤ ~1.6KB; bigger output gets the normal open-ended sync-flush form), and
@@ -113,7 +113,7 @@ are REAL but **provisional** — they embed local `/Users/timo/...` paths from t
         `curl … | tar xz -C /Applications` — browser downloads of ad-hoc apps hit
         Gatekeeper's "damaged" refusal (see desktop/README.md "Installing a
         release").
-- [ ] **Decompose the hub (god object).** `server/src/hub.ts` owns the per-session
+- [ ] **Decompose the hub (god object).** `server-rs/pilot-server/src/hub.rs` owns the per-session
       journals, running/attention maps, clients map, live ticker, OAuth pending,
       prompt-results ledger; `handleClient` is one giant switch. Extract
       collaborators the hub delegates to. Deferred — touches the app's central

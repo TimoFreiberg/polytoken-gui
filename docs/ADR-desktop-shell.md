@@ -1,12 +1,15 @@
 # ADR — Desktop shell: Tauri now, Bun hub as supervised sidecar, Rust hub behind go/no-go
 
-Status: **amended** (2026-07-03 — Rust hub GO decision recorded below; see
-"Rust hub: GO decision"). Previously **accepted 2026-07-03** (owner sign-off) —
-**spike complete, all five exit criteria green**; the walking skeleton shipped as
-`desktop/` (see "Spike results" below and `desktop/README.md`).
-Originally proposed 2026-07-02 from the design-dossier track. Supersedes the shell part of the "📐 Architecture direction" note
-in `docs/TODO.md` (2026-07-01) — the Rust-hub end-state there stays a valid *target*,
-gated by the criteria below. The Swift shell (`desktop/`, deleted) is fully retired.
+Status: **amended** (2026-07-08 — TS server deleted, Rust server is the only
+server; clone mode removed, the desktop app bundles the Rust `pilot-server`
+binary as its sidecar). Previously **amended** (2026-07-03 — Rust hub GO decision
+recorded below; see "Rust hub: GO decision"). Previously **accepted 2026-07-03**
+(owner sign-off) — **spike complete, all five exit criteria green**; the walking
+skeleton shipped as `desktop/` (see "Spike results" below and `desktop/README.md`).
+Originally proposed 2026-07-02 from the design-dossier track. Supersedes the
+shell part of the "📐 Architecture direction" note in `docs/TODO.md` (2026-07-01)
+— the Rust-hub end-state there stays a valid *target*, gated by the criteria
+below. The Swift shell (`desktop/`, deleted) is fully retired.
 
 ## Decision
 

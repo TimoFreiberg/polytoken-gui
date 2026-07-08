@@ -25,22 +25,16 @@ See `docs/DESIGN.md` for architecture, `docs/DECISIONS.md` for settled calls, `d
 Monorepo, Bun workspaces.
 - `protocol/` — shared, JSON-serializable WS contract + the `foldEvent` reducer that
   runs identically on server & client.
-- `server/` — Bun (`Bun.serve`) WS bridge + `/debug/state`. Embeds a `PilotDriver`
-  (the seam). `MockDriver` is the deterministic fixture driver for dev/e2e;
-  `polytoken-driver.ts` is the live daemon driver. The hub never changes between them.
-- `server-rs/` — Rust port of the server (in progress). Same WS protocol, HTTP
-  endpoints, and driver behavior. Three crates: `pilot-protocol` (WS types + fold),
+- `server-rs/` — the Rust server. Axum-based WS bridge + HTTP routes + static file
+  serving. Three crates: `pilot-protocol` (WS types + fold),
   `pilot-daemon-types` (auto-generated from OpenAPI), `pilot-server` (the binary).
-  Mock mode uses `mock_driver.rs`, a direct port of the TS MockDriver. Set
-  `PILOT_SERVER_IMPL=rust` to launch the Rust binary instead of the Bun server.
-  **The installed daemon is `0.5.0-unstable.1`** (bearer-token auth); the Rust
-  server is the only server path being maintained (the TS server in `server/`
-  is not being updated — cutover to Rust-only). See `server-rs/PROGRESS.md`
-  for the live-path validation status before building on it.
+  The `PilotDriver` seam has two implementors: `mock` (deterministic, for dev/e2e)
+  and `polytoken` (the live daemon). **The installed daemon is
+  `0.5.0-unstable.1`** (bearer-token auth). See `server-rs/PROGRESS.md` for the
+  live-path validation status before building on it. Archived TS tests are in
+  `server-rs/ts-test-reference/` for reference when porting cases to Rust.
 - `client/` — Svelte 5 + Vite PWA. Reconnecting WS singleton, the same fold reducer,
   Claude-app theming in `src/app.css` (warm paper, light + dark).
-- `server/src/shared/` — agent-agnostic utilities both drivers + the hub use
-  (worktree, warm-cap, session-list, login-env, background-model).
 
 ## Commands
 
@@ -48,33 +42,24 @@ Monorepo, Bun workspaces.
 bun install
 PILOT_DRIVER=mock bun run dev   # server + client, using mock driver (no daemon needed)
 bun run dev                     # default: polytoken driver (needs a running daemon)
-bun test                        # unit tests — no driver needed, no mock required
+bun test                        # unit tests — protocol, client, scripts
 bun run test:e2e                # Playwright — sets PILOT_DRIVER=mock automatically
-bunx tsc --noEmit -p protocol/tsconfig.json   # typecheck server/protocol the same way
+bunx tsc --noEmit -p protocol/tsconfig.json   # typecheck protocol
 bunx tsc --noEmit -p tsconfig.scripts.json   # typecheck scripts/ (dev tooling)
 bunx tsc --noEmit -p tsconfig.e2e.json       # typecheck e2e/ (Playwright doesn't, by default)
 bun run --cwd client check                    # svelte-check
 bun run --cwd client build                    # prod bundle
-# Rust server (in progress — port to parity, then cut over):
 cd server-rs && cargo build       # build the Rust server
-cd server-rs && cargo test        # run all Rust tests (150 tests)
+cd server-rs && cargo test        # run all Rust tests
 cd server-rs && cargo run         # run the Rust server (reads PILOT_PORT, PILOT_DATA_DIR, etc.)
-PILOT_SERVER_IMPL=rust bun run dev   # launch the Rust server instead of Bun
 ```
 
-`bun run check` runs protocol + server + scripts + e2e + client typechecks end to end.
+`bun run check` runs protocol + scripts + e2e + client typechecks end to end.
 `tsconfig.scripts.json` and `tsconfig.e2e.json` close the typecheck gap for the
 dev-tooling and Playwright trees. Keep it green. **server-rs has its own CI
 gate** (`rust-server` job in `.github/workflows/ci.yml`: `cargo fmt --check` +
 `cargo clippy --locked --all-targets -- -D warnings` + `cargo test`); run
 `bun run check:rs` locally for the same three checks.
-
-**Rust server note:** The Rust port is in progress. Set `PILOT_SERVER_IMPL=rust`
-to spawn the Rust binary (`cargo run` in `server-rs/`) instead of the Bun server
-(`bun run src/index.ts` in `server/`). The Rust server reads the same env vars
-(`PILOT_PORT`, `PILOT_DATA_DIR`, `PILOT_TOKEN`, `PILOT_DRIVER`, etc.). Run
-`cargo test` in `server-rs/` for the Rust unit tests. The daemon types are
-auto-generated: `bun run scripts/codegen-polytoken-rs.ts`.
 
 **Driver note:** the server defaults to the polytoken daemon driver. Set
 `PILOT_DRIVER=mock` to use the deterministic mock instead — you want this for UI dev
@@ -82,15 +67,15 @@ without a running daemon and for the dev-bar (`/?dev`). The e2e suite sets it
 automatically; unit tests don't touch the driver at all. `PILOT_DRIVER=pi` is a hard
 error (the driver was removed on this branch).
 
-A third mode, **`PILOT_DRIVER=fake`** (Rust server only — set `PILOT_SERVER_IMPL=rust`),
-runs the real `PolytokenDriver` over an *in-process, corpus-backed fake daemon*:
-deterministic like the mock, but it exercises the live driver stack
-(`daemon_client → event_map → driver`) end-to-end. It reads the frozen corpus
-(`server-rs/tests/corpus`) and fails loud if it's absent, so it's dev/e2e-only (never
-shipped). The corpus-backed **live e2e tier** drives it: `bun run test:e2e:live`
-(separate `playwright.live.config.ts` over `e2e/live/`; the default `bun run test:e2e`
-mock tier — `desktop`/`mobile` — is unchanged). It's a deliberate subset over the
-frozen corpus flows, not the full mock suite (see `docs/DECISIONS.md` D21).
+A third mode, **`PILOT_DRIVER=fake`**, runs the real `PolytokenDriver` over an
+*in-process, corpus-backed fake daemon*: deterministic like the mock, but it
+exercises the live driver stack (`daemon_client → event_map → driver`)
+end-to-end. It reads the frozen corpus (`server-rs/tests/corpus`) and fails loud
+if it's absent, so it's dev/e2e-only (never shipped). The corpus-backed **live e2e
+tier** drives it: `bun run test:e2e:live` (separate `playwright.live.config.ts`
+over `e2e/live/`; the default `bun run test:e2e` mock tier — `desktop`/`mobile` —
+is unchanged). It's a deliberate subset over the frozen corpus flows, not the full
+mock suite (see `docs/DECISIONS.md` D21).
 
 **Worktree note:** if you're spawned in an isolated worktree, work there — don't
 fall back to `~/src/pilot` (a concurrent session may be committing there; two
@@ -134,7 +119,7 @@ This is set up so you can verify autonomously — use it.
   that state. Or send a `{type:"mock", script}` WS message.
 - **Inspect server state directly:** `GET /debug/state` returns the full
   authoritative `SessionState` as JSON. `curl localhost:8787/debug/state | …`.
-- Fixtures + scripts live in `server/src/fixtures.ts`. Add a script there to get a
+- Fixtures + scripts live in the Rust server's `mock_driver.rs`. Add a script there to get a
   new reproducible UI state.
 - **Committed regression suite:** `bun run test:e2e` (Playwright, in `e2e/`). It
   reuses a running `bun run dev` (or starts one), resets the mock via `/debug/reset`
@@ -148,8 +133,9 @@ This is set up so you can verify autonomously — use it.
   fight it; re-Read before an Edit if a region was reformatted.
 - VCS is **jj** (see the `jj` skill). Commit when done; review with `jj diff --git`;
   imperative subject ≤72 chars.
-- Keep `protocol/` free of runtime/DOM deps — it's imported by both halves.
-- The `PilotDriver` interface is the contract for swapping mock ↔ polytoken. Add
+- Keep `protocol/` free of runtime/DOM deps — it's imported by both halves
+  (the Rust server and the Svelte client).
+- The `PilotDriver` trait is the contract for swapping mock ↔ polytoken. Add
   capabilities there, implement in both drivers.
 - **Collapse/disclosure affordances share two primitives.** The glyph is
   `client/src/components/ui/Chevron.svelte` (stroked SVG; `variant="disclosure"`

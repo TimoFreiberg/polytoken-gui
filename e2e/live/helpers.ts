@@ -1,7 +1,7 @@
 import { expect, type Page } from "@playwright/test";
 
 // Helpers for the LIVE tier — the real PolytokenDriver over an in-process,
-// corpus-backed fake daemon (PILOT_DRIVER=fake + PILOT_SERVER_IMPL=rust). These
+// corpus-backed fake daemon (PILOT_DRIVER=fake). These
 // deliberately do NOT reuse e2e/helpers.ts: `gotoFresh` there waits for the mock's
 // scripted greeting turn (which the fake bootstrap session has no equivalent of),
 // and `drive` clicks dev-bar buttons whose labels are the MOCK's script vocabulary.

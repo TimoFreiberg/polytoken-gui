@@ -1,4 +1,4 @@
-// Brings up the whole dev stack with one command: the Bun WS server (PILOT_PORT,
+// Brings up the whole dev stack with one command: the Rust WS server (PILOT_PORT,
 // default 8787) and the Vite client (VITE_PORT, default 5173, proxying /ws and
 // /debug to PILOT_SERVER). Used by `bun run dev` and by the Claude_Preview launch
 // config so an agent can boot the app in one shot.
@@ -109,16 +109,8 @@ const dataDir =
 const viteArgs = ["run", "dev"];
 if (vitePort) viteArgs.push("--port", vitePort);
 
-// Pilot embeds the polytoken daemon inside a Bun process. Some provider deps are CJS packages that
-// Bun resolves from ~/.bun/install/cache, where transitive deps are not laid out as
-// siblings. NODE_PATH must be present before Bun starts so those cached packages can
-// resolve through this workspace's real dependency symlink forest.
-const bunNodePath = join(process.cwd(), "node_modules", ".bun", "node_modules");
 const backendEnv = {
   ...process.env,
-  NODE_PATH: process.env.NODE_PATH
-    ? `${bunNodePath}:${process.env.NODE_PATH}`
-    : bunNodePath,
   PILOT_PORT: backendPort,
   PILOT_DATA_DIR: dataDir,
   // In auto-port mode the instance must be tokenless (auth disabled), like every other
@@ -135,20 +127,12 @@ const backendEnv = {
 // still booting — a tool like Claude_Preview returns as soon as the port listens,
 // catching the client mid-reconnect-backoff with a stale "Offline" banner and an
 // empty session list. Gating on /health makes the first WS connect succeed.
-const useRustBackend = process.env.PILOT_SERVER_IMPL === "rust";
-const server = useRustBackend
-  ? Bun.spawn(["cargo", "run"], {
-      cwd: "server-rs",
-      env: backendEnv,
-      stdout: "inherit",
-      stderr: "inherit",
-    })
-  : Bun.spawn(["bun", "run", "--hot", "src/index.ts"], {
-      cwd: "server",
-      env: backendEnv,
-      stdout: "inherit",
-      stderr: "inherit",
-    });
+const server = Bun.spawn(["cargo", "run"], {
+  cwd: "server-rs",
+  env: backendEnv,
+  stdout: "inherit",
+  stderr: "inherit",
+});
 
 async function waitForHealth(base: string, timeoutMs = 15_000): Promise<void> {
   const deadline = Date.now() + timeoutMs;

@@ -15,7 +15,8 @@ const stageDir = process.argv[2] ?? resolve(import.meta.dir, "..");
 const port = Number(process.env.PILOT_SMOKE_PORT ?? 8799);
 const base = `http://127.0.0.1:${port}`;
 
-const serverDir = join(stageDir, "server");
+const serverDir = join(stageDir, "server-rs");
+const clientDist = join(stageDir, "client", "dist");
 const dataDir = mkdtempSync(join(tmpdir(), "pilot-smoke-"));
 
 function fail(msg: string): never {
@@ -41,7 +42,7 @@ function cleanup(): void {
 console.error(
   `smoke-test: booting staged server from ${serverDir} on :${port}`,
 );
-proc = Bun.spawn(["bun", "run", "src/index.ts"], {
+proc = Bun.spawn(["cargo", "run"], {
   cwd: serverDir,
   env: {
     ...process.env,
@@ -49,6 +50,7 @@ proc = Bun.spawn(["bun", "run", "src/index.ts"], {
     PILOT_HOST: "127.0.0.1",
     PILOT_PORT: String(port),
     PILOT_DATA_DIR: dataDir,
+    PILOT_CLIENT_DIST: clientDist,
     PILOT_TOKEN: "", // tokenless: /health and / are open, simplest to probe
   },
   stdout: "inherit",
@@ -84,7 +86,7 @@ await waitForHealth();
 console.error("smoke-test: /health ok");
 
 // Confirm the built client is actually being served — not the "no client build"
-// placeholder the server returns when client/dist is missing (server/src/index.ts).
+// placeholder the server returns when client/dist is missing.
 const rootRes = await fetch(`${base}/`);
 const html = await rootRes.text();
 if (!rootRes.ok) fail(`GET / returned ${rootRes.status}`);

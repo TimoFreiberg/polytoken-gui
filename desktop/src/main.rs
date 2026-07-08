@@ -1,6 +1,6 @@
-//! Pilot desktop shell (Tauri). Boots a local pilot server (bundled sidecar binary, or
-//! a dedicated clone in dev), gates on /health, then shows the hub-served web client in
-//! a chromeless window. See desktop/README.md and docs/ADR-desktop-shell.md.
+//! Pilot desktop shell (Tauri). Boots a local pilot server (bundled Rust sidecar
+//! binary), gates on /health, then shows the hub-served web client in a chromeless
+//! window. See desktop/README.md and docs/ADR-desktop-shell.md.
 
 #![cfg_attr(
     all(not(debug_assertions), target_os = "windows"),
@@ -67,25 +67,6 @@ fn main() {
             let state = app.state::<AppState>();
             let config = state.config.clone();
 
-            // Clone mode runs everything from a dedicated checkout — a bare `.git` check
-            // is enough (always a plain `git clone`, not a worktree). Fail with setup
-            // instructions rather than a confusing blank window (present_fatal shows the
-            // dialog on its own thread while the loading page sits underneath). Bundled
-            // mode already verified its payload in resolve().
-            if matches!(config.hub_mode, crate::config::HubMode::Clone)
-                && !config.clone.join(".git").exists()
-            {
-                shell::present_fatal(
-                    &handle,
-                    &format!(
-                        "No pilot checkout at {clone}.\n\nCreate it once:\n  git clone \
-                         <pilot-repo> {clone}\n  cd {clone} && bun install && bun run \
-                         build\n\nOr set PILOT_APP_CLONE to an existing checkout.",
-                        clone = config.clone.display()
-                    ),
-                );
-                return Ok(());
-            }
             std::fs::create_dir_all(&config.data_dir)?;
 
             let supervisor = Supervisor::start(config.clone(), {
@@ -150,19 +131,10 @@ fn on_supervisor_event(app: &AppHandle, event: SupervisorEvent) {
             state.overlay.navigated();
             shell::navigate_main(app, &state.config.app_url());
             if first_time {
-                match state.config.hub_mode {
-                    // Clone mode is the dev loop: no payload auto-update (you're editing
-                    // that checkout). One silent startup check covers the shell.
-                    crate::config::HubMode::Clone => {
-                        updater::spawn_check(app.clone(), false);
-                    }
-                    // Bundled mode: one artifact = shell + hub + client, so the shell's
-                    // own update loop owns updates — it drives the sidebar card over
-                    // /update/state and applies via the Tauri updater.
-                    crate::config::HubMode::Bundled { .. } => {
-                        updater::spawn_periodic(app.clone());
-                    }
-                }
+                // One artifact = shell + hub + client, so the shell's own update loop
+                // owns updates — it drives the sidebar card over /update/state and
+                // applies via the Tauri updater.
+                updater::spawn_periodic(app.clone());
             }
         }
         SupervisorEvent::Unrecoverable(message) => {

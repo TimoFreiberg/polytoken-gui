@@ -1,22 +1,20 @@
 #!/usr/bin/env bun
-// build-hub.ts — compile the pilot hub (server/src/index.ts) into a single
-// self-contained binary for the bundled desktop app.
+// build-hub.ts — compile the Rust pilot server into a binary for the bundled
+// desktop app.
 //
-// The output lands in desktop/binaries/pilot-hub-<target-triple> — the
+// The output lands in desktop/binaries/pilot-server-<target-triple> — the
 // target-triple suffix is Tauri's externalBin convention (the bundler strips it
-// and ships the binary as Contents/MacOS/pilot-hub). The binary embeds the Bun
-// runtime and every workspace/npm dependency; at runtime it only needs the
-// external tools the hub always shelled out to (polytoken, git/jj, fd) plus
-// PILOT_CLIENT_DIST pointing at a built client bundle (in the .app: the
-// client-dist resource; see server/src/config.ts).
+// and ships the binary as Contents/MacOS/pilot-server). At runtime the binary
+// only needs the external tools the hub always shelled out to (polytoken,
+// git/jj, fd) plus PILOT_CLIENT_DIST pointing at a built client bundle (in the
+// .app: the client-dist resource).
 //
 // Run from anywhere: `bun scripts/desktop/build-hub.ts`. Used as the Tauri
 // beforeDevCommand/beforeBuildCommand (desktop/tauri.conf.json) — dev
 // needs the file to exist because tauri-build stages externalBin next to the
-// dev binary and errors when it's missing, even though clone-mode dev never
-// spawns it.
+// dev binary and errors when it's missing, even though dev never spawns it.
 
-import { existsSync, mkdirSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync } from "node:fs";
 import { join, resolve } from "node:path";
 
 const repoRoot = resolve(import.meta.dir, "../..");
@@ -46,28 +44,32 @@ if (import.meta.main) {
   const outDir = join(repoRoot, "desktop", "binaries");
   mkdirSync(outDir, { recursive: true });
   // tauri.conf.json maps ../client/dist as a bundle resource; guarantee the dir
-  // exists so a fresh checkout can `tauri dev` (clone mode) before any client build.
+  // exists so a fresh checkout can `tauri dev` before any client build.
   mkdirSync(join(repoRoot, "client", "dist"), { recursive: true });
 
-  const outfile = join(outDir, `pilot-hub-${hostTriple()}`);
-  const proc = Bun.spawn(
-    [
-      "bun",
-      "build",
-      "--compile",
-      "--sourcemap",
-      join(repoRoot, "server", "src", "index.ts"),
-      "--outfile",
-      outfile,
-    ],
-    { cwd: repoRoot, stdout: "inherit", stderr: "inherit" },
+  // Build the Rust server in release mode for the host target.
+  const build = Bun.spawn(
+    ["cargo", "build", "--release", "--bin", "pilot-server"],
+    { cwd: join(repoRoot, "server-rs"), stdout: "inherit", stderr: "inherit" },
   );
-  const code = await proc.exited;
+  const code = await build.exited;
   if (code !== 0) process.exit(code);
-  if (!existsSync(outfile)) {
-    console.error(`bun build reported success but ${outfile} is missing`);
+
+  const triple = hostTriple();
+  const built = join(
+    repoRoot,
+    "server-rs",
+    "target",
+    "release",
+    "pilot-server",
+  );
+  const outfile = join(outDir, `pilot-server-${triple}`);
+  if (!existsSync(built)) {
+    console.error(`cargo build succeeded but ${built} is missing`);
     process.exit(1);
   }
+  copyFileSync(built, outfile);
+
   const size = (Bun.file(outfile).size / 1024 / 1024).toFixed(1);
-  console.log(`hub compiled → ${outfile} (${size} MB)`);
+  console.log(`server compiled → ${outfile} (${size} MB)`);
 }
