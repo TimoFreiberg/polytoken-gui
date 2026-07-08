@@ -73,7 +73,7 @@ use crate::polytoken::daemon_client::{
 use crate::polytoken::event_map::{self, DaemonEffect, FoldAccumulator, FoldResult, MapCtx};
 use crate::polytoken::fake_daemon::FakeControlHub;
 use crate::polytoken::history_seed::{self, HistoryMapCtx};
-use crate::polytoken::models::parse_models;
+use crate::polytoken::models::{model_post_key, parse_models};
 use crate::polytoken::sessions_registry;
 use crate::polytoken::ui_bridge::{PendingInterrogative, build_interrogative_response};
 use crate::shared::login_env::{self, CapturedLoginEnv};
@@ -1630,7 +1630,7 @@ impl PantokenDriver for PolytokenDriver {
             Ok(ws) => {
                 // Apply model/thinking if specified (on the warm client, before seeding)
                 if let Some(model) = &opts.model {
-                    let model_str = format!("{}/{}", model.provider, model.model_id);
+                    let model_str = model_post_key(&model.model_id);
                     let _ = ws
                         .client
                         .set_model(&model_str, opts.thinking.as_deref())
@@ -1969,11 +1969,11 @@ impl PantokenDriver for PolytokenDriver {
         }
     }
 
-    fn set_model(&self, provider: String, model_id: String, session_id: Option<SessionId>) {
+    fn set_model(&self, _provider: String, model_id: String, session_id: Option<SessionId>) {
         if let Some(sid) = &session_id {
             if let Some(ws) = self.inner.get_warm(sid) {
                 let ws = ws.clone();
-                let model = format!("{provider}/{model_id}");
+                let model = model_post_key(&model_id);
                 tokio::spawn(async move {
                     let _ = ws.client.set_model(&model, None).await;
                 });

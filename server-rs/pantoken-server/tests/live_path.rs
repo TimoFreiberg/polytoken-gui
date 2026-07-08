@@ -20,7 +20,7 @@ use pantoken_daemon_types::SseEnvelope;
 use pantoken_protocol::session_driver::{SessionDriverEvent, SessionRef, WorkspaceRef};
 use tokio::sync::Mutex;
 
-use pantoken_server::driver::{NewSessionOptsData, PantokenDriver};
+use pantoken_server::driver::{NewSessionModel, NewSessionOptsData, PantokenDriver};
 use pantoken_server::polytoken::daemon_client::{
     SpawnDaemonOpts, SpawnedDaemon, clear_spawn_override, set_spawn_override,
 };
@@ -195,6 +195,73 @@ async fn harness_smoke_opens_session_and_seeds() {
     // The seed is whatever history_to_seed_events produces from the recorded
     // /history (empty for streaming-turn). Assert it's a valid Vec (not a panic).
     let _ = seed;
+}
+
+#[tokio::test]
+async fn model_switches_post_full_registry_model_id() {
+    let _guard = OVERRIDE_MUTEX.lock().await;
+
+    let scenario = corpus_loader::load_named(VERSION, "streaming-turn");
+    let fake = Arc::new(fake_daemon::spawn(scenario.clone(), "model-key-1".into(), 0).await);
+    let _ovr = OverrideGuard::install(fake.clone());
+
+    let (driver, _dir) = make_driver().await;
+    driver
+        .new_session(NewSessionOptsData {
+            model: Some(NewSessionModel {
+                provider: "anthropic".into(),
+                model_id: "anthropic/claude-sonnet-5".into(),
+            }),
+            ..NewSessionOptsData::default()
+        })
+        .await
+        .expect("new_session");
+
+    let created_body = fake
+        .recorded_request_bodies()
+        .into_iter()
+        .find(|(method, path, _body)| method == "POST" && path == "/model")
+        .map(|(_method, _path, body)| body)
+        .expect("new_session should POST /model");
+    let created_json: serde_json::Value =
+        serde_json::from_str(&created_body).expect("model request body json");
+    assert_eq!(
+        created_json["model"], "anthropic/claude-sonnet-5",
+        "new_session must not prefix provider onto the full registry model id"
+    );
+
+    let calls_before = fake.recorded_request_bodies().len();
+    driver.set_model(
+        "deepseek".into(),
+        "deepseek/deepseek-v4-pro".into(),
+        Some(fake.session_id.clone()),
+    );
+
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(2);
+    let live_body = loop {
+        if let Some(body) = fake
+            .recorded_request_bodies()
+            .into_iter()
+            .skip(calls_before)
+            .find(|(method, path, _body)| method == "POST" && path == "/model")
+            .map(|(_method, _path, body)| body)
+        {
+            break body;
+        }
+        if tokio::time::Instant::now() >= deadline {
+            panic!(
+                "set_model should POST /model; calls: {:?}",
+                fake.recorded_request_bodies()
+            );
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    };
+    let live_json: serde_json::Value =
+        serde_json::from_str(&live_body).expect("live model request body json");
+    assert_eq!(
+        live_json["model"], "deepseek/deepseek-v4-pro",
+        "live set_model must not prefix provider onto the full registry model id"
+    );
 }
 
 // ===========================================================================

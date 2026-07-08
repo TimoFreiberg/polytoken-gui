@@ -89,6 +89,11 @@ fn canned(method: &str, path: &str) -> Option<(StatusCode, Value)> {
     if m == "POST" && (p == "/tui-attachment/release" || p == "/terminate") {
         return Some((StatusCode::OK, serde_json::json!({"ok": true})));
     }
+    // POST /model — acknowledge model/thinking switches. Tests inspect the
+    // recorded body to verify the driver sent the daemon's full registry key.
+    if m == "POST" && p == "/model" {
+        return Some((StatusCode::OK, serde_json::json!({"ok": true})));
+    }
     // GET /turn/input — the RefetchQueue effect's snapshot fetch. The corpus
     // doesn't record /turn/input (the queue-while-in-flight scenario triggers
     // a RefetchQueue but the capture didn't snapshot it), so serve a canned
@@ -116,6 +121,8 @@ fn canned(method: &str, path: &str) -> Option<(StatusCode, Value)> {
 struct FakeState {
     /// Every `(METHOD, path)` the driver called, in arrival order.
     calls: Vec<(String, String)>,
+    /// Every `(METHOD, path, body)` the driver called, in arrival order.
+    request_bodies: Vec<(String, String, String)>,
     /// Per `(METHOD, path)` → index into the scenario's matching `http[]`
     /// entries (so repeated calls advance through the recordings).
     cursors: HashMap<(String, String), usize>,
@@ -146,6 +153,11 @@ impl FakeDaemon {
     /// Every `(method, path)` the driver has made so far, in arrival order.
     pub fn recorded_calls(&self) -> Vec<(String, String)> {
         self.state.lock().calls.clone()
+    }
+
+    /// Every `(method, path, body)` the driver has made so far, in arrival order.
+    pub fn recorded_request_bodies(&self) -> Vec<(String, String, String)> {
+        self.state.lock().request_bodies.clone()
     }
 
     /// True iff the driver made a call matching `method` + `path`.
@@ -674,11 +686,17 @@ async fn http_handler(
 ) -> Response {
     let method = req.method().to_string();
     let path = req.uri().path().to_string();
+    let request_body = axum::body::to_bytes(req.into_body(), usize::MAX)
+        .await
+        .map(|bytes| String::from_utf8_lossy(&bytes).to_string())
+        .unwrap_or_default();
 
     // Record the call (lock held only for the push + cursor advance).
     let (status, body) = {
         let mut st = app.state.lock();
         st.calls.push((method.clone(), path.clone()));
+        st.request_bodies
+            .push((method.clone(), path.clone(), request_body));
         // Canned lifecycle endpoints win over recordings (the corpus never
         // records them, and a recording would be stale/malformed for them).
         if let Some((code, val)) = canned(&method, &path) {
