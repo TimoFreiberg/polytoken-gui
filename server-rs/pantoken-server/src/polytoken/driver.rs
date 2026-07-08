@@ -1490,6 +1490,37 @@ impl PantokenDriver for PolytokenDriver {
     async fn open_session(&self, path: String) -> Result<Vec<SessionDriverEvent>, String> {
         let session_id = PolytokenInner::session_id_from_path(&path)
             .ok_or_else(|| format!("could not resolve session id from path: {path}"))?;
+
+        // Fast path: if the session is already in the warm pool, the SSE consumer
+        // has been live-folding events into the hub's journal continuously.
+        // Re-fetching GET /history + mapping + folding the full transcript is
+        // size-proportional wasted work — finish_switch won't reseed an existing
+        // journal (the client gets its seed from the journal, not from this fetch).
+        // Return a minimal seed (just SessionOpened with the cached snapshot) so
+        // finish_switch can extract the sid and reconcile running/attention — the
+        // only things the full seed was used for on a warm re-open.
+        if let Some(ws) = self.inner.get_warm(&session_id) {
+            let real_id = ws.client.session_id.clone();
+            self.inner.focus(&real_id);
+            let ctx = DriverMapCtx {
+                session_ref: ws.session_ref.clone(),
+                workspace: ws.workspace.clone(),
+                last_state: ws.last_state.read().clone(),
+                monitor_mode: *ws.monitor_mode.lock(),
+                autodrain_enabled: *ws.autodrain_enabled.lock(),
+            };
+            let snapshot = ctx.snapshot(ctx.live_status());
+            // build_branch_seed with empty history yields just [SessionOpened]
+            // (the trailing SessionUpdated is skipped when nothing replayed).
+            return Ok(PolytokenInner::build_branch_seed(
+                snapshot,
+                &[],
+                &HistoryMapCtx {
+                    r#ref: ws.session_ref.clone(),
+                },
+            ));
+        }
+
         let session_ref = SessionRef {
             workspace_id: WorkspaceId::default(),
             session_id: session_id.clone(),

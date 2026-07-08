@@ -938,6 +938,112 @@ async fn test_open_session_cold_start_spawns_daemon() {
     let _ = seed;
 }
 
+/// Re-opening an already-warm session must NOT re-fetch GET /history. The first
+/// open_session warms the session (spawn → health → claim → state → history);
+/// the SSE consumer then live-folds events into the hub's journal. A second
+/// open_session for the same session should short-circuit: return a minimal
+/// [SessionOpened] seed from the cached snapshot, skipping the size-proportional
+/// history fetch + map + fold — finish_switch won't reseed an existing journal,
+/// so the full fetch is wasted work on the hottest path (A↔B switching).
+#[tokio::test]
+async fn open_session_warm_reopen_skips_history_fetch() {
+    let _guard = OVERRIDE_MUTEX.lock().await;
+
+    let scenario = synthetic_idle_scenario();
+    let override_guard = fake_daemon::MultiSpawnOverrideGuard::install(scenario, "warm-reopen");
+    let handle = override_guard.handle();
+
+    let (driver, dir) = make_driver().await;
+
+    // Write a session.json so cwd_for_session resolves (same setup as the
+    // cold-start test above).
+    let session_id = "warm-reopen-1";
+    let sessions_dir = dir.path().join("sessions");
+    let session_dir = sessions_dir.join(session_id);
+    std::fs::create_dir_all(&session_dir).expect("mkdir session dir");
+    std::fs::write(
+        session_dir.join("session.json"),
+        serde_json::json!({
+            "session_id": session_id,
+            "project_path": "/tmp/project",
+            "created_at": "2025-01-01T00:00:00Z",
+            "last_activity_at": "2025-01-01T00:00:00Z",
+        })
+        .to_string(),
+    )
+    .expect("write session.json");
+
+    let path = session_dir.join("session.json");
+    let path = path.to_string_lossy().to_string();
+
+    // First open: cold-start spawn → warm → history fetch.
+    let seed1 = driver
+        .open_session(path.clone())
+        .await
+        .expect("first open_session should succeed");
+
+    let spawned = handle.spawned();
+    assert_eq!(spawned.len(), 1, "one fake daemon should have been spawned");
+    assert!(
+        spawned[0].called("GET", "/history"),
+        "first open should fetch /history; calls: {:?}",
+        spawned[0].recorded_calls()
+    );
+    let history_count_after_first = spawned[0]
+        .recorded_calls()
+        .iter()
+        .filter(|(m, p)| m == "GET" && p == "/history")
+        .count();
+    assert_eq!(
+        history_count_after_first, 1,
+        "first open should hit /history exactly once"
+    );
+
+    // Second open: session is already warm — fast path, no history fetch.
+    let seed2 = driver
+        .open_session(path)
+        .await
+        .expect("second open_session should succeed");
+
+    let history_count_after_second = spawned[0]
+        .recorded_calls()
+        .iter()
+        .filter(|(m, p)| m == "GET" && p == "/history")
+        .count();
+    assert_eq!(
+        history_count_after_second,
+        1,
+        "warm re-open must NOT fetch /history again; calls: {:?}",
+        spawned[0].recorded_calls()
+    );
+
+    // The fast-path seed is a minimal [SessionOpened] (no replayed history).
+    assert_eq!(
+        seed2.len(),
+        1,
+        "warm re-open seed should be just SessionOpened; got {} events",
+        seed2.len()
+    );
+    assert!(
+        matches!(seed2[0], SessionDriverEvent::SessionOpened { .. }),
+        "warm re-open seed must be a SessionOpened; got {:?}",
+        seed2[0]
+    );
+
+    // The first seed may also be just SessionOpened (synthetic-idle has empty
+    // /history), so we can't compare seed lengths. But we CAN assert the sid
+    // matches — the fast path must return the same session identity.
+    let sid1 = seed1
+        .first()
+        .map(|e| e.session_ref().session_id.clone())
+        .expect("first seed has a session id");
+    let sid2 = seed2
+        .first()
+        .map(|e| e.session_ref().session_id.clone())
+        .expect("second seed has a session id");
+    assert_eq!(sid1, sid2, "warm re-open must return the same session id");
+}
+
 // ===========================================================================
 // Phase C — SSE ordering test (AC.3)
 // ===========================================================================
