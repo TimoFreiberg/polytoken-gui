@@ -521,9 +521,34 @@ impl PolytokenInner {
                 timestamp: DriverMapCtx::now_ts(),
                 run_id: None,
             },
-            snapshot,
+            snapshot: snapshot.clone(),
         }];
-        seed.extend(history_seed::history_to_seed_events(history_items, ctx));
+        let history = history_seed::history_to_seed_events(history_items, ctx);
+        let replayed = !history.is_empty();
+        seed.extend(history);
+        // Re-assert the authoritative snapshot AFTER the replayed history. The leading
+        // SessionOpened marks idle-vs-running, but every replayed user/assistant/tool
+        // event folds ON TOP of it: a history that ends mid-turn — on an assistant
+        // thinking/text block, or otherwise without a runCompleted/idle boundary — leaves
+        // the assistant bubble streaming:true (the fold's open assistant) AND the hub's
+        // running set stuck true (track_running flips it on for the trailing
+        // userMessage/assistantDelta and nothing re-settles it). A freshly loaded,
+        // actually-idle session then shows the "Thinking…"/working spinner forever.
+        // Replaying this trailing snapshot at the live status closes any dangling open
+        // assistant (the fold's closeOpenAssistant) and re-settles the running set — so
+        // the loaded state matches the daemon's real status. A genuinely running session
+        // carries status:running here, which correctly keeps the turn live. Skipped when
+        // nothing replayed: a bare SessionOpened is already settled.
+        if replayed {
+            seed.push(SessionDriverEvent::SessionUpdated {
+                base: SessionEventBase {
+                    session_ref: ctx.r#ref.clone(),
+                    timestamp: DriverMapCtx::now_ts(),
+                    run_id: None,
+                },
+                snapshot,
+            });
+        }
         seed
     }
 
@@ -2485,6 +2510,96 @@ mod tests {
         assert!(
             matches!(seed.first(), Some(SessionDriverEvent::SessionOpened { base, .. }) if base.session_ref == session_ref),
             "branch seed must start with sessionOpened so reseed:true rebuilds SessionState metadata"
+        );
+    }
+
+    /// Regression (`05evwe-blast`/`050hrk-cheek`): a session whose history ends
+    /// mid-turn — here on an assistant `thinking` block with no following
+    /// tool_result/completion — must NOT load as "still working". `build_branch_seed`
+    /// re-asserts the authoritative snapshot AFTER the replayed history, so (a) the
+    /// seed's LAST event is an idle snapshot the hub's `track_running` reads to clear
+    /// the running set, and (b) folding the seed settles the open assistant bubble.
+    /// Without the trailing re-assert the bubble stays `streaming:true` and the freshly
+    /// loaded idle session shows the "Thinking…" spinner forever.
+    #[test]
+    fn build_branch_seed_settles_history_ending_mid_thinking() {
+        use pilot_protocol::state::{TranscriptItem, fold_all};
+
+        let session_ref = SessionRef {
+            workspace_id: "ws".into(),
+            session_id: "s1".into(),
+        };
+        let workspace = WorkspaceRef {
+            workspace_id: "ws".into(),
+            path: "/repo".into(),
+            display_name: None,
+        };
+        let snapshot = event_map::snapshot_from_state(
+            None,
+            &session_ref,
+            &workspace,
+            SessionStatus::Idle,
+            "2025-01-01T00:00:00.000Z",
+            None,
+            None,
+        );
+        // The stuck-turn shape: a user prompt, then an assistant whose last block is
+        // `thinking` — no tool_result, no completion boundary.
+        let history = vec![
+            serde_json::json!({
+                "type": "user",
+                "content": "hello",
+                "prompt_id": "p1",
+                "emitted_at": "2025-01-01T00:00:01.000Z",
+            }),
+            serde_json::json!({
+                "type": "assistant",
+                "prompt_id": "p1",
+                "blocks": [ { "type": "thinking", "text": "still pondering" } ],
+                "emitted_at": "2025-01-01T00:00:02.000Z",
+            }),
+        ];
+        let seed = PolytokenInner::build_branch_seed(
+            snapshot,
+            &history,
+            &HistoryMapCtx {
+                r#ref: session_ref.clone(),
+            },
+        );
+
+        // (b for the hub): the seed ends with an idle snapshot re-assert, which
+        // `track_running` reads to clear the running set after the replay.
+        assert!(
+            matches!(
+                seed.last(),
+                Some(SessionDriverEvent::SessionUpdated { snapshot, .. })
+                    if matches!(snapshot.status, SessionStatus::Idle)
+            ),
+            "branch seed with replayed history must end with an idle SessionUpdated re-assert; got {:?}",
+            seed.last()
+        );
+
+        // (a for the client): folding the whole seed yields a settled state — idle
+        // status and the trailing assistant bubble closed (not streaming).
+        let state = fold_all(&seed);
+        assert!(
+            matches!(state.status, SessionStatus::Idle),
+            "folded seed status should be idle, got {:?}",
+            state.status
+        );
+        let last_assistant = state
+            .items
+            .iter()
+            .rev()
+            .find_map(|it| match it {
+                TranscriptItem::Assistant(a) => Some(a),
+                _ => None,
+            })
+            .expect("seed should fold to an assistant item");
+        assert!(
+            !last_assistant.streaming,
+            "the trailing snapshot must close the open assistant bubble (streaming:false), \
+             else a freshly loaded idle session shows the working spinner"
         );
     }
 }
