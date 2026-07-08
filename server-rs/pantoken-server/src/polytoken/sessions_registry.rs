@@ -178,6 +178,20 @@ pub fn cold_session_entry(
     opts: ColdSessionOpts,
 ) -> Option<SessionListEntry> {
     let meta = read_session_json(session_dir)?;
+    Some(cold_session_entry_from_meta(
+        session_dir,
+        session_id,
+        &meta,
+        opts,
+    ))
+}
+
+fn cold_session_entry_from_meta(
+    session_dir: &Path,
+    session_id: &str,
+    meta: &SessionJson,
+    opts: ColdSessionOpts,
+) -> SessionListEntry {
     let created_at = if meta.created_at.is_empty() {
         // `new Date(0).toISOString()` → "1970-01-01T00:00:00.000Z"
         "1970-01-01T00:00:00.000Z".to_string()
@@ -211,7 +225,7 @@ pub fn cold_session_entry(
         meta.project_path.clone()
     };
 
-    Some(SessionListEntry {
+    SessionListEntry {
         session_id: session_id.to_string(),
         path: session_dir
             .join("session.json")
@@ -230,7 +244,7 @@ pub fn cold_session_entry(
         usage: None,
         archived: opts.archived,
         worktree: opts.worktree,
-    })
+    }
 }
 
 /// Callbacks the caller provides to resolve pantoken-side flags.
@@ -267,10 +281,12 @@ pub fn list_cold_sessions(
         let worktree = opts.worktree_for.as_ref().and_then(|f| (f)(&cwd));
         let session_json_path = session_dir.join("session.json");
         let archived = (opts.archived_for)(&session_json_path.to_string_lossy());
-        let entry = cold_session_entry(&session_dir, &id, ColdSessionOpts { archived, worktree });
-        let Some(entry) = entry else {
-            continue;
-        };
+        let entry = cold_session_entry_from_meta(
+            &session_dir,
+            &id,
+            &meta,
+            ColdSessionOpts { archived, worktree },
+        );
         out.push(entry);
     }
     out

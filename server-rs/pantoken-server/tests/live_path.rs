@@ -481,11 +481,11 @@ async fn queued_prompt_updates_queue_without_user_echo() {
             SessionDriverEvent::UserMessage { id, .. } if id == "client-queued-prompt-id" => {
                 panic!("queued prompt must not emit an immediate userMessage echo");
             }
-            SessionDriverEvent::QueueUpdated { messages, .. } => {
-                if messages.iter().any(|m| m.text == "queued-turn-text") {
-                    saw_queue = true;
-                    break;
-                }
+            SessionDriverEvent::QueueUpdated { messages, .. }
+                if messages.iter().any(|m| m.text == "queued-turn-text") =>
+            {
+                saw_queue = true;
+                break;
             }
             _ => {}
         }

@@ -161,6 +161,7 @@ struct PolytokenInner {
     next_sub_id: Mutex<usize>,
     is_viewed: RwLock<Option<Box<SessionViewed>>>,
     command_cache: Mutex<HashMap<String, Vec<CommandInfo>>>,
+    facet_cache: Mutex<HashMap<String, Vec<String>>>,
     command_runner: Arc<CommandRunner>,
 }
 
@@ -224,6 +225,7 @@ impl PolytokenDriver {
                 next_sub_id: Mutex::new(0),
                 is_viewed: RwLock::new(None),
                 command_cache: Mutex::new(HashMap::new()),
+                facet_cache: Mutex::new(HashMap::new()),
                 command_runner: default_command_runner(),
                 fake_control,
             }),
@@ -271,6 +273,7 @@ impl PolytokenDriver {
                 next_sub_id: Mutex::new(0),
                 is_viewed: RwLock::new(None),
                 command_cache: Mutex::new(HashMap::new()),
+                facet_cache: Mutex::new(HashMap::new()),
                 command_runner: default_command_runner(),
                 fake_control: None,
             }),
@@ -1888,6 +1891,9 @@ impl PantokenDriver for PolytokenDriver {
         let Some(cwd) = self.inner.targeted_session_cwd(session_id.as_ref()) else {
             return builtins();
         };
+        if let Some(cached) = self.inner.facet_cache.lock().get(&cwd) {
+            return cached.clone();
+        }
         let output = self
             .inner
             .run_polytoken(
@@ -1942,7 +1948,9 @@ impl PantokenDriver for PolytokenDriver {
                         }
                     }
                 }
-                if names.is_empty() { builtins() } else { names }
+                let facets = if names.is_empty() { builtins() } else { names };
+                self.inner.facet_cache.lock().insert(cwd, facets.clone());
+                facets
             }
             Err(e) => {
                 error!("list_facets failed: {e}");
@@ -2253,6 +2261,7 @@ mod tests {
             next_sub_id: Mutex::new(0),
             is_viewed: RwLock::new(None),
             command_cache: Mutex::new(HashMap::new()),
+            facet_cache: Mutex::new(HashMap::new()),
             command_runner: default_command_runner(),
             fake_control: None,
         }
@@ -2544,6 +2553,32 @@ mod tests {
             calls
                 .iter()
                 .all(|(_, cwd)| cwd.as_deref() == Some("/repo/facets"))
+        );
+    }
+
+    #[tokio::test]
+    async fn list_facets_caches_by_cwd() {
+        let calls = Arc::new(Mutex::new(0));
+        let calls_for_runner = calls.clone();
+        let runner: Arc<CommandRunner> = Arc::new(move |_program, args, _cwd| {
+            *calls_for_runner.lock() += 1;
+            Box::pin(async move {
+                if args.iter().any(|a| a == "ls") {
+                    Ok(ok_output("execute.md\n"))
+                } else {
+                    Ok(ok_output("---\nname: execute\n---\nbody"))
+                }
+            })
+        });
+        let (driver, _dir) = driver_with_runner("s1", "/repo/facets", runner);
+
+        let _ = driver.list_facets(Some("s1".into())).await;
+        let _ = driver.list_facets(Some("s1".into())).await;
+
+        assert_eq!(
+            *calls.lock(),
+            2,
+            "second facet list should hit the cwd cache"
         );
     }
 
