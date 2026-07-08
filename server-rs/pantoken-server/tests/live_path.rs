@@ -418,6 +418,86 @@ async fn prompt_echoes_images_and_warns_with_prompt_id() {
 }
 
 #[tokio::test]
+async fn queued_prompt_updates_queue_without_user_echo() {
+    let _guard = OVERRIDE_MUTEX.lock().await;
+
+    let mut scenario = corpus_loader::load_named(VERSION, "streaming-turn");
+    scenario.sse.clear();
+    scenario
+        .http
+        .retain(|entry| !(entry.method == "POST" && entry.path == "/prompt"));
+    scenario.http.push(support::corpus::HttpEntry {
+        method: "POST".into(),
+        path: "/prompt".into(),
+        request_body: None,
+        status: 202,
+        response_body: Some(serde_json::json!({
+            "prompt_id": "daemon-queued-prompt",
+            "session_id": "SESSION",
+            "queued_item": {
+                "admission_prompt_id": "daemon-queued-prompt",
+                "content": "queued from prompt",
+                "id": "queued-from-prompt"
+            }
+        })),
+    });
+    let fake = Arc::new(fake_daemon::spawn(scenario, "prompt-queued".into(), 0).await);
+    let _ovr = OverrideGuard::install(fake.clone());
+
+    let (driver, _dir) = make_driver().await;
+    let (_sub_id, mut rx) = collect_events(&driver, 256);
+
+    let _seed = driver
+        .new_session(NewSessionOptsData::default())
+        .await
+        .expect("new_session");
+
+    driver
+        .prompt(
+            "queued from prompt".into(),
+            None,
+            Some(fake.session_id.clone()),
+            vec![],
+            Some("client-queued-prompt-id".into()),
+        )
+        .await
+        .expect("prompt");
+
+    assert!(
+        fake.called("POST", "/prompt"),
+        "prompt POST not sent: {:?}",
+        fake.recorded_calls()
+    );
+    assert!(
+        fake.called("GET", "/turn/input"),
+        "queued prompt should refetch the full queue: {:?}",
+        fake.recorded_calls()
+    );
+
+    let mut saw_queue = false;
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(5);
+    while let Ok(Some(ev)) = tokio::time::timeout_at(deadline, rx.recv()).await {
+        match ev {
+            SessionDriverEvent::UserMessage { id, .. } if id == "client-queued-prompt-id" => {
+                panic!("queued prompt must not emit an immediate userMessage echo");
+            }
+            SessionDriverEvent::QueueUpdated { messages, .. } => {
+                if messages.iter().any(|m| m.text == "queued-turn-text") {
+                    saw_queue = true;
+                    break;
+                }
+            }
+            _ => {}
+        }
+    }
+
+    assert!(
+        saw_queue,
+        "queued prompt did not update the queue tray state"
+    );
+}
+
+#[tokio::test]
 async fn warm_child_killed_on_shutdown() {
     let _guard = OVERRIDE_MUTEX.lock().await;
 

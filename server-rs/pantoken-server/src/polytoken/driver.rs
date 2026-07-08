@@ -1152,16 +1152,58 @@ impl PantokenDriver for PolytokenDriver {
         };
         self.inner.focus(&sid);
         // POST first; only echo after success so a failed POST doesn't create a
-        // ghost transcript row.
-        if let Err(e) = ws.client.prompt(&text, None).await {
-            return Err(format!("prompt failed: {e}"));
-        }
+        // ghost transcript row. If the daemon accepts the prompt into the
+        // pending-turn queue, keep it out of the transcript until the later
+        // `pending_turn_input_drained` event promotes it into the active turn.
+        let accepted = ws
+            .client
+            .prompt(&text, None)
+            .await
+            .map_err(|e| format!("prompt failed: {e}"))?;
         let now = DriverMapCtx::now_ts();
         let base = SessionEventBase {
             session_ref: ws.session_ref.clone(),
             timestamp: now.clone(),
             run_id: None,
         };
+        if accepted.queued_item.is_some() {
+            let res = ws.client.turn_input_snapshot().await;
+            let messages = res
+                .data
+                .map(|snapshot| event_map::queue_messages_from_snapshot(&snapshot, &now))
+                .unwrap_or_else(|| {
+                    accepted
+                        .queued_item
+                        .as_ref()
+                        .map(|item| vec![event_map::queue_message_from_item(item, &now)])
+                        .unwrap_or_default()
+                });
+            self.inner.emit(SessionDriverEvent::QueueUpdated {
+                base: base.clone(),
+                messages,
+            });
+            if !images.is_empty() {
+                let plural = if images.len() == 1 {
+                    "1 image was".to_string()
+                } else {
+                    format!("{} images were", images.len())
+                };
+                self.inner.emit(SessionDriverEvent::HostUiRequest {
+                    base,
+                    request: HostUiRequest::Notify {
+                        request_id: format!(
+                            "img-unsupported-{}",
+                            chrono::Utc::now().timestamp_millis()
+                        ),
+                        message: format!(
+                            "⚠ {plural} attached but the daemon doesn't support images yet — only the text was sent."
+                        ),
+                        level: Some(NotifyLevel::Warning),
+                    },
+                });
+            }
+            return Ok(());
+        }
         self.inner.emit(SessionDriverEvent::UserMessage {
             base: base.clone(),
             id: prompt_id
