@@ -34,6 +34,18 @@ let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 // back to the normal backoff schedule.
 let connectWatchdog: ReturnType<typeof setTimeout> | null = null;
 const CONNECT_TIMEOUT_MS = 8_000;
+// Heartbeat: a half-open socket (phone slept, NAT dropped the stream mid-sleep, no
+// FIN/RST ever arrives) sits in `_state === "connected"` forever — onclose/onerror never
+// fire, so the "live" indicator lies. While connected, ping on an interval; ANY inbound
+// frame (not just a reply pong) counts as proof of life, tracked in `lastInboundAt`. A
+// ping that gets no traffic back within the watchdog window means the transport is dead —
+// force it closed and fall into the normal reconnect/backoff flow, same remedy as the
+// handshake watchdog above.
+let heartbeatInterval: ReturnType<typeof setInterval> | null = null;
+let heartbeatWatchdog: ReturnType<typeof setTimeout> | null = null;
+let lastInboundAt = 0;
+const HEARTBEAT_INTERVAL_MS = 25_000;
+const HEARTBEAT_WATCHDOG_MS = 10_000;
 let intentionalClose = false;
 // The store registers a provider for the focused session's fold watermark; the
 // (re)connect hello carries it so the server can tail-replay just the missed
@@ -78,10 +90,65 @@ function clearConnectWatchdog(): void {
   }
 }
 
+function clearHeartbeatWatchdog(): void {
+  if (heartbeatWatchdog !== null) {
+    clearTimeout(heartbeatWatchdog);
+    heartbeatWatchdog = null;
+  }
+}
+
+/** Stop the recurring ping + drop any pending watchdog. Called from `cleanupSocket` so
+ * every path that discards a socket also stops heartbeating the one it's replacing. */
+function stopHeartbeat(): void {
+  if (heartbeatInterval !== null) {
+    clearInterval(heartbeatInterval);
+    heartbeatInterval = null;
+  }
+  clearHeartbeatWatchdog();
+}
+
+/** Start heartbeating a freshly-connected socket. Called once per connection, right
+ * after the server's `hello` flips `_state` to "connected". */
+function startHeartbeat(): void {
+  stopHeartbeat();
+  lastInboundAt = Date.now();
+  heartbeatInterval = setInterval(() => {
+    // Battery: skip the routine ping while backgrounded — a wake (visibilitychange/
+    // pageshow/online) probes liveness explicitly instead, see handleWake below.
+    if (typeof document !== "undefined" && document.hidden) return;
+    probeLiveness();
+  }, HEARTBEAT_INTERVAL_MS);
+}
+
+/** Send a ping and arm a watchdog: if no inbound traffic (a pong or anything else)
+ * arrives before it fires, the socket is half-open — force-close it and fall back to
+ * the normal reconnect/backoff flow. At most one watchdog is ever pending; re-probing
+ * clears and re-arms it rather than stacking. */
+function probeLiveness(): void {
+  if (!ws || ws.readyState !== WebSocket.OPEN) return;
+  const armedSocket = ws;
+  const sentAt = Date.now();
+  send({ type: "ping" });
+  clearHeartbeatWatchdog();
+  heartbeatWatchdog = setTimeout(() => {
+    heartbeatWatchdog = null;
+    // A replacement socket already took over — not this watchdog's problem.
+    if (ws !== armedSocket) return;
+    if (lastInboundAt >= sentAt) return; // traffic arrived after the ping — still alive
+    console.warn(
+      "[ws] heartbeat watchdog expired — socket looks half-open, forcing reconnect",
+    );
+    cleanupSocket(); // detaches onclose so the close below can't double-schedule
+    armedSocket.close();
+    scheduleReconnect();
+  }, HEARTBEAT_WATCHDOG_MS);
+}
+
 function cleanupSocket(): void {
   // Every path that discards a socket (close, force-reconnect, disconnect)
-  // also invalidates its handshake watchdog.
+  // also invalidates its handshake watchdog and heartbeat.
   clearConnectWatchdog();
+  stopHeartbeat();
   if (ws) {
     ws.onopen = null;
     ws.onmessage = null;
@@ -136,11 +203,18 @@ function doConnect(): void {
   };
 
   ws.onmessage = (event: MessageEvent) => {
+    // ANY inbound frame is proof of life for the heartbeat watchdog — stamped before
+    // parsing so even a frame we fail to make sense of still counts (a parse failure
+    // below just means it isn't forwarded to listeners).
+    lastInboundAt = Date.now();
     const msg = parseServerMessage(event.data as string);
     if (!msg) return;
     // OPEN only means the transport is up. Treat the socket as usable after the
     // server's authenticated hello, so durable prompts never race ahead of auth.
-    if (msg.type === "hello") _state = "connected";
+    if (msg.type === "hello") {
+      _state = "connected";
+      startHeartbeat();
+    }
     for (const listener of listeners) {
       try {
         listener(msg);
@@ -203,6 +277,23 @@ export function disconnect(): void {
   _state = "disconnected";
 }
 
+/** A wake signal (tab foregrounded, bfcache restore, network back) is exactly when a
+ * half-open socket's lie matters most: `_state` says "connected" whether or not the
+ * transport underneath still works, and a phone that just woke is the textbook case
+ * (NAT dropped the stream while asleep, no FIN/RST ever arrived). Don't trust it —
+ * if it claims connected, probe right now instead of waiting for the next heartbeat
+ * tick; the probe's own watchdog forces a reconnect if nothing answers. If it's
+ * anything else, skip the probe and reconnect immediately, like the manual Reconnect
+ * button — no reason to ride out the accumulated backoff for an obvious fresh wake. */
+function handleWake(): void {
+  if (intentionalClose) return;
+  if (_state !== "connected") {
+    forceReconnect();
+    return;
+  }
+  probeLiveness();
+}
+
 if (typeof document !== "undefined") {
   document.addEventListener("visibilitychange", () => {
     if (document.visibilityState === "hidden") {
@@ -210,19 +301,17 @@ if (typeof document !== "undefined") {
         clearTimeout(reconnectTimer);
         reconnectTimer = null;
       }
-    } else if (!intentionalClose && _state !== "connected") {
-      // A freshly-foregrounded tab is exactly when an eager reconnect is wanted
-      // (a phone just woke). Don't wait out the accumulated backoff delay — reset
-      // the attempt counter and connect now, like the manual Reconnect button.
-      forceReconnect();
+    } else {
+      handleWake();
     }
   });
+  // bfcache restore (e.g. iOS Safari switching apps and back) can land here without
+  // ever firing visibilitychange — pageshow is the reliable signal for that case.
+  window.addEventListener("pageshow", handleWake);
   // A network flap (cell↔wifi over Tailscale) fires 'online' the moment the OS has
-  // connectivity again — usually well before the next backoff tick. Reconnect
+  // connectivity again — usually well before the next backoff tick. Probe/reconnect
   // eagerly instead of riding out the timer.
-  window.addEventListener("online", () => {
-    if (!intentionalClose && _state !== "connected") forceReconnect();
-  });
+  window.addEventListener("online", handleWake);
   // Deterministic e2e hook: simulate a transport loss without taking HTTP/Vite
   // offline, so the test can close and reopen the page around a durable queued prompt.
   if (import.meta.env.DEV)

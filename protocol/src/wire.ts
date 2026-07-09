@@ -114,6 +114,11 @@ export type ServerMessage =
        *  Empty/absent when no build marker exists (dev). */
       buildSha?: string;
     }
+  /** Heartbeat reply to a client `ping` — transport-level only (never folded or
+   *  journaled), the same shape of message as `hello`. The client's ws layer already
+   *  treats ANY inbound frame as proof of liveness, so `pong` carries no fields of its
+   *  own; it exists purely to give a sent ping something to solicit. */
+  | { type: "pong" }
   /** Seed-on-connect (protocol v2): the focused session's full transcript as
    *  EVENTS, which the client folds from a fresh `initialSessionState()` — the
    *  replacement for v1's folded-state `snapshot`, so no server-side fold is
@@ -450,6 +455,12 @@ export type ClientMessage =
    *  headless/remote host with no GUI). The path itself is already known to the client
    *  via `hello.dataDir`, so copying it is local and needs no round-trip. */
   | { type: "openDataDir" }
+  /** Heartbeat probe: sent on an interval while connected (and once immediately on a
+   *  wake — tab foregrounded, bfcache restore, network back online) to catch a
+   *  half-open socket that TCP itself may never surface (phone slept, NAT dropped the
+   *  stream, no FIN/RST ever arrives). The server replies with `pong`; the client
+   *  actually treats ANY inbound frame as liveness, so this mostly exists to solicit
+   *  one on a schedule. */
   | { type: "ping" };
 
 /** Parse a raw WS frame into a typed message, or null on bad JSON / missing `type`.

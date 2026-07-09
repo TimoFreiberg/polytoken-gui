@@ -122,6 +122,11 @@ pub enum ServerMessage {
         #[serde(skip_serializing_if = "Option::is_none", default, rename = "buildSha")]
         build_sha: Option<String>,
     },
+    /// Heartbeat reply to a client `Ping` — transport-level only (never folded or
+    /// journaled), the same shape of message as `Hello`. The client's ws layer already
+    /// treats ANY inbound frame as proof of liveness, so `Pong` carries no fields of its
+    /// own; it exists purely to give a sent ping something to solicit.
+    Pong,
     Seed {
         #[serde(rename = "sessionId")]
         session_id: Option<SessionId>,
@@ -417,6 +422,12 @@ pub enum ClientMessage {
         script: String,
     },
     OpenDataDir,
+    /// Heartbeat probe: sent on an interval while connected (and once immediately on a
+    /// wake — tab foregrounded, bfcache restore, network back online) to catch a
+    /// half-open socket that TCP itself may never surface (phone slept, NAT dropped the
+    /// stream, no FIN/RST ever arrives). The hub replies with `Pong`; the client
+    /// actually treats ANY inbound frame as liveness, so this mostly exists to solicit
+    /// one on a schedule.
     Ping,
 }
 
@@ -765,6 +776,15 @@ mod tests {
         let json_str = r#"{"type": "ping"}"#;
         let msg = parse_client_message(json_str).unwrap();
         assert!(matches!(msg, ClientMessage::Ping));
+    }
+
+    #[test]
+    fn roundtrip_server_pong() {
+        let msg = ServerMessage::Pong;
+        let json = serde_json::to_string(&msg).unwrap();
+        assert_eq!(json, r#"{"type":"pong"}"#);
+        let parsed: ServerMessage = serde_json::from_str(&json).unwrap();
+        assert!(matches!(parsed, ServerMessage::Pong));
     }
 
     #[test]

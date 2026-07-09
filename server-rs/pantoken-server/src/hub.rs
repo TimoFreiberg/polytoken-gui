@@ -1280,7 +1280,11 @@ impl SessionHub {
             .and_then(|c| c.focused_id.clone());
 
         match &msg {
-            ClientMessage::Hello { .. } | ClientMessage::Ping => {}
+            ClientMessage::Hello { .. } => {}
+            // Heartbeat: reply immediately so the client ws layer's watchdog sees
+            // inbound traffic and knows the transport is still alive. No session
+            // targeting, no journal/fold involvement — this client_key only.
+            ClientMessage::Ping => self.send_to_client(client_key, ServerMessage::Pong),
             ClientMessage::Prompt {
                 text,
                 deliver_as,
@@ -2419,6 +2423,20 @@ type SwitchFuture =
 /// unrecognized error falls back to a generic banner with no `kind`.
 fn classify_switch_error(raw: &str) -> (String, Option<String>) {
     let session_switch = || Some("session-switch".to_string());
+    // The session's project directory no longer exists on disk (docs/TODO.md:
+    // restoring a session run in a now-deleted directory "can't ever
+    // succeed"). Permanent — deliberately does NOT match the client's
+    // LEASE_CONFLICT_RE, so no "Retry" action is offered for it (see
+    // store.svelte.ts), only the plain dismissible toast.
+    if let Some((_, tail)) = raw.split_once("session directory no longer exists:") {
+        let dir = tail.trim();
+        return (
+            format!(
+                "Couldn't restore this session — its directory no longer exists ({dir}). Move the project back to that path, or archive this session."
+            ),
+            session_switch(),
+        );
+    }
     // Daemon failed to start (startup.json state:"failed") — the message already
     // names the config/parse error; surface it plainly (TS captures the tail).
     if let Some((_, tail)) = raw.split_once("polytoken daemon failed to start:") {
@@ -2428,6 +2446,16 @@ fn classify_switch_error(raw: &str) -> (String, Option<String>) {
                 "Couldn't open this session — the daemon failed to start ({}). Try again, or open it in the TUI to diagnose.",
                 detail
             ),
+            session_switch(),
+        );
+    }
+    // The daemon process exited before it ever wrote a ready startup.json
+    // (e.g. a CLI parse error) — distinct from the state:"failed" case above
+    // (which the daemon reported cleanly) but equally not worth retrying
+    // as-is.
+    if raw.contains("polytoken daemon exited early") {
+        return (
+            "Couldn't open this session — the daemon exited immediately. Try again, or open it in the TUI to diagnose.".into(),
             session_switch(),
         );
     }
@@ -2453,6 +2481,7 @@ fn classify_switch_error(raw: &str) -> (String, Option<String>) {
         || raw.contains("request timed out")
         || raw.contains("fetch failed")
         || raw.contains("ECONNREFUSED")
+        || raw.contains("daemon health probe failed")
     {
         return (
             "Couldn't reach the session daemon. Try again — if it persists, the daemon may be wedged.".into(),
@@ -3226,6 +3255,18 @@ mod hub_models_tests {
             }
             other => panic!("expected Error, got {other:?}"),
         }
+    }
+
+    /// Heartbeat: a client `Ping` gets an immediate `Pong` reply, so the ws layer's
+    /// watchdog sees inbound traffic and knows the transport is still alive.
+    #[tokio::test]
+    async fn ping_replies_with_pong() {
+        let (_driver, hub, _ops) = test_hub();
+        let (client_key, _tx, mut rx) = hub.lock().add_client(None);
+        hub.lock().handle_client(client_key, ClientMessage::Ping);
+
+        let msg = drain_until(&mut rx, |m| matches!(m, ServerMessage::Pong)).await;
+        assert!(matches!(msg, ServerMessage::Pong));
     }
 
     async fn drain_one(rx: &mut mpsc::Receiver<ServerMessage>) -> ServerMessage {
@@ -4133,6 +4174,42 @@ mod hub_models_tests {
         let (message, kind) = classify_switch_error("lease claim failed (409): held by other");
         assert_eq!(kind.as_deref(), Some("session-switch"));
         assert!(message.contains("Detach it there"));
+    }
+
+    #[test]
+    fn classify_missing_cwd_names_the_directory_and_is_permanent_shaped() {
+        // The concrete docs/TODO.md case: a cold session whose project cwd no
+        // longer exists. `open_session` (polytoken/driver.rs) produces this
+        // exact message before ever attempting a spawn.
+        let (message, kind) =
+            classify_switch_error("session directory no longer exists: /tmp/gone-project");
+        assert_eq!(kind.as_deref(), Some("session-switch"));
+        assert!(
+            message.contains("/tmp/gone-project"),
+            "message must name the missing directory: {message}"
+        );
+        assert!(message.contains("no longer exists"));
+        // Client-side note (store.svelte.ts LEASE_CONFLICT_RE): this message
+        // must NOT read as a lease conflict, or the client would wrongly
+        // offer a "Retry" action for a failure that can never succeed.
+        assert!(!message.contains("another TUI is attached"));
+        assert!(!message.contains("lease to lapse"));
+    }
+
+    #[test]
+    fn classify_daemon_exited_early_is_session_switch_kind() {
+        let (message, kind) = classify_switch_error(
+            "polytoken daemon exited early (status exit status: 1):\nstderr: bad args",
+        );
+        assert_eq!(kind.as_deref(), Some("session-switch"));
+        assert!(message.contains("exited immediately"));
+    }
+
+    #[test]
+    fn classify_daemon_health_probe_failed_reads_as_unreachable() {
+        let (message, kind) = classify_switch_error("daemon health probe failed");
+        assert_eq!(kind.as_deref(), Some("session-switch"));
+        assert!(message.contains("Couldn't reach the session daemon"));
     }
 
     #[test]
