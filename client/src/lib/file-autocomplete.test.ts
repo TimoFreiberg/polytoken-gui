@@ -461,10 +461,43 @@ describe("buildAtItems", () => {
     ] satisfies AtItem[]);
   });
 
-  test("external mode yields no items (a later stage resolves these)", () => {
+  test("external mode with no server results yet: empty (never falls back to the local index)", () => {
     expect(buildAtItems({ ...base, query: "~/Documents" })).toEqual([]);
     expect(buildAtItems({ ...base, query: "/etc/hosts" })).toEqual([]);
     expect(buildAtItems({ ...base, query: "../sibling" })).toEqual([]);
+  });
+
+  test("external mode maps server-resolved files straight to file rows — no badges, no sigils", () => {
+    const external = [f("~/notes.md"), f("~/projects", true)];
+    const items = buildAtItems({ ...base, query: "~/", serverFiles: external });
+    expect(items).toEqual([
+      { kind: "file", file: f("~/notes.md") },
+      { kind: "file", file: f("~/projects", true) },
+    ] satisfies AtItem[]);
+  });
+
+  test("external mode ignores the local file index entirely, even when it would match", () => {
+    // `files` (the local project index) is deliberately irrelevant here — a query
+    // like "~/README" must never surface the local index's "README.md".
+    const items = buildAtItems({
+      ...base,
+      query: "~/README",
+      serverFiles: [f("~/README.md")],
+    });
+    expect(items).toEqual([
+      { kind: "file", file: f("~/README.md") },
+    ] satisfies AtItem[]);
+  });
+
+  test("external mode caps results at `limit`", () => {
+    const many = Array.from({ length: 5 }, (_, i) => f(`~/file${i}.txt`));
+    const items = buildAtItems({
+      ...base,
+      query: "~/",
+      serverFiles: many,
+      limit: 3,
+    });
+    expect(items).toHaveLength(3);
   });
 
   test("bare @ (empty partial): files only, no kind noise, no sigils", () => {

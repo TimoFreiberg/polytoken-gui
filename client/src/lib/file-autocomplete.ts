@@ -135,8 +135,10 @@ export function filterFiles(
  * writes the long form regardless of which one the user typed.
  *
  * External paths (`/`, `~`, `..`) are recognized here so the composer can suppress
- * project-file candidates for them, but resolving actual external candidates is a
- * later stage — callers get `{ mode: "external" }` and no items.
+ * project-file candidates for them; resolving actual external candidates happens
+ * server-side (the composer always server-queries for this mode — see the
+ * `queryFiles` effect in `Composer.svelte`), so `buildAtItems` just maps whatever
+ * the server returned into file rows.
  */
 export type AtQueryClass =
   | { mode: "skill"; partial: string }
@@ -314,7 +316,9 @@ export interface BuildAtItemsParams {
  * `classifyAtQuery` + the per-kind filters into the single list `AtMenu` renders.
  *
  *   - skill/subagent/model: full takeover — only that kind's matches.
- *   - external: no items yet (a later stage resolves external paths).
+ *   - external (`~/…`, `/…`, `../…`): full takeover — the server-resolved `serverFiles`
+ *     for the current query, mapped straight to file rows (see the `queryFiles`
+ *     effect in `Composer.svelte`, which always fires for this mode).
  *   - project, empty partial (bare `@`): files only — no kind noise; the footer
  *     hint advertises the sigils instead.
  *   - project, non-empty partial: file matches (local ranked + server extras,
@@ -354,7 +358,16 @@ export function buildAtItems(params: BuildAtItemsParams): AtItem[] {
     }));
   }
   if (cls.mode === "external") {
-    return [];
+    // The server is the only source for external paths — it lists the immediate
+    // children of the directory being browsed (`server-rs/.../file_search.rs::list_external`
+    // for a real session, the mock's synthetic external tree for dev/e2e). No local
+    // index involvement (there isn't one outside the project), no badged kind
+    // matches, no sigils — just the as-typed file/dir rows the server returned for
+    // the current query (the caller already filters `serverFiles` to the current
+    // query via the `store.files.query === atQ` echo guard).
+    return serverFiles
+      .slice(0, limit)
+      .map((file): AtItem => ({ kind: "file", file }));
   }
 
   // cls.mode === "project"

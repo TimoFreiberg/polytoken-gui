@@ -2479,6 +2479,21 @@ impl PantokenDriver for PolytokenDriver {
         let Some(root) = self.inner.file_lookup_root(cwd, session_id.as_ref()) else {
             return Vec::new();
         };
+        // A query starting with `~`, `/`, or `..` addresses the filesystem
+        // OUTSIDE the project (polytoken parity) — browse that directory's
+        // immediate children instead of walking the project tree. `root` also
+        // doubles as `base` for `..`-relative prefixes: it's already the
+        // session cwd (or caller override), exactly what `..` should resolve
+        // against.
+        if crate::polytoken::file_search::is_external_query(&query) {
+            let home = std::env::var("HOME").unwrap_or_default();
+            return crate::polytoken::file_search::list_external(
+                std::path::Path::new(&root),
+                std::path::Path::new(&home),
+                &query,
+                crate::polytoken::file_search::FILE_QUERY_CAP,
+            );
+        }
         crate::polytoken::file_search::list_files_with_fd(std::path::Path::new(&root), &query)
     }
 
@@ -3286,6 +3301,31 @@ mod tests {
         let mut paths: Vec<String> = files.iter().map(|f| f.path.clone()).collect();
         paths.sort();
         assert_eq!(paths, vec!["a.rs".to_string(), "b.rs".to_string()]);
+    }
+
+    #[tokio::test]
+    async fn list_files_dispatches_external_dotdot_query_to_parent_of_cwd() {
+        // A query starting with `..` should list the immediate children of the
+        // session cwd's PARENT directory instead of the recursive project
+        // search — exercises `list_files`'s external-query dispatch
+        // (`file_search::is_external_query` + `list_external`), not just the
+        // pure helper in isolation.
+        let root = tempfile::tempdir().expect("root tempdir");
+        let repo_path = root.path().join("project");
+        std::fs::create_dir_all(&repo_path).expect("mkdir project");
+        std::fs::write(root.path().join("sibling.txt"), "").expect("write sibling.txt");
+
+        let runner: Arc<CommandRunner> =
+            Arc::new(|_p, _a, _c| Box::pin(async { Err("unused".to_string()) }));
+        let (driver, _dir) = driver_with_runner("s1", repo_path.to_str().unwrap(), runner);
+
+        let files = driver
+            .list_files("..".into(), Some("s1".into()), None)
+            .await;
+        let names: Vec<&str> = files.iter().map(|f| f.path.as_str()).collect();
+
+        assert!(names.contains(&"../sibling.txt"));
+        assert!(names.contains(&"../project"));
     }
 
     #[test]

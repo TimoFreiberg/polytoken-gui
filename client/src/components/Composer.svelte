@@ -203,18 +203,20 @@
   }
 
   // --- @-reference autocomplete (files, skills, subagents, models — hybrid: instant
-  // local matching + server fallback for files). Same shape as slash: an active query
-  // (the text after `@` at/before cursor), a highlighted index, and a dismissed flag so
-  // Esc closes it for this token. `classifyAtQuery` (in `buildAtItems`) decides which
-  // kind the query addresses; only "project" (plain file) mode ever touches the server —
+  // local matching + server fallback for project files, server-only for external paths).
+  // Same shape as slash: an active query (the text after `@` at/before cursor), a
+  // highlighted index, and a dismissed flag so Esc closes it for this token.
+  // `classifyAtQuery` (in `buildAtItems`) decides which kind the query addresses —
   // skills/subagents come from `store.atRefs` and models from `store.models`, both
   // already pushed/fetched, no round-trip needed. The server pushes the focused session's
   // full file index on switch (store.fileIndex); `filterFiles` ranks it locally on every
-  // keystroke, so the menu updates synchronously — no round-trip, and no hide/show flicker
-  // (the old per-query RPC blanked the menu for the in-flight window). Only when the index
-  // was truncated (a cwd larger than the server cap) AND local matches are thin do we fall
-  // back to a debounced server `fd` search (store.queryFiles), merging its results into
-  // the local ones.
+  // keystroke, so the "project" mode menu updates synchronously — no round-trip, and no
+  // hide/show flicker (the old per-query RPC blanked the menu for the in-flight window).
+  // Project mode only falls back to a debounced server `fd` search (store.queryFiles) when
+  // the index was truncated (a cwd larger than the server cap) AND local matches are thin,
+  // merging its results into the local ones. "external" mode (`~/…`, `/…`, `../…`) has no
+  // local index at all — there's nothing to prefetch for paths outside the project — so it
+  // ALWAYS uses the debounced server query; see the effect below.
   const AT_MENU_LIMIT = 50;
   // Fire the server fallback only when local matches are thinner than this — a comfortably
   // full menu means the wanted file is almost certainly already shown, so don't round-trip.
@@ -279,23 +281,28 @@
     modelLevel = null;
   });
 
-  // Debounced server fallback: fires only in project (file) mode, when the index was
-  // truncated and local matches are thin (the wanted file may live past the cap), OR always
-  // while drafting (no session index exists for the draft's target cwd, so the server `fd`
-  // search scoped to that cwd is the only source). Skill/subagent/model/external modes never
-  // reach the server here — their sources are already local (atRefs/models) or unimplemented
-  // (external, a later stage). The common non-draft file case never reaches the server either.
+  // Debounced server fallback: ALWAYS fires in external mode (`~/…`, `/…`, `../…`) —
+  // there's no local index for paths outside the project, so the server is the only
+  // source. In project (file) mode it fires only when the index was truncated and local
+  // matches are thin (the wanted file may live past the cap), OR always while drafting
+  // (no session index exists for the draft's target cwd, so the server `fd` search
+  // scoped to that cwd is the only source). Skill/subagent/model modes never reach the
+  // server here — their sources are already local (atRefs/models). The common
+  // non-draft project-file case never reaches the server either.
   $effect(() => {
     const q = atQ;
     const needFallback =
       q !== null &&
-      atClass?.mode === "project" &&
-      (drafting ||
-        (store.fileIndex.truncated && localFileItems.length < FALLBACK_MIN));
+      (atClass?.mode === "external" ||
+        (atClass?.mode === "project" &&
+          (drafting ||
+            (store.fileIndex.truncated && localFileItems.length < FALLBACK_MIN))));
     clearTimeout(fileDebounce);
     if (!needFallback) return;
     // A draft searches its target project dir (typed cwd, or $HOME when blank); a real
-    // session lets the server use its focused cwd (undefined).
+    // session lets the server use its focused cwd (undefined). Same resolution for
+    // external mode — the server resolves `~`/`..` against its own $HOME/session cwd
+    // regardless of which cwd (if any) is passed here.
     const cwd = drafting
       ? store.draft?.cwd.trim() || store.defaultNewSessionCwd
       : undefined;

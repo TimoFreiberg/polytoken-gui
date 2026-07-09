@@ -599,6 +599,41 @@ mod tests {
     }
 
     #[test]
+    fn at_refs_serializes_flattened_not_nested_under_refs() {
+        // `AtRefs { refs: AtRefs }` uses `#[serde(flatten)]` precisely so `refs`
+        // never appears as a JSON key — regression guard for that flatten (a
+        // dropped `#[serde(flatten)]` would silently nest `skills`/`subagents`
+        // one level deeper and the client's `atRefs` fold would stop matching).
+        let msg = ServerMessage::AtRefs {
+            refs: AtRefs {
+                skills: vec!["debug".to_string(), "journal".to_string()],
+                subagents: vec!["reviewer".to_string()],
+            },
+        };
+        let json = serde_json::to_value(&msg).unwrap();
+        assert_eq!(
+            json,
+            serde_json::json!({
+                "type": "atRefs",
+                "skills": ["debug", "journal"],
+                "subagents": ["reviewer"],
+            })
+        );
+
+        let parsed: ServerMessage = serde_json::from_value(json).unwrap();
+        match parsed {
+            ServerMessage::AtRefs { refs } => {
+                assert_eq!(
+                    refs.skills,
+                    vec!["debug".to_string(), "journal".to_string()]
+                );
+                assert_eq!(refs.subagents, vec!["reviewer".to_string()]);
+            }
+            _ => panic!("expected AtRefs"),
+        }
+    }
+
+    #[test]
     fn roundtrip_server_session_list() {
         let json_str = r#"{
             "type": "sessionList",

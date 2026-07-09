@@ -766,6 +766,80 @@ fn mock_dir_tree() -> &'static std::collections::HashMap<String, Vec<String>> {
     })
 }
 
+/// The synthetic external filesystem for `@~/`, `@/`, `@../` browsing (the
+/// composer's kind-aware `@`-picker) — the mock equivalent of the real
+/// driver's `file_search::list_external`, but keyed directly on the AS-TYPED
+/// directory prefix (`file_search::split_external_query`'s first element)
+/// rather than a resolved absolute path, since the mock never touches the
+/// real disk. Deliberately distinct from `mock_dir_tree()` above (the
+/// new-session project picker's dirs-only tree): this one has files too, and
+/// is addressed by literal query prefix instead of a real/faked absolute
+/// path. `.secrets` under `~` is a hidden dotfile fixture (dotfile-hiding +
+/// reveal-on-`.`-partial e2e assertions); `/etc` and `..` round out the
+/// browsable set so all three lead-ins (`~`, `/`, `..`) have something to
+/// show.
+fn mock_external_tree() -> &'static HashMap<&'static str, Vec<(&'static str, bool)>> {
+    use std::sync::OnceLock;
+    static TREE: OnceLock<HashMap<&'static str, Vec<(&'static str, bool)>>> = OnceLock::new();
+    TREE.get_or_init(|| {
+        let mut m: HashMap<&'static str, Vec<(&'static str, bool)>> = HashMap::new();
+        m.insert(
+            "~",
+            vec![
+                ("notes.md", false),
+                ("todo.txt", false),
+                ("projects", true),
+                (".secrets", false),
+            ],
+        );
+        m.insert(
+            "~/projects",
+            vec![("pantoken", true), ("blog", true), ("readme.md", false)],
+        );
+        m.insert("/etc", vec![("hosts", false)]);
+        m.insert("..", vec![("sibling-project", true), ("NOTES.md", false)]);
+        m
+    })
+}
+
+/// Faithful mock port of `file_search::list_external`: same split/filter/sort
+/// rules (dirs first, then case-insensitive alphabetical; hidden dotfiles
+/// excluded unless the partial itself starts with `.`), but looks the
+/// as-typed directory prefix up in `mock_external_tree()` instead of
+/// resolving + reading a real directory. An unknown prefix (not one of the
+/// fixture's browsable dirs) yields an empty vec, same graceful-empty
+/// behavior as a missing real directory.
+fn mock_list_external(query: &str) -> Vec<FileInfo> {
+    let (dir_prefix, partial) = crate::polytoken::file_search::split_external_query(query);
+    let Some(children) = mock_external_tree().get(dir_prefix.as_str()) else {
+        return Vec::new();
+    };
+
+    let partial_lower = partial.to_lowercase();
+    let reveal_dotfiles = partial.starts_with('.');
+
+    let mut entries: Vec<(&str, bool)> = children
+        .iter()
+        .copied()
+        .filter(|(name, _)| reveal_dotfiles || !name.starts_with('.'))
+        .filter(|(name, _)| partial.is_empty() || name.to_lowercase().contains(&partial_lower))
+        .collect();
+
+    entries.sort_by(|a, b| match (a.1, b.1) {
+        (true, false) => std::cmp::Ordering::Less,
+        (false, true) => std::cmp::Ordering::Greater,
+        _ => a.0.to_lowercase().cmp(&b.0.to_lowercase()),
+    });
+
+    entries
+        .into_iter()
+        .map(|(name, is_dir)| FileInfo {
+            path: crate::polytoken::file_search::join_prefix(&dir_prefix, name),
+            is_directory: is_dir,
+        })
+        .collect()
+}
+
 // ── Script steps + event builders ──────────────────────────────────────
 
 fn base() -> SessionEventBase {
@@ -2444,6 +2518,14 @@ impl PantokenDriver for MockDriver {
         _session_id: Option<SessionId>,
         cwd: Option<String>,
     ) -> Vec<FileInfo> {
+        // A query starting with `~`, `/`, or `..` addresses the filesystem
+        // OUTSIDE the project — mirrors the real driver's dispatch in
+        // `polytoken/driver.rs::list_files`, but looks the query up in the
+        // synthetic `mock_external_tree()` instead of resolving + reading a
+        // real directory (the mock never touches the real disk).
+        if crate::polytoken::file_search::is_external_query(&query) {
+            return mock_list_external(&query);
+        }
         // Faithful port of TS `MockDriver.listFiles()` (`server/src/mock-driver.ts:764-788`):
         // a new-session draft passes its target cwd — surface it as a synthetic
         // `<cwd>/DRAFT-CWD.md` match so the draft @-mention path
@@ -3371,5 +3453,78 @@ impl PantokenDriver for MockDriver {
         self.queues.lock().clear();
         self.dirty_worktrees.lock().clear();
         self.reaped_worktrees.lock().clear();
+    }
+}
+
+#[cfg(test)]
+mod external_list_files_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn tilde_alone_lists_home_dirs_first_dotfile_hidden() {
+        let driver = MockDriver::new();
+        let files = driver.list_files("~".into(), None, None).await;
+        let names: Vec<&str> = files.iter().map(|f| f.path.as_str()).collect();
+
+        // Dirs before files: "projects" before the two plain files.
+        assert_eq!(names, vec!["~/projects", "~/notes.md", "~/todo.txt"]);
+        assert!(
+            !names.contains(&"~/.secrets"),
+            "hidden dotfile should not be listed by default"
+        );
+    }
+
+    #[tokio::test]
+    async fn tilde_dot_partial_reveals_the_hidden_dotfile() {
+        let driver = MockDriver::new();
+        let files = driver.list_files("~/.se".into(), None, None).await;
+        let names: Vec<&str> = files.iter().map(|f| f.path.as_str()).collect();
+        assert_eq!(names, vec!["~/.secrets"]);
+    }
+
+    #[tokio::test]
+    async fn tilde_proj_narrows_to_projects_dir() {
+        let driver = MockDriver::new();
+        let files = driver.list_files("~/proj".into(), None, None).await;
+        let names: Vec<&str> = files.iter().map(|f| f.path.as_str()).collect();
+        assert_eq!(names, vec!["~/projects"]);
+    }
+
+    #[tokio::test]
+    async fn drills_into_projects_directory() {
+        let driver = MockDriver::new();
+        let files = driver.list_files("~/projects/".into(), None, None).await;
+        let names: Vec<&str> = files.iter().map(|f| f.path.as_str()).collect();
+        assert_eq!(
+            names,
+            vec![
+                "~/projects/blog",
+                "~/projects/pantoken",
+                "~/projects/readme.md"
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn slash_etc_lists_the_etc_fixture() {
+        let driver = MockDriver::new();
+        let files = driver.list_files("/etc/".into(), None, None).await;
+        let names: Vec<&str> = files.iter().map(|f| f.path.as_str()).collect();
+        assert_eq!(names, vec!["/etc/hosts"]);
+    }
+
+    #[tokio::test]
+    async fn dotdot_alone_lists_the_relative_fixture() {
+        let driver = MockDriver::new();
+        let files = driver.list_files("..".into(), None, None).await;
+        let names: Vec<&str> = files.iter().map(|f| f.path.as_str()).collect();
+        assert_eq!(names, vec!["../sibling-project", "../NOTES.md"]);
+    }
+
+    #[tokio::test]
+    async fn unknown_external_prefix_is_empty() {
+        let driver = MockDriver::new();
+        let files = driver.list_files("~/nope/".into(), None, None).await;
+        assert!(files.is_empty());
     }
 }

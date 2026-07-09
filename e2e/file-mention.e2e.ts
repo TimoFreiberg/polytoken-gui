@@ -223,3 +223,78 @@ test("[ and ] on a non-model row type the character into the draft instead of be
   await box.press("]");
   await expect(box).toHaveValue("@skill:[]");
 });
+
+// External paths (`@~/`, `@/`, `@../`) browse the server's filesystem OUTSIDE the
+// project — the mock's synthetic external tree (server-rs/pantoken-server/src/mock_driver.rs
+// `mock_external_tree()`), not the local file index. Every case here always round-trips
+// through the debounced server query (Composer.svelte's always-fire-for-external effect),
+// so assertions rely on Playwright's auto-retrying `expect` rather than a fixed wait.
+// Keyboard accepts throughout — mouse accepts have a known cursor-resync quirk.
+
+test("@~/ lists the synthetic external home — dirs first, hidden dotfile absent", async ({
+  page,
+}) => {
+  const box = ta(page);
+  await box.click();
+  await page.keyboard.type("@~/");
+  await expect(menu(page)).toBeVisible();
+  await expect(row(page, "file:~/projects")).toBeVisible();
+  await expect(row(page, "file:~/notes.md")).toBeVisible();
+  await expect(row(page, "file:~/todo.txt")).toBeVisible();
+  await expect(row(page, "file:~/.secrets")).toHaveCount(0);
+});
+
+test("@~/proj narrows to the projects/ directory only", async ({ page }) => {
+  const box = ta(page);
+  await box.click();
+  await page.keyboard.type("@~/proj");
+  await expect(menu(page)).toBeVisible();
+  await expect(row(page, "file:~/projects")).toBeVisible();
+  await expect(row(page, "file:~/notes.md")).toHaveCount(0);
+  await expect(row(page, "file:~/todo.txt")).toHaveCount(0);
+});
+
+test("keyboard-accepting projects/ drills down; accepting readme.md completes the path", async ({
+  page,
+}) => {
+  const box = ta(page);
+  await box.click();
+  await page.keyboard.type("@~/proj");
+  await expect(menu(page)).toBeVisible();
+  await expect(row(page, "file:~/projects")).toBeVisible();
+
+  // Only "~/projects" matches "proj" — it's the sole (and default-highlighted) row.
+  await box.press("Enter");
+  await expect(box).toHaveValue("@~/projects/");
+
+  // The menu recomputed to `~/projects`'s children — same keep-narrowing mechanic as a
+  // project-mode directory `/`.
+  await expect(menu(page)).toBeVisible();
+  await expect(row(page, "file:~/projects/blog")).toBeVisible();
+  await expect(row(page, "file:~/projects/pantoken")).toBeVisible();
+  await expect(row(page, "file:~/projects/readme.md")).toBeVisible();
+
+  // Dirs sort first, alphabetically (blog, pantoken), then the file (readme.md) —
+  // arrow down twice from the default-highlighted first row to reach it.
+  await box.press("ArrowDown");
+  await box.press("ArrowDown");
+  await box.press("Enter");
+  await expect(box).toHaveValue("@~/projects/readme.md");
+});
+
+test("@../ lists the parent-relative fixtures", async ({ page }) => {
+  const box = ta(page);
+  await box.click();
+  await page.keyboard.type("@../");
+  await expect(menu(page)).toBeVisible();
+  await expect(row(page, "file:../sibling-project")).toBeVisible();
+  await expect(row(page, "file:../NOTES.md")).toBeVisible();
+});
+
+test("@/etc/ lists the root-anchored fixture", async ({ page }) => {
+  const box = ta(page);
+  await box.click();
+  await page.keyboard.type("@/etc/");
+  await expect(menu(page)).toBeVisible();
+  await expect(row(page, "file:/etc/hosts")).toBeVisible();
+});
