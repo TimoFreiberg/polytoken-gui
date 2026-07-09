@@ -16,9 +16,10 @@
 //! `polytoken event-schema`).
 
 use pantoken_daemon_types::{
-    BlockDeltaPayload, ContentBlockKind, CurrentGoal, DaemonEvent, PendingTurnInputItem,
-    PendingTurnInputSnapshot, PermissionCandidateRuleContext, PermissionMonitor, ProviderError,
-    SessionStateSnapshot, SystemReminderReason, ToolLiveDisplayContent,
+    BlockDeltaPayload, ContentBlockKind, CurrentGoal, DaemonEvent, NotificationType,
+    PendingTurnInputItem, PendingTurnInputSnapshot, PermissionCandidateRuleContext,
+    PermissionMonitor, ProviderError, SessionStateSnapshot, SubagentResultKind,
+    SystemReminderReason, ToolLiveDisplayContent,
 };
 use pantoken_protocol::session_driver::{
     AssistantDeltaChannel, FlaggedFile, FlaggedFileMode, GoalInfo, HostUiRequest, ImageContent,
@@ -250,6 +251,30 @@ fn notify(
             message,
             level: Some(level),
         },
+    }
+}
+
+/// Build a concise notice for a queued notification. Completion notifications carry their
+/// full report in `summary`, but that report is already available through the background-job
+/// detail view; putting it in the transcript creates an enormous notice. Other notification
+/// types use `summary` as their actual user-facing message.
+fn notification_message(notification: &pantoken_daemon_types::Notification) -> String {
+    match &notification.notification_type {
+        NotificationType::JobComplete { exit_code } => match exit_code {
+            Some(code) => format!("Job completed (exit {})", code),
+            None => "Job completed".to_string(),
+        },
+        NotificationType::SubagentComplete { handle, outcome } => {
+            let result = match &outcome.kind {
+                SubagentResultKind::Success => "Success",
+                SubagentResultKind::Failure => "Failure",
+                SubagentResultKind::Cancelled => "Cancelled",
+            };
+            format!("Subagent {} {}", handle, result)
+        }
+        NotificationType::HookResult
+        | NotificationType::ExtensionMessage { .. }
+        | NotificationType::Unknown => notification.summary.clone(),
     }
 }
 
@@ -1752,7 +1777,7 @@ pub fn map_daemon_event(
             vec![notify(
                 base,
                 format!("notif-{}", notification.id),
-                notification.summary.clone(),
+                notification_message(notification),
                 NotifyLevel::Info,
             )],
             vec![],
@@ -2936,14 +2961,47 @@ mod tests {
     // TS event-map.test.ts L672–L890. Oracle-derived assertions (AC.7).
 
     #[test]
-    fn notification_queued_notify_with_summary() {
+    fn notification_queued_job_completion_uses_short_label() {
         let out = fold_fresh(
-            json!({ "type": "notification_queued", "notification": { "id": "n1", "notification_type": { "type": "job_complete", "exit_code": 0 }, "source": "background", "summary": "Job finished", "timestamp": "2026-06-28T10:00:00Z" } }),
+            json!({ "type": "notification_queued", "notification": { "id": "n1", "notification_type": { "type": "job_complete", "exit_code": 0 }, "source": "background", "summary": "A full job report that must not become a transcript notice", "timestamp": "2026-06-28T10:00:00Z" } }),
         );
         let ev = event_json(&out.events[0]);
         assert_eq!(ev["type"], "hostUiRequest");
         assert_eq!(ev["request"]["kind"], "notify");
-        assert_eq!(ev["request"]["message"], "Job finished");
+        assert_eq!(ev["request"]["message"], "Job completed (exit 0)");
+    }
+
+    #[test]
+    fn notification_queued_job_completion_without_exit_code_uses_short_label() {
+        let out = fold_fresh(
+            json!({ "type": "notification_queued", "notification": { "id": "n1", "notification_type": { "type": "job_complete" }, "source": "background", "summary": "A full job report", "timestamp": "2026-06-28T10:00:00Z" } }),
+        );
+        assert_eq!(
+            event_json(&out.events[0])["request"]["message"],
+            "Job completed"
+        );
+    }
+
+    #[test]
+    fn notification_queued_subagent_completion_uses_handle_and_outcome() {
+        let out = fold_fresh(
+            json!({ "type": "notification_queued", "notification": { "id": "n1", "notification_type": { "type": "subagent_complete", "handle": "job-42", "outcome": { "kind": "failure", "message": "details" } }, "source": "background", "summary": "A full review report", "timestamp": "2026-06-28T10:00:00Z" } }),
+        );
+        assert_eq!(
+            event_json(&out.events[0])["request"]["message"],
+            "Subagent job-42 Failure"
+        );
+    }
+
+    #[test]
+    fn notification_queued_non_completion_preserves_summary() {
+        let out = fold_fresh(
+            json!({ "type": "notification_queued", "notification": { "id": "n1", "notification_type": { "type": "extension_message", "extension_name": "journal" }, "source": "extension", "summary": "Journal entry saved", "timestamp": "2026-06-28T10:00:00Z" } }),
+        );
+        assert_eq!(
+            event_json(&out.events[0])["request"]["message"],
+            "Journal entry saved"
+        );
     }
 
     #[test]

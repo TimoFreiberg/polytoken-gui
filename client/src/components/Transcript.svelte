@@ -1530,7 +1530,7 @@
   }
   .notice {
     flex-direction: row;
-    align-items: center;
+    align-items: flex-start;
     gap: 8px;
     font-size: 13px;
     color: var(--text-muted);
@@ -1538,7 +1538,11 @@
     background: var(--surface-sunken);
     border: 1px solid var(--border);
     padding: 6px 12px;
-    border-radius: 999px;
+    border-radius: var(--radius-sm);
+  }
+  .notice .ntext {
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
   }
   .notice.error {
     color: var(--danger);
