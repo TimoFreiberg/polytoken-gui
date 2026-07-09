@@ -366,6 +366,25 @@ test("plain Tab still accepts the highlighted row after Shift+Tab has toggled ig
   await expect(box).toHaveValue("@~/.secrets");
 });
 
+test("Shift+Tab in a skill takeover falls through to browser focus-nav (no toggle, no accept)", async ({
+  page,
+}) => {
+  // Skill/subagent/model takeovers have no notion of "ignored files", so the footer
+  // omits the ⇧Tab hint and the key must NOT be swallowed — neither as an invisible
+  // ignoreOff flip nor as an accept. Browser default: backward focus navigation.
+  const box = ta(page);
+  await box.click();
+  await page.keyboard.type("@skill:");
+  await expect(menu(page)).toBeVisible();
+  await expect(menu(page)).not.toContainText("⇧Tab");
+
+  await box.press("Shift+Tab");
+  // Not accepted (the draft would read "@skill:debug"), not modified at all…
+  await expect(box).toHaveValue("@skill:");
+  // …and the browser's default backward focus-move actually happened.
+  await expect(box).not.toBeFocused();
+});
+
 test("Escape still dismisses the menu after the ignore toggle has been used", async ({
   page,
 }) => {

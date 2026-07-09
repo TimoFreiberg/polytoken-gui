@@ -90,9 +90,11 @@ fn path_matches(path: &str, query_segments: &[String]) -> bool {
 ///
 /// When `include_ignored` is true (Shift+Tab toggled on), every ignore-file
 /// source is disabled AND hidden files are included — dotfiles and gitignored
-/// entries both surface. `.git` itself stays excluded either way (nobody wants
-/// its internals in the picker, toggle or not — and the polytoken docs say the
-/// project's private dir stays excluded too).
+/// entries both surface. `.git` AND the project's private `.polytoken` dir
+/// stay excluded either way (nobody wants their internals in the picker,
+/// toggle or not — matching the daemon's own `GET /files?include_ignored=true`
+/// behavior, which also keeps the private dir excluded; see
+/// `daemon_client.rs::files`). Both are enforced in `filter_entry` below.
 ///
 /// **Divergence from TS `baseFdArgs`:** `.git_global(false)` skips the user's
 /// *global* gitignore (`core.excludesFile` / `~/.gitignore_global`), whereas
@@ -114,12 +116,14 @@ pub fn list_files_with_fd(root: &Path, query: &str, include_ignored: bool) -> Ve
         .git_exclude(!include_ignored)
         .follow_links(true)
         .filter_entry(|entry| {
-            // Exclude the .git directory tree regardless of the toggle
-            // (belt-and-suspenders — ignore already respects .gitignore, but a
-            // repo without .gitignore shouldn't leak .git internals, and the
-            // toggle disables ignore-file sources entirely).
+            // Exclude the .git tree AND the project's private .polytoken dir
+            // regardless of the toggle (belt-and-suspenders for .git — ignore
+            // already respects .gitignore, but a repo without one shouldn't
+            // leak .git internals; load-bearing for .polytoken when the toggle
+            // disables every ignore-file source — the daemon's own
+            // include_ignored index keeps the private dir excluded too).
             let name = entry.file_name().to_string_lossy();
-            name != ".git"
+            name != ".git" && name != ".polytoken"
         })
         .build();
 
@@ -154,8 +158,13 @@ pub fn list_files_with_fd(root: &Path, query: &str, include_ignored: bool) -> Ve
         // Normalize to forward slashes.
         let rel = rel.replace('\\', "/");
 
-        // Drop stray .git entries defensively.
+        // Drop stray .git/.polytoken entries defensively (filter_entry above
+        // already prunes both subtrees; this guards a symlinked path that
+        // resolves back into one).
         if rel == ".git" || rel.starts_with(".git/") || rel.contains("/.git/") {
+            continue;
+        }
+        if rel == ".polytoken" || rel.starts_with(".polytoken/") || rel.contains("/.polytoken/") {
             continue;
         }
 
@@ -285,7 +294,13 @@ pub fn list_external(
         if !partial.is_empty() && !name.to_lowercase().contains(&partial_lower) {
             continue;
         }
-        let is_dir = entry.file_type().map(|ft| ft.is_dir()).unwrap_or(false);
+        // `entry.file_type()` does NOT follow symlinks, so a symlink-to-directory
+        // would come back `is_dir: false` — no trailing `/`, not drillable —
+        // inconsistent with `list_files_with_fd`'s `follow_links(true)`. Stat via
+        // `Path::is_dir()` instead (follows symlinks; a stat per entry is fine at
+        // ≤`cap` entries). A broken symlink stats as an error → `false` → treated
+        // as a plain file, the sensible fallback.
+        let is_dir = entry.path().is_dir();
         entries.push((name, is_dir));
     }
 
@@ -552,6 +567,41 @@ mod tests {
         );
     }
 
+    #[test]
+    fn test_list_files_private_dir_stays_hidden_even_with_include_ignored() {
+        // The project's private `.polytoken` dir is excluded like `.git` in BOTH
+        // toggle states — matching the daemon's own GET /files?include_ignored=true,
+        // which keeps the private dir excluded (`daemon_client.rs::files`). A plain
+        // dotfile (`.env`) IS revealed by the toggle — the exclusion is specific to
+        // the private dir, not dotfiles generally.
+        let dir = tempfile::tempdir().expect("tempdir");
+        let root = dir.path();
+
+        fs::create_dir_all(root.join(".polytoken")).expect("mkdir .polytoken");
+        fs::write(root.join(".polytoken/config.md"), "private").expect("write config.md");
+        fs::write(root.join(".env"), "SECRET=1").expect("write .env");
+        fs::write(root.join("visible.rs"), "").expect("write visible.rs");
+
+        let toggled = list_files_with_fd(root, "", true);
+        assert!(
+            !toggled.iter().any(|f| f.path.starts_with(".polytoken")),
+            ".polytoken must stay excluded even with include_ignored, got: {:?}",
+            toggled
+        );
+        assert!(
+            toggled.iter().any(|f| f.path == ".env"),
+            "a plain dotfile should still be revealed by the toggle, got: {:?}",
+            toggled
+        );
+
+        let untoggled = list_files_with_fd(root, "", false);
+        assert!(
+            !untoggled.iter().any(|f| f.path.starts_with(".polytoken")),
+            ".polytoken must be excluded without the toggle too, got: {:?}",
+            untoggled
+        );
+    }
+
     #[cfg(unix)]
     #[test]
     fn test_list_files_follows_symlinks() {
@@ -714,6 +764,43 @@ mod external_tests {
             revealed.iter().any(|f| f.path == "~/.secrets"),
             "include_ignored should reveal dotfiles regardless of the partial, got: {:?}",
             revealed
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_list_external_symlinked_dir_is_a_directory() {
+        // `DirEntry::file_type()` doesn't follow symlinks, so a symlink-to-dir
+        // used to come back `is_directory: false` — no trailing `/`, not
+        // drillable. The stat-based `Path::is_dir()` follows the link. A broken
+        // symlink degrades to a plain file (never an error).
+        use std::os::unix::fs::symlink;
+
+        let home = tempfile::tempdir().expect("home tempdir");
+        fs::create_dir_all(home.path().join("real_dir")).expect("mkdir real_dir");
+        symlink(home.path().join("real_dir"), home.path().join("linked")).expect("symlink dir");
+        symlink(home.path().join("gone"), home.path().join("dangling")).expect("broken symlink");
+        let base = tempfile::tempdir().expect("base tempdir");
+
+        let files = list_external(base.path(), home.path(), "~", 50, false);
+
+        let linked = files
+            .iter()
+            .find(|f| f.path == "~/linked")
+            .expect("symlinked dir should be listed");
+        assert!(
+            linked.is_directory,
+            "a symlink to a directory must be drillable (is_directory), got: {:?}",
+            files
+        );
+        let dangling = files
+            .iter()
+            .find(|f| f.path == "~/dangling")
+            .expect("broken symlink should still be listed");
+        assert!(
+            !dangling.is_directory,
+            "a broken symlink degrades to a plain file, got: {:?}",
+            files
         );
     }
 

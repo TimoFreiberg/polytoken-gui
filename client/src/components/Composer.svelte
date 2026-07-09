@@ -735,19 +735,22 @@
       }
     }
     // Shift+Tab: toggle the ignore-rules picker state (polytoken TUI parity) — hidden
-    // dotfiles and gitignored entries join the candidates while on. Deliberately checked
-    // ahead of (and independent of) the `atOpen`-gated block below, on the weaker
-    // `atQ !== null && !atDismissed` condition: a project-mode query that matches ONLY a
-    // currently-hidden dotfile has zero local candidates, so `atOpen` (which additionally
-    // requires `atItems.length > 0`) is still false at this point — the menu hasn't
-    // rendered yet — but the toggle must still work here, since it's the only way to ever
-    // reveal that candidate and make the menu open. MUST also be checked before the
-    // atOpen block's own Enter/Tab accept branch below: that branch matches on
+    // dotfiles and gitignored entries join the candidates while on. Gated on
+    // `ignoreToggleApplies` (project/external file modes only): skill/subagent/model
+    // takeovers have no notion of "ignored", so Shift+Tab there must fall through to the
+    // browser's normal backward focus-nav instead of being swallowed by an invisible
+    // state flip. Deliberately checked ahead of (and independent of) the `atOpen`-gated
+    // block below: a project-mode query that matches ONLY a currently-hidden dotfile has
+    // zero local candidates, so `atOpen` (which additionally requires
+    // `atItems.length > 0`) is still false at this point — the menu hasn't rendered
+    // yet — but the toggle must still work here, since it's the only way to ever reveal
+    // that candidate and make the menu open. MUST also be checked before the atOpen
+    // block's own Enter/Tab accept branch below: that branch matches on
     // `e.key === "Tab"` alone, so without this earlier, shift-guarded check it would
     // swallow Shift+Tab as an accept instead of a toggle. Plain Tab (no shift) still
     // falls through to that block's accept, unaffected.
     if (
-      atQ !== null &&
+      ignoreToggleApplies &&
       !atDismissed &&
       e.key === "Tab" &&
       e.shiftKey &&
@@ -793,7 +796,12 @@
         atSel = (atSel - 1 + n) % n;
         return;
       }
-      if (e.key === "Enter" || e.key === "Tab") {
+      // Accept requires an UNSHIFTED Tab: in the file modes Shift+Tab was already
+      // consumed by the ignore-toggle branch above, but in skill/subagent/model
+      // takeovers (where that branch doesn't apply) a bare `e.key === "Tab"` match
+      // would swallow Shift+Tab as an accept — it must fall through to the
+      // browser's backward focus-nav instead.
+      if (e.key === "Enter" || (e.key === "Tab" && !e.shiftKey)) {
         e.preventDefault();
         const item = atItems[atSel];
         if (item) acceptAtItem(item);

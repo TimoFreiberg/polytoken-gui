@@ -2477,25 +2477,37 @@ impl PantokenDriver for PolytokenDriver {
         // fall back to the targeted session cwd. The TS driver spawns `fd`
         // directly; the Rust port uses an in-process `.gitignore`-aware walk
         // via the `ignore` crate (no external binary dependency).
-        let Some(root) = self.inner.file_lookup_root(cwd, session_id.as_ref()) else {
-            return Vec::new();
-        };
+        let root = self.inner.file_lookup_root(cwd, session_id.as_ref());
         // A query starting with `~`, `/`, or `..` addresses the filesystem
         // OUTSIDE the project (polytoken parity) — browse that directory's
-        // immediate children instead of walking the project tree. `root` also
-        // doubles as `base` for `..`-relative prefixes: it's already the
-        // session cwd (or caller override), exactly what `..` should resolve
-        // against.
+        // immediate children instead of walking the project tree. External
+        // browsing is dispatched BEFORE the no-root early return below: `~/…`
+        // and `/…` queries resolve against $HOME / the filesystem root and need
+        // no cwd at all, so a missing root (no session, no caller cwd) must not
+        // block them. Only `..`-relative queries need a base to resolve
+        // against — for those, no root means nothing to answer with. When a
+        // root exists it doubles as `base` (it's already the session cwd or
+        // caller override, exactly what `..` should resolve against); the
+        // no-root fallback base is `home`, which `~`/`/` prefixes never read.
         if crate::polytoken::file_search::is_external_query(&query) {
             let home = std::env::var("HOME").unwrap_or_default();
+            let base = match &root {
+                Some(r) => r.clone(),
+                None if query.starts_with("..") => return Vec::new(),
+                None => home.clone(),
+            };
             return crate::polytoken::file_search::list_external(
-                std::path::Path::new(&root),
+                std::path::Path::new(&base),
                 std::path::Path::new(&home),
                 &query,
                 crate::polytoken::file_search::FILE_QUERY_CAP,
                 include_ignored,
             );
         }
+        // Project-mode walk: without a root there's nothing to search.
+        let Some(root) = root else {
+            return Vec::new();
+        };
         crate::polytoken::file_search::list_files_with_fd(
             std::path::Path::new(&root),
             &query,
@@ -3376,6 +3388,41 @@ mod tests {
             toggled_names
         );
         assert!(toggled_names.contains(&"visible.rs"));
+    }
+
+    #[tokio::test]
+    async fn list_files_external_absolute_query_works_without_a_cwd() {
+        // `~/…` and `/…` external queries need no cwd — only `..`-relative ones
+        // do — so a missing file_lookup_root (no session, no caller cwd) must
+        // not blank them. Target a session id with no warm entry so the root
+        // resolves to None, then browse an absolute tempdir path.
+        let browse = tempfile::tempdir().expect("browse tempdir");
+        std::fs::write(browse.path().join("visible.txt"), "").expect("write visible.txt");
+
+        let runner: Arc<CommandRunner> =
+            Arc::new(|_p, _a, _c| Box::pin(async { Err("unused".to_string()) }));
+        let (driver, _dir) = driver_with_runner("s1", "/repo/unused", runner);
+
+        let query = format!("{}/", browse.path().display());
+        let files = driver
+            .list_files(query, Some("no-such-session".into()), None, false)
+            .await;
+        assert!(
+            files.iter().any(|f| f.path.ends_with("/visible.txt")),
+            "absolute external browse should work with no cwd, got: {:?}",
+            files
+        );
+
+        // A `..`-relative query with no root has nothing to resolve against —
+        // graceful empty, not a panic or a wrong-base listing.
+        let dotdot = driver
+            .list_files("..".into(), Some("no-such-session".into()), None, false)
+            .await;
+        assert!(
+            dotdot.is_empty(),
+            "`..` with no cwd should be empty, got: {:?}",
+            dotdot
+        );
     }
 
     #[test]
