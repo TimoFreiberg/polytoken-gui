@@ -1,10 +1,15 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
   <!-- pantoken mark: a pan seen from above that is also a token —
-       gold coin with a square mint-hole, periwinkle handle -->
+       gold coin with a square mint-hole, periwinkle handle swung 30°
+       below horizontal so the whole reads as a Q. The hole stays
+       upright: the coin is rotationally symmetric, so tilting it would
+       only tilt the square. -->
   <rect width="512" height="512" rx="115" fill="#f6f4ee"/>
-  <rect x="322" y="232" width="144" height="48" rx="24" fill="#4f63bf"/>
-  <circle cx="440" cy="256" r="9" fill="#f6f4ee"/>
-  <circle cx="216" cy="256" r="122" fill="#cf962b"/>
-  <circle cx="216" cy="256" r="93" fill="none" stroke="#f6f4ee" stroke-width="11" opacity="0.85"/>
-  <rect x="184" y="224" width="64" height="64" rx="12" fill="#f6f4ee"/>
+  <g transform="rotate(30 232 236)">
+    <rect x="352" y="207" width="152" height="58" rx="29" fill="#4f63bf"/>
+    <circle cx="472" cy="236" r="11" fill="#f6f4ee"/>
+  </g>
+  <circle cx="232" cy="236" r="154" fill="#cf962b"/>
+  <circle cx="232" cy="236" r="117" fill="none" stroke="#f6f4ee" stroke-width="13" opacity="0.85"/>
+  <rect x="192" y="196" width="80" height="80" rx="14" fill="#f6f4ee"/>
 </svg>
