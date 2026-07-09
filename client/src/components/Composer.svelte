@@ -95,9 +95,12 @@
     typeof navigator !== "undefined" && navigator.maxTouchPoints > 0;
   // Context-window pressure cue: the meter ring escalates by color but never says
   // "you're running out" in words. Once the active session's window is ≥85% full, surface
-  // a one-line nudge above the composer toward /compact or a fresh session. Drafts carry no
-  // usage, so it stays hidden there; the tone tracks the ring (accent 85–89, danger 90+).
-  const contextPct = $derived(store.session.usage?.percent ?? null);
+  // a one-line nudge above the composer toward /compact or a fresh session. While drafting,
+  // store.session still holds the PREVIOUS session — suppress the cue rather than show its
+  // pressure; the tone tracks the ring (accent 85–89, danger 90+).
+  const contextPct = $derived(
+    drafting ? null : (store.session.usage?.percent ?? null),
+  );
   const contextCue = $derived(
     contextPct !== null && contextPct >= 85
       ? { pct: Math.round(contextPct), tone: contextTone(contextPct) }

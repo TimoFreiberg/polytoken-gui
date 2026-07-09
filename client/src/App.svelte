@@ -352,16 +352,27 @@
           <button onclick={() => store.markUpdateReady()}>update</button>
         </div>
       {/if}
-      <QnaInline />
+      <!-- QnaInline/ApprovalLayer read store.session, which still holds the
+           PREVIOUS session while a new-session draft is up — hide them there so
+           its dialogs can't pop over the draft form (sidebar attention still
+           points at them). -->
+      {#if !store.draft}
+        <QnaInline />
+      {/if}
       <Composer />
-      <ApprovalLayer />
+      {#if !store.draft}
+        <ApprovalLayer />
+      {/if}
     </div>
   </div>
   <!-- Right edge pop-in arrow: same idea as the left one, for the collapsed context
        panel (⌘⇧J also reopens it). The Chevron's one shipped orientation points right
        (its "closed" pose) — mirrored horizontally here so it points back toward the
        content, matching the left tab's inward-pointing arrow. -->
-  {#if !store.rightSidebarOpen}
+  <!-- The context panel shows the ACTIVE session's flags/jobs/todos — while a
+       new-session draft is up that would be a different session's context, so
+       the panel and its pop-in tab hide entirely. -->
+  {#if !store.rightSidebarOpen && !store.draft}
     <button
       class="edge-tab edge-tab-right"
       data-testid="context-edge-open"
@@ -373,10 +384,14 @@
       <span class="edge-tab-mirror"><Chevron open={false} /></span>
     </button>
   {/if}
-  <RightSidebar />
+  {#if !store.draft}
+    <RightSidebar />
+  {/if}
 </div>
 <Settings />
-<PlanView />
+{#if !store.draft}
+  <PlanView />
+{/if}
 <!-- Shared full-screen viewer for any read-only transcript image (user attachments,
      tool image output). Opened via imageViewer.open(batch, index) from Transcript /
      ToolCard; the composer drives its own local lightbox. -->

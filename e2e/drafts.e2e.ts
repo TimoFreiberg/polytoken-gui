@@ -187,6 +187,30 @@ test("a new-session draft hides the focused session's tasklist pill", async ({
   await expect(pill).toBeHidden();
 });
 
+test("a new-session draft hides the previous session's dialogs and context panel", async ({
+  page,
+}) => {
+  // Raise a blocking confirm on the focused session.
+  await drive(page, "confirm");
+  await expect(page.getByRole("dialog")).toBeVisible();
+
+  // The draft view must not show the OTHER session's approval popup, nor its
+  // context panel (flags/jobs/todos) or the panel's pop-in tab.
+  await openSidebar(page);
+  await page.getByRole("button", { name: "New session…" }).click();
+  await expect(
+    page.getByPlaceholder("Describe a task or ask a question…"),
+  ).toBeVisible();
+  await expect(page.getByRole("dialog")).toBeHidden();
+  await expect(page.getByTestId("right-sidebar")).toBeHidden();
+  await expect(page.getByTestId("context-edge-open")).toBeHidden();
+
+  // Returning to the session re-surfaces the still-pending dialog.
+  await openSidebar(page);
+  await row(page, "Wire up the WebSocket bridge").click();
+  await expect(page.getByRole("dialog")).toBeVisible();
+});
+
 test("⌘⇧C in a new-session draft changes the DRAFT's facet, not the session's", async ({
   page,
 }) => {

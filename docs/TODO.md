@@ -30,7 +30,12 @@ resolution is non-obvious or likely to bite again. Otherwise see `jj log`.
       dead — that entry was deleted in the docs cleanup; the tier summary
       lives in `server-rs/PROGRESS.md` Phase 2.5.)
 - [ ] move "archived" popups elsewhere (top of sidebar? still middle of transcript but top instead of bottom? discuss first)
-- [ ] when in the "new session" view, none of the state of the previous session should be displayed. i sometimes got ask_user_question popups in that view, we need to ensure no plan proposals from the prev session pop up, and the sidebar must also be cleared
+- ~~[x]~~ The "new session" view leaked the previous session's state:
+      ApprovalLayer/QnaInline dialogs, PlanView, the right context panel
+      (+ its edge tab), and the composer's context-pressure cue all read
+      `store.session` (still the old session while drafting). All now gate on
+      `!store.draft` — the pattern QueueTray already used. If a NEW surface
+      reads `store.session`, it must decide what drafting means for it.
 
 
 ## 🔵 Corpus capture follow-ups (from the 2026-07-06 live-capture session)
@@ -174,8 +179,6 @@ are REAL but **provisional** — they embed local `/Users/timo/...` paths from t
 - [ ] `bun run check` has no enforcement — a red server typecheck sat on main
       unnoticed (fixed in 204d3361) and the chain short-circuits, so everything
       after it had stopped gating too. Decide: pre-push hook vs CI.
-- [ ] Settings.svelte carries ~10 unused CSS selectors (svelte-check warnings)
-      left behind by a refactor — sweep them.
 - [ ] `sse_loop` retries forever even on permanent failures (401 included) —
       its own comment admits it. Post-warm liveness needs a "this session
       died" client signal before fail-fast is honest there (the restore path
