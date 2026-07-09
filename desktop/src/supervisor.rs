@@ -2,6 +2,7 @@
 //! asked for: spawn, gate on /health, poll for liveness, respawn on crash with a
 //! crash-loop breaker, SIGTERM → bounded wait → SIGKILL on teardown.
 
+use std::fs::OpenOptions;
 use std::io::{Read, Write};
 use std::net::{SocketAddr, TcpStream};
 use std::process::{Child, Command, Stdio};
@@ -92,6 +93,28 @@ fn run_loop(
         let mut cmd = Command::new(&config.hub_bin);
         cmd.current_dir(&config.data_dir);
         cmd.envs(config.server_env()).stdin(Stdio::null());
+        let log_file = match open_log_file(config) {
+            Ok(f) => f,
+            Err(e) => {
+                on_event(SupervisorEvent::Unrecoverable(format!(
+                    "Couldn't open the pantoken server log at {}: {e}",
+                    config.data_dir.join("pantoken.log").display()
+                )));
+                return;
+            }
+        };
+        let log_file_for_stderr = match log_file.try_clone() {
+            Ok(f) => f,
+            Err(e) => {
+                on_event(SupervisorEvent::Unrecoverable(format!(
+                    "Couldn't attach stderr to the pantoken server log at {}: {e}",
+                    config.data_dir.join("pantoken.log").display()
+                )));
+                return;
+            }
+        };
+        cmd.stdout(Stdio::from(log_file));
+        cmd.stderr(Stdio::from(log_file_for_stderr));
         let mut child = match crate::proc::spawn_with_clean_signals(&mut cmd) {
             Ok(c) => c,
             Err(e) => {
@@ -139,6 +162,13 @@ fn run_loop(
             return;
         }
     }
+}
+
+fn open_log_file(config: &PantokenConfig) -> std::io::Result<std::fs::File> {
+    OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(config.data_dir.join("pantoken.log"))
 }
 
 /// Drive one child process: gate on /health (fatal if the *initial* boot never gets
