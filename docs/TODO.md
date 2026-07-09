@@ -5,8 +5,8 @@ resolution is non-obvious or likely to bite again. Otherwise see `jj log`.
 
 ## 🔴 Open bugs
 
-- [ ] POST /interrogative/respond fails with 401 because the Authorization header is missing
-- [ ] currently only top of transcript is draggable, top of both sidebars should be too ()
+- [ ] pantoken needs to support all the `@` references like polytoken does, see "Referencing things with @" in https://docs.polytoken.dev/using-polytoken/prompting-and-input/#referencing-things-with-
+- [ ] currently only top of transcript is draggable, top of both sidebars should be too
 - [ ] add version git tag to bottom of sidebar next to git hash
 - [ ] **Subagent-completion notice dumps the whole report (and renders as a
       giant ellipse).** When a subagent / `job_block` returns, the daemon emits
@@ -45,22 +45,6 @@ resolution is non-obvious or likely to bite again. Otherwise see `jj log`.
       live-driver corroboration. (The old "see DECISIONS.md D21" pointer is
       dead — that entry was deleted in the docs cleanup; the tier summary
       lives in `server-rs/PROGRESS.md` Phase 2.5.)
-- ~~[x]~~ Cold-restore transcript collapse ("not triggered when a cold session
-      is restored"): could NOT be reproduced (2026-07-09) — the seed builder's
-      trailing re-assert already settles restored turns (since "Settle
-      orphaned tools in seed builder, not fold"), verified from fold-simulation
-      down to browser e2e. Regression coverage added (mock
-      `restored_session_seed` fixture + unit + e2e). If it recurs live,
-      capture a live repro before reopening — the mock-reproducible mechanism
-      is demonstrably fixed.
-- ~~[x]~~ Drag region (2026-07-09): three stacked causes fixed — the header now
-      uses Tauri's subtree mode (`data-tauri-drag-region="deep"`, verified
-      against the vendored 2.11.5 drag script), `core:window:allow-start-dragging`
-      is granted, and a `remote` capability scope now covers the
-      `http://127.0.0.1` webview origin (capabilities silently didn't apply to
-      it at all before). Agent-unverifiable by nature — confirm dragging +
-      double-click-maximize by hand during the `desktop/` dogfood pass.
-
 - [ ] move "archived" popups elsewhere (top of sidebar? still middle of transcript but top instead of bottom? discuss first)
 
 ## 🔵 Corpus capture follow-ups (from the 2026-07-06 live-capture session)
