@@ -339,6 +339,14 @@ fn mock_files() -> Vec<FileInfo> {
     ]
 }
 
+fn mock_skills() -> Vec<String> {
+    vec!["debug".into(), "journal".into()]
+}
+
+fn mock_subagents() -> Vec<String> {
+    vec!["reviewer".into(), "explorer".into()]
+}
+
 fn mock_usage() -> SessionUsage {
     SessionUsage {
         tokens: Some(47200),
@@ -2423,6 +2431,12 @@ impl PantokenDriver for MockDriver {
     }
     async fn list_file_index(&self, _session_id: Option<SessionId>) -> (Vec<FileInfo>, bool) {
         (mock_files(), false)
+    }
+    async fn list_at_refs(&self, _session_id: Option<SessionId>) -> AtRefs {
+        AtRefs {
+            skills: mock_skills(),
+            subagents: mock_subagents(),
+        }
     }
     async fn list_files(
         &self,

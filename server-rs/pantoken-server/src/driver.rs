@@ -6,9 +6,9 @@
 
 use async_trait::async_trait;
 use pantoken_protocol::session_driver::{
-    BackgroundJob, CommandInfo, DirListing, FileInfo, HostUiResponse, ImageContent, ModelDefaults,
-    ModelOption, PathStat, PermissionMonitorMode, SessionDriverEvent, SessionId, SessionListEntry,
-    SessionUsage,
+    AtRefs, BackgroundJob, CommandInfo, DirListing, FileInfo, HostUiResponse, ImageContent,
+    ModelDefaults, ModelOption, PathStat, PermissionMonitorMode, SessionDriverEvent, SessionId,
+    SessionListEntry, SessionUsage,
 };
 use pantoken_protocol::wire::{DeliveryMode, LoginEnvStatus, McpAction};
 
@@ -190,6 +190,10 @@ pub trait PantokenDriver: Send + Sync {
 
     /// The full file index for a session's cwd.
     async fn list_file_index(&self, session_id: Option<SessionId>) -> (Vec<FileInfo>, bool);
+
+    /// Skills + subagents available for composer `@`-reference autocomplete
+    /// (server-authoritative, session/cwd-scoped like `list_file_index`).
+    async fn list_at_refs(&self, session_id: Option<SessionId>) -> AtRefs;
 
     /// Fallback file search for a composer @-mention query.
     async fn list_files(

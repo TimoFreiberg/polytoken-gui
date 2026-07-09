@@ -2281,6 +2281,19 @@ impl SessionHub {
         );
 
         let driver = self.driver.clone();
+        let focused_for_at_refs = focused.clone();
+        self.hub_ops.enqueue(
+            "connect_at_refs",
+            Box::new(move |hub| {
+                Box::pin(async move {
+                    let refs = driver.list_at_refs(focused_for_at_refs).await;
+                    let h = hub.lock();
+                    h.send_to_client(client_key, ServerMessage::AtRefs { refs });
+                })
+            }),
+        );
+
+        let driver = self.driver.clone();
         self.hub_ops.enqueue(
             "connect_model_defaults",
             Box::new(move |hub| {
@@ -2790,6 +2803,22 @@ async fn finish_switch(
                 let (files, truncated) = driver.list_file_index(focused).await;
                 let h = hub.lock();
                 h.send_to_client(client_key, ServerMessage::FileIndex { files, truncated });
+            })
+        }),
+    );
+
+    // atRefs (skills/subagents): session/cwd-scoped like file index, so
+    // re-pushed on every switch.
+    let hub_ops = { hub.lock().hub_ops.clone() };
+    let driver = { hub.lock().driver.clone() };
+    let focused = Some(sid.clone());
+    hub_ops.enqueue(
+        "switch_at_refs",
+        Box::new(move |hub| {
+            Box::pin(async move {
+                let refs = driver.list_at_refs(focused).await;
+                let h = hub.lock();
+                h.send_to_client(client_key, ServerMessage::AtRefs { refs });
             })
         }),
     );
@@ -3689,8 +3718,9 @@ mod hub_models_tests {
         hub.lock().spawn_connect_lists(client_key);
 
         // connect_session_list, connect_model_list, connect_command_list,
-        // connect_facet_list, connect_file_index, connect_model_defaults.
-        for _ in 0..6 {
+        // connect_facet_list, connect_file_index, connect_at_refs,
+        // connect_model_defaults.
+        for _ in 0..7 {
             apply_one(hub.clone(), &mut hub_ops).await;
         }
 
@@ -3716,6 +3746,35 @@ mod hub_models_tests {
                 assert_eq!(defaults.thinking_level.as_deref(), Some("medium"));
             }
             other => panic!("expected modelDefaults, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn connecting_client_receives_at_refs() {
+        // Sibling of `connecting_client_receives_model_list_and_defaults`: a
+        // connecting client gets the mock driver's skill/subagent fixtures via
+        // the new `connect_at_refs` fan-out.
+        let (_driver, hub, mut hub_ops) = test_hub();
+        let (client_key, _tx, mut rx) = hub.lock().add_client(None);
+        hub.lock().spawn_connect_lists(client_key);
+
+        for _ in 0..7 {
+            apply_one(hub.clone(), &mut hub_ops).await;
+        }
+
+        let at_refs = drain_until(&mut rx, |msg| matches!(msg, ServerMessage::AtRefs { .. })).await;
+        match at_refs {
+            ServerMessage::AtRefs { refs } => {
+                assert_eq!(
+                    refs.skills,
+                    vec!["debug".to_string(), "journal".to_string()]
+                );
+                assert_eq!(
+                    refs.subagents,
+                    vec!["reviewer".to_string(), "explorer".to_string()]
+                );
+            }
+            other => panic!("expected atRefs, got {other:?}"),
         }
     }
 

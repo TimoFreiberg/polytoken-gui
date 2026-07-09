@@ -220,6 +220,15 @@ pub struct PathStat {
     pub is_dir: bool,
 }
 
+/// Skills + subagents available for the composer's `@skill:`/`@subagent:`
+/// reference autocomplete. Server-authoritative like `FileInfo`'s `fileIndex`;
+/// pushed on connect and re-pushed on session switch (session/cwd-scoped).
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct AtRefs {
+    pub skills: Vec<String>,
+    pub subagents: Vec<String>,
+}
+
 // ── Goal / flags / todos ────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

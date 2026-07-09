@@ -185,6 +185,10 @@ export type ServerMessage =
    *  `truncated` is true when the cwd has more files than the cap, which is the only
    *  case the client falls back to a {@link queryFiles} search. See {@link FileInfo}. */
   | { type: "fileIndex"; files: readonly FileInfo[]; truncated: boolean }
+  /** Skills + subagents available for the composer's `@skill:`/`@subagent:`
+   *  reference autocomplete. Server-authoritative like {@link fileIndex}; pushed
+   *  on connect and re-pushed on session switch (they're session/cwd-scoped). */
+  | { type: "atRefs"; skills: readonly string[]; subagents: readonly string[] }
   /** File paths matching a composer @-mention query — the server-side `fd` *fallback*,
    *  used only when the {@link fileIndex} was truncated and local matches are thin (so a
    *  wanted file may live past the index cap). The client sends {@link queryFiles}

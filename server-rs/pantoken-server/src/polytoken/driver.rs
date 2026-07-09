@@ -50,8 +50,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use pantoken_daemon_types::*;
 use pantoken_protocol::session_driver::{
-    BackgroundJob, CommandInfo, DirListing, FileInfo, HostUiRequest, HostUiResponse, ImageContent,
-    JobKind, JobStatusKind, ModelDefaults, ModelOption, NotifyLevel, PathStat,
+    AtRefs, BackgroundJob, CommandInfo, DirListing, FileInfo, HostUiRequest, HostUiResponse,
+    ImageContent, JobKind, JobStatusKind, ModelDefaults, ModelOption, NotifyLevel, PathStat,
     PermissionMonitorMode, SessionClosedReason, SessionDriverEvent, SessionEventBase, SessionId,
     SessionListEntry, SessionRef, SessionSnapshot, SessionStatus, SessionUsage, WorkspaceId,
     WorkspaceRef, WorktreeInfo,
@@ -2437,6 +2437,35 @@ impl PantokenDriver for PolytokenDriver {
         (Vec::new(), false)
     }
 
+    /// Skills + subagents for the composer's `@`-reference autocomplete. Reads
+    /// the warm session's cached `last_state` (populated by the normal
+    /// FetchState/Reseed effects); if nothing is cached yet, fetches GET /state
+    /// once and populates the cache, mirroring the `FetchState` effect's
+    /// populate-and-cache pattern (`execute_effect` above). No warm session (or
+    /// no session_id, e.g. a draft) → empty `AtRefs`.
+    async fn list_at_refs(&self, session_id: Option<SessionId>) -> AtRefs {
+        let Some(sid) = &session_id else {
+            return AtRefs::default();
+        };
+        let Some(ws) = self.inner.get_warm(sid) else {
+            return AtRefs::default();
+        };
+        let cached = ws.last_state.read().clone();
+        let state = match cached {
+            Some(state) => Some(state),
+            None => {
+                let res = ws.client.state().await;
+                if let Some(state) = res.data {
+                    *ws.last_state.write() = Some(state.clone());
+                    Some(state)
+                } else {
+                    None
+                }
+            }
+        };
+        at_refs_from_snapshot(state.as_ref())
+    }
+
     async fn list_files(
         &self,
         query: String,
@@ -2831,6 +2860,21 @@ fn parse_job_status(val: &serde_json::Value) -> JobStatusKind {
             tracing::warn!("unparseable job status: {val}, defaulting to Running");
             JobStatusKind::Running
         }
+    }
+}
+
+/// Pure mapping from a (possibly absent) daemon state snapshot to `AtRefs`.
+/// Extracted from `list_at_refs` so the snapshot→AtRefs projection is
+/// unit-testable without warm-session/daemon-client scaffolding. `None` fields
+/// on the snapshot (daemon didn't report skills/subagents) map to empty vecs,
+/// same as no snapshot at all.
+fn at_refs_from_snapshot(state: Option<&SessionStateSnapshot>) -> AtRefs {
+    match state {
+        Some(state) => AtRefs {
+            skills: state.available_skills.clone().unwrap_or_default(),
+            subagents: state.available_subagents.clone().unwrap_or_default(),
+        },
+        None => AtRefs::default(),
     }
 }
 
@@ -4543,5 +4587,77 @@ mod tests {
             .await;
         // No assertion beyond "didn't panic" — this proves the not-found path
         // degrades quietly rather than e.g. unwrapping None.
+    }
+
+    /// A minimal `SessionStateSnapshot` with every field at its quietest
+    /// default except `available_skills`/`available_subagents`, which the
+    /// caller overrides. Mirrors `event_map::tests::base_state` (private to
+    /// that module, hence duplicated here rather than imported).
+    fn state_with_at_refs(
+        skills: Option<Vec<String>>,
+        subagents: Option<Vec<String>>,
+    ) -> SessionStateSnapshot {
+        SessionStateSnapshot {
+            active_facet: "execute".to_string(),
+            active_model: None,
+            active_plan: None,
+            active_reasoning_effort: None,
+            adventurous_handoff_active: None,
+            available_models: None,
+            available_skills: skills,
+            available_subagents: subagents,
+            context_usage: None,
+            current_goal: None,
+            cwd: None,
+            cwd_stack_depth: None,
+            env: Default::default(),
+            flags: vec![],
+            latest_compaction_summary: None,
+            mcp_servers: None,
+            most_recent_assistant_text: None,
+            pending_interrogatives: None,
+            plugin_config: serde_json::Value::Null,
+            project_cwd: None,
+            session_title: None,
+            source_control: None,
+            symlink_warnings: None,
+            todos: vec![],
+            turn_in_flight: Some(false),
+        }
+    }
+
+    /// No snapshot at all (never fetched, or the fetch failed) → empty `AtRefs`,
+    /// not an error — the composer's `@`-menu just shows no skill/subagent rows.
+    #[test]
+    fn at_refs_from_snapshot_no_state_is_empty() {
+        let refs = at_refs_from_snapshot(None);
+        assert!(refs.skills.is_empty());
+        assert!(refs.subagents.is_empty());
+    }
+
+    /// The daemon reporting `None` for either field (older daemon, or a facet
+    /// with nothing configured) maps to an empty vec, same as no snapshot.
+    #[test]
+    fn at_refs_from_snapshot_none_fields_map_to_empty_vecs() {
+        let state = state_with_at_refs(None, None);
+        let refs = at_refs_from_snapshot(Some(&state));
+        assert!(refs.skills.is_empty());
+        assert!(refs.subagents.is_empty());
+    }
+
+    /// The normal case: the snapshot's `available_skills`/`available_subagents`
+    /// pass through verbatim into `AtRefs`.
+    #[test]
+    fn at_refs_from_snapshot_maps_skills_and_subagents() {
+        let state = state_with_at_refs(
+            Some(vec!["debug".to_string(), "journal".to_string()]),
+            Some(vec!["reviewer".to_string()]),
+        );
+        let refs = at_refs_from_snapshot(Some(&state));
+        assert_eq!(
+            refs.skills,
+            vec!["debug".to_string(), "journal".to_string()]
+        );
+        assert_eq!(refs.subagents, vec!["reviewer".to_string()]);
     }
 }

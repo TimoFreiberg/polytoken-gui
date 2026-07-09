@@ -208,6 +208,12 @@ class PantokenStore {
     files: [],
     truncated: false,
   });
+  // Skills + subagents available for the composer's `@skill:`/`@subagent:` autocomplete,
+  // pushed by the server on connect + session switch (session/cwd-scoped, like `fileIndex`).
+  atRefs = $state<{ skills: string[]; subagents: string[] }>({
+    skills: [],
+    subagents: [],
+  });
   // Fallback file-search results for the current @-mention query (the server `fd` path,
   // only requested when `fileIndex.truncated`). The server echoes the query so we can drop
   // stale responses; the composer merges these into the local matches. See `queryFiles()`.
@@ -1060,6 +1066,12 @@ class PantokenStore {
       case "fileIndex":
         this.fileIndex = { files: [...msg.files], truncated: msg.truncated };
         break;
+      case "atRefs":
+        this.atRefs = {
+          skills: [...msg.skills],
+          subagents: [...msg.subagents],
+        };
+        break;
       case "fileList":
         this.files = { query: msg.query, items: [...msg.files] };
         break;
@@ -1713,6 +1725,8 @@ class PantokenStore {
     // user types `@`. The fallback-query cache is cleared for the same reason.
     this.fileIndex = { files: [], truncated: false };
     this.files = { query: "", items: [] };
+    // Same reasoning for skills/subagents: session/cwd-scoped, re-pushed on switch.
+    this.atRefs = { skills: [], subagents: [] };
     this.lastAttemptedSessionPath = path;
     // Optimistic: surface the target session immediately so the sidebar row,
     // header, and transcript all react the instant the user clicks — instead of

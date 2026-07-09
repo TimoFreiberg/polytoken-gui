@@ -7,8 +7,8 @@
 use serde::{Deserialize, Serialize};
 
 use crate::session_driver::{
-    BackgroundJob, CommandInfo, FileInfo, HostUiResponse, ImageContent, ModelDefaults, ModelOption,
-    PermissionMonitorMode, SessionDriverEvent, SessionId, SessionListEntry,
+    AtRefs, BackgroundJob, CommandInfo, FileInfo, HostUiResponse, ImageContent, ModelDefaults,
+    ModelOption, PermissionMonitorMode, SessionDriverEvent, SessionId, SessionListEntry,
 };
 
 pub const PROTOCOL_VERSION: u32 = 2;
@@ -178,6 +178,13 @@ pub enum ServerMessage {
     FileList {
         query: String,
         files: Vec<FileInfo>,
+    },
+    /// Skills + subagents available for composer `@`-reference autocomplete.
+    /// Server-authoritative like `FileIndex`; pushed on connect and re-pushed
+    /// on session switch (session/cwd-scoped). See `AtRefs`.
+    AtRefs {
+        #[serde(flatten)]
+        refs: AtRefs,
     },
     DirListing {
         #[serde(flatten)]

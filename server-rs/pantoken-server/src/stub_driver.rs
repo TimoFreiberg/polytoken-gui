@@ -5,8 +5,8 @@
 
 use async_trait::async_trait;
 use pantoken_protocol::session_driver::{
-    CommandInfo, DirListing, FileInfo, ModelDefaults, ModelOption, PathStat, SessionDriverEvent,
-    SessionId, SessionListEntry,
+    AtRefs, CommandInfo, DirListing, FileInfo, ModelDefaults, ModelOption, PathStat,
+    SessionDriverEvent, SessionId, SessionListEntry,
 };
 use pantoken_protocol::wire::{DeliveryMode, LoginEnvStatus};
 use parking_lot::Mutex;
@@ -135,6 +135,10 @@ impl PantokenDriver for StubDriver {
 
     async fn list_file_index(&self, _session_id: Option<SessionId>) -> (Vec<FileInfo>, bool) {
         (Vec::new(), false)
+    }
+
+    async fn list_at_refs(&self, _session_id: Option<SessionId>) -> AtRefs {
+        AtRefs::default()
     }
 
     async fn list_files(
