@@ -1050,6 +1050,10 @@ class PantokenStore {
           // not a cold first-run gate. Lets TokenGate say so.
           this.unauthorizedReason = "expired";
           disconnect(); // stop the reconnect loop until a new token is entered
+        } else if (msg.kind === "abort") {
+          console.error("[server error]", msg.message);
+          this.lastError = msg.message;
+          this.toast(msg.message, { durationMs: 8000 });
         } else if (msg.kind === "session-switch") {
           // A known, common session-open failure (daemon didn't start, lease
           // conflict, port didn't bind). These aren't unexpected crashes — render

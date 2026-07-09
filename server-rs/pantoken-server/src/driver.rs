@@ -96,8 +96,9 @@ pub trait PantokenDriver: Send + Sync {
         prompt_id: Option<String>,
     ) -> Result<(), String>;
 
-    /// Abort the current turn.
-    fn abort(&self, session_id: Option<SessionId>);
+    /// Abort the current turn. Returns `Err(message)` when the stop request
+    /// could not be delivered to the live daemon so the hub can surface it.
+    async fn abort(&self, session_id: Option<SessionId>) -> Result<(), String>;
 
     /// Atomically clear and return the targeted session's text-only driver queues.
     async fn clear_queue(&self, _session_id: Option<SessionId>) -> ClearQueueResult {

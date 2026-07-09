@@ -251,7 +251,7 @@ export type ServerMessage =
    *  client so its archived toast can explain the leftover and offer a force-delete.
    *  `path` == the worktree dir (== the session's cwd), the key `cleanupWorktree` takes. */
   | { type: "worktreeRetained"; path: string; reason: string }
-  | { type: "error"; message: string; kind?: "session-switch" };
+  | { type: "error"; message: string; kind?: "session-switch" | "abort" };
 
 /** Tail-resume request: "I still hold {sessionId} folded through {epoch, seq}".
  *  Carried on the reconnect hello; when the server's journal epoch matches and

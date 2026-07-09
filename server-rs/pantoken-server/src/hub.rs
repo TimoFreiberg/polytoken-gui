@@ -1348,7 +1348,23 @@ impl SessionHub {
             }
             ClientMessage::Abort { session_id } => {
                 let target = session_id.clone().or(focused_id);
-                self.driver.abort(target);
+                let driver = self.driver.clone();
+                self.hub_ops.enqueue(
+                    "abort",
+                    Box::new(move |hub| {
+                        Box::pin(async move {
+                            if let Err(e) = driver.abort(target).await {
+                                hub.lock().send_to_client(
+                                    client_key,
+                                    ServerMessage::Error {
+                                        message: e,
+                                        kind: Some("abort".into()),
+                                    },
+                                );
+                            }
+                        })
+                    }),
+                );
             }
             ClientMessage::SetModel {
                 provider,
@@ -3158,6 +3174,38 @@ mod hub_models_tests {
                 message.starts_with("couldn't open the data directory:"),
                 "unexpected error message: {message}"
             ),
+            other => panic!("expected Error, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn abort_failure_surfaces_to_requesting_client() {
+        let driver: Arc<dyn PantokenDriver> = Arc::new(
+            crate::stub_driver::StubDriver::new().with_abort_error("daemon did not receive stop"),
+        );
+        let (tx, mut ops) = hub_op_channel();
+        let hub = SessionHub::new(
+            driver,
+            tx,
+            None,
+            250,
+            "test-server".into(),
+            None,
+            "test-sha".into(),
+            10,
+        );
+
+        let (client_key, _tx, mut rx) = hub.lock().add_client(None);
+        hub.lock()
+            .handle_client(client_key, ClientMessage::Abort { session_id: None });
+        apply_one(hub.clone(), &mut ops).await;
+
+        let msg = drain_until(&mut rx, |m| matches!(m, ServerMessage::Error { .. })).await;
+        match msg {
+            ServerMessage::Error { message, kind } => {
+                assert_eq!(message, "daemon did not receive stop");
+                assert_eq!(kind.as_deref(), Some("abort"));
+            }
             other => panic!("expected Error, got {other:?}"),
         }
     }

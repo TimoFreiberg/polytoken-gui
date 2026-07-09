@@ -1486,17 +1486,19 @@ impl PantokenDriver for PolytokenDriver {
         Ok(())
     }
 
-    fn abort(&self, session_id: Option<SessionId>) {
-        if let Some(sid) = session_id {
-            if let Some(ws) = self.inner.get_warm(&sid) {
-                let ws = ws.clone();
-                tokio::spawn(async move {
-                    if let Err(e) = ws.client.cancel_turn().await {
-                        error!("abort failed: {e}");
-                    }
-                });
-            }
-        }
+    async fn abort(&self, session_id: Option<SessionId>) -> Result<(), String> {
+        let Some(sid) = session_id else {
+            return Err("No active session to stop.".into());
+        };
+        let Some(ws) = self.inner.get_warm(&sid) else {
+            return Err(format!(
+                "Couldn't stop session {sid}: it is not connected to the daemon."
+            ));
+        };
+        ws.client
+            .cancel_turn()
+            .await
+            .map_err(|e| format!("Couldn't send stop to the daemon: {e}"))
     }
 
     async fn clear_queue(&self, session_id: Option<SessionId>) -> ClearQueueResult {

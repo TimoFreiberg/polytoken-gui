@@ -1846,7 +1846,7 @@ impl PantokenDriver for MockDriver {
         Ok(())
     }
 
-    fn abort(&self, _session_id: Option<SessionId>) {
+    async fn abort(&self, _session_id: Option<SessionId>) -> Result<(), String> {
         // Faithful port of TS `MockDriver.abort()` (`server/src/mock-driver.ts:411`):
         // clear pending scheduled events FIRST (so a `pendinghold` thinking-delta
         // timer can't fire after abort and re-open the turn), then settle any open
@@ -1862,6 +1862,7 @@ impl PantokenDriver for MockDriver {
             user_entry_id: None,
             assistant_entry_id: None,
         });
+        Ok(())
     }
 
     async fn clear_queue(&self, session_id: Option<SessionId>) -> ClearQueueResult {

@@ -21,6 +21,7 @@ type Listener = Box<dyn Fn(SessionDriverEvent) + Send + Sync>;
 pub struct StubDriver {
     listeners: Arc<Mutex<Vec<Listener>>>,
     login_env_status: LoginEnvStatus,
+    abort_error: Option<String>,
 }
 
 impl StubDriver {
@@ -32,6 +33,7 @@ impl StubDriver {
                 ok: false,
                 detail: None,
             },
+            abort_error: None,
         }
     }
 
@@ -39,6 +41,11 @@ impl StubDriver {
     /// `PantokenDriver` trait for the Settings panel.
     pub fn with_login_env_status(mut self, status: LoginEnvStatus) -> Self {
         self.login_env_status = status;
+        self
+    }
+
+    pub fn with_abort_error(mut self, error: impl Into<String>) -> Self {
+        self.abort_error = Some(error.into());
         self
     }
 
@@ -85,7 +92,12 @@ impl PantokenDriver for StubDriver {
         Ok(())
     }
 
-    fn abort(&self, _session_id: Option<SessionId>) {}
+    async fn abort(&self, _session_id: Option<SessionId>) -> Result<(), String> {
+        match &self.abort_error {
+            Some(error) => Err(error.clone()),
+            None => Ok(()),
+        }
+    }
 
     fn respond_ui(
         &self,
