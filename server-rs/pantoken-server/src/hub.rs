@@ -46,7 +46,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use futures_util::FutureExt;
 use pantoken_protocol::session_driver::{
     HostUiRequest, HostUiResponse, ModelOption, SessionDriverEvent, SessionDriverEvent as E,
-    SessionEventBase, SessionId, SessionRef, SessionStatus, is_dialog_request,
+    SessionEventBase, SessionId, SessionRef, SessionStatus, SessionUsage, is_dialog_request,
 };
 use pantoken_protocol::state::{SessionState, fold_all, fold_event, initial_session_state};
 use pantoken_protocol::wire::{
@@ -237,7 +237,7 @@ pub struct SessionHub {
     default_focus_id: Option<SessionId>,
     ever_connected: bool,
     session_list_dirty: bool,
-    last_usage_emitted: HashMap<String, String>,
+    last_usage_emitted: HashMap<String, SessionUsage>,
 
     // ── Desktop update state ──────────────────────────────────────────────
     update_sha: Option<String>,
@@ -736,9 +736,7 @@ impl SessionHub {
     }
 
     fn track_attention(&mut self, sid: &SessionId, ev: &SessionDriverEvent) -> bool {
-        let before = self
-            .attention_for(sid)
-            .map(|a| serde_json::to_string(&a).unwrap_or_default());
+        let before = self.attention_for(sid);
 
         let disc = ev.type_discriminator();
         let timestamp = ev.timestamp();
@@ -902,9 +900,7 @@ impl SessionHub {
             _ => {}
         }
 
-        let after = self
-            .attention_for(sid)
-            .map(|a| serde_json::to_string(&a).unwrap_or_default());
+        let after = self.attention_for(sid);
         before != after
     }
 
@@ -2338,16 +2334,15 @@ impl SessionHub {
         for sid in running_sessions {
             let usage = self.driver.get_usage(Some(sid.clone()));
             let Some(usage) = usage else { continue };
-            let key = serde_json::to_string(&usage).unwrap_or_default();
             if self
                 .last_usage_emitted
                 .get(&sid)
-                .map(|k| k == &key)
+                .map(|last| last == &usage)
                 .unwrap_or(false)
             {
                 continue;
             }
-            self.last_usage_emitted.insert(sid.clone(), key);
+            self.last_usage_emitted.insert(sid.clone(), usage.clone());
 
             // Get the session ref from the journal's first event
             let session_ref = self

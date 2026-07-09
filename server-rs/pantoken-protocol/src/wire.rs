@@ -61,7 +61,7 @@ pub use crate::session_driver::{DirListing, PathStat};
 
 // ── SessionAttention ────────────────────────────────────────────────────
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct SessionAttention {
     #[serde(rename = "sessionId")]
     pub session_id: SessionId,
