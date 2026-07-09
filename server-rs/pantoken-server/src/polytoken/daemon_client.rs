@@ -441,6 +441,19 @@ fn merged_spawn_env(
     Some(env)
 }
 
+/// Render a daemon-spawn `io::Error` while its `ErrorKind` is still in hand.
+/// The one ambiguity worth resolving here: a bare OS "No such file or
+/// directory" reads like a missing project dir, but at these call sites the
+/// only path the OS resolves is the binary itself — say so, and name it.
+/// (Errors cross the driver seam as `String`; see restore_error.rs.)
+fn spawn_error_message(what: &str, polytoken_bin: &str, e: &std::io::Error) -> String {
+    if e.kind() == std::io::ErrorKind::NotFound {
+        format!("failed to spawn {what}: polytoken binary not found at '{polytoken_bin}'")
+    } else {
+        format!("failed to spawn {what}: {e}")
+    }
+}
+
 /// Spawn a NEW polytoken daemon session (no resume). `polytoken --working-dir <cwd>
 /// new --no-attach` prints `session_id=<id> port=<port>` to stdout and exits 0;
 /// the daemon runs detached.
@@ -468,7 +481,7 @@ async fn spawn_new_daemon(
     let output = cmd
         .output()
         .await
-        .map_err(|e| format!("failed to spawn polytoken new: {e}"))?;
+        .map_err(|e| spawn_error_message("polytoken new", polytoken_bin, &e))?;
     let stdout = String::from_utf8_lossy(&output.stdout).to_string();
     let stderr = String::from_utf8_lossy(&output.stderr).to_string();
     if !output.status.success() {
@@ -568,7 +581,7 @@ async fn spawn_resume_daemon(
 
     let mut child = cmd
         .spawn()
-        .map_err(|e| format!("failed to spawn polytoken daemon: {e}"))?;
+        .map_err(|e| spawn_error_message("polytoken daemon", polytoken_bin, &e))?;
     let pid = child.id();
 
     // Poll startup.json for readiness (the daemon writes it once it has bound its
@@ -2464,6 +2477,22 @@ pub fn _set_spawn_for_testing(_enabled: bool) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // A missing binary must be named as such — the bare OS "No such file or
+    // directory" reads like a missing project dir (see restore_error.rs).
+    #[test]
+    fn spawn_error_names_missing_binary() {
+        let not_found = std::io::Error::from(std::io::ErrorKind::NotFound);
+        assert_eq!(
+            spawn_error_message("polytoken daemon", "/opt/polytoken", &not_found),
+            "failed to spawn polytoken daemon: polytoken binary not found at '/opt/polytoken'"
+        );
+        let denied = std::io::Error::from(std::io::ErrorKind::PermissionDenied);
+        assert!(
+            spawn_error_message("polytoken new", "/opt/polytoken", &denied)
+                .starts_with("failed to spawn polytoken new: ")
+        );
+    }
 
     // AC.3 — build_resume_args includes --credential-file and the credential path.
     #[test]

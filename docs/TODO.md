@@ -183,10 +183,12 @@ are REAL but **provisional** — they embed local `/Users/timo/...` paths from t
       its own comment admits it. Post-warm liveness needs a "this session
       died" client signal before fail-fast is honest there (the restore path
       is classified now; see `polytoken/restore_error.rs`).
-- [ ] `spawn_new_daemon`/`spawn_resume_daemon` flatten `io::Error` into
-      strings — binary-missing vs dir-missing both read "No such file or
-      directory". Preserve `ErrorKind` so `restore_error::classify` can stop
-      string-sniffing.
+- ~~[x]~~ `spawn_new_daemon`/`spawn_resume_daemon` flattened `io::Error` into
+      bare OS strings — a missing binary read as "No such file or directory".
+      `spawn_error_message` now names the binary path while the `ErrorKind` is
+      in hand. (Full structured errors across the `Result<_, String>` driver
+      seam judged not worth it: classify() is already centralized + tested,
+      and MissingCwd has a pre-flight `is_dir()` guard.)
 - [ ] Restore fail-fast treats an unmounted volume as permanent `MissingCwd`
       (deliberate: the toast says move it back; re-clicking re-checks).
       Revisit only if external-volume projects become a real workflow.
