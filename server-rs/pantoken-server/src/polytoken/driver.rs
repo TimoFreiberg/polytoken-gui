@@ -168,12 +168,16 @@ struct PolytokenInner {
     /// `get_model_defaults()` so a single subprocess result serves both.
     /// `None` = not yet populated (or invalidated). Not cached on error.
     model_cache: Mutex<Option<ParsedModels>>,
-    /// Single-flight lock for model cache misses. Prevents the thundering
+    /// Single-flight flag for model cache misses. Prevents the thundering
     /// herd: N concurrent callers on a cold cache would each spawn
-    /// `polytoken models` independently. With this lock, only the first
-    /// caller runs the subprocess; others wait, then find the cache populated
-    /// (double-checked locking).
-    model_cache_lock: tokio::sync::Mutex<()>,
+    /// `polytoken models` independently. When `true`, a fetch is in progress;
+    /// other callers wait on `model_cache_notify` and then re-check the cache.
+    /// Held only for nanoseconds (never across `.await`), so a sync Mutex is
+    /// safe here — no async lock scheduling risk.
+    model_cache_fetching: Mutex<bool>,
+    /// Wakeup signal for callers waiting on an in-progress model fetch.
+    /// Notified after the fetcher stores the result (or gives up on error).
+    model_cache_notify: tokio::sync::Notify,
     /// The inspectable status of the config watcher (binary/global config).
     /// `Disabled` in fake/test mode.
     watch_status: Mutex<config_watcher::WatchStatus>,
@@ -245,7 +249,8 @@ impl PolytokenDriver {
                 command_cache: Mutex::new(HashMap::new()),
                 facet_cache: Mutex::new(HashMap::new()),
                 model_cache: Mutex::new(None),
-                model_cache_lock: tokio::sync::Mutex::new(()),
+                model_cache_fetching: Mutex::new(false),
+                model_cache_notify: tokio::sync::Notify::new(),
                 watch_status: Mutex::new(config_watcher::WatchStatus::Disabled),
                 watcher_handle: Mutex::new(None),
                 command_runner: default_command_runner(),
@@ -302,7 +307,8 @@ impl PolytokenDriver {
                 command_cache: Mutex::new(HashMap::new()),
                 facet_cache: Mutex::new(HashMap::new()),
                 model_cache: Mutex::new(None),
-                model_cache_lock: tokio::sync::Mutex::new(()),
+                model_cache_fetching: Mutex::new(false),
+                model_cache_notify: tokio::sync::Notify::new(),
                 watch_status: Mutex::new(config_watcher::WatchStatus::Disabled),
                 watcher_handle: Mutex::new(None),
                 command_runner: default_command_runner(),
@@ -566,40 +572,73 @@ impl PolytokenInner {
 
     /// Get the cached parsed models, or fetch them via `polytoken models` if
     /// the cache is empty. Uses single-flight deduplication: concurrent
-    /// callers on a cold cache share one subprocess — the first caller
-    /// acquires `model_cache_lock`, runs the command, and populates the cache;
-    /// waiting callers acquire the lock after, find the cache populated
-    /// (double-checked locking), and return without spawning a subprocess.
+    /// callers on a cold cache share one subprocess.
+    ///
+    /// The single-flight mechanism uses a sync `Mutex<bool>` "fetching" flag
+    /// (held only for nanoseconds, never across `.await`) plus a
+    /// `tokio::sync::Notify` to wake waiters. This avoids the scheduling risks
+    /// of holding an async mutex across a subprocess `.await`.
+    ///
+    /// Wakeup uses `notify_one()` with baton-passing: the fetcher wakes one
+    /// waiter, each woken waiter wakes the next. `notify_one()` stores a
+    /// permit when no one is polling yet, so if the fetcher finishes between
+    /// a waiter's flag-check and its `notified().await`, the stored permit
+    /// resolves the waiter immediately — no lost wakeup.
     ///
     /// On subprocess error, returns an empty `ParsedModels` (matching the
     /// original `list_models` error behavior) and does NOT cache the failure
     /// so the next call retries.
     async fn get_or_fetch_parsed_models(self: &Arc<Self>) -> ParsedModels {
-        // Fast path: cache hit (no lock contention).
-        if let Some(cached) = self.model_cache.lock().clone() {
-            return cached;
-        }
-        // Slow path: acquire the single-flight lock.
-        let _guard = self.model_cache_lock.lock().await;
-        // Double-check: another caller may have populated the cache while we
-        // waited for the lock.
-        if let Some(cached) = self.model_cache.lock().clone() {
-            return cached;
-        }
-        // Still a miss — we're the elected caller. Run the subprocess.
-        let output = self.run_polytoken(vec!["models".into()], None).await;
-        match output {
-            Ok(out) => {
-                let stdout = String::from_utf8_lossy(&out.stdout).to_string();
-                let parsed = parse_models(&stdout);
-                *self.model_cache.lock() = Some(parsed.clone());
-                parsed
+        loop {
+            // Fast path: cache hit.
+            if let Some(cached) = self.model_cache.lock().clone() {
+                return cached;
             }
-            Err(e) => {
-                error!("list_models failed: {e}");
-                // Do not cache failed results (AC.3: next call retries).
-                ParsedModels::default()
+
+            // Try to become the fetcher: set the flag (sync lock, no .await).
+            let became_fetcher = {
+                let mut fetching = self.model_cache_fetching.lock();
+                if *fetching {
+                    false
+                } else {
+                    *fetching = true;
+                    true
+                }
+            };
+
+            if became_fetcher {
+                // We're the elected caller. Run the subprocess with NO lock held.
+                let result = self.run_polytoken(vec!["models".into()], None).await;
+                let parsed = match result {
+                    Ok(out) => {
+                        let stdout = String::from_utf8_lossy(&out.stdout).to_string();
+                        let parsed = parse_models(&stdout);
+                        *self.model_cache.lock() = Some(parsed.clone());
+                        parsed
+                    }
+                    Err(e) => {
+                        error!("list_models failed: {e}");
+                        // Do not cache failed results (AC.3: next call retries).
+                        ParsedModels::default()
+                    }
+                };
+                // Clear the flag and wake one waiter (baton-start).
+                *self.model_cache_fetching.lock() = false;
+                self.model_cache_notify.notify_one();
+                return parsed;
             }
+
+            // Another caller is fetching. Wait for notification.
+            // notify_one() stores a permit if no task is polling yet, so this
+            // is race-free: if the fetcher finished between our flag check and
+            // this await, the stored permit resolves us immediately.
+            self.model_cache_notify.notified().await;
+            // Baton: wake the next waiter so they can re-check the cache.
+            // If no one is waiting, this stores a harmless stale permit.
+            self.model_cache_notify.notify_one();
+            // Loop back to re-check the cache. If the fetcher succeeded, the
+            // cache is populated and we return. If it failed, the cache is
+            // still empty and we'll try to become the fetcher ourselves.
         }
     }
 
@@ -2671,7 +2710,8 @@ mod tests {
             command_cache: Mutex::new(HashMap::new()),
             facet_cache: Mutex::new(HashMap::new()),
             model_cache: Mutex::new(None),
-            model_cache_lock: tokio::sync::Mutex::new(()),
+            model_cache_fetching: Mutex::new(false),
+            model_cache_notify: tokio::sync::Notify::new(),
             watch_status: Mutex::new(config_watcher::WatchStatus::Disabled),
             watcher_handle: Mutex::new(None),
             command_runner: default_command_runner(),
