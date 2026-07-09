@@ -61,6 +61,10 @@ test("recall survives a reload (persisted submit log)", async ({ page }) => {
   await expect(ta).toHaveValue("");
 
   await page.reload();
+  // The submit log is keyed by session id, which the reloaded store only knows
+  // once the seed lands — wait for the transcript to be back (the just-sent
+  // prompt row) before recalling, like a user who can see the page would.
+  await expect(page.getByText("durable across reload").first()).toBeVisible();
   const reloaded = composer(page);
   await reloaded.focus();
   await page.keyboard.press("ArrowUp");
