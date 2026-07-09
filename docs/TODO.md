@@ -46,6 +46,8 @@ resolution is non-obvious or likely to bite again. Otherwise see `jj log`.
       dead — that entry was deleted in the docs cleanup; the tier summary
       lives in `server-rs/PROGRESS.md` Phase 2.5.)
 - [ ] move "archived" popups elsewhere (top of sidebar? still middle of transcript but top instead of bottom? discuss first)
+- [ ] when in the "new session" view, none of the state of the previous session should be displayed. i sometimes got ask_user_question popups in that view, we need to ensure no plan proposals from the prev session pop up, and the sidebar must also be cleared
+
 
 ## 🔵 Corpus capture follow-ups (from the 2026-07-06 live-capture session)
 
