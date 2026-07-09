@@ -187,7 +187,7 @@ test("a new-session draft hides the focused session's tasklist pill", async ({
   await expect(pill).toBeHidden();
 });
 
-test("⌘⇧C in a new-session draft cycles the DRAFT's facet, not the session's", async ({
+test("⌘⇧C in a new-session draft changes the DRAFT's facet, not the session's", async ({
   page,
 }) => {
   await openSidebar(page);
@@ -195,8 +195,9 @@ test("⌘⇧C in a new-session draft cycles the DRAFT's facet, not the session's
   const badge = page.getByTestId("facet-badge");
   await expect(badge).toContainText("Execute");
 
-  // Cycle in the draft: only the draft's pick moves.
+  // ⌘⇧C opens the facet menu; pick Plan — only the draft's pick moves.
   await page.keyboard.press("Meta+Shift+C");
+  await page.getByRole("option", { name: "Plan" }).click();
   await expect(badge).toContainText("Plan");
 
   // Exit the draft to a live session — its facet must be untouched.
@@ -217,6 +218,7 @@ test("submitting a draft carries its facet into the created session", async ({
   const badge = page.getByTestId("facet-badge");
   await expect(badge).toContainText("Execute");
   await page.keyboard.press("Meta+Shift+C");
+  await page.getByRole("option", { name: "Plan" }).click();
   await expect(badge).toContainText("Plan");
 
   const box = composer(page);

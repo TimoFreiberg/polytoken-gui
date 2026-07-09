@@ -73,7 +73,7 @@ test("facet badge shows 'Plan' when the active facet is plan", async ({
   await expect(badge).toHaveText("Plan");
   await expect(badge).toHaveAttribute(
     "title",
-    "Facet: plan — click to switch (⌘⇧C cycles facets)",
+    "Facet: plan — click to switch (⌘⇧C opens this menu)",
   );
   // After the dwell, the script reverts to facet:"execute" and the badge returns
   // to its subtle "Execute" chip (always visible — a state readout, not a toggle
