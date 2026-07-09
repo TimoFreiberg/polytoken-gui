@@ -1838,31 +1838,24 @@ impl DaemonClient {
             urlencoding::encode(id)
         );
         let body_str = serde_json::to_string(response).unwrap_or_default();
-        let result = tokio::time::timeout(
-            Duration::from_millis(10_000),
-            self.http
-                .post(&url)
-                .header("content-type", "application/json")
-                .body(body_str)
-                .send(),
-        )
-        .await;
-        match result {
+        match self
+            .safe_fetch(&url, reqwest::Method::POST, Some(&body_str), 10_000)
+            .await
+        {
             Err(_) => Err(format!(
                 "POST /interrogative/respond timed out (10s) for {id}"
             )),
-            Ok(Err(e)) => Err(format!("POST /interrogative/respond failed: {e}")),
-            Ok(Ok(res)) => {
-                if !res.status().is_success() {
-                    let status = res.status().as_u16();
-                    let text = res.text().await.unwrap_or_default();
-                    Err(format!(
+            Ok((status, text, fetch_err)) => {
+                if !(200..300).contains(&status) {
+                    let message = fetch_err
+                        .or(text)
+                        .unwrap_or_else(|| "empty response body".into());
+                    return Err(format!(
                         "POST /interrogative/respond failed ({status}): {}",
-                        &text[..text.len().min(200)]
-                    ))
-                } else {
-                    Ok(())
+                        &message[..message.len().min(200)]
+                    ));
                 }
+                Ok(())
             }
         }
     }
@@ -2628,6 +2621,78 @@ sleep 30
             client.auth_header().is_none(),
             "auth header should be absent when token is None"
         );
+    }
+
+    #[tokio::test]
+    async fn test_respond_interrogative_sends_bearer_auth() {
+        use std::sync::{
+            Arc,
+            atomic::{AtomicBool, Ordering},
+        };
+
+        use axum::{
+            Json, Router,
+            extract::Path,
+            http::{HeaderMap, StatusCode},
+            response::IntoResponse,
+            routing::post,
+        };
+        use pantoken_daemon_types::InterrogativeResponse;
+        use serde_json::Value;
+        use tokio::net::TcpListener;
+
+        let saw_valid_body = Arc::new(AtomicBool::new(false));
+        let saw_valid_body_handler = saw_valid_body.clone();
+        let app = Router::new().route(
+            "/interrogative/{id}/respond",
+            post(
+                move |Path(id): Path<String>, headers: HeaderMap, Json(body): Json<Value>| {
+                    let saw_valid_body = saw_valid_body_handler.clone();
+                    async move {
+                        if headers.get("authorization").and_then(|v| v.to_str().ok())
+                            != Some("Bearer test-token")
+                        {
+                            return StatusCode::UNAUTHORIZED.into_response();
+                        }
+                        if id != "perm-1" {
+                            return StatusCode::NOT_FOUND.into_response();
+                        }
+                        if body
+                            == serde_json::json!({
+                                "kind": "permission_answer",
+                                "granted": true,
+                            })
+                        {
+                            saw_valid_body.store(true, Ordering::SeqCst);
+                        }
+                        StatusCode::NO_CONTENT.into_response()
+                    }
+                },
+            ),
+        );
+
+        let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+        let port = listener.local_addr().expect("local addr").port();
+        let server = tokio::spawn(async move {
+            axum::serve(listener, app).await.expect("serve");
+        });
+
+        let client = DaemonClient::new("s1".into(), port, 1, Some("test-token".into()));
+        let response = InterrogativeResponse::PermissionAnswer {
+            granted: true,
+            persistence_target: None,
+        };
+
+        client
+            .respond_interrogative("perm-1", &response)
+            .await
+            .expect("respond_interrogative should include bearer auth");
+        assert!(
+            saw_valid_body.load(Ordering::SeqCst),
+            "handler should receive the permission response body"
+        );
+
+        server.abort();
     }
 
     fn write_startup_json(
