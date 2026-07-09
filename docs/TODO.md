@@ -127,6 +127,24 @@ are REAL but **provisional** — they embed local `/Users/timo/...` paths from t
 
 ## 🏗️ Architecture
 
+- [ ] **WS → HTTP+SSE transport migration — assessed 2026-07-09, recommended
+      as its own project.** The transport seam is thin: ~120 lines of WS
+      handler (`main.rs`), 343 lines of reconnecting client singleton
+      (`ws.svelte.ts`); the whole seed/event/epoch/seq resume machinery is
+      transport-agnostic and would carry over unchanged (SSE `Last-Event-ID`
+      even maps onto it naturally). Client→server becomes one `POST /msg`
+      route dispatching the same `ClientMessage` enum. **Why do it:** (1) it
+      deletes the WKWebView permessage-deflate bug class entirely — standard
+      HTTP compression on the SSE stream is the 4–40× phone-path win the
+      compression TODO below wants, without waiting on a Bun/WKWebView fix;
+      (2) symmetry with the daemon's own HTTP+SSE protocol; (3) curl-able
+      debugging. **Costs/warts:** net LOC ≈ a wash (custom reconnect stays —
+      EventSource can't send auth headers, so it's a fetch-stream reader);
+      PWA service worker must bypass `/events`; migration risk on the most
+      load-bearing seam; multiclient + resume e2e re-validation. **Not a
+      one-night change** — wants its own branch with the full e2e suite as
+      the net, and obsoletes the permessage-deflate re-enable item if done.
+
 - **ADR-desktop-shell.md** — accepted; spike complete 2026-07-03, all five exit
   criteria green. The Tauri shell lives in `desktop/` (see its README). The
   "📐 Architecture direction" note that lived here (Rust hub end-state, distribution
