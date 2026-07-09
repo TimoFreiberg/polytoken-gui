@@ -436,6 +436,25 @@ impl PolytokenInner {
         }
     }
 
+    /// Surface a failed fire-and-forget daemon action as a visible warning
+    /// notice (+ a `warn!`). These calls back Settings toggles and slash
+    /// actions — an error dropped on the floor looks like a broken button.
+    fn report_action_error(&self, session_ref: &SessionRef, what: &str, err: &str) {
+        warn!("{what} failed: {err}");
+        self.emit(SessionDriverEvent::HostUiRequest {
+            base: SessionEventBase {
+                session_ref: session_ref.clone(),
+                timestamp: DriverMapCtx::now_ts(),
+                run_id: None,
+            },
+            request: HostUiRequest::Notify {
+                request_id: format!("action-error-{}", chrono::Utc::now().timestamp_millis()),
+                message: format!("{what} failed: {err}"),
+                level: Some(NotifyLevel::Warning),
+            },
+        });
+    }
+
     fn get_warm(&self, session_id: &SessionId) -> Option<Arc<WarmSession>> {
         self.warm.read().get(session_id).cloned()
     }
@@ -2697,9 +2716,12 @@ impl PantokenDriver for PolytokenDriver {
         if let Some(sid) = &session_id {
             if let Some(ws) = self.inner.get_warm(sid) {
                 let ws = ws.clone();
+                let inner = self.inner.clone();
                 let model = model_post_key(&model_id);
                 tokio::spawn(async move {
-                    let _ = ws.client.set_model(&model, None).await;
+                    if let Err(e) = ws.client.set_model(&model, None).await {
+                        inner.report_action_error(&ws.session_ref, "Model switch", &e);
+                    }
                 });
             }
         }
@@ -2709,12 +2731,28 @@ impl PantokenDriver for PolytokenDriver {
         if let Some(sid) = &session_id {
             if let Some(ws) = self.inner.get_warm(sid) {
                 let ws = ws.clone();
+                let inner = self.inner.clone();
                 let state = ws.last_state.read().clone();
-                if let Some(state) = state {
-                    if let Some(model) = state.active_model {
+                match state.and_then(|s| s.active_model) {
+                    Some(model) => {
                         tokio::spawn(async move {
-                            let _ = ws.client.set_model(&model, Some(&level)).await;
+                            if let Err(e) = ws.client.set_model(&model, Some(&level)).await {
+                                inner.report_action_error(
+                                    &ws.session_ref,
+                                    "Thinking-level switch",
+                                    &e,
+                                );
+                            }
                         });
+                    }
+                    None => {
+                        // POST /model needs the model key alongside the level; without
+                        // a cached state there is nothing valid to send.
+                        inner.report_action_error(
+                            &ws.session_ref,
+                            "Thinking-level switch",
+                            "the session's active model isn't known yet — try again in a moment",
+                        );
                     }
                 }
             }
@@ -2725,8 +2763,11 @@ impl PantokenDriver for PolytokenDriver {
         if let Some(sid) = &session_id {
             if let Some(ws) = self.inner.get_warm(sid) {
                 let ws = ws.clone();
+                let inner = self.inner.clone();
                 tokio::spawn(async move {
-                    let _ = ws.client.set_facet(&facet).await;
+                    if let Err(e) = ws.client.set_facet(&facet).await {
+                        inner.report_action_error(&ws.session_ref, "Facet switch", &e);
+                    }
                 });
             }
         }
@@ -2750,8 +2791,11 @@ impl PantokenDriver for PolytokenDriver {
                         pantoken_daemon_types::PermissionMonitorMode::Autonomous
                     }
                 };
+                let inner = self.inner.clone();
                 tokio::spawn(async move {
-                    let _ = ws.client.set_permission_mode(daemon_mode).await;
+                    if let Err(e) = ws.client.set_permission_mode(daemon_mode).await {
+                        inner.report_action_error(&ws.session_ref, "Permission-mode switch", &e);
+                    }
                 });
             }
         }
@@ -2760,7 +2804,13 @@ impl PantokenDriver for PolytokenDriver {
     async fn toggle_adventurous_handoff(&self, session_id: Option<SessionId>) {
         if let Some(sid) = &session_id {
             if let Some(ws) = self.inner.get_warm(sid) {
-                let _ = ws.client.toggle_adventurous_handoff().await;
+                if let Err(e) = ws.client.toggle_adventurous_handoff().await {
+                    self.inner.report_action_error(
+                        &ws.session_ref,
+                        "Adventurous-handoff toggle",
+                        &e,
+                    );
+                }
             }
         }
     }
@@ -2768,7 +2818,13 @@ impl PantokenDriver for PolytokenDriver {
     async fn set_notification_autodrain(&self, enabled: bool, session_id: Option<SessionId>) {
         if let Some(sid) = &session_id {
             if let Some(ws) = self.inner.get_warm(sid) {
-                let _ = ws.client.set_notification_autodrain(enabled).await;
+                if let Err(e) = ws.client.set_notification_autodrain(enabled).await {
+                    self.inner.report_action_error(
+                        &ws.session_ref,
+                        "Notification-autodrain switch",
+                        &e,
+                    );
+                }
             }
         }
     }
@@ -2776,7 +2832,10 @@ impl PantokenDriver for PolytokenDriver {
     async fn compact(&self, session_id: Option<SessionId>) {
         if let Some(sid) = &session_id {
             if let Some(ws) = self.inner.get_warm(sid) {
-                let _ = ws.client.compact(None).await;
+                if let Err(e) = ws.client.compact(None).await {
+                    self.inner
+                        .report_action_error(&ws.session_ref, "Compact", &e);
+                }
             }
         }
     }
@@ -2784,7 +2843,10 @@ impl PantokenDriver for PolytokenDriver {
     async fn clear_context(&self, session_id: Option<SessionId>) {
         if let Some(sid) = &session_id {
             if let Some(ws) = self.inner.get_warm(sid) {
-                let _ = ws.client.clear().await;
+                if let Err(e) = ws.client.clear().await {
+                    self.inner
+                        .report_action_error(&ws.session_ref, "Clear context", &e);
+                }
             }
         }
     }
@@ -2807,10 +2869,17 @@ impl PantokenDriver for PolytokenDriver {
                         crate::polytoken::daemon_client::McpServerAction::Reconnect
                     }
                 };
-                let _ = ws
+                if let Err(e) = ws
                     .client
                     .mcp_server_action(&server_name, daemon_action)
-                    .await;
+                    .await
+                {
+                    self.inner.report_action_error(
+                        &ws.session_ref,
+                        &format!("MCP server '{server_name}' action"),
+                        &e,
+                    );
+                }
             }
         }
     }
