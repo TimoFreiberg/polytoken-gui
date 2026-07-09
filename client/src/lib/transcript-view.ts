@@ -304,17 +304,19 @@ function buildTurn(
   };
 }
 
-export function groupTurns(
-  items: readonly TranscriptItem[],
-  lastTurnActive = false,
-): TurnGroup[] {
-  const turns: TurnGroup[] = [];
+interface TurnInput {
+  user: TranscriptItem | undefined;
+  body: TranscriptItem[];
+}
+
+function collectTurnInputs(items: readonly TranscriptItem[]): TurnInput[] {
+  const inputs: TurnInput[] = [];
   let user: TranscriptItem | undefined;
   let body: TranscriptItem[] = [];
   let started = false;
   const flush = () => {
     if (!started) return;
-    turns.push(buildTurn(user, body, turns.length));
+    inputs.push({ user, body });
     user = undefined;
     body = [];
   };
@@ -334,19 +336,146 @@ export function groupTurns(
     }
   }
   flush();
+  return inputs;
+}
+
+function inactiveLastTurn(turn: TurnGroup): TurnGroup {
+  return {
+    ...turn,
+    collapsible: false,
+    lanes: turn.lanes.map((lane) =>
+      lane.kind === "work" ? { ...lane, collapsible: false } : lane,
+    ),
+  };
+}
+
+function applyLastTurnActive(
+  turns: TurnGroup[],
+  lastTurnActive: boolean,
+): TurnGroup[] {
+  if (!lastTurnActive || turns.length === 0) return turns;
+  const lastIndex = turns.length - 1;
+  return turns.map((turn, index) =>
+    index === lastIndex ? inactiveLastTurn(turn) : turn,
+  );
+}
+
+export function groupTurns(
+  items: readonly TranscriptItem[],
+  lastTurnActive = false,
+): TurnGroup[] {
+  const turns = collectTurnInputs(items).map((input, index) =>
+    buildTurn(input.user, input.body, index),
+  );
   // A trailing assistant paragraph is only a *candidate* final response until the
   // run settles: another tool call can still move it back into `work`. Keep that
   // live turn inline so the collapse affordance cannot flicker in and out between
   // text and tool events.
-  if (lastTurnActive) {
-    const last = turns[turns.length - 1];
-    if (last) {
-      last.collapsible = false;
-      for (const lane of last.lanes)
-        if (lane.kind === "work") lane.collapsible = false;
+  return applyLastTurnActive(turns, lastTurnActive);
+}
+
+type CachedTurn = {
+  fingerprint: string;
+  turn: TurnGroup;
+};
+
+const objectFingerprintIds = new WeakMap<object, number>();
+let nextObjectFingerprintId = 1;
+
+function outputFingerprint(output: unknown): string {
+  if (output === undefined) return "";
+  if (output === null) return "null";
+  if (typeof output === "object") {
+    let id = objectFingerprintIds.get(output);
+    if (id === undefined) {
+      id = nextObjectFingerprintId++;
+      objectFingerprintIds.set(output, id);
     }
+    return `o:${id}`;
   }
-  return turns;
+  if (typeof output === "string") return `s:${output.length}`;
+  return `${typeof output}:${String(output)}`;
+}
+
+function itemFingerprint(item: TranscriptItem): string {
+  switch (item.kind) {
+    case "assistant":
+      return [
+        item.kind,
+        item.id,
+        item.ts ?? "",
+        item.completedAt ?? "",
+        item.entryId ?? "",
+        item.streaming ? "1" : "0",
+        item.text.length,
+        item.thinking.length,
+      ].join("\u001f");
+    case "tool":
+      return [
+        item.kind,
+        item.id,
+        item.name,
+        item.status,
+        item.startedAt ?? "",
+        item.finishedAt ?? "",
+        item.images?.length ?? 0,
+        item.text?.length ?? 0,
+        item.progress ?? "",
+        outputFingerprint(item.output),
+      ].join("\u001f");
+    case "user":
+      return [
+        item.kind,
+        item.id,
+        item.ts ?? "",
+        item.entryId ?? "",
+        item.delivery ?? "",
+        item.deliveryError ?? "",
+        item.text.length,
+        item.images?.length ?? 0,
+      ].join("\u001f");
+    case "inject":
+      return [
+        item.kind,
+        item.id,
+        item.ts ?? "",
+        item.customType,
+        item.display ? "1" : "0",
+        item.text.length,
+      ].join("\u001f");
+    case "notice":
+      return [item.kind, item.id, item.level, item.text].join("\u001f");
+  }
+}
+
+function turnFingerprint(input: TurnInput): string {
+  const items = input.user ? [input.user, ...input.body] : input.body;
+  return items.map(itemFingerprint).join("\u001e");
+}
+
+/** Create an instance-local turn grouper that reuses already-built turn view models.
+ *  Transcript events usually mutate or append at the active tail while old item objects
+ *  stay stable, so caching by turn id + render-relevant item fingerprint avoids rebuilding
+ *  every settled turn on each transcript invalidation. */
+export function createTurnGrouper(): typeof groupTurns {
+  let cache = new Map<string, CachedTurn>();
+  return (items, lastTurnActive = false) => {
+    const nextCache = new Map<string, CachedTurn>();
+    const turns = collectTurnInputs(items).map((input, index) => {
+      const id = input.user?.id ?? input.body[0]?.id ?? `turn-${index}`;
+      const fingerprint = turnFingerprint(input);
+      const cached = cache.get(id);
+      if (cached?.fingerprint === fingerprint) {
+        nextCache.set(id, cached);
+        return cached.turn;
+      }
+      const turn = buildTurn(input.user, input.body, index);
+      nextCache.set(id, { fingerprint, turn });
+      return turn;
+    });
+    cache = nextCache;
+    return applyLastTurnActive(turns, lastTurnActive);
+  };
 }
 
 // ── Injected custom-message (nudge) rendering ────────────────────────────────

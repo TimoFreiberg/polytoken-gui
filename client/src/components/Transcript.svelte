@@ -7,7 +7,7 @@
   import { store } from "../lib/store.svelte.js";
   import {
     filterHiddenThinking,
-    groupTurns,
+    createTurnGrouper,
     injectText,
     thinkingTailId,
     type TurnGroup,
@@ -92,7 +92,8 @@
   // While the last turn is active, its trailing text is only a candidate final
   // response — another tool can still follow. Keep the whole turn inline until the
   // lifecycle says it settled, then expose the collapse affordance.
-  const turns = $derived(groupTurns(displayItems, store.turnActive));
+  const groupTurnsMemo = createTurnGrouper();
+  const turns = $derived(groupTurnsMemo(displayItems, store.turnActive));
   const lastTurnId = $derived(turns[turns.length - 1]?.id);
   function turnDone(turn: TurnGroup): boolean {
     return turn.id !== lastTurnId || !store.turnActive;

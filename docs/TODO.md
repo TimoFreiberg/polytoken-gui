@@ -82,10 +82,11 @@ are REAL but **provisional** — they embed local `/Users/timo/...` paths from t
       the O(n²)-over-a-message shape may persist at lower constant factor. Profile
       a long streamed message under the 50ms default before deciding if incremental
       parsing is still worth it.
-- [ ] **Virtualize the transcript + memoize per-turn grouping (C2).**
-      `Transcript.svelte` recomputes grouping over the whole item list on every
-      structural event. Memoize per-turn so only the active turn recomputes;
-      real windowing after that.
+- [ ] **Virtualize the transcript when measurements justify it (C2).**
+      Per-turn grouping is memoized (`createTurnGrouper`), so settled turns reuse
+      their view models while the active tail streams. Real JS windowing remains
+      the next step only once `?dev` transcript render timings show thousands of
+      items causing perceptible paint cost.
 - [ ] **Re-enable WS compression (permessage-deflate) when safe.** Disabled
       2026-07-03 (`perMessageDeflate: false`, `server-rs/pantoken-server/src/main.rs`) because it
       killed the desktop app: Bun's WS compressor emits a BFINAL-terminated

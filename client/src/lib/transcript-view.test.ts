@@ -6,6 +6,7 @@ import type {
 } from "@pantoken/protocol";
 import { describe, expect, test } from "bun:test";
 import {
+  createTurnGrouper,
   filterHiddenThinking,
   formatWorkedDuration,
   groupTurns,
@@ -593,6 +594,65 @@ describe("groupTurns: injected custom messages (nudge boundary)", () => {
     expect(injectText(inject("x", { text: "<a>keep</b>" }) as InjectItem)).toBe(
       "<a>keep</b>",
     );
+  });
+});
+
+describe("createTurnGrouper", () => {
+  test("reuses unchanged settled turn groups when later turns change", () => {
+    const memoGroupTurns = createTurnGrouper();
+    const items = [
+      user("u1"),
+      tool("b1", "bash"),
+      asst("final-1"),
+      user("u2"),
+      tool("b2", "bash"),
+      asst("final-2"),
+    ];
+    const first = memoGroupTurns(items);
+
+    (items[5] as AssistantItem).text += " streamed";
+    const second = memoGroupTurns(items);
+
+    expect(second[0]).toBe(first[0]);
+    expect(second[1]).not.toBe(first[1]);
+    expect(second.map((turn) => turn.id)).toEqual(["u1", "u2"]);
+  });
+
+  test("rebuilds a settled turn when a grouping-relevant tool field changes", () => {
+    const memoGroupTurns = createTurnGrouper();
+    const imageTool = tool("shot", "read");
+    const items = [user("u1"), imageTool, asst("final")];
+    const first = memoGroupTurns(items);
+    expect(first[0]!.lanes[0]!.kind).toBe("work");
+
+    imageTool.images = [
+      {
+        type: "image",
+        mimeType: "image/png",
+        data: "abc",
+      },
+    ];
+    const second = memoGroupTurns(items);
+
+    expect(second[0]).not.toBe(first[0]);
+    expect(second[0]!.lanes[0]!.kind).toBe("pinned");
+  });
+
+  test("active-tail collapse suppression does not mutate the cached settled turn", () => {
+    const memoGroupTurns = createTurnGrouper();
+    const items = [user("u1"), tool("b1", "bash"), asst("final")];
+
+    const active = memoGroupTurns(items, true)[0]!;
+    expect(active.collapsible).toBe(false);
+    expect(active.lanes[0]!.kind).toBe("work");
+    if (active.lanes[0]!.kind === "work")
+      expect(active.lanes[0]!.collapsible).toBe(false);
+
+    const settled = memoGroupTurns(items, false)[0]!;
+    expect(settled.collapsible).toBe(true);
+    expect(settled.lanes[0]!.kind).toBe("work");
+    if (settled.lanes[0]!.kind === "work")
+      expect(settled.lanes[0]!.collapsible).toBe(true);
   });
 });
 
