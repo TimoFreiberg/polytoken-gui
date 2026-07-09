@@ -1,6 +1,14 @@
 import { describe, expect, test } from "bun:test";
-import type { FileInfo } from "@pantoken/protocol";
-import { extractAtQuery, filterFiles } from "./file-autocomplete.js";
+import type { FileInfo, ModelOption } from "@pantoken/protocol";
+import {
+  buildAtItems,
+  classifyAtQuery,
+  extractAtQuery,
+  filterFiles,
+  filterModels,
+  filterNames,
+  type AtItem,
+} from "./file-autocomplete.js";
 
 describe("extractAtQuery", () => {
   test("returns the text after @ at cursor position", () => {
@@ -159,5 +167,368 @@ describe("filterFiles", () => {
 
   test("no match returns empty", () => {
     expect(filterFiles(FILES, "zzz")).toEqual([]);
+  });
+});
+
+describe("classifyAtQuery", () => {
+  test("skill: long form", () => {
+    expect(classifyAtQuery("skill:debug")).toEqual({
+      mode: "skill",
+      partial: "debug",
+    });
+  });
+
+  test("s: shorthand", () => {
+    expect(classifyAtQuery("s:debug")).toEqual({
+      mode: "skill",
+      partial: "debug",
+    });
+  });
+
+  test("subagent: long form", () => {
+    expect(classifyAtQuery("subagent:reviewer")).toEqual({
+      mode: "subagent",
+      partial: "reviewer",
+    });
+  });
+
+  test("a: shorthand", () => {
+    expect(classifyAtQuery("a:reviewer")).toEqual({
+      mode: "subagent",
+      partial: "reviewer",
+    });
+  });
+
+  test("model: long form", () => {
+    expect(classifyAtQuery("model:anthropic/claude-opus-4-8")).toEqual({
+      mode: "model",
+      partial: "anthropic/claude-opus-4-8",
+    });
+  });
+
+  test("m: shorthand", () => {
+    expect(classifyAtQuery("m:sonnet")).toEqual({
+      mode: "model",
+      partial: "sonnet",
+    });
+  });
+
+  test("external: leading slash", () => {
+    expect(classifyAtQuery("/etc/hosts")).toEqual({
+      mode: "external",
+      raw: "/etc/hosts",
+    });
+  });
+
+  test("external: leading tilde", () => {
+    expect(classifyAtQuery("~/Documents")).toEqual({
+      mode: "external",
+      raw: "~/Documents",
+    });
+  });
+
+  test("external: leading ..", () => {
+    expect(classifyAtQuery("../sibling/file.ts")).toEqual({
+      mode: "external",
+      raw: "../sibling/file.ts",
+    });
+  });
+
+  test("bare shorthand letters without a colon are project queries", () => {
+    expect(classifyAtQuery("s")).toEqual({ mode: "project", partial: "s" });
+    expect(classifyAtQuery("a")).toEqual({ mode: "project", partial: "a" });
+    expect(classifyAtQuery("m")).toEqual({ mode: "project", partial: "m" });
+  });
+
+  test("sigils are case-sensitive lowercase — mixed case falls through to project", () => {
+    expect(classifyAtQuery("Skill:debug")).toEqual({
+      mode: "project",
+      partial: "Skill:debug",
+    });
+    expect(classifyAtQuery("S:debug")).toEqual({
+      mode: "project",
+      partial: "S:debug",
+    });
+  });
+
+  test("an ordinary path is a project query", () => {
+    expect(classifyAtQuery("src/foo.ts")).toEqual({
+      mode: "project",
+      partial: "src/foo.ts",
+    });
+  });
+
+  test("empty query is a project query with an empty partial", () => {
+    expect(classifyAtQuery("")).toEqual({ mode: "project", partial: "" });
+  });
+});
+
+describe("filterNames", () => {
+  const NAMES = ["debug", "journal", "reviewer", "explorer"];
+
+  test("empty partial returns the head of the list as-given", () => {
+    expect(filterNames(NAMES, "", 2)).toEqual(["debug", "journal"]);
+  });
+
+  test("case-insensitive substring match", () => {
+    expect(filterNames(NAMES, "REV")).toEqual(["reviewer"]);
+  });
+
+  test("name-start match ranks before an interior match", () => {
+    // "explorer" starts with "exp"; "reviewer" doesn't contain it at all — pick a
+    // query that's an interior match for one name and a start match for another.
+    expect(filterNames(["subreview", "reviewer"], "review")).toEqual([
+      "reviewer", // start-of-name match
+      "subreview", // interior match
+    ]);
+  });
+
+  test("ties break alphabetically", () => {
+    expect(filterNames(["zeta", "alpha"], "a")).toEqual(["alpha", "zeta"]);
+  });
+
+  test("respects the limit", () => {
+    const many = ["x1", "x2", "x3", "x4", "x5", "x6", "x7"];
+    expect(filterNames(many, "x", 5)).toEqual(["x1", "x2", "x3", "x4", "x5"]);
+  });
+
+  test("no match returns empty", () => {
+    expect(filterNames(NAMES, "zzz")).toEqual([]);
+  });
+});
+
+describe("filterModels", () => {
+  const m = (
+    provider: string,
+    modelId: string,
+    label: string,
+  ): ModelOption => ({ provider, modelId, label });
+  const MODELS: readonly ModelOption[] = [
+    m("anthropic", "claude-opus-4-8", "Claude Opus 4.8"),
+    m("anthropic", "claude-sonnet-4-6", "Claude Sonnet 4.6"),
+    m("openai", "gpt-5", "GPT-5"),
+  ];
+  const ids = (items: ModelOption[]) => items.map((i) => i.modelId);
+
+  test("empty partial returns the head of the list as-given", () => {
+    expect(ids(filterModels(MODELS, "", 2))).toEqual([
+      "claude-opus-4-8",
+      "claude-sonnet-4-6",
+    ]);
+  });
+
+  test("matches modelId", () => {
+    expect(ids(filterModels(MODELS, "gpt"))).toEqual(["gpt-5"]);
+  });
+
+  test("matches label (case-insensitive)", () => {
+    expect(ids(filterModels(MODELS, "opus"))).toEqual(["claude-opus-4-8"]);
+  });
+
+  test("matches provider/modelId", () => {
+    expect(ids(filterModels(MODELS, "anthropic/claude-sonnet"))).toEqual([
+      "claude-sonnet-4-6",
+    ]);
+  });
+
+  test("ranks a modelId-start match before an interior/label-only match", () => {
+    const models = [
+      m("x", "gpt-5", "GPT-5"), // label contains "5", modelId starts with "gpt", not "5"
+      m("x", "5-flash", "Five Flash"), // modelId starts with "5"
+    ];
+    expect(ids(filterModels(models, "5"))).toEqual(["5-flash", "gpt-5"]);
+  });
+
+  test("respects the limit", () => {
+    expect(filterModels(MODELS, "", 1)).toHaveLength(1);
+  });
+
+  test("no match returns empty", () => {
+    expect(filterModels(MODELS, "zzz")).toEqual([]);
+  });
+});
+
+describe("buildAtItems", () => {
+  const f = (path: string, isDirectory = false): FileInfo => ({
+    path,
+    isDirectory,
+  });
+  const m = (
+    provider: string,
+    modelId: string,
+    label: string,
+  ): ModelOption => ({ provider, modelId, label });
+
+  const SKILLS = ["debug", "journal"];
+  const SUBAGENTS = ["reviewer", "explorer"];
+  const MODELS: readonly ModelOption[] = [
+    m("anthropic", "claude-opus-4-8", "Claude Opus 4.8"),
+    m("anthropic", "claude-sonnet-4-6", "Claude Sonnet 4.6"),
+    m("openai", "gpt-5", "GPT-5"),
+  ];
+  const FILES: readonly FileInfo[] = [
+    f("README.md"),
+    f("store", true),
+    f("store.ts"),
+  ];
+
+  const base = {
+    files: FILES,
+    serverFiles: [] as readonly FileInfo[],
+    skills: SKILLS,
+    subagents: SUBAGENTS,
+    models: MODELS,
+  };
+
+  test("skill mode is a full takeover — only skill items, filtered", () => {
+    const items = buildAtItems({ ...base, query: "skill:jo" });
+    expect(items).toEqual([
+      { kind: "skill", name: "journal" },
+    ] satisfies AtItem[]);
+  });
+
+  test("subagent mode via shorthand is a full takeover", () => {
+    const items = buildAtItems({ ...base, query: "a:rev" });
+    expect(items).toEqual([
+      { kind: "subagent", name: "reviewer" },
+    ] satisfies AtItem[]);
+  });
+
+  test("model mode is a full takeover", () => {
+    const items = buildAtItems({ ...base, query: "m:sonnet" });
+    expect(items).toEqual([
+      { kind: "model", model: MODELS[1] },
+    ] satisfies AtItem[]);
+  });
+
+  test("takeover mode with an empty partial returns the whole kind list", () => {
+    const items = buildAtItems({ ...base, query: "skill:" });
+    expect(items).toEqual([
+      { kind: "skill", name: "debug" },
+      { kind: "skill", name: "journal" },
+    ] satisfies AtItem[]);
+  });
+
+  test("external mode yields no items (a later stage resolves these)", () => {
+    expect(buildAtItems({ ...base, query: "~/Documents" })).toEqual([]);
+    expect(buildAtItems({ ...base, query: "/etc/hosts" })).toEqual([]);
+    expect(buildAtItems({ ...base, query: "../sibling" })).toEqual([]);
+  });
+
+  test("bare @ (empty partial): files only, no kind noise, no sigils", () => {
+    const items = buildAtItems({ ...base, query: "" });
+    expect(items).toEqual([
+      { kind: "file", file: f("README.md") },
+      { kind: "file", file: f("store", true) },
+      { kind: "file", file: f("store.ts") },
+    ] satisfies AtItem[]);
+  });
+
+  test("'sk' shows the skill: sigil after file matches, but not subagent:/model:", () => {
+    const items = buildAtItems({
+      files: [f("skills-doc.md"), f("readme.md")],
+      serverFiles: [],
+      skills: SKILLS, // neither "debug" nor "journal" contains "sk"
+      subagents: SUBAGENTS, // neither contains "sk"
+      models: MODELS, // none contain "sk"
+      query: "sk",
+    });
+    expect(items).toEqual([
+      { kind: "file", file: f("skills-doc.md") },
+      { kind: "sigil", prefix: "skill:", label: "browse skills…" },
+    ] satisfies AtItem[]);
+  });
+
+  test("'s' matches both the skill: and subagent: sigils (not model:)", () => {
+    const items = buildAtItems({
+      files: [f("readme.md")], // no "s" in "readme.md"
+      serverFiles: [],
+      skills: SKILLS, // no "s" in "debug"/"journal"
+      subagents: SUBAGENTS, // no "s" in "reviewer"/"explorer"
+      models: [],
+      query: "s",
+    });
+    expect(items).toEqual([
+      { kind: "sigil", prefix: "skill:", label: "browse skills…" },
+      { kind: "sigil", prefix: "subagent:", label: "browse subagents…" },
+    ] satisfies AtItem[]);
+  });
+
+  test("empty skill/subagent lists suppress their sigils; model: sigil is exempt", () => {
+    const items = buildAtItems({
+      files: [],
+      serverFiles: [],
+      skills: [],
+      subagents: [],
+      models: [], // still offers the model: sigil — models are always available
+      query: "m",
+    });
+    expect(items).toEqual([
+      { kind: "sigil", prefix: "model:", label: "browse models…" },
+    ] satisfies AtItem[]);
+
+    const noSigils = buildAtItems({
+      files: [],
+      serverFiles: [],
+      skills: [],
+      subagents: [],
+      models: [],
+      query: "s",
+    });
+    expect(noSigils).toEqual([]);
+  });
+
+  test("project mode appends badged skill/subagent/model matches after files, sigils last", () => {
+    const items = buildAtItems({
+      files: [f("modelo.txt")], // matches "model" as an interior/prefix substring
+      serverFiles: [],
+      skills: ["model-skill"],
+      subagents: ["model-agent"],
+      models: [m("x", "model-9", "Model Nine")],
+      query: "model",
+    });
+    expect(items).toEqual([
+      { kind: "file", file: f("modelo.txt") },
+      { kind: "skill", name: "model-skill" },
+      { kind: "subagent", name: "model-agent" },
+      { kind: "model", model: m("x", "model-9", "Model Nine") },
+      { kind: "sigil", prefix: "model:", label: "browse models…" },
+    ] satisfies AtItem[]);
+  });
+
+  test("badged matches per kind are capped at 5, alphabetical among equal ranks", () => {
+    const manySkills = ["x7", "x1", "x6", "x2", "x5", "x3", "x4"];
+    const items = buildAtItems({
+      files: [],
+      serverFiles: [],
+      skills: manySkills,
+      subagents: [],
+      models: [],
+      query: "x",
+    });
+    // No file "x" matches, no subagents, no models — just the capped, sorted skill
+    // badges (no sigil: "x" isn't a prefix of any sigil word).
+    expect(items).toEqual([
+      { kind: "skill", name: "x1" },
+      { kind: "skill", name: "x2" },
+      { kind: "skill", name: "x3" },
+      { kind: "skill", name: "x4" },
+      { kind: "skill", name: "x5" },
+    ] satisfies AtItem[]);
+  });
+
+  test("server file extras are merged in after local matches, deduped by path", () => {
+    const items = buildAtItems({
+      files: [f("foo/a.ts")],
+      serverFiles: [f("foo/a.ts"), f("bar/a.ts")],
+      skills: [],
+      subagents: [],
+      models: [],
+      query: "a.ts",
+    });
+    expect(items).toEqual([
+      { kind: "file", file: f("foo/a.ts") },
+      { kind: "file", file: f("bar/a.ts") },
+    ] satisfies AtItem[]);
   });
 });

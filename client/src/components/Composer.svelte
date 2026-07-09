@@ -1,8 +1,14 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import type { CommandInfo, FileInfo } from "@pantoken/protocol";
+  import type { CommandInfo } from "@pantoken/protocol";
   import { store } from "../lib/store.svelte.js";
-  import { extractAtQuery, filterFiles } from "../lib/file-autocomplete.js";
+  import {
+    extractAtQuery,
+    filterFiles,
+    classifyAtQuery,
+    buildAtItems,
+    type AtItem,
+  } from "../lib/file-autocomplete.js";
   import {
     IMAGE_LIMITS,
     prepareImageFiles,
@@ -15,7 +21,7 @@
   } from "../lib/caret-visual-line.js";
   import { contextTone } from "../lib/context-tone.js";
   import SlashMenu from "./SlashMenu.svelte";
-  import FileMenu from "./FileMenu.svelte";
+  import AtMenu from "./AtMenu.svelte";
   import DirPicker from "./DirPicker.svelte";
   import ImageLightbox from "./ImageLightbox.svelte";
   import ModelPicker from "./ModelPicker.svelte";
@@ -195,66 +201,78 @@
       : (store.session.ref?.sessionId ?? "");
   }
 
-  // --- @-file mention autocomplete (hybrid: instant local matching + server fallback).
-  // Same shape as slash: an active query (the text after `@` at/before cursor), a
-  // highlighted index, and a dismissed flag so Esc closes it for this token. The server
-  // pushes the focused session's full file index on switch (store.fileIndex); `filterFiles`
-  // ranks it locally on every keystroke, so the menu updates synchronously — no round-trip,
-  // and no hide/show flicker (the old per-query RPC blanked the menu for the in-flight
-  // window). Only when the index was truncated (a cwd larger than the server cap) AND local
-  // matches are thin do we fall back to a debounced server `fd` search (store.queryFiles),
-  // merging its results into the local ones.
-  const FILE_MENU_LIMIT = 50;
+  // --- @-reference autocomplete (files, skills, subagents, models — hybrid: instant
+  // local matching + server fallback for files). Same shape as slash: an active query
+  // (the text after `@` at/before cursor), a highlighted index, and a dismissed flag so
+  // Esc closes it for this token. `classifyAtQuery` (in `buildAtItems`) decides which
+  // kind the query addresses; only "project" (plain file) mode ever touches the server —
+  // skills/subagents come from `store.atRefs` and models from `store.models`, both
+  // already pushed/fetched, no round-trip needed. The server pushes the focused session's
+  // full file index on switch (store.fileIndex); `filterFiles` ranks it locally on every
+  // keystroke, so the menu updates synchronously — no round-trip, and no hide/show flicker
+  // (the old per-query RPC blanked the menu for the in-flight window). Only when the index
+  // was truncated (a cwd larger than the server cap) AND local matches are thin do we fall
+  // back to a debounced server `fd` search (store.queryFiles), merging its results into
+  // the local ones.
+  const AT_MENU_LIMIT = 50;
   // Fire the server fallback only when local matches are thinner than this — a comfortably
   // full menu means the wanted file is almost certainly already shown, so don't round-trip.
   const FALLBACK_MIN = 25;
-  let fileSel = $state(0);
-  let fileDismissed = $state(false);
+  let atSel = $state(0);
+  let atDismissed = $state(false);
   let fileDebounce: ReturnType<typeof setTimeout> | undefined;
-  const fileMatch = $derived(extractAtQuery(store.composerDraft, cursorPos));
-  const fileQ = $derived(fileMatch?.query ?? null);
+  const atMatch = $derived(extractAtQuery(store.composerDraft, cursorPos));
+  const atQ = $derived(atMatch?.query ?? null);
+  const atClass = $derived(atQ === null ? null : classifyAtQuery(atQ));
   // Instant local matches over the prefetched index — the dominant path. Suppressed while
   // drafting a new session: the pushed index is the previously-focused session's cwd, so its
   // files are wrong for the draft's target project. A draft searches via the server fallback
-  // (scoped to the draft cwd) instead.
+  // (scoped to the draft cwd) instead. Only meaningful in project mode; used here purely as
+  // the "are local matches thin" signal for the fallback effect below (buildAtItems below
+  // does its own filtering over the full index for the actual menu items).
   const localFileItems = $derived(
-    fileQ === null || drafting
+    atQ === null || drafting
       ? []
-      : filterFiles(store.fileIndex.files, fileQ, FILE_MENU_LIMIT),
+      : filterFiles(store.fileIndex.files, atQ, AT_MENU_LIMIT),
   );
   // Server fallback results, but only while they match the *current* query (the echoed
   // query guards a stale in-flight response from landing under a newer keystroke).
   const serverFileItems = $derived(
-    fileQ !== null && store.files.query === fileQ ? store.files.items : [],
+    atQ !== null && store.files.query === atQ ? store.files.items : [],
   );
-  // Local first (instant), then any server extras not already shown, deduped by path. Local
-  // results carry the menu so it never blanks; server results only ever *add*.
-  const fileItems = $derived.by(() => {
-    if (fileQ === null) return [];
-    const seen = new Set(localFileItems.map((f) => f.path));
-    const merged = [...localFileItems];
-    for (const f of serverFileItems) {
-      if (seen.has(f.path)) continue;
-      seen.add(f.path);
-      merged.push(f);
-    }
-    return merged.slice(0, FILE_MENU_LIMIT);
+  // The full kind-aware menu list: file/skill/subagent/model/sigil rows, built by the pure
+  // `buildAtItems` helper so the ordering/filtering logic is unit-testable independent of
+  // this component. `files` is emptied while drafting (see localFileItems above).
+  const atItems = $derived.by((): AtItem[] => {
+    if (atQ === null) return [];
+    return buildAtItems({
+      query: atQ,
+      files: drafting ? [] : store.fileIndex.files,
+      serverFiles: serverFileItems,
+      skills: store.atRefs.skills,
+      subagents: store.atRefs.subagents,
+      models: store.models,
+      limit: AT_MENU_LIMIT,
+    });
   });
-  const fileOpen = $derived(
-    fileQ !== null && !fileDismissed && fileItems.length > 0,
+  const atOpen = $derived(
+    atQ !== null && !atDismissed && atItems.length > 0,
   );
   $effect(() => {
-    if (fileSel >= fileItems.length) fileSel = 0;
+    if (atSel >= atItems.length) atSel = 0;
   });
 
-  // Debounced server fallback: when the index was truncated and local matches are thin (the
-  // wanted file may live past the cap), OR always while drafting (no session index exists for
-  // the draft's target cwd, so the server `fd` search scoped to that cwd is the only source).
-  // The common non-draft case never reaches the server.
+  // Debounced server fallback: fires only in project (file) mode, when the index was
+  // truncated and local matches are thin (the wanted file may live past the cap), OR always
+  // while drafting (no session index exists for the draft's target cwd, so the server `fd`
+  // search scoped to that cwd is the only source). Skill/subagent/model/external modes never
+  // reach the server here — their sources are already local (atRefs/models) or unimplemented
+  // (external, a later stage). The common non-draft file case never reaches the server either.
   $effect(() => {
-    const q = fileQ;
+    const q = atQ;
     const needFallback =
       q !== null &&
+      atClass?.mode === "project" &&
       (drafting ||
         (store.fileIndex.truncated && localFileItems.length < FALLBACK_MIN));
     clearTimeout(fileDebounce);
@@ -480,12 +498,12 @@
     cursorPos = ta?.selectionStart ?? 0;
     // A user keystroke ends history navigation: the edited text is the new live draft.
     histIndex = null;
-    // A fresh keystroke restarts the selection at the top; leaving slash/file mode
+    // A fresh keystroke restarts the selection at the top; leaving slash/@-reference mode
     // clears a prior Escape so the next trigger reopens the menu.
     slashSel = 0;
     if (slashQuery(store.composerDraft) === null) slashDismissed = false;
-    fileSel = 0;
-    if (extractAtQuery(store.composerDraft, cursorPos) === null) fileDismissed = false;
+    atSel = 0;
+    if (extractAtQuery(store.composerDraft, cursorPos) === null) atDismissed = false;
   }
 
   // Replace the bare slash token with `/name ` and keep focus so the user types args
@@ -501,23 +519,47 @@
     });
   }
 
-  /** Replace the @-mention span (`@<query>`) with the selected file path, keeping
-   *  the cursor after the inserted text. Directories get a trailing "/" so the user
-   *  can continue typing to narrow further (agent convention). */
-  function acceptFile(file: FileInfo) {
-    const m = fileMatch;
+  /** Replace the @-mention span (`@<query>`) with the canonical text for the picked
+   *  item, keeping the cursor right after the inserted text:
+   *    - file: unchanged behavior — directories get a trailing "/" so the user can
+   *      keep typing to narrow further.
+   *    - skill/subagent: `@skill:<name>` / `@subagent:<name>`.
+   *    - model: `@model:<provider>/<modelId>` — always canonical, even if the user
+   *      typed the `m:` shorthand.
+   *    - sigil: just `@<prefix>` (e.g. `@skill:`) — the cursor lands right after the
+   *      colon, so the menu recomputes to that kind's list (same keep-narrowing
+   *      mechanic as a directory `/`). */
+  function acceptAtItem(item: AtItem) {
+    const m = atMatch;
     if (!m) return;
     const draft = store.composerDraft;
-    const path = file.isDirectory ? `${file.path}/` : file.path;
+    let inserted: string;
+    switch (item.kind) {
+      case "file":
+        inserted = item.file.isDirectory ? `${item.file.path}/` : item.file.path;
+        break;
+      case "skill":
+        inserted = `skill:${item.name}`;
+        break;
+      case "subagent":
+        inserted = `subagent:${item.name}`;
+        break;
+      case "model":
+        inserted = `model:${item.model.provider}/${item.model.modelId}`;
+        break;
+      case "sigil":
+        inserted = item.prefix;
+        break;
+    }
     store.composerDraft =
-      draft.slice(0, m.atPos) + "@" + path + draft.slice(cursorPos);
-    fileDismissed = false;
-    fileSel = 0;
+      draft.slice(0, m.atPos) + "@" + inserted + draft.slice(cursorPos);
+    atDismissed = false;
+    atSel = 0;
     queueMicrotask(() => {
       ta?.focus();
       autosize();
-      // Place cursor after the inserted path.
-      if (ta) ta.selectionStart = ta.selectionEnd = m.atPos + 1 + path.length;
+      // Place cursor after the inserted text.
+      if (ta) ta.selectionStart = ta.selectionEnd = m.atPos + 1 + inserted.length;
     });
   }
 
@@ -549,7 +591,7 @@
     // abandons the draft. ⌥P / ⌥W are handled by the window keydown listener so they
     // also work before the textarea is focused (⌘N leaves it blurred).
     if (drafting) {
-      if (e.key === "Escape" && !slashOpen && !fileOpen && !store.composerDraft.trim()) {
+      if (e.key === "Escape" && !slashOpen && !atOpen && !store.composerDraft.trim()) {
         e.preventDefault();
         store.cancelDraft();
         return;
@@ -614,29 +656,29 @@
         return;
       }
     }
-    // @-file mention keyboard handling (after slash, so slash takes priority if
-    // both menus somehow overlap — the user typed `/` first).
-    if (fileOpen) {
-      const n = fileItems.length;
+    // @-reference keyboard handling (after slash, so slash takes priority if both
+    // menus somehow overlap — the user typed `/` first).
+    if (atOpen) {
+      const n = atItems.length;
       if (e.key === "ArrowDown" || (e.ctrlKey && e.key === "n")) {
         e.preventDefault();
-        fileSel = (fileSel + 1) % n;
+        atSel = (atSel + 1) % n;
         return;
       }
       if (e.key === "ArrowUp" || (e.ctrlKey && e.key === "p")) {
         e.preventDefault();
-        fileSel = (fileSel - 1 + n) % n;
+        atSel = (atSel - 1 + n) % n;
         return;
       }
       if (e.key === "Enter" || e.key === "Tab") {
         e.preventDefault();
-        const file = fileItems[fileSel];
-        if (file) acceptFile(file);
+        const item = atItems[atSel];
+        if (item) acceptAtItem(item);
         return;
       }
       if (e.key === "Escape") {
         e.preventDefault();
-        fileDismissed = true;
+        atDismissed = true;
         return;
       }
     }
@@ -921,12 +963,12 @@
           onhover={(i) => (historySel = i)}
         />
       {/if}
-      {#if fileOpen}
-        <FileMenu
-          items={fileItems}
-          selected={fileSel}
-          onpick={acceptFile}
-          onhover={(i) => (fileSel = i)}
+      {#if atOpen}
+        <AtMenu
+          items={atItems}
+          selected={atSel}
+          onpick={acceptAtItem}
+          onhover={(i) => (atSel = i)}
         />
       {/if}
       <div class="box" class:streaming bind:this={box}>
@@ -954,8 +996,8 @@
             : "Message pantoken…"}
         rows="1"
         role="combobox"
-        aria-expanded={slashOpen || fileOpen}
-        aria-controls={fileOpen ? "file-menu" : "slash-menu"}
+        aria-expanded={slashOpen || atOpen}
+        aria-controls={atOpen ? "at-menu" : "slash-menu"}
         aria-autocomplete="list"
       ></textarea>
       <div class="actions">

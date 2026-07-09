@@ -1,10 +1,12 @@
-// Pure helpers for the composer's @-file mention typeahead. Kept DOM-free so they
+// Pure helpers for the composer's @-reference typeahead. Kept DOM-free so they
 // can be unit-tested directly: `extractAtQuery` decides whether the cursor is inside
 // a `@`-prefix token and returns the query text + the `@` position for replacement;
-// `filterFiles` ranks the prefetched file index against a query for instant local
-// matching (no server round-trip).
+// `classifyAtQuery` further classifies that query text into a kind (file/skill/
+// subagent/model/external); `filterFiles`/`filterNames`/`filterModels` rank each
+// candidate source against a query for instant local matching (no server round-trip);
+// `buildAtItems` composes all of the above into the ordered list the menu renders.
 
-import type { FileInfo } from "@pantoken/protocol";
+import type { FileInfo, ModelOption } from "@pantoken/protocol";
 
 /** Characters that delimit a token boundary — a `@` is only a mention prefix when
  *  it starts a new token (i.e. preceded by whitespace / start of line, NOT in the
@@ -121,4 +123,238 @@ export function filterFiles(
   });
 
   return scored.slice(0, limit).map((s) => s.f);
+}
+
+/** Which kind of reference an @-mention query resolves to, and the text left over
+ *  once the kind's sigil (if any) is stripped.
+ *
+ * Sigils are literal, case-sensitive, lowercase prefixes — `Skill:` or `S:` do NOT
+ * match (they fall through to `project`, same as any other query that isn't a
+ * recognized sigil or external-path lead-in). The long form (`skill:`) and the
+ * shorthand (`s:`) both classify to the same mode; canonical insertion always
+ * writes the long form regardless of which one the user typed.
+ *
+ * External paths (`/`, `~`, `..`) are recognized here so the composer can suppress
+ * project-file candidates for them, but resolving actual external candidates is a
+ * later stage — callers get `{ mode: "external" }` and no items.
+ */
+export type AtQueryClass =
+  | { mode: "skill"; partial: string }
+  | { mode: "subagent"; partial: string }
+  | { mode: "model"; partial: string }
+  | { mode: "external"; raw: string }
+  | { mode: "project"; partial: string };
+
+export function classifyAtQuery(query: string): AtQueryClass {
+  if (query.startsWith("skill:"))
+    return { mode: "skill", partial: query.slice(6) };
+  if (query.startsWith("s:")) return { mode: "skill", partial: query.slice(2) };
+  if (query.startsWith("subagent:"))
+    return { mode: "subagent", partial: query.slice(9) };
+  if (query.startsWith("a:"))
+    return { mode: "subagent", partial: query.slice(2) };
+  if (query.startsWith("model:"))
+    return { mode: "model", partial: query.slice(6) };
+  if (query.startsWith("m:")) return { mode: "model", partial: query.slice(2) };
+  if (query.startsWith("/") || query.startsWith("~") || query.startsWith(".."))
+    return { mode: "external", raw: query };
+  return { mode: "project", partial: query };
+}
+
+/** One row the @-reference menu can render. A discriminated union so `AtMenu` can
+ *  switch on `kind` for rendering and `Composer.acceptAtItem` can switch on it for
+ *  canonical insertion text. */
+export type AtItem =
+  | { kind: "file"; file: FileInfo }
+  | { kind: "skill"; name: string }
+  | { kind: "subagent"; name: string }
+  | { kind: "model"; model: ModelOption }
+  | { kind: "sigil"; prefix: "skill:" | "subagent:" | "model:"; label: string };
+
+/**
+ * Rank a flat name list (skills, subagents) against a partial query, for the
+ * kind-takeover (`@skill:`) and appended-badged-match (bare `@foo`) cases.
+ * Case-insensitive substring match; name-start matches rank before interior
+ * matches, ties break alphabetically. An empty partial returns the head of the
+ * list as-given (mirrors `filterFiles`'s bare-`@` behavior).
+ */
+export function filterNames(
+  names: readonly string[],
+  partial: string,
+  limit = 50,
+): string[] {
+  if (!partial) return names.slice(0, limit);
+  const q = partial.toLowerCase();
+
+  const scored: { name: string; rank: number }[] = [];
+  for (const name of names) {
+    const lower = name.toLowerCase();
+    const at = lower.indexOf(q);
+    if (at === -1) continue;
+    scored.push({ name, rank: at === 0 ? 0 : 1 });
+  }
+
+  scored.sort((a, b) => {
+    if (a.rank !== b.rank) return a.rank - b.rank;
+    return a.name.localeCompare(b.name);
+  });
+
+  return scored.slice(0, limit).map((s) => s.name);
+}
+
+/**
+ * Rank the available models against a partial query, for `@model:`/`@m:` takeover
+ * and appended badged matches. Matches against `label`, `modelId`, and
+ * `provider/modelId` (so "sonnet", "claude-sonnet-4-6", and "anthropic/claude"
+ * all hit); ranks a `modelId`-start match first, then alphabetical by `modelId`.
+ * An empty partial returns the head of the list as-given.
+ */
+export function filterModels(
+  models: readonly ModelOption[],
+  partial: string,
+  limit = 50,
+): ModelOption[] {
+  if (!partial) return models.slice(0, limit);
+  const q = partial.toLowerCase();
+
+  const scored: { m: ModelOption; rank: number }[] = [];
+  for (const m of models) {
+    const modelId = m.modelId.toLowerCase();
+    const label = m.label.toLowerCase();
+    const providerModel = `${m.provider}/${m.modelId}`.toLowerCase();
+    if (
+      !modelId.includes(q) &&
+      !label.includes(q) &&
+      !providerModel.includes(q)
+    )
+      continue;
+    scored.push({ m, rank: modelId.startsWith(q) ? 0 : 1 });
+  }
+
+  scored.sort((a, b) => {
+    if (a.rank !== b.rank) return a.rank - b.rank;
+    return a.m.modelId.localeCompare(b.m.modelId);
+  });
+
+  return scored.slice(0, limit).map((s) => s.m);
+}
+
+/** Sigil rows offered at the end of a project-mode, non-empty-partial menu — the
+ *  "keep narrowing" affordance that makes the other kinds discoverable. `model:` is
+ *  always offered (models are a fixed, always-available source); `skill:`/
+ *  `subagent:` are only offered when their source list is non-empty (an empty
+ *  fixture/session has nothing to browse into). */
+const SIGILS: readonly {
+  prefix: "skill:" | "subagent:" | "model:";
+  label: string;
+}[] = [
+  { prefix: "skill:", label: "browse skills…" },
+  { prefix: "subagent:", label: "browse subagents…" },
+  { prefix: "model:", label: "browse models…" },
+];
+
+export interface BuildAtItemsParams {
+  /** The full text after `@` (before any sigil stripping) — classified internally. */
+  query: string;
+  /** The prefetched local file index (project mode only; ignored otherwise). */
+  files: readonly FileInfo[];
+  /** Extra file matches from the server fallback search (project mode only), already
+   *  filtered to the current query by the caller. */
+  serverFiles: readonly FileInfo[];
+  skills: readonly string[];
+  subagents: readonly string[];
+  models: readonly ModelOption[];
+  /** Cap on file results (project mode) and on takeover-mode kind lists. Appended
+   *  badged matches in project mode are always capped at 5 per kind, regardless. */
+  limit?: number;
+}
+
+/**
+ * Build the ordered @-reference menu items for one query, composing
+ * `classifyAtQuery` + the per-kind filters into the single list `AtMenu` renders.
+ *
+ *   - skill/subagent/model: full takeover — only that kind's matches.
+ *   - external: no items yet (a later stage resolves external paths).
+ *   - project, empty partial (bare `@`): files only — no kind noise; the footer
+ *     hint advertises the sigils instead.
+ *   - project, non-empty partial: file matches (local ranked + server extras,
+ *     deduped, capped at `limit`), then name-matching skills/subagents/models
+ *     (badged, capped at 5 each), then sigil rows for any sigil that starts with
+ *     the partial — sigils always last, so Enter-on-first-item still picks the
+ *     best file.
+ */
+export function buildAtItems(params: BuildAtItemsParams): AtItem[] {
+  const {
+    query,
+    files,
+    serverFiles,
+    skills,
+    subagents,
+    models,
+    limit = 50,
+  } = params;
+  const cls = classifyAtQuery(query);
+
+  if (cls.mode === "skill") {
+    return filterNames(skills, cls.partial, limit).map((name): AtItem => ({
+      kind: "skill",
+      name,
+    }));
+  }
+  if (cls.mode === "subagent") {
+    return filterNames(subagents, cls.partial, limit).map((name): AtItem => ({
+      kind: "subagent",
+      name,
+    }));
+  }
+  if (cls.mode === "model") {
+    return filterModels(models, cls.partial, limit).map((model): AtItem => ({
+      kind: "model",
+      model,
+    }));
+  }
+  if (cls.mode === "external") {
+    return [];
+  }
+
+  // cls.mode === "project"
+  const partial = cls.partial;
+  const localMatches = filterFiles(files, partial, limit);
+  const seen = new Set(localMatches.map((f) => f.path));
+  const mergedFiles: FileInfo[] = [...localMatches];
+  for (const f of serverFiles) {
+    if (seen.has(f.path)) continue;
+    seen.add(f.path);
+    mergedFiles.push(f);
+  }
+  const items: AtItem[] = mergedFiles
+    .slice(0, limit)
+    .map((file): AtItem => ({ kind: "file", file }));
+
+  if (partial === "") return items; // bare @: files only, no kind noise
+
+  const KIND_LIMIT = 5;
+  for (const name of filterNames(skills, partial, KIND_LIMIT)) {
+    items.push({ kind: "skill", name });
+  }
+  for (const name of filterNames(subagents, partial, KIND_LIMIT)) {
+    items.push({ kind: "subagent", name });
+  }
+  for (const model of filterModels(models, partial, KIND_LIMIT)) {
+    items.push({ kind: "model", model });
+  }
+
+  for (const sigil of SIGILS) {
+    const available =
+      sigil.prefix === "model:"
+        ? true
+        : sigil.prefix === "skill:"
+          ? skills.length > 0
+          : subagents.length > 0;
+    if (available && sigil.prefix.startsWith(partial)) {
+      items.push({ kind: "sigil", prefix: sigil.prefix, label: sigil.label });
+    }
+  }
+
+  return items;
 }
