@@ -2293,22 +2293,28 @@ class PantokenStore {
   /** Toggle the adventurous auto-handoff flag (lets plan mode autonomously start
    *  implementing). The updated state arrives via the next snapshot. */
   toggleAdventurousHandoff(): void {
-    send({ type: "toggleAdventurousHandoff" });
+    send({
+      type: "sessionAction",
+      action: { kind: "toggleAdventurousHandoff" },
+    });
   }
 
   /** Set the notification auto-drain flag (autodrain non-blocking notifications). */
   setNotificationAutodrain(enabled: boolean): void {
-    send({ type: "setNotificationAutodrain", enabled });
+    send({
+      type: "sessionAction",
+      action: { kind: "setNotificationAutodrain", enabled },
+    });
   }
 
   /** Trigger context compaction (the daemon's POST /compact). */
   compact(): void {
-    send({ type: "compact" });
+    send({ type: "sessionAction", action: { kind: "compact" } });
   }
 
   /** Clear the session's context entirely (the daemon's POST /clear). */
   clearContext(): void {
-    send({ type: "clearContext" });
+    send({ type: "sessionAction", action: { kind: "clearContext" } });
   }
 
   /** Manage an MCP server (enable/disable/disconnect/reconnect). */
@@ -2316,7 +2322,10 @@ class PantokenStore {
     serverName: string,
     action: "enable" | "disable" | "disconnect" | "reconnect",
   ): void {
-    send({ type: "setMcpServer", serverName, action });
+    send({
+      type: "sessionAction",
+      action: { kind: "setMcpServer", serverName, action },
+    });
   }
 
   /** Models shown in the header picker: filtered to favorites when any are set, but the

@@ -169,16 +169,17 @@ are REAL but **provisional** — they embed local `/Users/timo/...` paths from t
       prompt-results ledger; `handleClient` is one giant switch. Extract
       collaborators the hub delegates to. Deferred — touches the app's central
       nervous system; wants its own change with the full e2e suite as the net.
-- [ ] **Flatten the per-feature fan-out (the CAUSE of hub/driver growth).** A
-      simple daemon toggle costs six touches: wire variant → hub case →
-      `PantokenDriver` method (~30 methods, half optional behind `?.`) → two driver
-      impls → store method → component. The pass-through class (compact,
-      clearContext, setMcpServer, toggleAdventurousHandoff,
-      setNotificationAutodrain, …) shares one shape — POST → refresh → snapshot;
-      the polytoken driver already unified them behind `refreshAndEmit` — so a
-      data-driven `sessionAction(kind, payload)` seam would collapse roughly a
-      third of the hub switch and driver interface. Do it before/with the hub
-      decomposition; it shrinks the thing being decomposed.
+- [ ] **Flatten the per-feature fan-out (the CAUSE of hub/driver growth).**
+      **Phase 1 landed (2026-07-10):** the five fire-and-forget pass-throughs
+      (compact, clearContext, setMcpServer, toggleAdventurousHandoff,
+      setNotificationAutodrain) now ride ONE `sessionAction` wire envelope →
+      one hub case → one `session_action(SessionAction)` driver method with a
+      match arm per driver (net −73 lines). Adding such an action is now a
+      `SessionAction` variant + one arm per driver + a store one-liner.
+      **Remaining:** the sync spawn-style setters (setFacet, setThinking,
+      setModel, setPermissionMonitor) could join the envelope, but they have
+      client-side branches (draft targeting, optimistic state) — evaluate per
+      case. Then the hub decomposition proper.
 - [ ] **Decompose the client store (the client-side god object).**
       `client/src/lib/store.svelte.ts` (~2.5k lines) mixes protocol fold/resume
       machinery, outbox durability, draft persistence, nav history, toasts,

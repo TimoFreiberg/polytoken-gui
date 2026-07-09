@@ -10,7 +10,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::Duration;
 
 use pantoken_protocol::session_driver::*;
-use pantoken_protocol::wire::DeliveryMode;
+use pantoken_protocol::wire::{DeliveryMode, SessionAction};
 use parking_lot::Mutex;
 use tokio::sync::{mpsc, oneshot};
 use tracing::warn;
@@ -2765,22 +2765,6 @@ impl PantokenDriver for MockDriver {
         });
     }
 
-    async fn toggle_adventurous_handoff(&self, _session_id: Option<SessionId>) {
-        // Flip the local flag and broadcast a sessionUpdated snapshot carrying the
-        // new value — faithful port of the TS MockDriver.toggleAdventurousHandoff.
-        let flipped = {
-            let mut g = self.adventurous_handoff.lock().unwrap();
-            *g = !*g;
-            *g
-        };
-        let mut s = snap(SessionStatus::Idle, None, None, None, None, None);
-        s.adventurous_handoff = Some(flipped);
-        self.emit(SessionDriverEvent::SessionUpdated {
-            base: base(),
-            snapshot: s,
-        });
-    }
-
     fn get_usage(&self, _session_id: Option<SessionId>) -> Option<SessionUsage> {
         let tokens = LIVE_USAGE_TOKENS.fetch_add(2800, Ordering::Relaxed) + 2800;
         let tokens = tokens.min(200000) as i64;
@@ -2792,61 +2776,77 @@ impl PantokenDriver for MockDriver {
         })
     }
 
-    // Faithful port of TS `MockDriver.compact()` (`server/src/mock-driver.ts:860`):
-    // drop usage to a small post-compaction residual (the daemon keeps a summary,
-    // so context isn't zero), then notify "Context compacted". Does not reset
-    // `liveUsageTokens`, mirroring the TS override exactly.
-    async fn compact(&self, _session_id: Option<SessionId>) {
-        self.emit(SessionDriverEvent::UsageUpdated {
-            base: base(),
-            usage: SessionUsage {
-                tokens: Some(8000),
-                context_window: 200000,
-                percent: Some(4.0),
-            },
-        });
-        self.emit(SessionDriverEvent::HostUiRequest {
-            base: base(),
-            request: HostUiRequest::Notify {
-                request_id: format!("compact-done-{}", ts()),
-                message: "Context compacted".into(),
-                level: Some(NotifyLevel::Info),
-            },
-        });
-    }
-
-    // Faithful port of TS `MockDriver.clearContext()` (`server/src/mock-driver.ts:887`):
-    // usage drops to zero so the ring renders "0%", then notify "Context cleared".
-    async fn clear_context(&self, _session_id: Option<SessionId>) {
-        self.emit(SessionDriverEvent::UsageUpdated {
-            base: base(),
-            usage: SessionUsage {
-                tokens: Some(0),
-                context_window: 200000,
-                percent: Some(0.0),
-            },
-        });
-        self.emit(SessionDriverEvent::HostUiRequest {
-            base: base(),
-            request: HostUiRequest::Notify {
-                request_id: format!("clear-done-{}", ts()),
-                message: "Context cleared".into(),
-                level: Some(NotifyLevel::Info),
-            },
-        });
-    }
-
-    // Faithful port of TS `MockDriver.setNotificationAutodrain()`
-    // (`server/src/mock-driver.ts:849-858`): set the flag and emit a
-    // `sessionUpdated` whose snapshot carries `notificationAutodrain: enabled`
-    // so the Settings toggle round-trips through the hub → client.
-    async fn set_notification_autodrain(&self, enabled: bool, _session_id: Option<SessionId>) {
-        let mut snapshot = mock_snapshot(SessionStatus::Idle);
-        snapshot.notification_autodrain = Some(enabled);
-        self.emit(SessionDriverEvent::SessionUpdated {
-            base: base(),
-            snapshot,
-        });
+    // One arm per SessionAction, each a faithful port of its TS MockDriver
+    // method: deterministic fixture responses so Settings toggles and the
+    // context actions round-trip through hub → client in dev/e2e.
+    // SetMcpServer is a mock no-op (the MCP e2e drives UI states via widgets).
+    async fn session_action(&self, action: SessionAction, _session_id: Option<SessionId>) {
+        match action {
+            SessionAction::ToggleAdventurousHandoff => {
+                // Flip the local flag and broadcast a sessionUpdated snapshot
+                // carrying the new value.
+                let flipped = {
+                    let mut g = self.adventurous_handoff.lock().unwrap();
+                    *g = !*g;
+                    *g
+                };
+                let mut s = snap(SessionStatus::Idle, None, None, None, None, None);
+                s.adventurous_handoff = Some(flipped);
+                self.emit(SessionDriverEvent::SessionUpdated {
+                    base: base(),
+                    snapshot: s,
+                });
+            }
+            SessionAction::SetNotificationAutodrain { enabled } => {
+                // Emit a sessionUpdated whose snapshot carries the new flag.
+                let mut snapshot = mock_snapshot(SessionStatus::Idle);
+                snapshot.notification_autodrain = Some(enabled);
+                self.emit(SessionDriverEvent::SessionUpdated {
+                    base: base(),
+                    snapshot,
+                });
+            }
+            SessionAction::Compact => {
+                // Drop usage to a small post-compaction residual (the daemon
+                // keeps a summary, so context isn't zero), then notify.
+                self.emit(SessionDriverEvent::UsageUpdated {
+                    base: base(),
+                    usage: SessionUsage {
+                        tokens: Some(8000),
+                        context_window: 200000,
+                        percent: Some(4.0),
+                    },
+                });
+                self.emit(SessionDriverEvent::HostUiRequest {
+                    base: base(),
+                    request: HostUiRequest::Notify {
+                        request_id: format!("compact-done-{}", ts()),
+                        message: "Context compacted".into(),
+                        level: Some(NotifyLevel::Info),
+                    },
+                });
+            }
+            SessionAction::ClearContext => {
+                // Usage drops to zero so the ring renders "0%", then notify.
+                self.emit(SessionDriverEvent::UsageUpdated {
+                    base: base(),
+                    usage: SessionUsage {
+                        tokens: Some(0),
+                        context_window: 200000,
+                        percent: Some(0.0),
+                    },
+                });
+                self.emit(SessionDriverEvent::HostUiRequest {
+                    base: base(),
+                    request: HostUiRequest::Notify {
+                        request_id: format!("clear-done-{}", ts()),
+                        message: "Context cleared".into(),
+                        level: Some(NotifyLevel::Info),
+                    },
+                });
+            }
+            SessionAction::SetMcpServer { .. } => {}
+        }
     }
 
     fn default_seed(&self) -> Option<Vec<SessionDriverEvent>> {

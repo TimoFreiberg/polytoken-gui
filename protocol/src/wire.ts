@@ -291,6 +291,22 @@ export interface ResumeToken {
   readonly seq: number;
 }
 
+/** The fire-and-forget pass-through actions carried by the `sessionAction`
+ *  ClientMessage. They share one lifecycle: POST to the daemon, no direct
+ *  reply — the effect arrives as later driver events. Daemon endpoints:
+ *  POST /adventurous-handoff (toggle), /notifications/autodrain, /compact,
+ *  /clear (context + shell env), /mcp/{server}/{action}. */
+export type SessionAction =
+  | { kind: "toggleAdventurousHandoff" }
+  | { kind: "setNotificationAutodrain"; enabled: boolean }
+  | { kind: "compact" }
+  | { kind: "clearContext" }
+  | {
+      kind: "setMcpServer";
+      serverName: string;
+      action: "enable" | "disable" | "disconnect" | "reconnect";
+    };
+
 export type ClientMessage =
   | { type: "hello"; auth?: string; resume?: ResumeToken }
   | {
@@ -332,35 +348,12 @@ export type ClientMessage =
       mode: PermissionMonitorMode;
       sessionId?: SessionId;
     }
-  /** Toggle the adventurous auto-handoff flag (lets plan mode autonomously start
-   *  implementing). The daemon's POST /adventurous-handoff toggles; the updated
-   *  state arrives via the next snapshot's `adventurousHandoff`. */
-  | { type: "toggleAdventurousHandoff"; sessionId?: SessionId }
-  /** Set the notification auto-drain flag (autodrain non-blocking notifications).
-   *  The updated state arrives via the next snapshot's `notificationAutodrain`. */
-  | {
-      type: "setNotificationAutodrain";
-      enabled: boolean;
-      sessionId?: SessionId;
-    }
-  /** Trigger context compaction (the daemon's POST /compact). Compaction runs
-   *  asynchronously; the daemon emits compaction_started/complete/cancelled/failed
-   *  events (already mapped to notify + fetchState). Omit sessionId to target
-   *  the focused session. */
-  | { type: "compact"; sessionId?: SessionId }
-  /** Clear the session's context entirely (the daemon's POST /clear — resets
-   *  context + shell env). Emits a context_cleared event (already mapped to a
-   *  reseed). Omit sessionId to target the focused session. */
-  | { type: "clearContext"; sessionId?: SessionId }
-  /** Manage an MCP server (enable/disable/disconnect/reconnect). The daemon's
-   *  POST /mcp/{server}/{action} fires lifecycle events (already mapped to
-   *  notify + fetchState). Omit sessionId to target the focused session. */
-  | {
-      type: "setMcpServer";
-      serverName: string;
-      action: "enable" | "disable" | "disconnect" | "reconnect";
-      sessionId?: SessionId;
-    }
+  /** The data-driven envelope for fire-and-forget session actions that share one
+   *  shape: a daemon POST whose effect arrives via later events (snapshots,
+   *  notifications, usage updates) — no direct reply. Adding an action = one
+   *  `SessionAction` variant + one arm per driver; the hub routes them all
+   *  identically. Omit sessionId to target the focused session. */
+  | { type: "sessionAction"; action: SessionAction; sessionId?: SessionId }
   /** Set the explicit login shell pantoken captures env from at startup (null = the
    *  `$SHELL` / OS-login-shell default). Persists server-side; the env is captured
    *  once at boot, so it applies on the next server restart. The server re-broadcasts

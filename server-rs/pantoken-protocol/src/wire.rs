@@ -335,27 +335,11 @@ pub enum ClientMessage {
         #[serde(skip_serializing_if = "Option::is_none", default, rename = "sessionId")]
         session_id: Option<SessionId>,
     },
-    ToggleAdventurousHandoff {
-        #[serde(skip_serializing_if = "Option::is_none", default, rename = "sessionId")]
-        session_id: Option<SessionId>,
-    },
-    SetNotificationAutodrain {
-        enabled: bool,
-        #[serde(skip_serializing_if = "Option::is_none", default, rename = "sessionId")]
-        session_id: Option<SessionId>,
-    },
-    Compact {
-        #[serde(skip_serializing_if = "Option::is_none", default, rename = "sessionId")]
-        session_id: Option<SessionId>,
-    },
-    ClearContext {
-        #[serde(skip_serializing_if = "Option::is_none", default, rename = "sessionId")]
-        session_id: Option<SessionId>,
-    },
-    SetMcpServer {
-        #[serde(rename = "serverName")]
-        server_name: String,
-        action: McpAction,
+    /// The data-driven envelope for fire-and-forget session actions that share
+    /// one shape (a daemon POST; updated state arrives via later events).
+    /// Adding an action = one `SessionAction` variant + one arm per driver.
+    SessionAction {
+        action: SessionAction,
         #[serde(skip_serializing_if = "Option::is_none", default, rename = "sessionId")]
         session_id: Option<SessionId>,
     },
@@ -483,6 +467,26 @@ pub enum McpAction {
     Disable,
     Disconnect,
     Reconnect,
+}
+
+/// The fire-and-forget pass-through actions carried by
+/// `ClientMessage::SessionAction`. They share one lifecycle: POST to the
+/// daemon, no direct reply — the effect arrives as later driver events
+/// (snapshots, notifications, usage updates).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum SessionAction {
+    ToggleAdventurousHandoff,
+    SetNotificationAutodrain {
+        enabled: bool,
+    },
+    Compact,
+    ClearContext,
+    SetMcpServer {
+        #[serde(rename = "serverName")]
+        server_name: String,
+        action: McpAction,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -774,23 +778,53 @@ mod tests {
     }
 
     #[test]
-    fn roundtrip_set_mcp_server() {
+    fn roundtrip_session_action_set_mcp_server() {
         let json_str = r#"{
-            "type": "setMcpServer",
-            "serverName": "my-server",
-            "action": "reconnect"
+            "type": "sessionAction",
+            "action": {
+                "kind": "setMcpServer",
+                "serverName": "my-server",
+                "action": "reconnect"
+            }
         }"#;
         let msg = parse_client_message(json_str).unwrap();
         match msg {
-            ClientMessage::SetMcpServer {
-                server_name,
-                action,
+            ClientMessage::SessionAction {
+                action:
+                    SessionAction::SetMcpServer {
+                        server_name,
+                        action,
+                    },
                 ..
             } => {
                 assert_eq!(server_name, "my-server");
                 assert_eq!(action, McpAction::Reconnect);
             }
-            _ => panic!("expected SetMcpServer"),
+            _ => panic!("expected SessionAction::SetMcpServer"),
+        }
+    }
+
+    #[test]
+    fn roundtrip_session_action_payload_free_kinds() {
+        for (json_kind, expected) in [
+            ("compact", SessionAction::Compact),
+            ("clearContext", SessionAction::ClearContext),
+            (
+                "toggleAdventurousHandoff",
+                SessionAction::ToggleAdventurousHandoff,
+            ),
+        ] {
+            let json_str = format!(
+                r#"{{"type": "sessionAction", "action": {{"kind": "{json_kind}"}}, "sessionId": "s1"}}"#
+            );
+            let msg = parse_client_message(&json_str).unwrap();
+            match msg {
+                ClientMessage::SessionAction { action, session_id } => {
+                    assert_eq!(action, expected);
+                    assert_eq!(session_id.as_deref(), Some("s1"));
+                }
+                _ => panic!("expected SessionAction for kind {json_kind}"),
+            }
         }
     }
 

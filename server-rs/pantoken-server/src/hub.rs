@@ -1397,65 +1397,14 @@ impl SessionHub {
                 let target = session_id.clone().or(focused_id);
                 self.driver.set_permission_monitor(*mode, target);
             }
-            ClientMessage::ToggleAdventurousHandoff { session_id } => {
+            ClientMessage::SessionAction { action, session_id } => {
                 let target = session_id.clone().or(focused_id);
                 let driver = self.driver.clone();
+                let action = action.clone();
                 self.hub_ops.enqueue(
-                    "toggle_adventurous_handoff",
+                    "session_action",
                     Box::new(move |_hub| {
-                        Box::pin(async move { driver.toggle_adventurous_handoff(target).await })
-                    }),
-                );
-            }
-            ClientMessage::SetNotificationAutodrain {
-                enabled,
-                session_id,
-            } => {
-                let target = session_id.clone().or(focused_id);
-                let driver = self.driver.clone();
-                let enabled = *enabled;
-                self.hub_ops.enqueue(
-                    "set_notification_autodrain",
-                    Box::new(move |_hub| {
-                        Box::pin(
-                            async move { driver.set_notification_autodrain(enabled, target).await },
-                        )
-                    }),
-                );
-            }
-            ClientMessage::Compact { session_id } => {
-                let target = session_id.clone().or(focused_id);
-                let driver = self.driver.clone();
-                self.hub_ops.enqueue(
-                    "compact",
-                    Box::new(move |_hub| Box::pin(async move { driver.compact(target).await })),
-                );
-            }
-            ClientMessage::ClearContext { session_id } => {
-                let target = session_id.clone().or(focused_id);
-                let driver = self.driver.clone();
-                self.hub_ops.enqueue(
-                    "clear_context",
-                    Box::new(move |_hub| {
-                        Box::pin(async move { driver.clear_context(target).await })
-                    }),
-                );
-            }
-            ClientMessage::SetMcpServer {
-                server_name,
-                action,
-                session_id,
-            } => {
-                let target = session_id.clone().or(focused_id);
-                let driver = self.driver.clone();
-                let server_name = server_name.clone();
-                let action = *action;
-                self.hub_ops.enqueue(
-                    "set_mcp_server",
-                    Box::new(move |_hub| {
-                        Box::pin(
-                            async move { driver.set_mcp_server(server_name, action, target).await },
-                        )
+                        Box::pin(async move { driver.session_action(action, target).await })
                     }),
                 );
             }
@@ -3814,21 +3763,19 @@ mod hub_models_tests {
 
     #[tokio::test]
     async fn compact_and_clear_context_route_to_driver() {
-        // There is no TS hub test asserting that a `compact`/`clearContext`
-        // ClientMessage reaches `driver.compact`/`driver.clear_context` (the TS
-        // hub tests cover unrelated attention/ring paths). This is the test-first
-        // net for the routing path in `hub.rs:handle_client`: the hub enqueues a
-        // `compact`/`clear_context` hub op that calls the driver method, and the
-        // MockDriver overrides emit a `usageUpdated` we can observe on the wire.
-        // (The mock-override behavior itself is covered by the e2e suite; this is
-        // only the routing assertion.)
+        // Routing net for `sessionAction` in `hub.rs:handle_client`: the hub
+        // enqueues one `session_action` hub op that calls the driver method,
+        // and the MockDriver's arms emit a `usageUpdated` we can observe on
+        // the wire. (The mock behavior itself is covered by the e2e suite;
+        // this is only the routing assertion.)
         let (_driver, hub, mut hub_ops) = test_hub();
         let (client_key, _tx, mut rx) = hub.lock().add_client(None);
 
-        // compact → driver.compact → usageUpdated { tokens: 8000, percent: 4 }
+        // compact → driver.session_action → usageUpdated { tokens: 8000, percent: 4 }
         hub.lock().handle_client(
             client_key,
-            ClientMessage::Compact {
+            ClientMessage::SessionAction {
+                action: pantoken_protocol::wire::SessionAction::Compact,
                 session_id: Some("demo-session".into()),
             },
         );
@@ -3855,10 +3802,11 @@ mod hub_models_tests {
             other => panic!("expected usageUpdated from compact, got {other:?}"),
         }
 
-        // clearContext → driver.clear_context → usageUpdated { tokens: 0, percent: 0 }
+        // clearContext → driver.session_action → usageUpdated { tokens: 0, percent: 0 }
         hub.lock().handle_client(
             client_key,
-            ClientMessage::ClearContext {
+            ClientMessage::SessionAction {
+                action: pantoken_protocol::wire::SessionAction::ClearContext,
                 session_id: Some("demo-session".into()),
             },
         );

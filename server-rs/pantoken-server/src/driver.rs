@@ -10,7 +10,7 @@ use pantoken_protocol::session_driver::{
     ModelDefaults, ModelOption, PathStat, PermissionMonitorMode, SessionDriverEvent, SessionId,
     SessionListEntry, SessionUsage,
 };
-use pantoken_protocol::wire::{DeliveryMode, LoginEnvStatus, McpAction};
+use pantoken_protocol::wire::{DeliveryMode, LoginEnvStatus, SessionAction};
 
 /// Options for `PantokenDriver::new_session`. All optional: a bare new session
 /// defaults to $HOME. The first `prompt` is delivered by the hub after
@@ -243,26 +243,12 @@ pub trait PantokenDriver: Send + Sync {
     /// Switch the active permission-monitor mode.
     fn set_permission_monitor(&self, mode: PermissionMonitorMode, session_id: Option<SessionId>);
 
-    /// Toggle the adventurous auto-handoff flag.
-    async fn toggle_adventurous_handoff(&self, _session_id: Option<SessionId>) {}
-
-    /// Set the notification auto-drain flag.
-    async fn set_notification_autodrain(&self, _enabled: bool, _session_id: Option<SessionId>) {}
-
-    /// Trigger context compaction.
-    async fn compact(&self, _session_id: Option<SessionId>) {}
-
-    /// Clear the session's context entirely.
-    async fn clear_context(&self, _session_id: Option<SessionId>) {}
-
-    /// Manage an MCP server.
-    async fn set_mcp_server(
-        &self,
-        _server_name: String,
-        _action: McpAction,
-        _session_id: Option<SessionId>,
-    ) {
-    }
+    /// Run a fire-and-forget pass-through action (compact, clear-context,
+    /// MCP server management, the toggles — see `SessionAction`). One method
+    /// instead of one per action: they share a single lifecycle (a daemon
+    /// POST whose effect arrives via later driver events), so adding an
+    /// action is a `SessionAction` variant + one match arm per driver.
+    async fn session_action(&self, _action: SessionAction, _session_id: Option<SessionId>) {}
 
     /// The daemon's global default model/thinking for new sessions.
     async fn get_model_defaults(&self) -> ModelDefaults {

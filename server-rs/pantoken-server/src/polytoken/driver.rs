@@ -56,7 +56,7 @@ use pantoken_protocol::session_driver::{
     SessionListEntry, SessionRef, SessionSnapshot, SessionStatus, SessionUsage, WorkspaceId,
     WorkspaceRef, WorktreeInfo,
 };
-use pantoken_protocol::wire::{DeliveryMode, LoginEnvStatus, McpAction};
+use pantoken_protocol::wire::{DeliveryMode, LoginEnvStatus, McpAction, SessionAction};
 use parking_lot::{Mutex, RwLock};
 use tokio::sync::mpsc;
 use tracing::{debug, error, info, warn};
@@ -2801,86 +2801,43 @@ impl PantokenDriver for PolytokenDriver {
         }
     }
 
-    async fn toggle_adventurous_handoff(&self, session_id: Option<SessionId>) {
-        if let Some(sid) = &session_id {
-            if let Some(ws) = self.inner.get_warm(sid) {
-                if let Err(e) = ws.client.toggle_adventurous_handoff().await {
-                    self.inner.report_action_error(
-                        &ws.session_ref,
-                        "Adventurous-handoff toggle",
-                        &e,
-                    );
-                }
-            }
-        }
-    }
-
-    async fn set_notification_autodrain(&self, enabled: bool, session_id: Option<SessionId>) {
-        if let Some(sid) = &session_id {
-            if let Some(ws) = self.inner.get_warm(sid) {
-                if let Err(e) = ws.client.set_notification_autodrain(enabled).await {
-                    self.inner.report_action_error(
-                        &ws.session_ref,
-                        "Notification-autodrain switch",
-                        &e,
-                    );
-                }
-            }
-        }
-    }
-
-    async fn compact(&self, session_id: Option<SessionId>) {
-        if let Some(sid) = &session_id {
-            if let Some(ws) = self.inner.get_warm(sid) {
-                if let Err(e) = ws.client.compact(None).await {
-                    self.inner
-                        .report_action_error(&ws.session_ref, "Compact", &e);
-                }
-            }
-        }
-    }
-
-    async fn clear_context(&self, session_id: Option<SessionId>) {
-        if let Some(sid) = &session_id {
-            if let Some(ws) = self.inner.get_warm(sid) {
-                if let Err(e) = ws.client.clear().await {
-                    self.inner
-                        .report_action_error(&ws.session_ref, "Clear context", &e);
-                }
-            }
-        }
-    }
-
-    async fn set_mcp_server(
-        &self,
-        server_name: String,
-        action: McpAction,
-        session_id: Option<SessionId>,
-    ) {
-        if let Some(sid) = &session_id {
-            if let Some(ws) = self.inner.get_warm(sid) {
+    async fn session_action(&self, action: SessionAction, session_id: Option<SessionId>) {
+        use crate::polytoken::daemon_client::McpServerAction;
+        let Some(sid) = &session_id else { return };
+        let Some(ws) = self.inner.get_warm(sid) else {
+            return;
+        };
+        let (what, result) = match action {
+            SessionAction::ToggleAdventurousHandoff => (
+                "Adventurous-handoff toggle".to_string(),
+                ws.client.toggle_adventurous_handoff().await.map(|_| ()),
+            ),
+            SessionAction::SetNotificationAutodrain { enabled } => (
+                "Notification-autodrain switch".to_string(),
+                ws.client.set_notification_autodrain(enabled).await,
+            ),
+            SessionAction::Compact => ("Compact".to_string(), ws.client.compact(None).await),
+            SessionAction::ClearContext => ("Clear context".to_string(), ws.client.clear().await),
+            SessionAction::SetMcpServer {
+                server_name,
+                action,
+            } => {
                 let daemon_action = match action {
-                    McpAction::Enable => crate::polytoken::daemon_client::McpServerAction::Enable,
-                    McpAction::Disable => crate::polytoken::daemon_client::McpServerAction::Disable,
-                    McpAction::Disconnect => {
-                        crate::polytoken::daemon_client::McpServerAction::Disconnect
-                    }
-                    McpAction::Reconnect => {
-                        crate::polytoken::daemon_client::McpServerAction::Reconnect
-                    }
+                    McpAction::Enable => McpServerAction::Enable,
+                    McpAction::Disable => McpServerAction::Disable,
+                    McpAction::Disconnect => McpServerAction::Disconnect,
+                    McpAction::Reconnect => McpServerAction::Reconnect,
                 };
-                if let Err(e) = ws
-                    .client
-                    .mcp_server_action(&server_name, daemon_action)
-                    .await
-                {
-                    self.inner.report_action_error(
-                        &ws.session_ref,
-                        &format!("MCP server '{server_name}' action"),
-                        &e,
-                    );
-                }
+                (
+                    format!("MCP server '{server_name}' action"),
+                    ws.client
+                        .mcp_server_action(&server_name, daemon_action)
+                        .await,
+                )
             }
+        };
+        if let Err(e) = result {
+            self.inner.report_action_error(&ws.session_ref, &what, &e);
         }
     }
 
