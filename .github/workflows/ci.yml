@@ -74,9 +74,8 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
-          workspaces: server-rs
-      - run: cargo build
-        working-directory: server-rs
+          workspaces: .
+      - run: cargo build -p pantoken-server
       - name: Cache Playwright browsers
         uses: actions/cache@v4
         with:
@@ -114,12 +113,11 @@ jobs:
           restore-keys: bun-${{ runner.os }}-
       - uses: Swatinem/rust-cache@v2
         with:
-          workspaces: server-rs
+          workspaces: .
       - run: bun install --frozen-lockfile
       # Pre-warm the Rust binary so dev.ts's `cargo run` answers /health quickly (the
       # webServer timeout budgets a cold compile, but warming keeps it comfortable).
-      - run: cargo build
-        working-directory: server-rs
+      - run: cargo build -p pantoken-server
       - name: Cache Playwright browsers
         uses: actions/cache@v4
         with:
@@ -154,15 +152,10 @@ jobs:
       # ensures client/dist exists so the resource mapping never trips.
       - uses: Swatinem/rust-cache@v2
         with:
-          workspaces: server-rs
+          workspaces: .
       - run: bun scripts/desktop/build-hub.ts --debug
-      - uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: desktop
-      - run: cargo fmt --check
-        working-directory: desktop
-      - run: cargo clippy --locked --all-targets -- -D warnings
-        working-directory: desktop
+      - run: cargo fmt --check -p pantoken-desktop
+      - run: cargo clippy --locked -p pantoken-desktop --all-targets -- -D warnings
 
   rust-server:
     name: rust server — fmt, clippy, test
@@ -171,15 +164,13 @@ jobs:
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
-          workspaces: server-rs
-      - run: cargo fmt --check
-        working-directory: server-rs
-      - run: cargo clippy --locked --all-targets -- -D warnings
-        working-directory: server-rs
-      - run: cargo test
-        working-directory: server-rs
+          workspaces: .
+      - run: cargo fmt --all -- --check
+      - run: cargo clippy --locked -p pantoken-protocol -p pantoken-daemon-types -p pantoken-server --all-targets -- -D warnings
+      - run: cargo test -p pantoken-protocol -p pantoken-daemon-types -p pantoken-server
 
   # Tag pushes only (scripts/desktop/release.ts creates them): prepare the signed
   # bundled .app in parallel with the gates, then publish only after those gates pass.
@@ -202,10 +193,7 @@ jobs:
       - run: bun install --frozen-lockfile
       - uses: Swatinem/rust-cache@v2
         with:
-          workspaces: server-rs
-      - uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: desktop
+          workspaces: .
       - name: Build signed release artifacts
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
