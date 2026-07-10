@@ -2620,32 +2620,47 @@ impl PantokenDriver for PolytokenDriver {
     }
 
     async fn list_dir(&self, path: Option<String>) -> DirListing {
-        let target = path.unwrap_or_else(|| std::env::var("HOME").unwrap_or_default());
-        let entries = match std::fs::read_dir(&target) {
-            Ok(dir) => dir
-                .filter_map(|e| e.ok())
-                .filter_map(|e| {
-                    let name = e.file_name().to_string_lossy().to_string();
-                    let is_dir = e.file_type().ok().map(|t| t.is_dir()).unwrap_or(false);
-                    if is_dir { Some(name) } else { None }
-                })
-                .collect(),
-            Err(_) => Vec::new(),
-        };
-        DirListing {
-            path: target,
-            parent: None,
-            entries,
-            error: None,
+        // The DirPicker relies on the server to (a) resolve `~`/relative paths,
+        // (b) echo the resolved absolute path, (c) provide `parent` for up-nav,
+        // and (d) flag `error` on an unreadable dir. Match the mock's contract.
+        let target = resolve_picker_path(path.as_deref());
+        let parent = std::path::Path::new(&target)
+            .parent()
+            .map(|p| p.to_string_lossy().into_owned())
+            .filter(|p| p != &target);
+        match std::fs::read_dir(&target) {
+            Ok(dir) => {
+                let mut entries: Vec<String> = dir
+                    .filter_map(|e| e.ok())
+                    .filter_map(|e| {
+                        let is_dir = e.file_type().ok().map(|t| t.is_dir()).unwrap_or(false);
+                        is_dir.then(|| e.file_name().to_string_lossy().into_owned())
+                    })
+                    .collect();
+                entries.sort();
+                DirListing {
+                    path: target,
+                    parent,
+                    entries,
+                    error: None,
+                }
+            }
+            Err(_) => DirListing {
+                path: target,
+                parent,
+                entries: Vec::new(),
+                error: Some(true),
+            },
         }
     }
 
     async fn stat_path(&self, path: String) -> PathStat {
-        let p = std::path::Path::new(&path);
+        let resolved = resolve_picker_path(Some(&path));
+        let p = std::path::Path::new(&resolved);
         PathStat {
             exists: p.exists(),
             is_dir: p.is_dir(),
-            path,
+            path: resolved,
         }
     }
 
@@ -2938,6 +2953,46 @@ impl PantokenDriver for PolytokenDriver {
     }
 }
 
+/// Resolve a DirPicker path to an absolute, lexically-normalized path against the
+/// real filesystem — the contract the mock's `mock_resolve` implements and the
+/// DirPicker depends on (it echoes the resolved path and navigates by `parent`).
+/// `None`/empty → `$HOME` (the picker's default root); a leading `~` expands to
+/// `$HOME`; a bare relative path resolves against `$HOME`; `.`/`..` collapse
+/// lexically (no disk access, so it works for not-yet-existing paths too).
+fn resolve_picker_path(path: Option<&str>) -> String {
+    use std::path::{Component, Path, PathBuf};
+    let home = std::env::var("HOME").unwrap_or_else(|_| "/".to_string());
+    let raw = path.map(str::trim).filter(|s| !s.is_empty());
+    let Some(raw) = raw else { return home };
+
+    // Expand a leading `~` (`~` or `~/...`) to $HOME; anything else keeps its text.
+    let expanded: PathBuf = if raw == "~" {
+        return home;
+    } else if let Some(rest) = raw.strip_prefix("~/") {
+        Path::new(&home).join(rest)
+    } else if Path::new(raw).is_absolute() {
+        PathBuf::from(raw)
+    } else {
+        // Bare relative path → resolve against $HOME (the picker's root).
+        Path::new(&home).join(raw)
+    };
+
+    // Lexical normalization: collapse `.`/`..`, keep the root.
+    let mut out = PathBuf::from("/");
+    for comp in expanded.components() {
+        match comp {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                out.pop();
+            }
+            Component::Normal(c) => out.push(c),
+            Component::RootDir | Component::Prefix(_) => {}
+        }
+    }
+    let s = out.to_string_lossy().into_owned();
+    if s.is_empty() { "/".to_string() } else { s }
+}
+
 /// Parse the daemon's `JobStatus` (a `serde_json::Value` oneOf) into pantoken's
 /// string enum. The daemon sends it as `{"status": "running", ...}` or just
 /// `"running"`; we try the object's `status` field first, then a bare string.
@@ -2983,6 +3038,26 @@ fn at_refs_from_snapshot(state: Option<&SessionStateSnapshot>) -> AtRefs {
 mod tests {
     use super::*;
     use pantoken_protocol::wire::LoginEnvStatus;
+
+    #[test]
+    fn resolve_picker_path_expands_tilde_and_normalizes() {
+        // SAFETY: single-threaded test; set a deterministic HOME.
+        unsafe { std::env::set_var("HOME", "/home/tester") };
+        assert_eq!(resolve_picker_path(None), "/home/tester");
+        assert_eq!(resolve_picker_path(Some("")), "/home/tester");
+        assert_eq!(resolve_picker_path(Some("  ")), "/home/tester");
+        assert_eq!(resolve_picker_path(Some("~")), "/home/tester");
+        assert_eq!(resolve_picker_path(Some("~/src")), "/home/tester/src");
+        assert_eq!(
+            resolve_picker_path(Some("~/src/../lib")),
+            "/home/tester/lib"
+        );
+        // Absolute paths are normalized but not home-rooted.
+        assert_eq!(resolve_picker_path(Some("/etc/../usr/bin")), "/usr/bin");
+        assert_eq!(resolve_picker_path(Some("/")), "/");
+        // A bare relative path resolves against HOME (the picker's root).
+        assert_eq!(resolve_picker_path(Some("src")), "/home/tester/src");
+    }
 
     /// A minimal `PolytokenInner` for recency/focus tests — only the `order` +
     /// `warm_cap` fields matter; the rest are inert defaults. The warm map is
