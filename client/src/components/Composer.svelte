@@ -1018,28 +1018,6 @@
 
     <QueueTray />
 
-    {#if streaming}
-      <div class="streamrow">
-        <button
-          class="stop"
-          onclick={() => store.abort()}
-          disabled={store.connection !== "connected" || stopState === "stopping"}
-          title={store.connection === "connected"
-            ? stopState === "stopping"
-              ? "Stop requested — waiting for Pantoken"
-              : stopState === "unconfirmed"
-                ? "Retry stopping the agent (Esc)"
-                : "Stop the agent (Esc)"
-            : "Can't stop while offline — the agent keeps running"}
-          >{stopState === "stopping"
-            ? "■ Stopping…"
-            : stopState === "unconfirmed"
-              ? "↻ Retry stop"
-              : "■ Stop"}</button
-        >
-      </div>
-    {/if}
-
     {#if drafting && store.draft}
       <!-- New-session config chips (project · worktree). Model + effort live in the
            footer toolbar below, rebound to the draft via store.composerConfig. -->
@@ -1176,6 +1154,28 @@
         </div>
       {/if}
       <div class="toolbar-right">
+        {#if streaming}
+          <!-- Keep Stop in the always-present toolbar so a turn starting/finishing
+               never changes the composer's height. Unlike the follow-up hint, this
+               remains visible on touch viewports as the primary in-flight control. -->
+          <button
+            class="stop"
+            onclick={() => store.abort()}
+            disabled={store.connection !== "connected" || stopState === "stopping"}
+            title={store.connection === "connected"
+              ? stopState === "stopping"
+                ? "Stop requested — waiting for Pantoken"
+                : stopState === "unconfirmed"
+                  ? "Retry stopping the agent (Esc)"
+                  : "Stop the agent (Esc)"
+              : "Can't stop while offline — the agent keeps running"}
+            >{stopState === "stopping"
+              ? "■ Stopping…"
+              : stopState === "unconfirmed"
+                ? "↻ Retry stop"
+                : "■ Stop"}</button
+          >
+        {/if}
         <!-- Hidden file input for image attachments. -->
         <input
           bind:this={fileInput}
@@ -1333,12 +1333,6 @@
     background: color-mix(in srgb, currentColor 12%, transparent);
     padding: 0 4px;
     border-radius: var(--radius-xs);
-  }
-  .streamrow {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 10px;
   }
   .stop {
     border: 1px solid color-mix(in srgb, var(--danger) 40%, transparent);
