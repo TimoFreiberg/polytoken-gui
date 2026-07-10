@@ -1,8 +1,9 @@
 # Mobile app plan — iPhone, PWA-first
 
-Status: **draft for evening discussion** (2026-07-10). Decisions marked ✅ are
-settled by research + Timo's answers; items under *Open questions* need a call
-tonight before the overnight build kicks off.
+Status: **build in progress** (kicked off 2026-07-10 ~23:10 CEST). All open
+questions were answered by Timo in the evening review — resolutions are folded
+into the sections below and summarized under *Decisions from the evening
+review*. Live build state: see *PROGRESS* at the bottom.
 
 ## ✅ Decision: the mobile app is the installed PWA. No wrapper.
 
@@ -107,27 +108,29 @@ Research across Claude iOS, ChatGPT, GitHub Mobile, Linear converged clearly:
 - **View type:** tapping it opens a **full-screen Context screen** (GitHub
   Mobile "Files changed" pattern), not a bottom sheet — sheets are for
   transient pickers, not browsable multi-step content.
-- **Layout inside (proposal, discuss tonight — see OQ2):** three stacked
-  sections with counts — Flagged files / Background jobs / Todos, same order
-  as the TUI — reusing the section markup + `JobDetail`/`TodoDetail` that
-  `RightSidebar.svelte` already renders. Sections collapsed to count rows when
-  long; alternative is a segmented control (one panel at a time).
+- **Layout inside (✅ decided — OQ2):** three stacked sections with counts —
+  Flagged files / Background jobs / Todos, same order as the TUI — reusing the
+  section markup + `JobDetail`/`TodoDetail` that `RightSidebar.svelte` already
+  renders. Sections collapse to count rows when long.
 - **Back navigation:** pushed as a history entry so **iOS swipe-back and the
   browser back button close the view** instead of leaving the app. Same
   history integration for the left drawer (open drawer = history entry) —
   standalone PWAs have no browser chrome, so back-gesture correctness is the
   difference between "app" and "webpage" feel.
 
-### D3. Badge semantics (proposal, discuss — OQ3)
-Context-entry badge counts *things that changed while you weren't looking*:
-finished-but-unseen background jobs + newly flagged files. Pending approvals
-stay where they are today (transcript card + bell/notification) — they are not
-Context-panel business. Clear the per-panel portion when its section is viewed.
+### D3. Badge semantics (✅ decided — OQ3, simplified per Timo)
+The badge is a **plain total: flagged files + background jobs + todos** — the
+same numbers the panel sections show. No unseen/unread tracking, no
+"changed while you weren't looking" state. Show the bubble when the total is
+> 0, hide otherwise. Approvals stay **out** of the Context badge.
 
 ### D4. Approvals on phone
 Inline transcript card (exists) is already the shipped pattern in Claude/ChatGPT
-mobile. Work tonight: make the **push deep-link land on the approval** —
-`PushNotification.url` already routes via `sw.js`; sharpen it to
+mobile. Per Timo: approvals may take (near-)full screen on phone; **minimizable
+like the desktop app is a nice-to-have, not a showstopper** — audit
+`ApprovalLayer.svelte` at 375px and keep/port the minimize affordance only if
+it falls out cleanly. Work tonight: make the **push deep-link land on the
+approval** — `PushNotification.url` already routes via `sw.js`; sharpen it to
 session + scroll-to-approval, and verify the tap→approve flow is two taps max.
 
 ### D5. Composer & header ergonomics
@@ -162,10 +165,12 @@ on touch paths. Add this as a note to AGENTS.md conventions.
   Pilot/Bun era; `push.rs` is the port — morning checklist item M3).
 - On push receive: `setAppBadge(count)` (Badging API, iOS 16.4+); clear on
   focus. Covers the TODO's "app-icon unread badge" for free.
-- Evaluate **Declarative Web Push** (iOS 18.4+): JSON pushes with `app_badge`
-  + `navigate`, no SW execution needed, and no permission-revocation penalty
-  for unshown notifications. Adopt only if it coexists cleanly with the
-  current SW push path (feature-detect; keep classic push as fallback).
+- **Declarative Web Push: skipped for v1** (was OQ6). Timo's constraint —
+  "only do autonomous stuff you can verify yourself" — rules it out: it is an
+  iOS-Safari-only format that cannot be exercised in Chromium/Playwright or
+  the mock driver, so an overnight adoption would ship unverified. Classic SW
+  push stays (it's the on-device-proven path). Filed in TODO.md as a
+  candidate with a real-device test plan.
 - Distinct notification `tag`s per kind (approval / turn-complete / job-done)
   so later notifications coalesce sensibly.
 
@@ -240,41 +245,35 @@ ScheduleWakeup/cron per the times given at kickoff.
 - M7 LTE (Wi-Fi off): connect, stream a turn, background 5 min, foreground →
   reconnect + tail replay correct.
 
-## Open questions for tonight
+## ✅ Decisions from the evening review (2026-07-10, all OQs resolved)
 
-- **OQ1 — Entry affordance:** one badged icon (recommended) vs three separate
-  buttons. If three: where do they fit at 375px?
-  <human>yeah one icon sounds great</human>
-- **OQ2 — Context screen layout:** stacked sections with counts (recommended)
-  vs segmented control (one panel at a time). Affects whether "each of the
-  three items gets a full-screen view" is literal (three views) or one view
-  with three sections.
-  <human>Ill take your recommendation. </human>
-- **OQ3 — Badge semantics:** proposal in D3 (unseen finished jobs + new
-  flags); confirm approvals stay out of the Context badge.
-<human>Yes, approvals definitely stayed out of the out of the context badge. They can be kind of full screen. It would be neat if they could be minimized like in the desktop app, but if that's hard to do nicely, then that's not a showstopper.
+- **OQ1 — Entry affordance:** one badged icon in the header. Settled.
+- **OQ2 — Context screen layout:** stacked sections with counts (the
+  recommendation). One full-screen Context view, three sections.
+- **OQ3 — Badge semantics:** plain totals (flags + jobs + todos), no
+  unseen/unread tracking. Approvals stay out of the badge; approvals may be
+  (near-)full-screen on phone, desktop-style minimize is a nice-to-have only.
+- **OQ4 — Breakpoint:** pure width dependence stays; a narrow desktop window
+  gets the phone treatment. (Also makes testing simpler.)
+- **OQ5 — WebKit e2e tier:** delegated to my judgment → add an **opt-in**
+  `iphone-webkit` Playwright project (env-gated, not in the default run, not
+  in CI). Rationale: the history/swipe-back work is exactly where WebKit
+  diverges from Chromium, so having the proxy is worth it; the default gate
+  stays Chromium-fast. Timeboxed — if the WebKit install/run misbehaves, drop
+  it and note here.
+- **OQ6 — Declarative Web Push:** **skipped** — Timo's constraint "only do
+  autonomous stuff you can verify yourself" rules it out (iOS-Safari-only;
+  not exercisable in Playwright/Chromium or the mock driver). Classic SW push
+  stays; TODO entry with a real-device test plan instead.
+- **OQ7 — Rename:** no rename; staying "Pantoken".
+- **OQ8 — main-deploy:** not a concern per Timo (deploys will move to tagged
+  GitHub releases anyway). Gates still merge only when green; **no remote
+  push overnight** regardless (repo rule: never push without asking).
 
-Um, we do not need to handle unseen finished jobs and new flags in a special way. We can just make Like I don't know, count how many things there are in the sidebar in the badge and just show all of them. We don't need to like show unread or anything. </human>
-- **OQ4 — Breakpoint semantics:** ≤859px currently means "phone". A narrow
-  desktop window gets the same treatment — fine, or does desktop need the
-  right sidebar back at narrow widths?
-<human>
-Yeah, we can we can just make it depend on the width. Um I'll notice if it looks bad on desktop and then I'll do something about it. Um would make it easier to test too so um I'm fine with that. 
-</human>
+## PROGRESS (live, newest first)
 
-- **OQ5 — WebKit e2e tier:** Playwright mobile project is Chromium (Pixel 7)
-  by design (avoids the WebKit download). Add an optional `iphone-webkit`
-  project (closest Safari proxy without a device) — worth the CI weight?
-<human>I don't know. We could try to find out but I'm fine with taking your gut feeling on this. 
-</human>
-- **OQ6 — Declarative Web Push:** timeboxed spike in phase 3, or skip and
-  keep classic SW push only?
-<human>I don't know enough about that. If you have a recommendation then go with your recommendation. Otherwise Yeah, I mean trying out new stuff is nice. Go with a spike, I don't mind, but Only do autonomous stuff if you can verify it yourself, please. </human>
-- **OQ7 — Rename (Pantoken → Polyscope, TODO'd):** the home-screen install
-  burns the current name/icon in. Still cheap to change later (reinstall), so
-  default is *not tonight* — confirm.
-<human>Nah, there is no rename planned for this. We'll stay on Pantoken for now. </human>
-- **OQ8 — main-deploy risk:** merging gates to `main` overnight auto-deploys
-  the Mini (drops live WS; your phone origin updates while you sleep). OK, or
-  hold all merges until the morning checklist passes?
-<human>Um don't focus on the auto main deployment too much. I think I'm gonna move to auto deploying my tag releases from GitHub releases instead anyway. </human>
+- 2026-07-11 01:40 — Wakeup 1. Session 1 was cut short by the usage limit
+  right after the plan-doc edits; no implementation had started. Now: commit
+  this doc, env prep (bun install / cargo build / baseline e2e), then Phase 1.
+- 2026-07-10 23:10 — Kickoff. Wakeup crons set (01:38, 06:48 local). Evening
+  answers folded into the doc as decisions.
