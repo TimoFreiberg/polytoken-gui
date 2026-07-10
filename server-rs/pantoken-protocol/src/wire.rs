@@ -386,6 +386,13 @@ pub enum ClientMessage {
         #[serde(skip_serializing_if = "Option::is_none", default)]
         force: Option<bool>,
     },
+    /// Detach from a session: release Pantoken's TUI attachment lease so an
+    /// external client (terminal polytoken CLI) can take over. The daemon
+    /// stays alive; the session reappears as idle in the sidebar. Only
+    /// meaningful for the polytoken driver; the mock/default is a no-op.
+    DetachSession {
+        path: String,
+    },
     ListCommands,
     ListFacets,
     FetchJobs,

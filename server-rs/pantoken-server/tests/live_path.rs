@@ -2269,3 +2269,165 @@ async fn set_archived_retains_dirty_worktree() {
         "a retained (dirty) worktree should stay on disk"
     );
 }
+
+// ===========================================================================
+// Detach session — release the TUI attachment lease without killing the daemon
+// ===========================================================================
+
+/// AC.3 — `PolytokenDriver::detach_session` releases the lease (DELETE
+/// /tui-attachment/{lease_id}) and does NOT terminate the daemon (no POST
+/// /terminate). The warm session is removed from the warm pool.
+#[tokio::test]
+async fn detach_session_releases_lease_without_terminating() {
+    let _guard = OVERRIDE_MUTEX.lock().await;
+
+    let scenario = synthetic_idle_scenario();
+    let override_guard = fake_daemon::MultiSpawnOverrideGuard::install(scenario, "detach");
+    let handle = override_guard.handle();
+
+    let (driver, dir) = make_driver().await;
+
+    // Write a session.json with a real project dir so open_session can warm it
+    // via the cold-start spawn path (same setup as the cold-start test).
+    let session_id = "detach-session-1";
+    let sessions_dir = dir.path().join("sessions");
+    let session_dir = sessions_dir.join(session_id);
+    std::fs::create_dir_all(&session_dir).expect("mkdir session dir");
+    let project_dir = dir.path().join("project");
+    std::fs::create_dir_all(&project_dir).expect("mkdir project dir");
+    std::fs::write(
+        session_dir.join("session.json"),
+        serde_json::json!({
+            "session_id": session_id,
+            "project_path": project_dir.to_string_lossy(),
+            "created_at": "2025-01-01T00:00:00Z",
+            "last_activity_at": "2025-01-01T00:00:00Z",
+        })
+        .to_string(),
+    )
+    .expect("write session.json");
+
+    let path = session_dir.join("session.json");
+    let path = path.to_string_lossy().to_string();
+
+    // Warm the session via open_session.
+    let _seed = driver
+        .open_session(path.clone())
+        .await
+        .expect("open_session should warm the session");
+
+    let spawned = handle.spawned();
+    assert_eq!(spawned.len(), 1, "one fake daemon should have been spawned");
+
+    // Snapshot the claim count before detach — the initial open claimed once.
+    let claim_count_before = spawned[0]
+        .recorded_calls()
+        .iter()
+        .filter(|(m, p)| m == "POST" && p == "/tui-attachment/claim")
+        .count();
+    assert_eq!(
+        claim_count_before, 1,
+        "initial open should have claimed the lease exactly once"
+    );
+
+    // Detach.
+    driver
+        .detach_session(path.clone())
+        .await
+        .expect("detach_session should succeed");
+
+    // AC.3: the lease was released via DELETE /tui-attachment/{lease_id}.
+    assert!(
+        spawned[0].called("DELETE", "/tui-attachment/lease-1"),
+        "detach should release the lease via DELETE /tui-attachment/lease-1; \
+         calls: {:?}",
+        spawned[0].recorded_calls()
+    );
+
+    // AC.3: the daemon was NOT terminated (no POST /terminate).
+    assert!(
+        !spawned[0].called("POST", "/terminate"),
+        "detach must NOT terminate the daemon (no POST /terminate); \
+         calls: {:?}",
+        spawned[0].recorded_calls()
+    );
+}
+
+/// AC.4 — After detach, re-opening the session re-claims the lease
+/// successfully (no 409 conflict). The warm session was removed but the daemon
+/// process is still alive (Pantoken just released its lease), so re-attaching
+/// should work.
+#[tokio::test]
+async fn detach_then_reopen_reclaims_lease() {
+    let _guard = OVERRIDE_MUTEX.lock().await;
+
+    let scenario = synthetic_idle_scenario();
+    let override_guard = fake_daemon::MultiSpawnOverrideGuard::install(scenario, "detach-reopen");
+    let handle = override_guard.handle();
+
+    let (driver, dir) = make_driver().await;
+
+    // Same session.json setup as AC.3.
+    let session_id = "detach-reopen-1";
+    let sessions_dir = dir.path().join("sessions");
+    let session_dir = sessions_dir.join(session_id);
+    std::fs::create_dir_all(&session_dir).expect("mkdir session dir");
+    let project_dir = dir.path().join("project");
+    std::fs::create_dir_all(&project_dir).expect("mkdir project dir");
+    std::fs::write(
+        session_dir.join("session.json"),
+        serde_json::json!({
+            "session_id": session_id,
+            "project_path": project_dir.to_string_lossy(),
+            "created_at": "2025-01-01T00:00:00Z",
+            "last_activity_at": "2025-01-01T00:00:00Z",
+        })
+        .to_string(),
+    )
+    .expect("write session.json");
+
+    let path = session_dir.join("session.json");
+    let path = path.to_string_lossy().to_string();
+
+    // Warm the session.
+    let _seed1 = driver
+        .open_session(path.clone())
+        .await
+        .expect("first open_session should succeed");
+
+    // Detach — releases the lease, removes from warm pool, daemon stays alive.
+    driver
+        .detach_session(path.clone())
+        .await
+        .expect("detach_session should succeed");
+
+    // AC.4: re-open the session. The detach removed it from the warm pool, so
+    // open_session re-spawns (cold-start) and re-claims the lease. No 409, no
+    // error — the previous lease was released by the detach.
+    let _seed2 = driver
+        .open_session(path.clone())
+        .await
+        .expect("re-open after detach should re-claim the lease without error");
+
+    // A second fake daemon was spawned (the cold-start re-open).
+    let spawned = handle.spawned();
+    assert_eq!(
+        spawned.len(),
+        2,
+        "re-open after detach should spawn a second fake daemon (cold-start)"
+    );
+
+    // The second daemon's lease was claimed (proving re-attach succeeded).
+    assert!(
+        spawned[1].called("POST", "/tui-attachment/claim"),
+        "re-open should re-claim the lease on the new daemon; calls: {:?}",
+        spawned[1].recorded_calls()
+    );
+
+    // The first daemon was never terminated by the detach.
+    assert!(
+        !spawned[0].called("POST", "/terminate"),
+        "detach must NOT terminate the first daemon; calls: {:?}",
+        spawned[0].recorded_calls()
+    );
+}

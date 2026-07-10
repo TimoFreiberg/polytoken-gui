@@ -425,6 +425,10 @@ export type ClientMessage =
    *  discards uncommitted changes; without it the server refuses a dirty worktree and
    *  reports back. The server re-broadcasts the session list (clearing the indicator). */
   | { type: "cleanupWorktree"; path: string; force?: boolean }
+  /** Detach from a session: release Pantoken's TUI attachment lease so an external
+   *  client (terminal polytoken CLI) can take over. The daemon stays alive; the
+   *  session reappears as idle in the sidebar. Recovery for when Pantoken wedges. */
+  | { type: "detachSession"; path: string }
   /** Ask the server to re-read the focused session's commands and re-broadcast them. */
   | { type: "listCommands" }
   /** Ask the server to re-read the focused session's available facets and

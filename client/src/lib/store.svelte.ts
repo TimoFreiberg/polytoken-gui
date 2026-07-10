@@ -2446,6 +2446,13 @@ class PantokenStore {
   reloadSession(path: string): void {
     send({ type: "reloadSession", path });
   }
+  /** Detach from the daemon: release Pantoken's TUI attachment lease so the
+   *  session can be taken over in the terminal polytoken CLI. The daemon stays
+   *  alive; the session reappears as idle in the sidebar. Recovery for when
+   *  Pantoken hits a bug and you need to continue in the terminal. */
+  detachSession(path: string): void {
+    send({ type: "detachSession", path });
+  }
   /** Copy text to the clipboard (worktree path, session id, …). Returns whether it
    *  succeeded so the caller can flash feedback; degrades quietly where the clipboard
    *  API is unavailable (insecure context / older browser). */

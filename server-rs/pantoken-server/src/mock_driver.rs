@@ -2320,7 +2320,7 @@ impl PantokenDriver for MockDriver {
             }
 
             let pending = self.pending_dialogs.lock();
-            for (_, p) in pending.iter() {
+            for p in pending.values() {
                 if p.session_ref.session_id == sid {
                     seed.push(SessionDriverEvent::HostUiRequest {
                         base: SessionEventBase {

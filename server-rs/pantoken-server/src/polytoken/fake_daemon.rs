@@ -89,6 +89,12 @@ fn canned(method: &str, path: &str) -> Option<(StatusCode, Value)> {
     if m == "POST" && (p == "/tui-attachment/release" || p == "/terminate") {
         return Some((StatusCode::OK, serde_json::json!({"ok": true})));
     }
+    // DELETE /tui-attachment/{lease_id} — `release_lease()` uses this (not POST
+    // /tui-attachment/release). The lease_id is dynamic (e.g. "lease-1"), so
+    // match the path prefix. Idempotent → 204 No Content (empty body).
+    if m == "DELETE" && p.starts_with("/tui-attachment/") {
+        return Some((StatusCode::NO_CONTENT, Value::Null));
+    }
     // POST /model — acknowledge model/thinking switches. Tests inspect the
     // recorded body to verify the driver sent the daemon's full registry key.
     if m == "POST" && p == "/model" {

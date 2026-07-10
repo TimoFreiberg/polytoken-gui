@@ -2180,6 +2180,50 @@ impl PantokenDriver for PolytokenDriver {
         self.open_session(path).await
     }
 
+    /// Detach from a session: release the TUI attachment lease so an external
+    /// client (terminal polytoken CLI) can take over. Tears down SSE + drops the
+    /// warm session but does NOT kill the daemon (unlike `dispose_warm` /
+    /// `reload_session`, which call `client.close()` → `release_lease()` +
+    /// `terminate()` + `kill()`).
+    ///
+    /// The teardown order (stop SSE → drop sender → abort+await consumer →
+    /// release lease) matches `dispose_warm` / `reload_session` exactly, which
+    /// is battle-tested — the only difference is `release_lease()` instead of
+    /// `close()`.
+    async fn detach_session(&self, path: String) -> Result<(), String> {
+        let session_id = PolytokenInner::session_id_from_path(&path)
+            .ok_or_else(|| format!("could not resolve session id from path: {path}"))?;
+        let removed = self.inner.warm.write().remove(&session_id);
+        if let Some(ws) = removed {
+            // Extract handles before awaiting (avoid holding parking_lot guards
+            // across .await — the deadlock class the hub already hit once).
+            let sub = ws.sse_subscription.lock().take();
+            *ws.sse_tx.lock() = None;
+            let consumer_handle = ws.sse_consumer_handle.lock().take();
+            if let Some(sub) = sub {
+                sub.stop().await;
+            }
+            if let Some(handle) = consumer_handle {
+                handle.abort();
+                let _ = handle.await;
+            }
+            // Release the lease (best-effort) — this is the detach. Does NOT
+            // call client.close() (which would /terminate + kill the daemon).
+            ws.client.release_lease().await;
+            // Emit a synthetic SessionClosed so the hub clears the running
+            // indicator (mirrors eviction at driver.rs:1085-1089).
+            self.inner.emit(SessionDriverEvent::SessionClosed {
+                base: SessionEventBase {
+                    session_ref: ws.session_ref.clone(),
+                    timestamp: DriverMapCtx::now_ts(),
+                    run_id: None,
+                },
+                reason: SessionClosedReason::Manual,
+            });
+        }
+        Ok(())
+    }
+
     async fn new_session(
         &self,
         opts: NewSessionOptsData,

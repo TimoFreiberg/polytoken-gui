@@ -150,6 +150,14 @@ pub trait PantokenDriver: Send + Sync {
         self.open_session(path).await
     }
 
+    /// Detach from a session: release the TUI attachment lease so an external
+    /// client (terminal polytoken CLI) can take over. Tears down SSE + drops the
+    /// warm session but does NOT kill the daemon. Only meaningful for the
+    /// polytoken driver; the mock/fake default is a no-op.
+    async fn detach_session(&self, _path: String) -> Result<(), String> {
+        Ok(())
+    }
+
     /// The landing session a freshly-connecting client adopts.
     fn default_seed(&self) -> Option<Vec<SessionDriverEvent>> {
         None

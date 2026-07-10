@@ -52,18 +52,12 @@ pub fn parse_facet_name(content: &str) -> Option<String> {
         // a preceding `\r` — match the TS `^---\r?\n([\s\S]*?)\r?\n---`.
         after_newline.find("\r\n---")
     });
-    let frontmatter = match close_pos {
-        Some(pos) => {
-            // The content between the opening `---\n` and `\n---`.
-            // For `\n---` at position `pos`, the frontmatter is up to `pos`.
-            // Strip a trailing `\r` if present (the `\r?\n` before `---`).
-            let raw = &after_newline[..pos];
-            raw.strip_suffix('\r').unwrap_or(raw)
-        }
-        // If no closing `---` is found, match the TS behavior: the regex
-        // `^---\r?\n([\s\S]*?)\r?\n---` won't match an unterminated block.
-        None => return None,
-    };
+    let pos = close_pos?;
+    // The content between the opening `---\n` and `\n---`.
+    // For `\n---` at position `pos`, the frontmatter is up to `pos`.
+    // Strip a trailing `\r` if present (the `\r?\n` before `---`).
+    let raw = &after_newline[..pos];
+    let frontmatter = raw.strip_suffix('\r').unwrap_or(raw);
 
     // `name:` at the start of a line (no indent — it's a top-level frontmatter
     // key). The value may be quoted ("plan" or 'plan') or unquoted (plan).

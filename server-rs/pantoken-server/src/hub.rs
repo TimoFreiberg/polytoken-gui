@@ -1757,6 +1757,35 @@ impl SessionHub {
                     }),
                 );
             }
+            ClientMessage::DetachSession { path } => {
+                let driver = self.driver.clone();
+                let path = path.clone();
+                self.hub_ops.enqueue(
+                    "detach_session",
+                    Box::new(move |hub| {
+                        Box::pin(async move {
+                            let result = driver.detach_session(path).await;
+                            if let Err(msg) = result {
+                                let h = hub.lock();
+                                h.send_to_client(
+                                    client_key,
+                                    ServerMessage::Error {
+                                        message: msg,
+                                        kind: None,
+                                    },
+                                );
+                            } else {
+                                // Success: re-broadcast the session list so the
+                                // UI reflects the now-detached (idle) session.
+                                let sessions = driver.list_sessions().await;
+                                let default_cwd = std::env::var("HOME").unwrap_or_default();
+                                let mut h = hub.lock();
+                                h.broadcast_session_list_with(sessions, default_cwd);
+                            }
+                        })
+                    }),
+                );
+            }
             ClientMessage::ListCommands => {
                 let driver = self.driver.clone();
                 let focused = focused_id.clone();
@@ -4493,5 +4522,32 @@ mod hub_models_tests {
         // triggered by raced events is not re-run. Blocked on wiring the
         // swap buffer.
         let _ = ("take_swap_buffer blocker",);
+    }
+
+    /// AC.2 — `handle_client(DetachSession)` enqueues the op, calls the
+    /// driver's `detach_session` (the mock/default is a no-op → `Ok(())`),
+    /// and broadcasts the session list on success. There is no error message.
+    #[tokio::test]
+    async fn handle_client_detach_session_calls_driver_and_broadcasts() {
+        let (_driver, hub, mut hub_ops) = test_hub();
+        let (client_key, _tx, mut rx) = hub.lock().add_client(None);
+
+        hub.lock().handle_client(
+            client_key,
+            ClientMessage::DetachSession {
+                path: "/sessions/test/session.json".into(),
+            },
+        );
+        apply_one(hub.clone(), &mut hub_ops).await;
+
+        // Success path: no Error message, just a session list broadcast.
+        let result = drain_until(&mut rx, |msg| {
+            matches!(msg, ServerMessage::SessionList { .. })
+        })
+        .await;
+        match result {
+            ServerMessage::SessionList { .. } => {}
+            other => panic!("expected SessionList after detach, got {other:?}"),
+        }
     }
 }
