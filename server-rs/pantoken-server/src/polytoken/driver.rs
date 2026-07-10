@@ -669,30 +669,27 @@ impl PolytokenInner {
                     .and_then(|env| env.get("PATH"))
                     .cloned();
                 let process_path = std::env::var("PATH").unwrap_or_default();
-                info!(
-                    bin_path = %self.bin_path,
-                    args = ?models_args,
-                    process_path = %process_path,
-                    login_env_path = ?login_env_path,
-                    "running polytoken models"
-                );
 
-                let result = self.run_polytoken(models_args, None).await;
+                let result = self.run_polytoken(models_args.clone(), None).await;
                 let parsed = match result {
                     Ok(out) => {
                         let stdout = String::from_utf8_lossy(&out.stdout).to_string();
                         let stderr = String::from_utf8_lossy(&out.stderr).to_string();
                         let exit_code = out.status.code();
-                        info!(
-                            exit_code = ?exit_code,
-                            stdout_len = stdout.len(),
-                            stderr_len = stderr.len(),
-                            stdout = %stdout.chars().take(4000).collect::<String>(),
-                            stderr = %stderr.chars().take(4000).collect::<String>(),
-                            "polytoken models completed"
-                        );
                         let parsed = parse_models(&stdout);
                         if parsed.models.is_empty() {
+                            warn!(
+                                bin_path = %self.bin_path,
+                                args = ?models_args,
+                                process_path = %process_path,
+                                login_env_path = ?login_env_path,
+                                exit_code = ?exit_code,
+                                stdout_len = stdout.len(),
+                                stderr_len = stderr.len(),
+                                stdout = %stdout.chars().take(4000).collect::<String>(),
+                                stderr = %stderr.chars().take(4000).collect::<String>(),
+                                "polytoken models returned zero models"
+                            );
                             let diagnostic = if stdout.trim().is_empty() {
                                 let message = if stderr.trim().is_empty() {
                                     "polytoken models returned empty stdout".to_string()
@@ -704,12 +701,6 @@ impl PolytokenInner {
                                 };
                                 ModelCatalogDiagnostic::EmptyOutput { message }
                             } else {
-                                let preview: String = stdout.chars().take(4000).collect();
-                                warn!(
-                                    "polytoken models returned zero models; parsed stdout ({} bytes):\n{}",
-                                    stdout.len(),
-                                    preview
-                                );
                                 ModelCatalogDiagnostic::CouldNotBeParsed {
                                     message: "polytoken models returned output, but no model entries were parsed".into(),
                                 }
@@ -722,7 +713,6 @@ impl PolytokenInner {
                         parsed
                     }
                     Err(e) => {
-                        info!(error = %e, "polytoken models subprocess failed to spawn");
                         error!("list_models failed: {e}");
                         *self.model_catalog_diagnostic.lock() =
                             Some(ModelCatalogDiagnostic::NoResponse {
