@@ -43,6 +43,28 @@ resolution is non-obvious or likely to bite again. Otherwise see `jj log`.
       `store.session` (still the old session while drafting). All now gate on
       `!store.draft` — the pattern QueueTray already used. If a NEW surface
       reads `store.session`, it must decide what drafting means for it.
+- [ ] **Branch (`/rewind`) live-path gaps** (found 2026-07-10 by the frontend→daemon
+      trace; the request shape + entry-id→prompt_id mapping are correct, these are
+      error-handling/coverage holes): (a) `branch_from` returns a bare
+      `BranchResult` so a daemon `/rewind` rejection can't propagate — it collapses
+      to the generic "session switch returned no session" client error, real reason
+      only in server logs; give branch its own error surface. (b) The LIVE driver
+      hardcodes `editor_text: None`, so the "edit & resend" gesture (⌘⇧↑,
+      `branchLastPrompt`) destroys the prompt text on the live path — prefill is
+      mock-only. Needs confirming whether polytoken `/rewind` returns the dropped
+      prompt's text (the daemon source isn't in-repo). (c) Zero live-path coverage:
+      the fake daemon has no `/rewind` route, so a branch under `PANTOKEN_DRIVER=fake`
+      404s into the generic-error path. (d) Doc drift: `protocol/src/wire.ts` still
+      describes branch as the daemon's `/tree`+navigateTree; it's a destructive POST
+      `/rewind`.
+- [ ] **clear_queue + SessionAction live-driver test gaps** (found 2026-07-10):
+      the `clear_queue_drains_daemon_queue` test uses a 1-item fake `/turn/input`
+      fixture, so its `deletes == 1` assertion can't tell "one DELETE per item" from
+      "exactly one dequeue" (the historical bug shape) — needs a 2+ item fixture,
+      which needs a fake-daemon knob (canned `/turn/input` + always-200 DELETE win
+      over `scenario.http`). And 8/9 `SessionAction` arms + `report_action_error`
+      have no live-driver test (mock e2e covers wire agreement, not the polytoken
+      PermissionMonitorMode/McpAction mappings or the error-surfacing notice).
 
 
 ## 🔵 Corpus capture follow-ups (from the 2026-07-06 live-capture session)
