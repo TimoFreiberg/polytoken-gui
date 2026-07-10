@@ -1231,6 +1231,11 @@
         <PermissionBadge />
         <FacetBadge />
         <ModelPicker />
+        {#if store.modelCatalogDiagnostic}
+          <span class="model-diagnostic" title={store.modelCatalogDiagnostic.message}>
+            Model picker unavailable: {store.modelCatalogDiagnostic.message}
+          </span>
+        {/if}
       </div>
     </div>
 
@@ -1537,6 +1542,15 @@
     align-items: center;
     gap: 8px;
     min-width: 0;
+  }
+  .model-diagnostic {
+    max-width: 34ch;
+    color: var(--danger);
+    font-size: 11px;
+    line-height: 1.25;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
   /* The model/effort badges can grow; let them shrink + ellipsize before the
      fixed-width context meter or attach button give up their space. */

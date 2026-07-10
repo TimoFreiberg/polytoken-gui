@@ -99,6 +99,12 @@ export interface McpServerInfo {
   readonly toolCount: number;
 }
 
+/** Why model discovery did not produce a usable catalog. */
+export type ModelCatalogDiagnostic =
+  | { readonly kind: "couldNotBeParsed"; readonly message: string }
+  | { readonly kind: "emptyOutput"; readonly message: string }
+  | { readonly kind: "noResponse"; readonly message: string };
+
 /** One selectable model for the per-session model picker (the available set is
  *  broadcast separately from the per-session snapshot; see `modelList`). */
 export interface ModelOption {

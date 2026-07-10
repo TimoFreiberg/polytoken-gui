@@ -15,6 +15,7 @@ import {
   type ImageContent,
   initialSessionState,
   type LoginEnvStatus,
+  type ModelCatalogDiagnostic,
   type ModelDefaults,
   type PantokenSettings,
   type ModelOption,
@@ -184,6 +185,9 @@ class PantokenStore {
   // Model picker — the models available to switch to (current selection lives in
   // session.config). Server-authoritative, delivered like `sessions`.
   models = $state<ModelOption[]>([]);
+  // Why model discovery produced no usable catalog. Kept separate from `models` so the
+  // UI can distinguish an empty/error catalog from a valid list.
+  modelCatalogDiagnostic = $state<ModelCatalogDiagnostic | undefined>(undefined);
   // Slash commands the focused session offers, for the composer typeahead. Server-
   // authoritative, delivered like `models`; refreshed on session switch (cwd-scoped).
   commands = $state<CommandInfo[]>([]);
@@ -1060,6 +1064,7 @@ class PantokenStore {
       }
       case "modelList":
         this.models = [...msg.models];
+        this.modelCatalogDiagnostic = msg.diagnostic;
         break;
       case "commandList":
         this.commands = [...msg.commands];

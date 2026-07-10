@@ -11,6 +11,7 @@ import type {
   FileInfo,
   HostUiResponse,
   ImageContent,
+  ModelCatalogDiagnostic,
   ModelDefaults,
   ModelOption,
   PermissionMonitorMode,
@@ -172,8 +173,14 @@ export type ServerMessage =
       attention?: readonly SessionAttention[];
     }
   /** The models available to switch to (server-authoritative, like `sessionList`).
-   *  The current selection rides each session's snapshot `config`, not this. */
-  | { type: "modelList"; models: readonly ModelOption[] }
+   *  The current selection rides each session's snapshot `config`, not this. When
+   *  discovery degraded, `diagnostic` explains why the list is empty so the GUI can
+   *  fail visibly instead of silently hiding the picker. */
+  | {
+      type: "modelList";
+      models: readonly ModelOption[];
+      diagnostic?: ModelCatalogDiagnostic;
+    }
   /** The slash commands the focused session offers (extension/template/skill), for the
    *  composer's typeahead. Server-authoritative like `modelList`; re-broadcast on
    *  session switch because the set is cwd-scoped. See {@link CommandInfo}. */

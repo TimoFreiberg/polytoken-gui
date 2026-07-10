@@ -2077,8 +2077,9 @@ impl SessionHub {
 
     pub async fn broadcast_model_list(&mut self) {
         let models = self.driver.list_models().await;
+        let diagnostic = self.driver.model_catalog_diagnostic();
         self.available_models = models.clone();
-        self.broadcast(ServerMessage::ModelList { models });
+        self.broadcast(ServerMessage::ModelList { models, diagnostic });
     }
 
     #[expect(
@@ -2174,9 +2175,10 @@ impl SessionHub {
             Box::new(move |hub| {
                 Box::pin(async move {
                     let models = driver.list_models().await;
+                    let diagnostic = driver.model_catalog_diagnostic();
                     let mut h = hub.lock();
                     h.available_models = models.clone();
-                    h.broadcast(ServerMessage::ModelList { models });
+                    h.broadcast(ServerMessage::ModelList { models, diagnostic });
                 })
             }),
         );
@@ -3662,7 +3664,7 @@ mod hub_models_tests {
         })
         .await;
         match model_list {
-            ServerMessage::ModelList { models } => {
+            ServerMessage::ModelList { models, .. } => {
                 assert!(models.iter().any(|m| m.model_id == "deepseek-v4-flash"));
             }
             other => panic!("expected modelList, got {other:?}"),

@@ -5,6 +5,7 @@
 //! Port of `server/src/driver.ts`.
 
 use async_trait::async_trait;
+use pantoken_protocol::session_driver::ModelCatalogDiagnostic;
 use pantoken_protocol::session_driver::{
     AtRefs, BackgroundJob, CommandInfo, DirListing, FileInfo, HostUiResponse, ImageContent,
     ModelDefaults, ModelOption, PathStat, PermissionMonitorMode, SessionDriverEvent, SessionId,
@@ -181,6 +182,11 @@ pub trait PantokenDriver: Send + Sync {
 
     /// Models available to switch to.
     async fn list_models(&self) -> Vec<ModelOption>;
+
+    /// Diagnostic for the most recent model-catalog discovery, if it degraded.
+    fn model_catalog_diagnostic(&self) -> Option<ModelCatalogDiagnostic> {
+        None
+    }
 
     /// Slash commands the targeted session offers.
     async fn list_commands(&self, session_id: Option<SessionId>) -> Vec<CommandInfo>;

@@ -7,8 +7,9 @@
 use serde::{Deserialize, Serialize};
 
 use crate::session_driver::{
-    AtRefs, BackgroundJob, CommandInfo, FileInfo, HostUiResponse, ImageContent, ModelDefaults,
-    ModelOption, PermissionMonitorMode, SessionDriverEvent, SessionId, SessionListEntry,
+    AtRefs, BackgroundJob, CommandInfo, FileInfo, HostUiResponse, ImageContent,
+    ModelCatalogDiagnostic, ModelDefaults, ModelOption, PermissionMonitorMode, SessionDriverEvent,
+    SessionId, SessionListEntry,
 };
 
 // Must equal PROTOCOL_VERSION in protocol/src/wire.ts. 2→3: the nine
@@ -164,6 +165,8 @@ pub enum ServerMessage {
     },
     ModelList {
         models: Vec<ModelOption>,
+        #[serde(skip_serializing_if = "Option::is_none", default)]
+        diagnostic: Option<ModelCatalogDiagnostic>,
     },
     CommandList {
         commands: Vec<CommandInfo>,
@@ -884,6 +887,30 @@ mod tests {
                 assert_eq!(defaults.favorites, vec!["anthropic/claude-4"]);
             }
             _ => panic!("expected ModelDefaults"),
+        }
+    }
+
+    #[test]
+    fn roundtrip_server_model_list_diagnostic() {
+        let json_str = r#"{
+            "type": "modelList",
+            "models": [],
+            "diagnostic": {
+                "kind": "couldNotBeParsed",
+                "message": "no model entries"
+            }
+        }"#;
+        let msg: ServerMessage = serde_json::from_str(json_str).unwrap();
+        match msg {
+            ServerMessage::ModelList { models, diagnostic } => {
+                assert!(models.is_empty());
+                assert!(matches!(
+                    diagnostic,
+                    Some(ModelCatalogDiagnostic::CouldNotBeParsed { message })
+                        if message == "no model entries"
+                ));
+            }
+            _ => panic!("expected ModelList"),
         }
     }
 

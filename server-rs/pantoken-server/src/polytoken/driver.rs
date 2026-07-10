@@ -85,6 +85,7 @@ use crate::shared::session_list::merge_session_lists;
 use crate::shared::warm_cap::eviction_plan;
 use crate::shared::worktree::{self, WorktreeMeta};
 use crate::worktree_store::WorktreeStore;
+use pantoken_protocol::session_driver::ModelCatalogDiagnostic;
 
 /// A warm session: a daemon client + accumulator + cached state.
 struct WarmSession {
@@ -170,6 +171,8 @@ struct PolytokenInner {
     /// `get_model_defaults()` so a single subprocess result serves both.
     /// `None` = not yet populated (or invalidated). Not cached on error.
     model_cache: Mutex<Option<ParsedModels>>,
+    /// The latest non-fatal model-catalog discovery diagnostic, if any.
+    model_catalog_diagnostic: Mutex<Option<ModelCatalogDiagnostic>>,
     /// Single-flight flag for model cache misses. Prevents the thundering
     /// herd: N concurrent callers on a cold cache would each spawn
     /// `polytoken models` independently. When `true`, a fetch is in progress;
@@ -251,6 +254,7 @@ impl PolytokenDriver {
                 command_cache: Mutex::new(HashMap::new()),
                 facet_cache: Mutex::new(HashMap::new()),
                 model_cache: Mutex::new(None),
+                model_catalog_diagnostic: Mutex::new(None),
                 model_cache_fetching: AtomicBool::new(false),
                 model_cache_notify: tokio::sync::Notify::new(),
                 watch_status: Mutex::new(config_watcher::WatchStatus::Disabled),
@@ -309,6 +313,7 @@ impl PolytokenDriver {
                 command_cache: Mutex::new(HashMap::new()),
                 facet_cache: Mutex::new(HashMap::new()),
                 model_cache: Mutex::new(None),
+                model_catalog_diagnostic: Mutex::new(None),
                 model_cache_fetching: AtomicBool::new(false),
                 model_cache_notify: tokio::sync::Notify::new(),
                 watch_status: Mutex::new(config_watcher::WatchStatus::Disabled),
@@ -562,6 +567,11 @@ impl PolytokenInner {
     pub fn invalidate_model_cache(&self) {
         debug!("invalidating model cache");
         *self.model_cache.lock() = None;
+        *self.model_catalog_diagnostic.lock() = None;
+    }
+
+    pub fn model_catalog_diagnostic(&self) -> Option<ModelCatalogDiagnostic> {
+        self.model_catalog_diagnostic.lock().clone()
     }
 
     /// Invalidate ALL config-dependent caches: models/defaults, all facets,
@@ -569,6 +579,7 @@ impl PolytokenInner {
     pub fn invalidate_all_config_caches(&self) {
         debug!("invalidating all config caches (models, facets, commands)");
         *self.model_cache.lock() = None;
+        *self.model_catalog_diagnostic.lock() = None;
         self.facet_cache.lock().clear();
         self.command_cache.lock().clear();
     }
@@ -640,11 +651,35 @@ impl PolytokenInner {
                     Ok(out) => {
                         let stdout = String::from_utf8_lossy(&out.stdout).to_string();
                         let parsed = parse_models(&stdout);
+                        if parsed.models.is_empty() {
+                            let diagnostic = if stdout.trim().is_empty() {
+                                ModelCatalogDiagnostic::EmptyOutput {
+                                    message: "polytoken models returned empty stdout".into(),
+                                }
+                            } else {
+                                let preview: String = stdout.chars().take(4000).collect();
+                                warn!(
+                                    "polytoken models returned zero models; parsed stdout ({} bytes):\\n{}",
+                                    stdout.len(),
+                                    preview
+                                );
+                                ModelCatalogDiagnostic::CouldNotBeParsed {
+                                    message: "polytoken models returned output, but no model entries could be parsed".into(),
+                                }
+                            };
+                            *self.model_catalog_diagnostic.lock() = Some(diagnostic);
+                        } else {
+                            *self.model_catalog_diagnostic.lock() = None;
+                        }
                         *self.model_cache.lock() = Some(parsed.clone());
                         parsed
                     }
                     Err(e) => {
                         error!("list_models failed: {e}");
+                        *self.model_catalog_diagnostic.lock() =
+                            Some(ModelCatalogDiagnostic::NoResponse {
+                                message: format!("could not run polytoken models: {e}"),
+                            });
                         // Do not cache failed results (AC.3: next call retries).
                         ParsedModels::default()
                     }
@@ -2375,6 +2410,10 @@ impl PantokenDriver for PolytokenDriver {
         BranchResult::default()
     }
 
+    fn model_catalog_diagnostic(&self) -> Option<ModelCatalogDiagnostic> {
+        self.inner.model_catalog_diagnostic()
+    }
+
     async fn list_models(&self) -> Vec<ModelOption> {
         // Cache-first: return cached models if available (AC.1).
         if let Some(cached) = self.inner.model_cache.lock().clone() {
@@ -3094,6 +3133,7 @@ mod tests {
             command_cache: Mutex::new(HashMap::new()),
             facet_cache: Mutex::new(HashMap::new()),
             model_cache: Mutex::new(None),
+            model_catalog_diagnostic: Mutex::new(None),
             model_cache_fetching: AtomicBool::new(false),
             model_cache_notify: tokio::sync::Notify::new(),
             watch_status: Mutex::new(config_watcher::WatchStatus::Disabled),

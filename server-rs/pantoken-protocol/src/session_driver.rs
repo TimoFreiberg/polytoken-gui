@@ -158,6 +158,14 @@ pub struct McpServerInfo {
 // ── Models ──────────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum ModelCatalogDiagnostic {
+    CouldNotBeParsed { message: String },
+    EmptyOutput { message: String },
+    NoResponse { message: String },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ModelOption {
     pub provider: String,
     #[serde(rename = "modelId")]
