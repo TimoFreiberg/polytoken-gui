@@ -268,6 +268,75 @@ async fn model_switches_post_full_registry_model_id() {
     );
 }
 
+/// A failed opts POST during new_session must SURFACE (a warning notice appended
+/// to the seed — an emit would be dropped pre-journal) and must NOT poison the
+/// permission-mode cache. Regression: the three opts POSTs were `let _ =`, and
+/// the monitor_mode cache was written unconditionally, so a failed
+/// /permission-monitor left the seed badge asserting a mode the daemon wasn't
+/// running (the dangerous "badge says standard, daemon bypasses" direction).
+/// `/permission-monitor` isn't a canned fake route, so a scenario.http entry
+/// with status 500 injects the failure directly.
+#[tokio::test]
+async fn new_session_opts_failure_surfaces_notice_and_does_not_cache_mode() {
+    let _guard = OVERRIDE_MUTEX.lock().await;
+
+    let mut scenario = corpus_loader::load_named(VERSION, "streaming-turn");
+    scenario.http.push(support::corpus::HttpEntry {
+        method: "POST".into(),
+        path: "/permission-monitor".into(),
+        request_body: None,
+        status: 500,
+        response_body: Some(serde_json::json!({"error": "boom"})),
+    });
+    let fake = Arc::new(fake_daemon::spawn(scenario, "opts-fail-1".into(), 0).await);
+    let _ovr = OverrideGuard::install(fake.clone());
+
+    let (driver, _dir) = make_driver().await;
+    let seed = driver
+        .new_session(NewSessionOptsData {
+            permission_monitor: Some(
+                pantoken_protocol::session_driver::PermissionMonitorMode::Bypass,
+            ),
+            ..NewSessionOptsData::default()
+        })
+        .await
+        .expect("new_session still succeeds — the session is created, only the opt failed");
+
+    // The seed carries a visible warning notice about the failed permission mode.
+    let warned = seed.iter().any(|ev| {
+        matches!(
+            ev,
+            SessionDriverEvent::HostUiRequest {
+                request:
+                    pantoken_protocol::session_driver::HostUiRequest::Notify { message, level, .. },
+                ..
+            } if message.to_lowercase().contains("permission mode")
+                && *level == Some(pantoken_protocol::session_driver::NotifyLevel::Warning)
+        )
+    });
+    assert!(
+        warned,
+        "a failed /permission-monitor POST must append a warning notice to the seed; seed: {seed:?}"
+    );
+
+    // The seed's SessionOpened/Updated snapshots must NOT claim the un-applied
+    // mode — the cache was not poisoned, so the badge reflects the daemon default,
+    // not "bypass".
+    let claims_bypass = seed.iter().any(|ev| {
+        let snap = match ev {
+            SessionDriverEvent::SessionOpened { snapshot, .. } => Some(snapshot),
+            SessionDriverEvent::SessionUpdated { snapshot, .. } => Some(snapshot),
+            _ => None,
+        };
+        snap.and_then(|s| s.permission_monitor)
+            == Some(pantoken_protocol::session_driver::PermissionMonitorMode::Bypass)
+    });
+    assert!(
+        !claims_bypass,
+        "a failed permission-mode POST must not leave the seed asserting the un-applied mode"
+    );
+}
+
 /// docs/TODO.md bug 1 ("rename session doesn't work"), warm half: renaming a
 /// WARM session must reach the daemon's real `POST /title` (previously a
 /// dead no-op — `PolytokenDriver` never overrode the trait's default), and

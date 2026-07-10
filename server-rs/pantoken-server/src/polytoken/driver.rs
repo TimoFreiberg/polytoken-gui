@@ -436,12 +436,10 @@ impl PolytokenInner {
         }
     }
 
-    /// Surface a failed fire-and-forget daemon action as a visible warning
-    /// notice (+ a `warn!`). These calls back Settings toggles and slash
-    /// actions — an error dropped on the floor looks like a broken button.
-    fn report_action_error(&self, session_ref: &SessionRef, what: &str, err: &str) {
-        warn!("{what} failed: {err}");
-        self.emit(SessionDriverEvent::HostUiRequest {
+    /// Build a warning-notice event for a failed daemon action. The shared fold
+    /// renders a `notify` HostUiRequest as a persistent transcript notice.
+    fn action_error_notice(session_ref: &SessionRef, what: &str, err: &str) -> SessionDriverEvent {
+        SessionDriverEvent::HostUiRequest {
             base: SessionEventBase {
                 session_ref: session_ref.clone(),
                 timestamp: DriverMapCtx::now_ts(),
@@ -452,7 +450,20 @@ impl PolytokenInner {
                 message: format!("{what} failed: {err}"),
                 level: Some(NotifyLevel::Warning),
             },
-        });
+        }
+    }
+
+    /// Surface a failed fire-and-forget daemon action as a visible warning
+    /// notice (+ a `warn!`). These calls back Settings toggles and slash
+    /// actions — an error dropped on the floor looks like a broken button.
+    ///
+    /// Emits directly, so it is only safe once the session's journal exists (the
+    /// hub drops events for journal-less sessions). During a session SWAP (e.g.
+    /// `new_session`, before the journal is created) build the notice with
+    /// `action_error_notice` and APPEND it to the returned seed instead.
+    fn report_action_error(&self, session_ref: &SessionRef, what: &str, err: &str) {
+        warn!("{what} failed: {err}");
+        self.emit(Self::action_error_notice(session_ref, what, err));
     }
 
     fn get_warm(&self, session_id: &SessionId) -> Option<Arc<WarmSession>> {
@@ -2197,16 +2208,37 @@ impl PantokenDriver for PolytokenDriver {
             .await
         {
             Ok(ws) => {
-                // Apply model/thinking if specified (on the warm client, before seeding)
+                // Apply the draft's model/thinking/facet/permission-monitor on the
+                // warm client BEFORE seeding. A failed POST here can't be surfaced by
+                // emitting (the session's journal doesn't exist until the hub folds
+                // this seed — an emit would be dropped), so collect the failures as
+                // notice events and APPEND them to the seed instead; the shared fold
+                // renders each as a persistent transcript warning.
+                let mut notices: Vec<SessionDriverEvent> = Vec::new();
                 if let Some(model) = &opts.model {
                     let model_str = model_post_key(&model.model_id);
-                    let _ = ws
+                    if let Err(e) = ws
                         .client
                         .set_model(&model_str, opts.thinking.as_deref())
-                        .await;
+                        .await
+                    {
+                        warn!("new_session set_model failed: {e}");
+                        notices.push(PolytokenInner::action_error_notice(
+                            &ws.session_ref,
+                            "Applying the selected model",
+                            &e,
+                        ));
+                    }
                 }
                 if let Some(facet) = &opts.facet {
-                    let _ = ws.client.set_facet(facet).await;
+                    if let Err(e) = ws.client.set_facet(facet).await {
+                        warn!("new_session set_facet failed: {e}");
+                        notices.push(PolytokenInner::action_error_notice(
+                            &ws.session_ref,
+                            "Applying the selected facet",
+                            &e,
+                        ));
+                    }
                 }
                 if let Some(mode) = opts.permission_monitor {
                     let daemon_mode = match mode {
@@ -2223,8 +2255,21 @@ impl PantokenDriver for PolytokenDriver {
                             pantoken_daemon_types::PermissionMonitorMode::Autonomous
                         }
                     };
-                    let _ = ws.client.set_permission_mode(daemon_mode).await;
-                    *ws.monitor_mode.lock() = Some(mode);
+                    match ws.client.set_permission_mode(daemon_mode).await {
+                        // Cache the mode ONLY on success. Caching an unconfirmed pick
+                        // would let the seed's permission badge assert a mode the
+                        // daemon isn't running — including the dangerous direction
+                        // (badge says "standard" while the daemon bypasses approvals).
+                        Ok(()) => *ws.monitor_mode.lock() = Some(mode),
+                        Err(e) => {
+                            warn!("new_session set_permission_mode failed: {e}");
+                            notices.push(PolytokenInner::action_error_notice(
+                                &ws.session_ref,
+                                "Applying the selected permission mode",
+                                &e,
+                            ));
+                        }
+                    }
                 }
 
                 // Build seed from current /state + /history. Even an empty
@@ -2239,23 +2284,26 @@ impl PantokenDriver for PolytokenDriver {
                 };
                 let snapshot = ctx.snapshot(ctx.live_status());
                 let history_res = ws.client.history(None, None).await;
-                if let Some(history) = history_res.data {
-                    return Ok(PolytokenInner::build_branch_seed(
+                let mut seed = if let Some(history) = history_res.data {
+                    PolytokenInner::build_branch_seed(
                         snapshot,
                         &history.items,
                         &HistoryMapCtx {
                             r#ref: ws.session_ref.clone(),
                         },
-                    ));
-                }
-                Ok(vec![SessionDriverEvent::SessionOpened {
-                    base: SessionEventBase {
-                        session_ref: ws.session_ref.clone(),
-                        timestamp: DriverMapCtx::now_ts(),
-                        run_id: None,
-                    },
-                    snapshot,
-                }])
+                    )
+                } else {
+                    vec![SessionDriverEvent::SessionOpened {
+                        base: SessionEventBase {
+                            session_ref: ws.session_ref.clone(),
+                            timestamp: DriverMapCtx::now_ts(),
+                            run_id: None,
+                        },
+                        snapshot,
+                    }]
+                };
+                seed.extend(notices);
+                Ok(seed)
             }
             Err(e) => {
                 error!("new_session warm failed: {e}");
