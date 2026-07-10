@@ -304,9 +304,23 @@
         break;
     }
   }
+
+  function onMouseAuxClick(e: MouseEvent) {
+    if (store.unauthorized) return;
+    if (e.button === 3) {
+      e.preventDefault();
+      store.navBack();
+    } else if (e.button === 4) {
+      e.preventDefault();
+      store.navForward();
+    }
+  }
 </script>
 
-<svelte:window onkeydown={(e) => { onZoomKey(e); onGlobalKeydown(e); }} />
+<svelte:window
+  onkeydown={(e) => { onZoomKey(e); onGlobalKeydown(e); }}
+  onauxclick={onMouseAuxClick}
+/>
 {#if store.unauthorized}
   <TokenGate />
 {:else if store.protocolMismatch}
