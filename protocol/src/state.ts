@@ -93,15 +93,17 @@ export interface NoticeItem {
   text: string;
 }
 /** An extension-injected custom message (the daemon's `sendMessage`). Folded from a
- *  `customMessage` event. Acts as a turn boundary (see transcript-view.groupTurns):
- *  the run it triggered gets its own turn instead of gluing onto the prior one.
- *  `display:false` items render nothing but still split the turn. */
+ *  `customMessage` event. `turnBoundary` is true only when the message explicitly
+ *  starts a new agent turn; it defaults to false for legacy events. `display` is
+ *  independent of turn grouping. */
 export interface InjectItem {
   readonly kind: "inject";
   id: string;
   customType: string;
   text: string;
   display: boolean;
+  /** True only when this inject starts a new outer agent turn. */
+  readonly turnBoundary?: boolean;
   /** ISO timestamp (or epoch-ms string) of when the message was injected. */
   ts?: string;
 }
@@ -343,10 +345,9 @@ export function foldEvent(
     }
 
     case "customMessage": {
-      // An injected custom message closes any open assistant bubble (same as a user
-      // message / tool start) and lands as its own item so groupTurns can split the
-      // turn here. No completedAt: the prior runCompleted already stamped the real
-      // turn-final assistant; this is just the boundary marker.
+      // An injected custom message closes any open assistant bubble, preserving the
+      // existing fold invariant. Its explicit turnBoundary flag—not its generic kind—
+      // determines whether transcript grouping starts a new outer turn.
       closeOpenAssistant(state.items);
       state.items.push({
         kind: "inject",
@@ -354,6 +355,7 @@ export function foldEvent(
         customType: ev.customType,
         text: ev.text,
         display: ev.display,
+        turnBoundary: ev.turnBoundary,
         ts: ev.timestamp,
       });
       return state;

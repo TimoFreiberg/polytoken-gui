@@ -598,11 +598,8 @@ describe("groupTurns: image-bearing tools (visible)", () => {
   });
 });
 
-describe("groupTurns: injected custom messages (nudge boundary)", () => {
-  test("an injected message opens a NEW turn, freeing the prior turn's response", () => {
-    // The journal-nudge bug: turn 1 (work + final response), then an injected nudge
-    // that triggers a second run (journal tool + reply). Without the split, the nudge
-    // run glues onto turn 1 and its real `final` response collapses into work.
+describe("groupTurns: injected custom messages", () => {
+  test("a non-boundary inject stays in one turn and preserves chronological responses", () => {
     const turns = groupTurns([
       user("u1"),
       asst("narration"),
@@ -612,22 +609,22 @@ describe("groupTurns: injected custom messages (nudge boundary)", () => {
       tool("journal", "bash"),
       asst("post"),
     ]);
-    expect(turns).toHaveLength(2);
-    // Turn 1 keeps its real final response visible; only narration + tool collapse.
-    const t1 = turns[0]!;
-    expect(t1.id).toBe("u1");
-    expect(t1.response.map((i) => i.id)).toEqual(["final"]);
-    expect(t1.work.map((i) => i.id)).toEqual(["narration", "b1"]);
-    // Turn 2 is headed by the nudge; the journal call collapses, the reply stays.
-    const t2 = turns[1]!;
-    expect(t2.id).toBe("n1");
-    expect(t2.user?.kind).toBe("inject");
-    expect(t2.work.map((i) => i.id)).toEqual(["journal"]);
-    expect(t2.response.map((i) => i.id)).toEqual(["post"]);
-    expect(t2.collapsible).toBe(true);
+    expect(turns).toHaveLength(1);
+    const turn = turns[0]!;
+    expect(turn.id).toBe("u1");
+    expect(turn.response.map((i) => i.id)).toEqual(["post"]);
+    expect(turn.visible.map((i) => i.id)).toEqual(["final", "n1"]);
+    expect(turn.work.map((i) => i.id)).toEqual(["narration", "b1", "journal"]);
+    expect(turn.lanes.map((lane) => lane.item?.id ?? lane.items.map((i) => i.id).join(","))).toEqual([
+      "narration,b1",
+      "final",
+      "n1",
+      "journal",
+    ]);
+    expect(turn.collapsible).toBe(true);
   });
 
-  test("a display:false inject still splits the turn (robustness net)", () => {
+  test("a display:false non-boundary inject stays in the same turn", () => {
     const turns = groupTurns([
       user("u1"),
       asst("final"),
@@ -635,18 +632,20 @@ describe("groupTurns: injected custom messages (nudge boundary)", () => {
       tool("t", "bash"),
       asst("post"),
     ]);
-    expect(turns.map((t) => t.id)).toEqual(["u1", "n1"]);
-    expect(turns[0]!.response.map((i) => i.id)).toEqual(["final"]);
+    expect(turns).toHaveLength(1);
+    expect(turns[0]!.visible.map((i) => i.id)).toEqual(["final", "n1"]);
   });
 
-  test("inject carries its ts into the turn's startTs", () => {
+  test("only an explicitly marked inject starts a new turn", () => {
     const turns = groupTurns([
       user("u1"),
       asst("final"),
-      inject("n1", { ts: "5000" }),
+      inject("n1", { turnBoundary: true, ts: "5000" }),
       tool("t", "bash"),
       asst("post", { completedAt: "9000" }),
     ]);
+    expect(turns.map((t) => t.id)).toEqual(["u1", "n1"]);
+    expect(turns[0]!.response.map((i) => i.id)).toEqual(["final"]);
     expect(turns[1]!.startTs).toBe("5000");
   });
 
@@ -708,6 +707,19 @@ describe("createTurnGrouper", () => {
 
     expect(second[0]).not.toBe(first[0]);
     expect(second[0]!.lanes[0]!.kind).toBe("pinned");
+  });
+
+  test("changing only turnBoundary rebuilds the cached grouping", () => {
+    const memoGroupTurns = createTurnGrouper();
+    const injectItem = inject("n1");
+    const items = [user("u1"), asst("final"), injectItem, tool("t", "bash"), asst("post")];
+    const first = memoGroupTurns(items);
+    expect(first).toHaveLength(1);
+    injectItem.turnBoundary = true;
+    const second = memoGroupTurns(items);
+    expect(second).toHaveLength(2);
+    expect(second[0]).not.toBe(first[0]);
+
   });
 
   test("active-tail collapse suppression does not mutate the cached settled turn", () => {

@@ -356,6 +356,7 @@ pub fn history_to_seed_events(
                     .and_then(|v| v.as_str());
                 let label = reason_type.and_then(plan_review_label);
                 let visible = label.is_some();
+                let turn_boundary = reason_type == Some("goal_reminder");
                 let slug = item
                     .get("slug")
                     .and_then(|v| v.as_str())
@@ -379,6 +380,7 @@ pub fn history_to_seed_events(
                     custom_type,
                     text,
                     display: visible,
+                    turn_boundary,
                 });
             }
             "model_switch" => {
@@ -496,6 +498,7 @@ pub fn history_to_seed_events(
                     custom_type: "compaction".to_string(),
                     text,
                     display: true,
+                    turn_boundary: false,
                 });
             }
             "context_cleared" => {
@@ -509,12 +512,12 @@ pub fn history_to_seed_events(
                     custom_type: "context-cleared".to_string(),
                     text: "Context cleared".to_string(),
                     display: true,
+                    turn_boundary: false,
                 });
             }
             "session_lifecycle" => {
-                // A lifecycle event (session started/ended etc). Surface as a non-display
-                // turn-boundary marker (same as the live path's customMessage with
-                // display:false — it splits the turn without rendering a visible row).
+                // A lifecycle event is retained as non-display same-turn metadata; it is
+                // not a transcript turn boundary.
                 let text = item
                     .get("text")
                     .and_then(|v| v.as_str())
@@ -530,6 +533,7 @@ pub fn history_to_seed_events(
                     custom_type: "lifecycle".to_string(),
                     text,
                     display: false,
+                    turn_boundary: false,
                 });
             }
             // state_update, classifier_decision, image_reference: no transcript
@@ -813,6 +817,25 @@ mod tests {
     }
 
     #[test]
+    fn system_reminder_goal_reminder_marks_turn_boundary() {
+        let items = vec![json!({
+            "type": "system_reminder",
+            "reason": { "type": "goal_reminder" },
+            "slug": "goal-reminder",
+            "body": "Goal reminder",
+        })];
+        let out = history_to_seed_events(&items, &ctx());
+        assert!(matches!(
+            out[0],
+            SessionDriverEvent::CustomMessage {
+                turn_boundary: true,
+                display: false,
+                ..
+            }
+        ));
+    }
+
+    #[test]
     fn system_reminder_visible_label() {
         let items = vec![json!({
             "type": "system_reminder",
@@ -832,6 +855,13 @@ mod tests {
                 assert_eq!(*custom_type, "Plan review required");
                 assert_eq!(text, "review needed");
                 assert!(*display);
+                assert!(!matches!(
+                    out[0],
+                    SessionDriverEvent::CustomMessage {
+                        turn_boundary: true,
+                        ..
+                    }
+                ));
             }
             other => panic!("expected CustomMessage, got {:?}", other),
         }
@@ -853,6 +883,13 @@ mod tests {
             } => {
                 assert_eq!(*custom_type, "reminder"); // slug defaults to "reminder"
                 assert!(!*display);
+                assert!(matches!(
+                    out[0],
+                    SessionDriverEvent::CustomMessage {
+                        turn_boundary: false,
+                        ..
+                    }
+                ));
             }
             other => panic!("expected CustomMessage, got {:?}", other),
         }

@@ -6,6 +6,10 @@
 
 use serde::{Deserialize, Serialize};
 
+fn is_false(value: &bool) -> bool {
+    !*value
+}
+
 // ── Primitive type aliases ──────────────────────────────────────────────
 
 pub type WorkspaceId = String;
@@ -849,6 +853,9 @@ pub enum SessionDriverEvent {
         text: String,
         #[serde(default)]
         display: bool,
+        #[serde(skip_serializing_if = "is_false", default)]
+        #[serde(rename = "turnBoundary")]
+        turn_boundary: bool,
     },
     ToolStarted {
         #[serde(flatten)]

@@ -9,6 +9,10 @@ use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
 
+fn is_false(value: &bool) -> bool {
+    !*value
+}
+
 use crate::session_driver::{
     FlaggedFile, GoalInfo, HostUiRequest, ImageContent, McpServerInfo, NotifyLevel,
     PermissionMonitorMode, ResolvedRef, SessionConfig, SessionDriverEvent, SessionQueuedMessage,
@@ -135,6 +139,8 @@ pub struct InjectItem {
     pub text: String,
     #[serde(default)]
     pub display: bool,
+    #[serde(skip_serializing_if = "is_false", default, rename = "turnBoundary")]
+    pub turn_boundary: bool,
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub ts: Option<String>,
 }
@@ -416,6 +422,7 @@ pub fn fold_event(state: &mut SessionState, ev: &SessionDriverEvent) {
             custom_type,
             text,
             display,
+            turn_boundary,
             ..
         } => {
             close_open_assistant(&mut state.items, None);
@@ -424,6 +431,7 @@ pub fn fold_event(state: &mut SessionState, ev: &SessionDriverEvent) {
                 custom_type: custom_type.clone(),
                 text: text.clone(),
                 display: *display,
+                turn_boundary: *turn_boundary,
                 ts: Some(ev.timestamp().clone()),
             }));
         }
@@ -1266,6 +1274,7 @@ mod tests {
                 custom_type: "system".into(),
                 text: "injected".into(),
                 display: true,
+                turn_boundary: true,
             },
         );
         assert_eq!(s.items.len(), 1);
@@ -1274,6 +1283,7 @@ mod tests {
                 assert_eq!(i.custom_type, "system");
                 assert_eq!(i.text, "injected");
                 assert!(i.display);
+                assert!(i.turn_boundary);
             }
             _ => panic!("expected inject item"),
         }

@@ -37,6 +37,11 @@ function isVisibleTool(i: TranscriptItem): i is ToolItem {
   return i.kind === "tool" && (VISIBLE_TOOLS.has(i.name) || toolHasImages(i));
 }
 
+/** Only explicit boundary-marked injects start a new outer turn. */
+export function startsTurn(i: TranscriptItem): boolean {
+  return i.kind === "user" || (i.kind === "inject" && i.turnBoundary === true);
+}
+
 /** A blocking Q&A prompt: the `answer` tool. Scoped to `answer` only — image-bearing
  *  tools are pinned too, but they're not prompts, so their lead-up narration doesn't
  *  get the keep-visible treatment (see keepLeadUp below). HostUi dialogs (confirm/
@@ -211,7 +216,9 @@ function buildTurn(
 
   // Lanes preserve chronological order: a contiguous run of non-visible work folds into
   // one collapsible run; each visible tool stays pinned in place between runs, so it
-  // doesn't float to the bottom of the work block as later work streams in.
+  // doesn't float to the bottom of the work block as later work streams in. Assistant
+  // paragraphs immediately before a same-turn inject are pinned so a later run cannot
+  // hide an already-rendered response.
   //
   // Lead-up keep-visible: when a work run is immediately followed by a pinned `answer`
   // card, peel its trailing assistant paragraph(s) into pinned lanes too. Those carry
@@ -239,7 +246,18 @@ function buildTurn(
       lanes.push({ kind: "pinned", id: it.id, item: it });
   };
   for (const it of workItems) {
-    if (isVisibleTool(it)) {
+    if (it.kind === "inject") {
+      // A same-turn inject is chronological visible content. Protect the completed
+      // assistant paragraph immediately before it from being swallowed by the work
+      // lane created by the run that follows it.
+      if (run.length > 0) {
+        const [work, leadUp] = splitLeadUp(run);
+        run = work;
+        flushRun();
+        flushLeadUp(leadUp);
+      }
+      lanes.push({ kind: "pinned", id: it.id, item: it });
+    } else if (isVisibleTool(it)) {
       // Peel the lead-up paragraph(s) off the run BEFORE pinning the answer card, so
       // they render between the (now shorter) collapsible work run and the Q&A.
       if (isAnswerTool(it) && run.length > 0) {
@@ -321,11 +339,9 @@ function collectTurnInputs(items: readonly TranscriptItem[]): TurnInput[] {
     body = [];
   };
   for (const item of items) {
-    // A user prompt OR an injected custom message opens a new turn. The inject case is
-    // the fix for extension nudges (e.g. journal-nudge): the daemon's sendMessage triggers a
-    // fresh run with no user prompt, so without splitting here the new run's tools +
-    // reply glue onto the prior turn and collapse its final response into "work".
-    if (item.kind === "user" || item.kind === "inject") {
+    // User prompts and explicit boundary-marked injects open a new outer turn.
+    // Ordinary injects remain chronological content inside the current turn.
+    if (startsTurn(item)) {
       flush();
       user = item;
       body = [];
@@ -441,6 +457,7 @@ function itemFingerprint(item: TranscriptItem): string {
         item.ts ?? "",
         item.customType,
         item.display ? "1" : "0",
+        item.turnBoundary ? "1" : "0",
         item.text.length,
       ].join("\u001f");
     case "notice":

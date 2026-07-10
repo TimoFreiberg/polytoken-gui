@@ -278,9 +278,9 @@ fn notification_message(notification: &pantoken_daemon_types::Notification) -> S
     }
 }
 
-/// System-reminder reason types that surface as visible inject pills instead of
-/// silent turn-boundary markers. Maps the daemon's `SystemReminderReason` to a
-/// human-readable pill label.
+/// System-reminder reason types that surface as visible inject pills. Maps the
+/// daemon's `SystemReminderReason` to a human-readable pill label; visibility is
+/// independent from the explicit goal-reminder turn boundary.
 fn plan_review_label(reason: &SystemReminderReason) -> Option<&'static str> {
     match reason {
         SystemReminderReason::PlanReviewRequired => Some("Plan review required"),
@@ -1871,10 +1871,10 @@ pub fn map_daemon_event(
         DaemonEvent::SystemReminder {
             reason, slug, body, ..
         } => {
-            // A system-injected reminder — like the original driver's role:"custom" message.
-            // Most reasons are turn-boundary markers (display:false, robustness net only).
-            // Plan-review reasons surface visibly so the operator sees a review is needed.
+            // Visibility and turn grouping are independent: only an explicit goal reminder
+            // starts a new outer turn. Plan-review reasons remain visible but same-turn.
             let label = plan_review_label(reason);
+            let turn_boundary = matches!(reason, SystemReminderReason::GoalReminder);
             let visible = label.is_some();
             let custom_type = if visible {
                 label.unwrap().to_string()
@@ -1889,6 +1889,7 @@ pub fn map_daemon_event(
                     custom_type,
                     text: body.clone(),
                     display: visible,
+                    turn_boundary,
                 }],
                 vec![],
             )
@@ -2151,7 +2152,6 @@ mod tests {
         PermissionMonitorMode, SessionRef, TodoStatus, WorkspaceRef,
     };
     use serde_json::{Value, json};
-
 
     fn snap(items: Vec<(&str, &str)>) -> PendingTurnInputSnapshot {
         PendingTurnInputSnapshot {
@@ -3276,6 +3276,18 @@ mod tests {
         assert_eq!(ev["type"], "customMessage");
         assert_eq!(ev["customType"], "test-reminder");
         assert_eq!(ev["text"], "Don't forget the tests");
+        assert_eq!(ev["display"], false);
+        assert!(ev.get("turnBoundary").is_none());
+    }
+
+    #[test]
+    fn system_reminder_goal_reminder_marks_turn_boundary() {
+        let out = fold_fresh(
+            json!({ "type": "system_reminder", "body": "Goal reminder", "display_name": "Reminder", "emitted_at": "2026-06-28T10:00:00Z", "reason": { "type": "goal_reminder" }, "slug": "goal-reminder" }),
+        );
+        let ev = event_json(&out.events[0]);
+        assert_eq!(ev["type"], "customMessage");
+        assert_eq!(ev["turnBoundary"], true);
         assert_eq!(ev["display"], false);
     }
 

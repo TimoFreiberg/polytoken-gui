@@ -562,17 +562,17 @@ export interface UserMessageEvent extends SessionEventBase {
   readonly references?: readonly ResolvedRef[];
 }
 export interface CustomMessageEvent extends SessionEventBase {
-  // An extension-injected `role:"custom"` message (the daemon's `sendMessage`). These trigger
-  // a fresh daemon run with no user prompt, so they double as a TURN BOUNDARY: without
-  // one, the new run's tools + reply glue onto the prior turn and collapse its final
-  // response into the "Worked for Ns" work block. `display` mirrors the daemon's own "show
-  // this in the transcript" flag — true ones render as a tiny expandable note, false
-  // ones render nothing but still split the turn (the robustness net).
+  // An extension-injected `role:"custom"` message (the daemon's `sendMessage`).
+  // `turnBoundary` is true only when this message intentionally starts a new agent
+  // turn (currently an explicit goal reminder). It is optional for compatibility with
+  // older servers and persisted events; absent means false. `display` controls whether
+  // the note is rendered and is independent of turn grouping.
   readonly type: "customMessage";
   readonly id: string;
   readonly customType: string;
   readonly text: string;
   readonly display: boolean;
+  readonly turnBoundary?: boolean;
 }
 export interface ToolStartedEvent extends SessionEventBase {
   readonly type: "toolStarted";

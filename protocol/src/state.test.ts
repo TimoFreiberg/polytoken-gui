@@ -131,10 +131,11 @@ describe("foldEvent", () => {
         customType: "journal-nudge",
         text: "<journal-nudge>do it</journal-nudge>",
         display: true,
+        turnBoundary: true,
         timestamp: "t9",
       }),
     ]);
-    // The streaming assistant is closed (no completedAt — the boundary marker doesn't
+    // The streaming assistant is closed (no completedAt — closing the bubble does not
     // claim the turn ended), and the inject lands as its own item.
     expect(s.items[0]).toMatchObject({ kind: "assistant", streaming: false });
     expect(s.items[0]).not.toHaveProperty("completedAt");
@@ -144,6 +145,7 @@ describe("foldEvent", () => {
       customType: "journal-nudge",
       text: "<journal-nudge>do it</journal-nudge>",
       display: true,
+      turnBoundary: true,
       ts: "t9",
     });
   });

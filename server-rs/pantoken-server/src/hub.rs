@@ -4407,6 +4407,7 @@ mod hub_models_tests {
             custom_type: "session-resumed".into(),
             text: "This session has been resumed from saved history.".into(),
             display: false,
+            turn_boundary: false,
         });
         assert_eq!(
             hub.lock()

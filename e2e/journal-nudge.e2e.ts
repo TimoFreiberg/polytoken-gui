@@ -6,10 +6,8 @@ test.beforeEach(async ({ page }) => {
 });
 
 // An extension nudge (the daemon's sendMessage, e.g. journal-nudge) triggers a fresh run with
-// no user prompt. Before the turn-boundary fix, that second run glued onto the prior
-// turn and its REAL final response collapsed into the "Worked for Ns" work block. The
-// fix surfaces the injected message as a tiny pill that opens a new turn, so the prior
-// turn's response stays visible.
+// no user prompt. It remains in the same outer turn, but the injected pill and the prior
+// assistant response stay chronological and visible while the later tool run remains work.
 test("a journal nudge keeps the prior turn's response visible and shows a collapsed pill", async ({
   page,
 }) => {

@@ -810,24 +810,23 @@ class PantokenStore {
   /** Estimated tokens the model has streamed into the focused session's CURRENT turn —
    *  a liveness counter shown beside the working spinner so you can tell the API is
    *  actually feeding you (the number climbs) from a stall (it freezes). Sums assistant
-   *  text + thinking since the last user/inject turn boundary; tools and earlier turns are
-   *  excluded, so it resets per turn for free. It's an ESTIMATE (~4 chars/token): the agent only
-   *  surfaces context-window usage to pantoken, not exact per-turn output token counts, so we
-   *  approximate from the streamed characters we already fold. Counting the thinking channel
+   *  text + thinking since the last user/goal-reminder turn boundary; tools and earlier turns
+   *  are excluded, so it resets per turn for free. It's an ESTIMATE (~4 chars/token): the agent
+   *  only surfaces context-window usage to pantoken, not exact per-turn output token counts, so
+   *  we approximate from the streamed characters we already fold. Counting the thinking channel
    *  too is the point — it proves liveness during "Thinking…" when no answer text shows.
    *
-   *  Turn boundary: we walk the tail and stop at a user/inject item (the start of this turn)
-   *  OR a SETTLED assistant (one with `completedAt`, which only the turn-FINAL assistant gets
-   *  — so a prior turn's reply never bleeds in). Intermediate bubbles a tool closed mid-turn
-   *  carry no `completedAt`, so a multi-bubble turn still sums whole; tools/notices are skipped
-   *  without breaking. */
+   *  Turn boundary: we walk the tail and stop at a user item or an inject explicitly marked
+   *  `turnBoundary`. Ordinary injected notices are same-turn content and do not reset the
+   *  estimate. A SETTLED assistant still stops the tail because only the turn-final assistant
+   *  carries `completedAt`; tools/notices are skipped without breaking. */
   get turnStreamTokens(): number {
     const items = this.session.items;
     let chars = 0;
     for (let i = items.length - 1; i >= 0; i--) {
       const it = items[i];
       if (!it) continue;
-      if (it.kind === "user" || it.kind === "inject") break;
+      if (it.kind === "user" || (it.kind === "inject" && it.turnBoundary === true)) break;
       if (it.kind === "assistant") {
         if (it.completedAt) break;
         chars += it.text.length + it.thinking.length;
