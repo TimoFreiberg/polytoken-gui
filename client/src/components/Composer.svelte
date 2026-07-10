@@ -598,7 +598,8 @@
   }
 
   /** Replace the @-mention span (`@<query>`) with the canonical text for the picked
-   *  item, keeping the cursor right after the inserted text:
+   *  item, keeping the cursor right after the inserted text (and trailing
+   *  separator, if any — a space for terminal kinds):
    *    - file: unchanged behavior — directories get a trailing "/" so the user can
    *      keep typing to narrow further.
    *    - skill/subagent: `@skill:<name>` / `@subagent:<name>`.
@@ -631,16 +632,18 @@
         inserted = item.prefix;
         break;
     }
+    const tail =
+      item.kind === "sigil" || (item.kind === "file" && item.file.isDirectory) ? "" : " ";
     store.composerDraft =
-      draft.slice(0, m.atPos) + "@" + inserted + draft.slice(cursorPos);
+      draft.slice(0, m.atPos) + "@" + inserted + tail + draft.slice(cursorPos);
     atDismissed = false;
     atSel = 0;
     modelLevel = null;
     queueMicrotask(() => {
       ta?.focus();
       autosize();
-      // Place cursor after the inserted text.
-      if (ta) ta.selectionStart = ta.selectionEnd = m.atPos + 1 + inserted.length;
+      // Place cursor after the inserted text and trailing separator.
+      if (ta) ta.selectionStart = ta.selectionEnd = m.atPos + 1 + inserted.length + tail.length;
     });
   }
 

@@ -56,7 +56,7 @@ test("@skill: lists the available skills; Enter inserts the canonical form", asy
   await expect(row(page, "skill:debug")).toBeVisible();
   await expect(row(page, "skill:journal")).toBeVisible();
   await box.press("Enter");
-  await expect(box).toHaveValue("@skill:debug");
+  await expect(box).toHaveValue("@skill:debug ");
 });
 
 test("@s:jou narrows the shorthand to journal only", async ({ page }) => {
@@ -68,7 +68,7 @@ test("@s:jou narrows the shorthand to journal only", async ({ page }) => {
   await expect(row(page, "skill:debug")).toHaveCount(0);
   await box.press("Enter");
   // Canonical form is always the long sigil, regardless of the shorthand typed.
-  await expect(box).toHaveValue("@skill:journal");
+  await expect(box).toHaveValue("@skill:journal ");
 });
 
 test("@a: lists the available subagents", async ({ page }) => {
@@ -79,7 +79,7 @@ test("@a: lists the available subagents", async ({ page }) => {
   await expect(row(page, "subagent:reviewer")).toBeVisible();
   await expect(row(page, "subagent:explorer")).toBeVisible();
   await row(page, "subagent:reviewer").click();
-  await expect(box).toHaveValue("@subagent:reviewer");
+  await expect(box).toHaveValue("@subagent:reviewer ");
 });
 
 test("@m: lists the mock models; accepting inserts the canonical provider/modelId", async ({
@@ -99,7 +99,7 @@ test("@m: lists the mock models; accepting inserts the canonical provider/modelI
   await expect(row(page, "model:openai/gpt-5")).toBeVisible();
   await expect(row(page, "model:anthropic/claude-opus-4-8")).toHaveCount(0);
   await box.press("Enter");
-  await expect(box).toHaveValue("@model:openai/gpt-5");
+  await expect(box).toHaveValue("@model:openai/gpt-5 ");
 });
 
 test("@sk shows the skill: sigil row after file matches; accepting it narrows into the skill list", async ({
@@ -171,7 +171,7 @@ test("[ ] adjust a selected model row's reasoning level; accepting appends (leve
   );
 
   await box.press("Enter");
-  await expect(box).toHaveValue("@model:anthropic/claude-sonnet-4-6(off)");
+  await expect(box).toHaveValue("@model:anthropic/claude-sonnet-4-6(off) ");
 });
 
 test("] clamps at the top level of a single-level model instead of wrapping", async ({
@@ -200,8 +200,8 @@ test("] clamps at the top level of a single-level model instead of wrapping", as
   );
 
   await box.press("Enter");
-  // No level chosen at accept time — unchanged, suffix-free insertion.
-  await expect(box).toHaveValue("@model:deepseek/deepseek-v4-flash");
+  // No level chosen at accept time — the terminal model gets the standard trailing space.
+  await expect(box).toHaveValue("@model:deepseek/deepseek-v4-flash ");
 });
 
 test("[ and ] on a non-model row type the character into the draft instead of being swallowed", async ({
@@ -279,7 +279,7 @@ test("keyboard-accepting projects/ drills down; accepting readme.md completes th
   await box.press("ArrowDown");
   await box.press("ArrowDown");
   await box.press("Enter");
-  await expect(box).toHaveValue("@~/projects/readme.md");
+  await expect(box).toHaveValue("@~/projects/readme.md ");
 });
 
 test("@../ lists the parent-relative fixtures", async ({ page }) => {
@@ -363,7 +363,7 @@ test("plain Tab still accepts the highlighted row after Shift+Tab has toggled ig
   // then accept with plain (unshifted) Tab.
   await box.press("ArrowDown");
   await box.press("Tab");
-  await expect(box).toHaveValue("@~/.secrets");
+  await expect(box).toHaveValue("@~/.secrets ");
 });
 
 test("Shift+Tab in a skill takeover falls through to browser focus-nav (no toggle, no accept)", async ({
