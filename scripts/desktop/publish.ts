@@ -23,8 +23,8 @@
 // newest release's copy). Put that URL in PANTOKEN_SHELL_UPDATE_URL or the data dir's
 // `shell-update-url` file — see desktop/README.md "Updates".
 
-import { existsSync } from "node:fs";
-import { homedir } from "node:os";
+import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { homedir, tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
 const repoRoot = resolve(import.meta.dir, "../..");
@@ -181,28 +181,42 @@ if (import.meta.main) {
   }
 
   // ── locate + validate artifacts ──
-  const app = join(bundleDir, "Pantoken.app");
+  // Tauri packages the app into the updater archive and then removes the raw .app.
+  // Validate the archive, rather than requiring an intermediate artifact that may no
+  // longer exist after `tauri build` completes.
   const tar = join(bundleDir, "Pantoken.app.tar.gz");
   const sig = `${tar}.sig`;
-  for (const p of [app, tar, sig]) {
+  for (const p of [tar, sig]) {
     if (!existsSync(p))
       fail(
         `expected artifact missing: ${p} (did the build produce updater artifacts?)`,
       );
   }
 
-  // The version OF THE ARTIFACT — from the built plist, not from any config file.
-  const plist = await capture([
-    "plutil",
-    "-extract",
-    "CFBundleShortVersionString",
-    "raw",
-    join(app, "Contents", "Info.plist"),
-  ]);
-  if (plist.code !== 0) fail(`couldn't read bundle version: ${plist.stderr}`);
-  const version = plist.stdout.trim();
-  if (!/^\d+\.\d+\.\d+/.test(version))
-    fail(`implausible bundle version '${version}'`);
+  // The version OF THE ARTIFACT — from the archive's plist, not from any config file.
+  const extractDir = mkdtempSync(join(tmpdir(), "pantoken-release-"));
+  const app = join(extractDir, "Pantoken.app");
+  let version: string;
+  try {
+    const extracted = await capture(["tar", "xzf", tar, "-C", extractDir]);
+    if (extracted.code !== 0)
+      fail(`couldn't extract updater archive: ${extracted.stderr}`);
+    if (!existsSync(app))
+      fail(`updater archive did not contain Pantoken.app: ${tar}`);
+    const plist = await capture([
+      "plutil",
+      "-extract",
+      "CFBundleShortVersionString",
+      "raw",
+      join(app, "Contents", "Info.plist"),
+    ]);
+    if (plist.code !== 0) fail(`couldn't read bundle version: ${plist.stderr}`);
+    version = plist.stdout.trim();
+    if (!/^\d+\.\d+\.\d+/.test(version))
+      fail(`implausible bundle version '${version}'`);
+  } finally {
+    rmSync(extractDir, { recursive: true, force: true });
+  }
   const tag = `v${version}`;
 
   // The authoritative tag guard: what was BUILT must be what the pushed tag names —

@@ -208,7 +208,6 @@ jobs:
         with:
           name: signed-release-artifacts
           path: |
-            desktop/target/release/bundle/macos/Pantoken.app/
             desktop/target/release/bundle/macos/Pantoken.app.tar.gz
             desktop/target/release/bundle/macos/Pantoken.app.tar.gz.sig
             desktop/target/release/bundle/macos/latest.json
