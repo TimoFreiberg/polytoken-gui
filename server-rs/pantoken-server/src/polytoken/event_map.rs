@@ -309,7 +309,7 @@ fn provider_error_message(error: &ProviderError) -> String {
         }
         ProviderError::ModelNotFound => "Model not found".to_string(),
         ProviderError::ContextTooLarge { .. } => "Context too large".to_string(),
-        ProviderError::Transport { message } => {
+        ProviderError::Transport { message, .. } => {
             format!("Transport error: {}", message)
         }
         ProviderError::ProtocolMalformed { detail } => {

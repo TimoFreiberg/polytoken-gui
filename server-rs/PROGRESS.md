@@ -193,16 +193,14 @@ Before porting, fixing, or testing any daemon-facing workaround, check
 dump — prefer deleting a workaround the daemon now owns over porting it
 faithfully.
 
-> **Version status (2026-07-07):** installed **0.5.0-unstable.1**. Bearer-token
-> auth (PT-235) is **adopted**: `DaemonClient` reads the credential file and
-> sends `Authorization: Bearer <token>` on every HTTP request (including SSE
-> and the lease heartbeat). `spawn_resume_daemon` passes `--credential-file`.
-> `open_session` now cold-starts a resume daemon when no running daemon is found.
-> Codegen re-run against 0.5.0 (new `UnauthorizedResponse`,
-> `credential_file_path` on `SessionRecord`; removed `Subsession*` event variants).
-> Re-check only on the *next* bump: re-run codegen, replay the corpus as the
-> drift canary, adopt newly daemon-owned fields, re-capture only on conscious
-> adoption.
+> **Version status (2026-07-11):** installed **0.5.0-unstable.6**. Codegen
+> re-run against unstable.6 (162 schemas, 55 DaemonEvent variants — same event
+> set as unstable.1). Two additive type changes: `TransportKind::StreamInterrupted`
+> new variant, `ProviderError::Transport` gained optional `source_detail: Option<String>`.
+> Bearer-token auth (PT-235) remains adopted. Corpus replayed as drift canary: all
+> 745 server tests pass. Re-check only on the *next* bump: re-run codegen, replay
+> the corpus as the drift canary, adopt newly daemon-owned fields, re-capture only
+> on conscious adoption.
 
 **Confirmed still daemon-gaps (probed live, 2026-07-04):**
 - SSE resume is a silent no-op — `Last-Event-ID: 100` replays nothing. Reconnect
