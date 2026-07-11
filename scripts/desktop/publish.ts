@@ -200,9 +200,9 @@ if (import.meta.main) {
   try {
     const extracted = await capture(["tar", "xzf", tar, "-C", extractDir]);
     if (extracted.code !== 0)
-      fail(`couldn't extract updater archive: ${extracted.stderr}`);
+      throw new Error(`couldn't extract updater archive: ${extracted.stderr}`);
     if (!existsSync(app))
-      fail(`updater archive did not contain Pantoken.app: ${tar}`);
+      throw new Error(`updater archive did not contain Pantoken.app: ${tar}`);
     const plist = await capture([
       "plutil",
       "-extract",
@@ -210,10 +210,13 @@ if (import.meta.main) {
       "raw",
       join(app, "Contents", "Info.plist"),
     ]);
-    if (plist.code !== 0) fail(`couldn't read bundle version: ${plist.stderr}`);
+    if (plist.code !== 0)
+      throw new Error(`couldn't read bundle version: ${plist.stderr}`);
     version = plist.stdout.trim();
     if (!/^\d+\.\d+\.\d+/.test(version))
-      fail(`implausible bundle version '${version}'`);
+      throw new Error(`implausible bundle version '${version}'`);
+  } catch (error) {
+    fail(error instanceof Error ? error.message : String(error));
   } finally {
     rmSync(extractDir, { recursive: true, force: true });
   }
