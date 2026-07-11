@@ -9,6 +9,12 @@ set -euo pipefail
 RECORD_PID_FILE="${RECORD_PID_FILE:-}"
 FORCE_EXIT="${FORCE_EXIT:-0}"
 FORCE_HEALTH_FAIL="${FORCE_HEALTH_FAIL:-0}"
+SERVICE_PID_FILE="${SERVICE_PID_FILE:-${HOME}/.local/state/pantoken/fake-service.pid}"
+SERVICE_COUNT_FILE="${SERVICE_COUNT_FILE:-${HOME}/.local/state/pantoken/fake-service.count}"
+SERVICE_PORT="${PANTOKEN_TEST_SERVICE_PORT:-8787}"
+SERVICE_FAIL_FIRST="${PANTOKEN_TEST_FAIL_FIRST:-0}"
+SERVICE_FAIL_ALWAYS="${PANTOKEN_TEST_FAIL_ALWAYS:-0}"
+SERVICE_FAIL_VERSION="${PANTOKEN_TEST_FAIL_VERSION:-}"
 
 FAKE_LAUNCHCTL_LOG="${HOME}/.local/state/pantoken/.launchctl.log"
 mkdir -p "$(dirname "$FAKE_LAUNCHCTL_LOG")"
@@ -35,9 +41,38 @@ if [[ "$FORCE_EXIT" != "0" ]]; then
 fi
 
 # Simulate success for kickstart
+if [[ "$ARGS" == *"print"* ]]; then
+  if [[ -f "$SERVICE_PID_FILE" ]]; then
+    printf 'pid = %s\n' "$(cat "$SERVICE_PID_FILE")"
+    printf 'path = %s\n' "${HOME}/pantoken-live/bin/pantoken-server"
+    exit 0
+  fi
+  exit 1
+fi
+
 if [[ "$ARGS" == *"kickstart"* ]]; then
-  # If the updater is supposed to fail post-flip, we don't actually start anything
-  # — the real health check will fail because no server is running.
+  if [[ -f "$SERVICE_PID_FILE" ]]; then
+    old_pid="$(cat "$SERVICE_PID_FILE")"
+    kill "$old_pid" 2>/dev/null || true
+  fi
+  count=0
+  [[ -f "$SERVICE_COUNT_FILE" ]] && count="$(cat "$SERVICE_COUNT_FILE")"
+  count=$((count + 1))
+  printf '%s\n' "$count" > "$SERVICE_COUNT_FILE"
+  fail_health=0
+  if [[ "$SERVICE_FAIL_ALWAYS" == "1" || ("$SERVICE_FAIL_FIRST" == "1" && "$count" == "1") ]]; then
+    fail_health=1
+  fi
+  if [[ -n "$SERVICE_FAIL_VERSION" && "$(readlink -f "$HOME/pantoken-live")" == *"/$SERVICE_FAIL_VERSION" ]]; then
+    fail_health=1
+  fi
+  mkdir -p "$(dirname "$SERVICE_PID_FILE")"
+  PANTOKEN_UPDATE_TEST_MODE=1 PANTOKEN_PORT="$SERVICE_PORT" PANTOKEN_TEST_SERVICE_PORT="$SERVICE_PORT" PANTOKEN_FAIL_HEALTH="$fail_health" \
+    "$HOME/pantoken-live/run.sh" >"${HOME}/.local/state/pantoken/fake-service.log" 2>&1 &
+  service_pid=$!
+  printf '%s\n' "$service_pid" > "$SERVICE_PID_FILE"
+  # Give the interpreter a moment to exec the fixture binary before print/ps.
+  sleep 0.05
   exit 0
 fi
 

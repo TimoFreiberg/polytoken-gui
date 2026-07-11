@@ -63,6 +63,10 @@ export PANTOKEN_DATA_DIR="$DATA_DIR"
 export PANTOKEN_HOST="127.0.0.1"
 export PANTOKEN_PORT="8787"
 export PANTOKEN_CLIENT_DIST="$ROOT/client-dist"
+if [[ "${PANTOKEN_UPDATE_TEST_MODE:-}" == "1" ]]; then
+  export PANTOKEN_DATA_DIR="${PANTOKEN_SMOKE_DATA_DIR:-${PANTOKEN_TEST_DATA_DIR:-$DATA_DIR}}"
+  export PANTOKEN_PORT="${PANTOKEN_SMOKE_PORT:-${PANTOKEN_TEST_SERVICE_PORT:-8787}}"
+fi
 
 [[ -x "$ROOT/bin/pantoken-server" ]] || { echo "pantoken: missing executable $ROOT/bin/pantoken-server" >&2; exit 1; }
 [[ -f "$ROOT/client-dist/index.html" ]] || { echo "pantoken: missing client $ROOT/client-dist/index.html" >&2; exit 1; }

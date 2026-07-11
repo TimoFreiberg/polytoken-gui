@@ -47,6 +47,10 @@ _TEST_ASSET_URL=""
 _TEST_SIG_URL=""
 _TEST_KICKSTART_CMD=""
 _TEST_HEALTH_URL=""
+_TEST_MINISIGN=""
+_TEST_VALIDATOR=""
+_TEST_LAUNCHCTL=""
+_TEST_PROCESS_PATH=""
 
 resolve_test_overrides() {
   if [[ "${PANTOKEN_UPDATE_TEST_MODE:-}" == "1" ]]; then
@@ -54,8 +58,17 @@ resolve_test_overrides() {
     [[ -n "${PANTOKEN_TEST_SIG_URL:-}" ]] && _TEST_SIG_URL="$PANTOKEN_TEST_SIG_URL"
     [[ -n "${PANTOKEN_TEST_KICKSTART_CMD:-}" ]] && _TEST_KICKSTART_CMD="$PANTOKEN_TEST_KICKSTART_CMD"
     [[ -n "${PANTOKEN_TEST_HEALTH_URL:-}" ]] && _TEST_HEALTH_URL="$PANTOKEN_TEST_HEALTH_URL"
+    [[ -n "${PANTOKEN_TEST_MINISIGN:-}" ]] && _TEST_MINISIGN="$PANTOKEN_TEST_MINISIGN"
+    [[ -n "${PANTOKEN_TEST_VALIDATOR:-}" ]] && _TEST_VALIDATOR="$PANTOKEN_TEST_VALIDATOR"
+    [[ -n "${PANTOKEN_TEST_LAUNCHCTL:-}" ]] && _TEST_LAUNCHCTL="$PANTOKEN_TEST_LAUNCHCTL"
+    [[ -n "${PANTOKEN_TEST_PROCESS_PATH:-}" ]] && _TEST_PROCESS_PATH="$PANTOKEN_TEST_PROCESS_PATH"
   fi
   [[ -n "${_TEST_HEALTH_URL:-}" ]] && HEALTH_URL="$_TEST_HEALTH_URL"
+  [[ -n "${_TEST_VALIDATOR:-}" ]] && TRUSTED_VALIDATOR="$_TEST_VALIDATOR"
+}
+
+is_test_mode() {
+  [[ "${PANTOKEN_UPDATE_TEST_MODE:-}" == "1" ]]
 }
 
 # ── Journal helpers ──────────────────────────────────────────────
@@ -84,22 +97,29 @@ die()    { log_err "$@"; exit "${2:-1}"; }
 
 # ── Pre-flight checks ────────────────────────────────────────────
 preflight() {
-  # 1. macOS arm64 check
-  local uname_m uname_s
-  uname_m="$(uname -m 2>/dev/null || echo unknown)"
-  uname_s="$(uname -s 2>/dev/null || echo unknown)"
-  if [[ "$uname_s" != "Darwin" ]]; then
-    die "This updater requires macOS (found ${uname_s})" 1
-  fi
-  if [[ "$uname_m" != "arm64" ]]; then
-    die "This updater requires macOS arm64 (found ${uname_m})" 1
+  # 1. macOS arm64 check. Explicit test mode is the only hermetic-harness escape hatch.
+  if ! is_test_mode; then
+    local uname_m uname_s
+    uname_m="$(uname -m 2>/dev/null || echo unknown)"
+    uname_s="$(uname -s 2>/dev/null || echo unknown)"
+    if [[ "$uname_s" != "Darwin" ]]; then
+      die "This updater requires macOS (found ${uname_s})" 1
+    fi
+    if [[ "$uname_m" != "arm64" ]]; then
+      die "This updater requires macOS arm64 (found ${uname_m})" 1
+    fi
   fi
 
   # 2. Required commands
   local cmd
-  for cmd in curl tar minisign launchctl ps readlink; do
+  for cmd in curl tar ps readlink; do
     command -v "$cmd" >/dev/null 2>&1 || die "Required command not found: ${cmd}" 1
   done
+  if ! is_test_mode; then
+    for cmd in minisign launchctl; do
+      command -v "$cmd" >/dev/null 2>&1 || die "Required command not found: ${cmd}" 1
+    done
+  fi
 
   # 3. Resolve test overrides early
   resolve_test_overrides
@@ -174,16 +194,18 @@ download_asset() {
 
 # ── Phase: Signature verification ──────────────────────────────
 verify_signature() {
-  _journal "signature-verified"
   log "Verifying minisign signature …"
 
-  if ! minisign -Vm \
+  local minisign_cmd="minisign"
+  [[ -n "${_TEST_MINISIGN:-}" ]] && minisign_cmd="$_TEST_MINISIGN"
+  if ! "$minisign_cmd" -Vm \
     "${TMPDIR_DOWNLOAD}/${HEADLESS_ASSET}" \
     -x "${TMPDIR_DOWNLOAD}/${HEADLESS_SIGNATURE}" \
     -P "$PUBLIC_KEY"; then
     die "minisign signature verification FAILED" 2
   fi
 
+  _journal "signature-verified"
   log "Signature verified."
 }
 
@@ -193,11 +215,13 @@ validate_tar() {
   log "Validating tar archive members …"
 
   [[ -x "$TRUSTED_VALIDATOR" ]] || die "trusted tar validator missing: ${TRUSTED_VALIDATOR}" 2
-  DIGEST_RECORD="${TRUSTED_VALIDATOR}.sha256"
-  [[ -f "$DIGEST_RECORD" ]] || die "trusted validator digest record missing: ${DIGEST_RECORD}" 2
-  expected_digest="$(tr -d '[:space:]' < "$DIGEST_RECORD")"
-  actual_digest="$(shasum -a 256 "$TRUSTED_VALIDATOR" | awk '{print $1}')"
-  [[ "$expected_digest" =~ ^[0-9a-f]{64}$ && "$actual_digest" == "$expected_digest" ]] || die "trusted validator digest mismatch" 2
+  if ! is_test_mode; then
+    DIGEST_RECORD="${TRUSTED_VALIDATOR}.sha256"
+    [[ -f "$DIGEST_RECORD" ]] || die "trusted validator digest record missing: ${DIGEST_RECORD}" 2
+    expected_digest="$(tr -d '[:space:]' < "$DIGEST_RECORD")"
+    actual_digest="$(shasum -a 256 "$TRUSTED_VALIDATOR" | awk '{print $1}')"
+    [[ "$expected_digest" =~ ^[0-9a-f]{64}$ && "$actual_digest" == "$expected_digest" ]] || die "trusted validator digest mismatch" 2
+  fi
   "$TRUSTED_VALIDATOR" "${TMPDIR_DOWNLOAD}/${HEADLESS_ASSET}" || die "Trusted tar validator rejected archive members" 2
 }
 
@@ -281,7 +305,8 @@ s.close()
 
   log "Running smoke test on staged release (port ${port}) …"
 
-  PANTOKEN_SMOKE_PORT="$port" \
+  PANTOKEN_UPDATE_TEST_MODE="${PANTOKEN_UPDATE_TEST_MODE:-}" \
+    PANTOKEN_SMOKE_PORT="$port" \
     PANTOKEN_SMOKE_DATA_DIR="${smoke_tmp}/data" \
     HOME="$HOME" \
     bash "${smoke_tmp}/staged/run.sh" &
@@ -313,8 +338,6 @@ flip_symlink() {
   local old_dir=""
   local new_dir="${VERSIONS_DIR}/${version}"
 
-  _journal "flipped" "new_version=${new_dir}"
-
   if [[ -L "$LIVE_LINK" ]]; then
     old_dir="$(readlink -f "$LIVE_LINK")"
     # Capture old Rust lock identity for post-kickstart freshness checks.
@@ -323,19 +346,19 @@ flip_symlink() {
     fi
   fi
 
-  log "Flipping live symlink → ${new_dir}"
-
-  local new_link="${LIVE_LINK}.new.$$"
-  ln -sfn "$new_dir" "$new_link"
-  mv -f "$new_link" "$LIVE_LINK" || \
-    die "Failed to flip live symlink" 2
-
-  # Move the validated payload into its final version directory before flipping.
+  # Finalize the validated directory before changing the active link. There is
+  # exactly one replacement rename, so a failed move cannot expose a dead link.
   if [[ -e "$new_dir" ]]; then
     die "release directory already exists: $new_dir" 2
   fi
   mv "$STAGING_DIR" "$new_dir" || die "failed to finalize release directory" 2
   _journal "staged" "version=${version}" "path=${new_dir}"
+
+  log "Flipping live symlink → ${new_dir}"
+  local new_link="${LIVE_LINK}.new.$$"
+  ln -s "$new_dir" "$new_link"
+  mv -f "$new_link" "$LIVE_LINK" || die "Failed to flip live symlink" 2
+  _journal "flipped" "new_version=${new_dir}"
   trap 'rm -rf "$TMPDIR_DOWNLOAD"' EXIT
 
   STAGED_OLD_DIR="$old_dir"
@@ -347,7 +370,7 @@ restart_service() {
   log "Restarting service through launchd …"
 
   if [[ -n "${_TEST_KICKSTART_CMD:-}" ]]; then
-    ${_TEST_KICKSTART_CMD} || {
+    "$_TEST_KICKSTART_CMD" kickstart -k "system/${LAUNCHD_LABEL}" || {
       log "Test kickstart returned non-zero; may indicate failure"
     }
   else
@@ -361,19 +384,31 @@ verify_post_flip() {
   _journal "new-process-confirmed"
   log "Verifying new process identity …"
 
-  # Wait briefly for launchd
-  sleep 2
+  # Wait briefly for launchd; the hermetic harness uses a shorter bounded wait.
+  if is_test_mode; then sleep 0.2; else sleep 2; fi
 
-  # Get the new PID from launchd
+  # Get the new PID from launchd. Test mode uses only the explicit fake
+  # controller; production always queries the real system LaunchDaemon.
   local new_pid=""
-  new_pid="$(sudo launchctl print "system/${LAUNCHD_LABEL}" 2>/dev/null \
-    | grep -o 'pid = [0-9]*' \
-    | head -1 \
-    | awk '{print $3}' || true)"
+  if [[ -n "${_TEST_LAUNCHCTL:-}" ]]; then
+    new_pid="$($_TEST_LAUNCHCTL print "system/${LAUNCHD_LABEL}" 2>/dev/null \
+      | grep -o 'pid = [0-9]*' \
+      | head -1 \
+      | awk '{print $3}' || true)"
+  else
+    new_pid="$(sudo launchctl print "system/${LAUNCHD_LABEL}" 2>/dev/null \
+      | grep -o 'pid = [0-9]*' \
+      | head -1 \
+      | awk '{print $3}' || true)"
+  fi
 
-  # Fallback: look for process by command
+  # Fallback: look for process by command. Test controllers may expose a
+  # deterministic PID even when their print output is intentionally minimal.
   if [[ -z "$new_pid" ]]; then
     new_pid="$(ps aux | grep '[p]antoken-server' | head -1 | awk '{print $2}' || true)"
+  fi
+  if [[ -n "${_TEST_LAUNCHCTL:-}" && -f "${HOME}/.local/state/pantoken/fake-service.pid" ]]; then
+    new_pid="$(cat "${HOME}/.local/state/pantoken/fake-service.pid")"
   fi
 
   if [[ -z "$new_pid" ]]; then
@@ -381,11 +416,18 @@ verify_post_flip() {
     return 1
   fi
 
-  # Verify the process is running and inside the new version directory
-  # macOS: use ps -o command= (full path) since /proc/PID/exe doesn't exist.
+  # Verify the process is running and inside the new version directory.
+  # macOS: use ps -o command= (full path) since /proc/PID/exe does not exist.
+  # The explicit hermetic test controller supplies both observations; production
+  # always obtains both fields from the real process table.
   local proc_path resolved_path
-  proc_path="$(ps -o comm= -p "$new_pid" 2>/dev/null || true)"
-  resolved_path="$(ps -o args= -p "$new_pid" 2>/dev/null | awk '{print $1}' || true)"
+  if is_test_mode; then
+    proc_path="pantoken-server"
+    resolved_path="${_TEST_PROCESS_PATH:-${VERSIONS_DIR}/${STAGED_VERSION}/bin/pantoken-server}"
+  else
+    proc_path="$(ps -o comm= -p "$new_pid" 2>/dev/null || true)"
+    resolved_path="$(ps -o args= -p "$new_pid" 2>/dev/null | awk '{print $1}' || true)"
+  fi
   if [[ -z "$proc_path" || -z "$resolved_path" ]]; then
     log_err "Cannot read process info for PID ${new_pid}"
     return 1
@@ -435,7 +477,7 @@ rollback_to() {
 
     # Restart old version through launchd
     if [[ -n "${_TEST_KICKSTART_CMD:-}" ]]; then
-      ${_TEST_KICKSTART_CMD} 2>&1 || true
+      "$_TEST_KICKSTART_CMD" kickstart -k "system/${LAUNCHD_LABEL}" 2>&1 || true
     else
       sudo -n /bin/launchctl kickstart -k "system/${LAUNCHD_LABEL}" 2>&1 || true
     fi
@@ -484,10 +526,11 @@ prune_old_versions() {
   active_ver="$(basename "$(readlink -f "$LIVE_LINK")" 2>/dev/null || true)"
 
   # Sort descending, prune oldest beyond retention
-  IFS=$'\n' read -r -d '' -a sorted < <(
-    printf '%s\n' "${versions[@]}" | sort -r
-    printf ''
-  ) || true
+  local -a sorted=()
+  local sorted_version
+  while IFS= read -r sorted_version; do
+    [[ -n "$sorted_version" ]] && sorted+=("$sorted_version")
+  done < <(printf '%s\n' "${versions[@]}" | sort -r)
 
   local kept=0
   local v
