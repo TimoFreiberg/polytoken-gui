@@ -114,6 +114,14 @@
     reconnecting: "reconnecting…",
     disconnected: "offline",
   };
+
+  // Total items behind the context entry (flagged files + jobs + todos) — the
+  // phone shows it as a count bubble on the entry button. Plain totals by design:
+  // no unseen/unread tracking (see docs/PLAN-mobile.md D3); approvals are
+  // deliberately not counted here (they surface in the transcript + bell).
+  const contextCount = $derived(
+    s.flags.length + store.jobs.length + s.todos.length,
+  );
 </script>
 
 <svelte:window onkeydown={onWindowKeydown} />
@@ -225,7 +233,21 @@
         aria-label="Show context panel"
         onclick={() => store.openRightSidebar()}
       >
+        <!-- Desktop: the trailing-edge chevron, same pixel as the panel's collapse
+             control. Phone: a panel glyph + count bubble — the chevron reads as
+             "nudge something in from the edge", which is wrong for a full-screen
+             view, and the badge is the whole point of the entry. CSS swaps them
+             on the 859px breakpoint. -->
         <span class="chevron-mirror"><Chevron open={false} /></span>
+        <span class="ctx-glyph">
+          <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <rect x="3" y="3" width="18" height="18" rx="2" />
+            <line x1="15" y1="3" x2="15" y2="21" />
+          </svg>
+          {#if contextCount > 0}
+            <span class="ctx-badge" data-testid="context-badge">{contextCount}</span>
+          {/if}
+        </span>
       </IconButton>
     {/if}
   </div>
@@ -312,6 +334,38 @@
   .chevron-mirror {
     display: inline-flex;
     transform: scaleX(-1);
+  }
+  /* Context entry: chevron on desktop, panel glyph + count bubble on phone. */
+  .ctx-glyph {
+    display: none;
+    position: relative;
+  }
+  .ctx-badge {
+    position: absolute;
+    top: -7px;
+    right: -9px;
+    min-width: 15px;
+    height: 15px;
+    padding: 0 4px;
+    box-sizing: border-box;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 10px;
+    font-weight: 650;
+    line-height: 1;
+    color: var(--accent-text);
+    background: var(--accent);
+    border-radius: 999px;
+    pointer-events: none;
+  }
+  @media (max-width: 859px) {
+    .chevron-mirror {
+      display: none;
+    }
+    .ctx-glyph {
+      display: inline-flex;
+    }
   }
   .conn {
     display: inline-flex;

@@ -22,12 +22,15 @@ test("the context panel is open by default on desktop", async ({ page }) => {
   );
 });
 
-test("the context panel has no title — just the collapse control", async ({
+test("the context panel shows no title on desktop — just the collapse control", async ({
   page,
 }) => {
+  // The "Context" title exists in the DOM for the phone's full-screen view
+  // (docs/PLAN-mobile.md D2) but must stay HIDDEN on desktop, where the column
+  // mirrors the title-less left sidebar.
   const panel = page.getByTestId("right-sidebar");
   await expect(panel).toHaveAttribute("data-open", "true");
-  await expect(panel).not.toContainText("Context");
+  await expect(panel.getByText("Context")).toBeHidden();
   await expect(
     page.getByRole("button", { name: "Collapse context panel" }),
   ).toBeVisible();

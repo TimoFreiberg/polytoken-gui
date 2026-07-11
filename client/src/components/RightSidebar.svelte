@@ -8,12 +8,14 @@
   import JobDetail from "./JobDetail.svelte";
 
   // The right context panel: flagged files, background jobs, and todos from
-  // the active session (in that order — matches the polytoken TUI). Mirrors the
-  // left Sidebar's drawer pattern (scrim on mobile, fixed column on desktop).
-  // No title label (the left sidebar doesn't have one either) — just the
-  // collapse control, symmetric with the left sidebar's '‹'. While collapsed it's
-  // reopened by ⌘⇧J or the header's expand chevron (StatusHeader), which sits at
-  // the same pixel as this collapse control.
+  // the active session (in that order — matches the polytoken TUI).
+  // Desktop: a fixed column with no title label (the left sidebar doesn't have
+  // one either) — just the collapse control, symmetric with the left sidebar's
+  // '‹'. While collapsed it's reopened by ⌘⇧J or the header's expand chevron
+  // (StatusHeader), which sits at the same pixel as this collapse control.
+  // Phone (≤859px): a FULL-SCREEN context view (not a drawer) — back arrow +
+  // "Context" title up top, opened from the header's badged entry, closed by
+  // the back arrow or the OS back gesture (lib/overlay-history.ts).
 
   const s = $derived(store.session);
   const flags = $derived(s.flags);
@@ -69,14 +71,6 @@
   }
 </script>
 
-{#if open}
-  <button
-    class="scrim"
-    aria-label="Close context panel"
-    onclick={() => store.closeRightSidebar()}
-  ></button>
-{/if}
-
 <aside
   class="right-sidebar"
   data-testid="right-sidebar"
@@ -91,8 +85,13 @@
       aria-label="Collapse context panel"
       onclick={() => store.closeRightSidebar()}
     >
-      <Chevron open={false} />
+      <!-- Desktop: '›' pointing at the edge it collapses to. Phone: mirrored to a
+           '‹' back arrow (the view is full-screen; leading edge, iOS-style). -->
+      <span class="collapse-glyph"><Chevron open={false} /></span>
     </IconButton>
+    <!-- Phone-only (display gated in CSS): full-screen views need a name; the
+         desktop column stays title-less to mirror the left sidebar. -->
+    <span class="panel-title">Context</span>
   </div>
 
   <SidebarResizeHandle
@@ -225,8 +224,8 @@
   .top {
     display: flex;
     align-items: center;
-    /* No title label (mirrors the left Sidebar's .top) — just the collapse
-       control, pinned to the trailing edge. */
+    /* Desktop: no title label (mirrors the left Sidebar's .top) — just the
+       collapse control, pinned to the trailing edge. */
     justify-content: flex-end;
     /* Same box as StatusHeader (height, 16px trailing gutter, centered contents), so
        this collapse chevron and the header's expand chevron occupy the same pixel:
@@ -234,6 +233,15 @@
     min-height: calc(var(--header-h) + env(safe-area-inset-top));
     padding: env(safe-area-inset-top) 16px 0;
     border-bottom: 1px solid var(--border);
+  }
+  .collapse-glyph {
+    display: inline-flex;
+  }
+  .panel-title {
+    display: none;
+    font-size: 14.5px;
+    font-weight: 600;
+    color: var(--text);
   }
   .content {
     flex: 1;
@@ -481,23 +489,21 @@
     text-overflow: ellipsis;
     white-space: nowrap;
   }
-  .scrim {
-    display: none;
-  }
-
-  /* Mobile: slide-in drawer from the right (mirrors left Sidebar's pattern). */
+  /* Phone: a full-screen context view that slides in from the right (an iOS
+     "push", not a drawer — no scrim, nothing peeks out behind it). Stays mounted
+     while closed (translated off-screen) so the slide can animate. */
   @media (max-width: 859px) {
     .right-sidebar {
       display: flex;
       position: fixed;
-      right: 0;
-      top: 0;
-      bottom: 0;
-      z-index: 60;
-      width: min(82vw, 320px);
+      inset: 0;
+      /* Above the app header (z 70) — unlike the left drawer, this is a full-screen
+         view with its own nav bar, so nothing behind it may stay on top. */
+      z-index: 75;
+      width: auto;
+      border-left: none;
       transform: translateX(100%);
-      transition: transform 0.18s ease;
-      box-shadow: -2px 0 12px rgba(0, 0, 0, 0.12);
+      transition: transform 0.22s ease;
     }
     .right-sidebar[data-open="true"] {
       transform: translateX(0);
@@ -505,14 +511,26 @@
     .right-sidebar[data-open="false"] {
       display: flex;
     }
-    .scrim {
+    /* Full-screen nav bar: back arrow at the leading edge, title beside it. */
+    .top {
+      justify-content: flex-start;
+      gap: 2px;
+      padding-left: 8px;
+    }
+    .collapse-glyph {
+      transform: scaleX(-1);
+    }
+    .panel-title {
       display: block;
-      position: fixed;
-      inset: 0;
-      z-index: 59;
-      background: rgba(0, 0, 0, 0.34);
-      border: none;
-      cursor: pointer;
+    }
+    .content {
+      /* Clear the home indicator; the top inset rides on .top's padding. */
+      padding-bottom: calc(8px + env(safe-area-inset-bottom));
+    }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .right-sidebar {
+      transition: none;
     }
   }
 </style>

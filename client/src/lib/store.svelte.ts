@@ -31,6 +31,7 @@ import {
 import { clearToken, getToken, setToken } from "./auth.js";
 import { buildFullHash } from "./build-info.js";
 import { notifyNativeUpdateStarting } from "./native-bridge.js";
+import { overlayHistory, PHONE_MQ } from "./overlay-history.js";
 import { filterSessions } from "./session-filter.js";
 import {
   DEFAULT_RIGHT_SIDEBAR_WIDTH,
@@ -193,7 +194,9 @@ class PantokenStore {
   models = $state<ModelOption[]>([]);
   // Why model discovery produced no usable catalog. Kept separate from `models` so the
   // UI can distinguish an empty/error catalog from a valid list.
-  modelCatalogDiagnostic = $state<ModelCatalogDiagnostic | undefined>(undefined);
+  modelCatalogDiagnostic = $state<ModelCatalogDiagnostic | undefined>(
+    undefined,
+  );
   // Slash commands the focused session offers, for the composer typeahead. Server-
   // authoritative, delivered like `models`; refreshed on session switch (cwd-scoped).
   commands = $state<CommandInfo[]>([]);
@@ -826,7 +829,11 @@ class PantokenStore {
     for (let i = items.length - 1; i >= 0; i--) {
       const it = items[i];
       if (!it) continue;
-      if (it.kind === "user" || (it.kind === "inject" && it.turnBoundary === true)) break;
+      if (
+        it.kind === "user" ||
+        (it.kind === "inject" && it.turnBoundary === true)
+      )
+        break;
       if (it.kind === "assistant") {
         if (it.completedAt) break;
         chars += it.text.length + it.thinking.length;
@@ -2164,32 +2171,44 @@ class PantokenStore {
     disconnect();
   }
   toggleSidebar(): void {
-    this.sidebarOpen = !this.sidebarOpen;
-    persistSidebarOpen(this.sidebarOpen);
+    if (this.sidebarOpen) this.closeSidebar();
+    else this.openSidebar();
   }
   closeSidebar(): void {
     this.sidebarOpen = false;
     persistSidebarOpen(false);
+    overlayHistory.closed("sidebar");
   }
   /** Open the drawer. Pair of closeSidebar; used by the left-edge swipe gesture. */
   openSidebar(): void {
     this.sidebarOpen = true;
     persistSidebarOpen(true);
+    // Phone: the drawer is an overlay — let the back gesture close it. The close
+    // callback skips overlayHistory.closed() (the entry is already popped).
+    overlayHistory.opened("sidebar", () => {
+      this.sidebarOpen = false;
+      persistSidebarOpen(false);
+    });
   }
   /** Toggle the right context panel (flagged files, background jobs, todos). */
   toggleRightSidebar(): void {
-    this.rightSidebarOpen = !this.rightSidebarOpen;
-    persistRightSidebarOpen(this.rightSidebarOpen);
+    if (this.rightSidebarOpen) this.closeRightSidebar();
+    else this.openRightSidebar();
   }
   closeRightSidebar(): void {
     this.rightSidebarOpen = false;
     persistRightSidebarOpen(false);
+    overlayHistory.closed("context");
   }
   /** Open the right context panel. Pair of closeRightSidebar; used by the
    *  edge pop-in arrow shown while it's collapsed. */
   openRightSidebar(): void {
     this.rightSidebarOpen = true;
     persistRightSidebarOpen(true);
+    overlayHistory.opened("context", () => {
+      this.rightSidebarOpen = false;
+      persistRightSidebarOpen(false);
+    });
   }
   setSidebarWidth(width: number): void {
     const sanitized = sanitizeStoredWidth(width);
@@ -2316,7 +2335,10 @@ class PantokenStore {
       this.persistDraftConfig();
       return;
     }
-    send({ type: "sessionAction", action: { kind: "setPermissionMonitor", mode } });
+    send({
+      type: "sessionAction",
+      action: { kind: "setPermissionMonitor", mode },
+    });
   }
 
   /** Toggle the adventurous auto-handoff flag (lets plan mode autonomously start
@@ -2530,34 +2552,44 @@ const SIDEBAR_KEY = "pantoken.sidebarOpen";
  *  client's Retry toast fires on either path without a wire-protocol change. */
 const LEASE_CONFLICT_RE = /another TUI is attached|lease to lapse/;
 
+/** On a phone the drawers are transient overlays: always start closed and never
+ *  persist — a stored "open" (e.g. written on a desktop-width visit before this
+ *  guard existed) must not cold-load a phone with the transcript covered. */
+function isPhoneViewport(): boolean {
+  return typeof window !== "undefined" && window.matchMedia(PHONE_MQ).matches;
+}
+
 /** Default the sidebar open on a desktop-width viewport, closed on a phone (where
- *  it's a drawer); a stored preference wins. Guarded for SSR/test environments. */
+ *  it's a drawer); a stored preference wins on desktop only. Guarded for SSR/test
+ *  environments. */
 function initialSidebarOpen(): boolean {
   if (typeof window === "undefined") return true;
+  if (isPhoneViewport()) return false;
   const stored = localStorage.getItem(SIDEBAR_KEY);
   if (stored !== null) return stored === "1";
   return window.matchMedia("(min-width: 860px)").matches;
 }
 
 function persistSidebarOpen(open: boolean): void {
-  if (typeof window !== "undefined")
-    localStorage.setItem(SIDEBAR_KEY, open ? "1" : "0");
+  if (typeof window === "undefined" || isPhoneViewport()) return;
+  localStorage.setItem(SIDEBAR_KEY, open ? "1" : "0");
 }
 
 const RIGHT_SIDEBAR_KEY = "pantoken.rightSidebarOpen";
 
-/** Same rule as initialSidebarOpen: open on a desktop-width viewport, closed on a
- *  phone (drawer), a stored preference wins. */
+/** Same rule as initialSidebarOpen: open on a desktop-width viewport (stored
+ *  preference wins there), always closed on a phone (full-screen context view). */
 function initialRightSidebarOpen(): boolean {
   if (typeof window === "undefined") return true;
+  if (isPhoneViewport()) return false;
   const stored = localStorage.getItem(RIGHT_SIDEBAR_KEY);
   if (stored !== null) return stored === "1";
   return window.matchMedia("(min-width: 860px)").matches;
 }
 
 function persistRightSidebarOpen(open: boolean): void {
-  if (typeof window !== "undefined")
-    localStorage.setItem(RIGHT_SIDEBAR_KEY, open ? "1" : "0");
+  if (typeof window === "undefined" || isPhoneViewport()) return;
+  localStorage.setItem(RIGHT_SIDEBAR_KEY, open ? "1" : "0");
 }
 
 const SIDEBAR_WIDTH_KEY = "pantoken.sidebarWidth";
@@ -2566,7 +2598,10 @@ const RIGHT_SIDEBAR_WIDTH_KEY = "pantoken.rightSidebarWidth";
 function initialSidebarWidth(): number {
   if (typeof window === "undefined") return DEFAULT_SIDEBAR_WIDTH;
   try {
-    return parseStoredWidth(localStorage.getItem(SIDEBAR_WIDTH_KEY), DEFAULT_SIDEBAR_WIDTH);
+    return parseStoredWidth(
+      localStorage.getItem(SIDEBAR_WIDTH_KEY),
+      DEFAULT_SIDEBAR_WIDTH,
+    );
   } catch {
     return DEFAULT_SIDEBAR_WIDTH;
   }
@@ -2575,7 +2610,10 @@ function initialSidebarWidth(): number {
 function initialRightSidebarWidth(): number {
   if (typeof window === "undefined") return DEFAULT_RIGHT_SIDEBAR_WIDTH;
   try {
-    return parseStoredWidth(localStorage.getItem(RIGHT_SIDEBAR_WIDTH_KEY), DEFAULT_RIGHT_SIDEBAR_WIDTH);
+    return parseStoredWidth(
+      localStorage.getItem(RIGHT_SIDEBAR_WIDTH_KEY),
+      DEFAULT_RIGHT_SIDEBAR_WIDTH,
+    );
   } catch {
     return DEFAULT_RIGHT_SIDEBAR_WIDTH;
   }

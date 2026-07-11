@@ -27,6 +27,7 @@
   import { STEP as FONT_STEP } from "./lib/font-scale.js";
   import { edgeSwipe } from "./lib/edge-swipe.js";
   import { createEdgeSwipe } from "./lib/edge-swipe.svelte.js";
+  import { PHONE_MQ } from "./lib/overlay-history.js";
   import type { PermissionMonitorMode } from "@pantoken/protocol";
 
   // Dev affordance: ?dev shows buttons that drive the mock to any UI state, so the
@@ -54,7 +55,6 @@
   // just fight the drawer's own scrim/scroll). Tracks the same 859px breakpoint the
   // drawer CSS uses.
   const edge = createEdgeSwipe();
-  const PHONE_MQ = "(max-width: 859px)";
   const edgeEnabled = $derived(
     store.sidebarOpen === false &&
       typeof window !== "undefined" &&

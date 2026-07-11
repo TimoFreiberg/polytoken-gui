@@ -272,6 +272,26 @@ ScheduleWakeup/cron per the times given at kickoff.
 
 ## PROGRESS (live, newest first)
 
+- 2026-07-11 02:30 — **Gate G1 green → Phase 1 committed.** Clean full e2e:
+  390 passed; the only real failures were a pre-existing tooltip regression
+  from the evening commit `ozor` ("Fix sidebar e2e startup and resizing"
+  accidentally flipped Tooltip's hover path to `begin(el, false)`, killing the
+  strip/restore contract) — fixed in its own commit, tooltip specs green —
+  plus one known-flaky sidebar-drafts spec (passed on retry, untouched area).
+- 2026-07-11 02:15 — **Phase 1 implemented + visually verified**, full e2e
+  rerun in flight. What landed: `lib/overlay-history.ts` (+8 unit tests) —
+  overlay ↔ browser-history coupling so back gesture closes overlays;
+  store: sidebar open/close routed through it, phone never restores/persists
+  drawer state; RightSidebar = full-screen Context view on phone (z-75 above
+  the header, back arrow + title, safe-areas, reduced-motion); StatusHeader =
+  panel glyph + plain-total badge on phone (desktop chevron unchanged);
+  new `context-screen.mobile.e2e.ts` (6 specs); updated `sidebar-resize`/
+  `right-sidebar` specs to the new contract. Verified in preview at 375px and
+  desktop: badge=9 with the context fixture, full-screen view renders, browser
+  back closes it, desktop docked panel identical to before. First e2e run:
+  386 passed, 3 fails — all understood (badge count fixed 8→9, hidden-title
+  assertion updated, subpixel rounding) — plus HMR-interference flakes from
+  live-editing during the run; clean rerun started with no concurrent edits.
 - 2026-07-11 01:40 — Wakeup 1. Session 1 was cut short by the usage limit
   right after the plan-doc edits; no implementation had started. Now: commit
   this doc, env prep (bun install / cargo build / baseline e2e), then Phase 1.
