@@ -28,11 +28,16 @@ test("the context view opens full-screen with a title and back arrow", async ({
   const panel = page.getByTestId("right-sidebar");
   await expect(panel).toHaveAttribute("data-open", "true");
 
-  // Full-screen: the panel covers the viewport (not a 320px drawer).
+  // Full-screen: the panel covers the viewport (not a 320px drawer). Polled —
+  // the view slides in over 0.22s, so an immediate boundingBox can catch it
+  // mid-transform.
   const viewport = page.viewportSize()!;
-  const box = (await panel.boundingBox())!;
-  expect(box.width).toBe(viewport.width);
-  expect(box.height).toBe(viewport.height);
+  await expect
+    .poll(async () => {
+      const box = await panel.boundingBox();
+      return box && { w: Math.round(box.width), h: Math.round(box.height) };
+    })
+    .toEqual({ w: viewport.width, h: viewport.height });
 
   // Full-screen views carry a name + a back affordance.
   await expect(panel.getByText("Context")).toBeVisible();
