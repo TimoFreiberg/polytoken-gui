@@ -183,11 +183,13 @@ impl PushService {
         if subs.is_empty() {
             return 0;
         }
-        // C1: PushNotification is all String/Option<String>, so serde_json
-        // cannot fail — expect rather than silently substituting an empty
-        // payload (which would send a corrupted notification).
-        let payload = serde_json::to_vec(n)
-            .expect("PushNotification serialization is infallible (all String fields)");
+        // C1: PushNotification contains String, Option<String>, and Option<u32>
+        // fields, all of which are infallibly serializable by serde_json — expect
+        // rather than silently substituting an empty payload (which would send a
+        // corrupted notification).
+        let payload = serde_json::to_vec(n).expect(
+            "PushNotification serialization is infallible (String, Option<String>, and Option<u32> fields)",
+        );
         let client = HyperWebPushClient::new();
         let partial = self.sig_builder.clone();
         let subject = self.vapid_subject.clone();

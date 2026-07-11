@@ -309,7 +309,8 @@ class PantokenStore {
     thinking?: string;
     /** Facet to start the session in (undefined = the daemon's default, execute). */
     facet?: string;
-    permissionMonitor?: PermissionMonitorMode; // undefined/"standard" = default
+    /** Omit to use the daemon/global default. */
+    permissionMonitor?: PermissionMonitorMode;
   } | null>(null);
   // A newSession prompt was just submitted and we're awaiting the new session's first
   // authoritative seed from the server (session warm-up can take a beat). Holds the

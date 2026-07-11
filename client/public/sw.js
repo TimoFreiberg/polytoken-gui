@@ -11,12 +11,12 @@ self.addEventListener("fetch", () => {
 });
 
 // Web Push: deliver a notification even when every tab is closed. Payload is the
-// JSON the server sends in PushService.sendToAll ({title, body, tag, url}).
+// JSON the server sends in PushService.sendToAll ({title, body, tag, url, badge}).
 //
 // Foreground suppression: if a pantoken window is already focused/visible, the user is
 // looking at the app — an OS notification would be redundant (and on desktop it
-// double-buzzes alongside the in-tab notify.ts path and the terminal pi notify
-// extension). So when foreground we SKIP the OS notification and let the live WS
+// double-buzzes alongside the in-tab notify.ts path and other in-app reactions).
+// So when foreground we SKIP the OS notification and let the live WS
 // connection drive any in-app reaction: the focused client already receives the
 // underlying agent events and runs notify.ts itself. We also postMessage the payload
 // to open clients as a forward-looking hook — but note NO client registers a
