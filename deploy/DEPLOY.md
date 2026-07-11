@@ -1,109 +1,128 @@
-# Deploying pantoken to the Mac Mini ("remote-pantoken")
+# Pantoken Mac Mini deployment
 
-Push `main` → it's live on the Mac Mini within ~60s, and the service self-restarts on
-crash or (headless) reboot. Pantoken runs as one loopback-bound process, reached over your
-tailnet via `tailscale serve` (which terminates TLS). No public exposure.
+The Mini runs the headless Rust `pantoken-server` directly as one system
+LaunchDaemon. It does not host a desktop `.app`, a Git checkout, Bun, Cargo, a
+source poller, or an automatic release fetcher.
 
+## Runtime layout
+
+```text
+~/pantoken-live -> ~/pantoken-versions/<version>/
+~/pantoken-versions/<version>/{VERSION,BUILD_SHA,run.sh,update.sh}
+~/pantoken-versions/<version>/bin/pantoken-server
+~/pantoken-versions/<version>/client-dist/
+~/.local/state/pantoken/pantoken.env   # user-owned, mode 0600
+~/.local/libexec/pantoken-tar-validate # trusted root-owned validator
 ```
-  laptop: jj git push ─▶ tangled.org ─(git fetch ~60s)─▶ com.pantoken.deploy (poller)
-                                                              │ build + smoke + flip
-  phone/laptop ─tailnet(TLS)─▶ tailscale serve ─▶ 127.0.0.1:8787 ◀── com.pantoken.server
-```
 
-## How it works
+The rendered `/Library/LaunchDaemons/com.pantoken.server.plist` runs
+`~/pantoken-live/run.sh` as the target user with `KeepAlive` and `RunAtLoad`.
+It fixes `PANTOKEN_DATA_DIR` to `~/.local/state/pantoken`, binds `127.0.0.1:8787`,
+and sets `PANTOKEN_CLIENT_DIST` to the active release. Tailscale Serve remains
+unchanged and must proxy `/` to `http://127.0.0.1:8787`.
 
-- **Blue-green slots.** `~/pantoken-blue` and `~/pantoken-green` are git clones; `~/pantoken-live`
-  is a symlink to whichever is active. Each deploy builds + smoke-tests the *inactive*
-  slot and only flips the symlink if smoke passes — a bad build never touches the
-  running slot. The post-flip `/health` check rolls back automatically if the new slot
-  won't come up.
-- **Two system LaunchDaemons** (in `/Library/LaunchDaemons`, running as your user via
-  `UserName`): `com.pantoken.server` (`KeepAlive`) and `com.pantoken.deploy` (`StartInterval`
-  60). Daemons, not per-user LaunchAgents, so both start at boot with **nobody logged
-  in** — the Mini runs and reboots headlessly.
-- **Sudo-free deploys.** Because the server runs as *your* user, the poller restarts it
-  with a plain `kill` (pid recorded by `run.sh`) and `KeepAlive` respawns it from the
-  flipped slot. Only the one-time install and rare plist edits need sudo.
-- **Secrets** live in `~/.local/state/pantoken/pantoken.env` (chmod 600), outside both slots,
-  alongside pantoken's existing VAPID key. `run.sh` sources it. Nothing secret is committed.
+## One-time bootstrap
 
-## One-time setup on the Mac Mini
+Build the checked-in tar validator on the trusted macOS arm64 host. Install it
+with the operator-supplied digest; the bootstrap computes the digest itself:
 
 ```bash
-# 0. SSH: a passphraseless deploy key authorized on tangled.org, wired in ~/.ssh/config
-#    for the tangled host. A boot-time daemon has no ssh-agent/keychain, so the key
-#    must be usable non-interactively. Confirm:  GIT_SSH_COMMAND='ssh -o BatchMode=yes' \
-#      git -C ~/src/pantoken fetch origin main
-
-# 1. Create the slots + symlink and build blue (run as you, from any pantoken checkout):
-scripts/deploy-ctl.sh setup-live
-
-# 2. Secrets file:
-mkdir -p ~/.local/state/pantoken
-cat > ~/.local/state/pantoken/pantoken.env <<'EOF'
-PANTOKEN_TOKEN=__paste_openssl_rand_hex_16__
-PANTOKEN_VAPID_SUBJECT=https://<mac-mini>.<tailnet>.ts.net
-# ANTHROPIC_API_KEY=...        # any creds pi needs at runtime (no login keychain in a daemon)
-# PANTOKEN_VERIFY_SIGNATURES=true # opt in to commit-signature checks (see scripts/allowed-signers)
-EOF
-chmod 600 ~/.local/state/pantoken/pantoken.env
-openssl rand -hex 16   # paste into PANTOKEN_TOKEN above
-
-# 3. Install both daemons (asks for sudo for the launchctl/cp bits only — do NOT run
-#    the whole command under sudo):
-scripts/deploy-ctl.sh install
-
-# 4. Expose over the tailnet (proxies WebSocket upgrades, so /ws works):
-tailscale serve --bg 8787
-tailscale serve status
+sudo deploy/bootstrap-tar-validator.sh \
+  --binary /path/to/pantoken-tar-validate \
+  --sha256 <64-lowercase-hex-digest>
 ```
 
-## Day-to-day
+Prepare a signed, validated headless payload, then bootstrap the version as the
+runtime user. The bootstrap renders/lints the plist and uses sudo only for the
+system plist and launchctl bootstrap:
 
 ```bash
-# Just push. The poller picks it up within ~60s.
-jj bookmark set main -r @- && jj git push
-
-# Want it now instead of waiting for the timer (run from your laptop):
-PANTOKEN_DEPLOY_HOST=<mac-mini>.<tailnet>.ts.net bun run deploy:now
+bash deploy/bootstrap-headless.sh <version> /path/to/extracted-payload --skip-daemon
+# review the rendered plist and env file, then:
+bash deploy/bootstrap-headless.sh <version> /path/to/extracted-payload
 ```
 
-## Connect from a device
+Create `~/.local/state/pantoken/pantoken.env` with only strict unquoted records,
+for example:
 
-Open once with the token; it's saved to localStorage and scrubbed from the URL:
+```text
+PANTOKEN_TOKEN=<bearer-token>
+PANTOKEN_VAPID_SUBJECT=mailto:you@example.com
+PANTOKEN_POLYTOKEN_BIN=/absolute/path/to/polytoken
+XDG_CONFIG_HOME=/Users/timo/.config
+XDG_DATA_HOME=/Users/timo/.local/share
 ```
-https://<mac-mini>.<tailnet>.ts.net/?token=<your-token>
+
+The file must be user-readable only (`0600`). `PANTOKEN_DATA_DIR` is not an
+allowed env-file setting; production state is always the fixed path above.
+The live driver requires the installed `polytoken` daemon version 0.5.0+ and
+its bearer-token credential/config contract. Verify that prerequisite and run a
+controlled live-driver interaction before removing any legacy state.
+
+Install the narrowly scoped restart authorization only through the reviewed
+privileged bootstrap path. The updater must be able to pass:
+
+```bash
+sudo -n -l /bin/launchctl kickstart -k system/com.pantoken.server
 ```
-Then "Add to Home Screen" to install the PWA. Subsequent visits need no token.
 
-## Operations (`scripts/deploy-ctl.sh …`, run as you)
+## Release preparation and updates
 
-| Command      | What it does                                               |
-|--------------|------------------------------------------------------------|
-| `status`     | daemons loaded? `/health` up? live slot + recent deploys   |
-| `logs`       | tail server (`pantoken.{out,err}.log`) + `pantoken-deploy.log`   |
-| `restart`    | kill the server so `KeepAlive` respawns it (no sudo)       |
-| `reinstall`  | re-render + re-bootstrap after editing a **plist** (sudo)  |
-| `uninstall`  | bootout + remove both daemons (sudo)                       |
-| `render <server\|deploy>` | print a rendered plist (debug)                |
+Desktop and headless artifacts share signed `vMAJOR.MINOR.PATCH` tags hosted at
+`TimoFreiberg/polytoken-gui`; the code remote is `TimoFreiberg/pantoken`.
+The headless release is
+`pantoken-headless-macos-aarch64.tar.gz` plus its minisign `.sig`.
 
-Deploy event log (machine-readable): `~/Library/Logs/pantoken-deploy-events.jsonl`.
-Force a redeploy of current `origin/main`: `~/pantoken-live/scripts/auto-deploy.sh --force`.
+Updates are manual and signed. Run the updater from the active release:
 
-## Known costs
+```bash
+~/pantoken-live/update.sh
+~/pantoken-live/update.sh v1.2.3   # explicit recovery tag
+```
 
-- A deploy restarts the process → it drops live WS connections + in-memory warm pi
-  sessions; an in-flight turn can be interrupted. The reconnecting client recovers and
-  pi persists sessions to disk, but a mid-stream turn is the real cost. (No graceful
-  drain yet.)
-- The smoke test runs the **mock** driver, so a real-driver-only failure slips past it;
-  the post-flip `/health` gate + auto-rollback is the backstop.
+The updater acquires an atomic lock, downloads fixed canonical URLs, verifies
+minisign before extraction, validates tar headers with the separately trusted
+validator, stages and mock-smokes the payload, atomically flips the live link,
+and restarts only through the exact launchd kickstart command. It requires a
+fresh process identity/path plus healthy `/health` and HTML. A failure after the
+flip restores the prior release, restarts it, and requires health before
+returning. It retains the active and previous releases and prunes only older
+known version directories after a successful commit. The journal in
+`~/.local/state/pantoken/update-journal.jsonl` records transaction and rollback
+states.
 
-## Security notes
+## Verification and platform gate
 
-- Tailscale is the network boundary (only your tailnet devices reach the box); the
-  token is defense-in-depth on top of that.
-- `PANTOKEN_HOST` defaults to `127.0.0.1` — not `0.0.0.0`. Only bind `0.0.0.0` for bare-LAN
-  use without Tailscale.
-- `/debug/*` requires `?token=` when a token is set; `PANTOKEN_DEBUG=0` disables it.
-- pi runs with your user's permissions — sandboxing/approval posture is OQ3/OQ4.
+Before enabling updates, run the real macOS gate with disposable labels and
+retain its evidence:
+
+```bash
+bash deploy/launchd-platform-gate.sh --evidence ~/pantoken-launchd-gate
+```
+
+It must pass on macOS arm64; fake controllers are not evidence for the launchd
+acceptance criteria. After bootstrap, inspect:
+
+```bash
+launchctl print system/com.pantoken.server
+curl -fsS http://127.0.0.1:8787/health
+curl -fsS http://127.0.0.1:8787/
+readlink ~/pantoken-live
+```
+
+Capture read-only Tailscale Serve status before and after cutover and abort
+without mutation if `/` is not exactly proxied to `127.0.0.1:8787`. Verify the
+real polytoken driver, authenticated WebSocket/session discovery, and one
+bounded non-destructive interaction before deleting old production state.
+
+## Rollback
+
+Use the retained prior version or an explicit known-good tag:
+
+```bash
+~/pantoken-live/update.sh v1.2.2
+```
+
+Never kill the server by PID and never run the updater as root. If an update or
+rollback fails, preserve the journal and both release directories for diagnosis;
+repair launchd authorization or restore a known-good tag manually before cleanup.

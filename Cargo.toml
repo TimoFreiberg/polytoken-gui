@@ -4,6 +4,7 @@ members = [
     "server-rs/pantoken-protocol",
     "server-rs/pantoken-daemon-types",
     "server-rs/pantoken-server",
+    "server-rs/pantoken-tar-validate",
 ]
 resolver = "2"
 

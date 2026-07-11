@@ -26,13 +26,49 @@
 import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import {
+  DESKTOP_ASSET,
+  DESKTOP_SIGNATURE,
+  RELEASE_REPO,
+  assertReleaseTag,
+  desktopUpdateEndpoint,
+  releaseAssetUrl,
+} from "./release-constants";
 
 const repoRoot = resolve(import.meta.dir, "../..");
-const bundleDir = join(repoRoot, "target", "release", "bundle", "macos");
+const bundleDir = process.env.PANTOKEN_RELEASE_BUNDLE_DIR
+  ? resolve(repoRoot, process.env.PANTOKEN_RELEASE_BUNDLE_DIR)
+  : join(repoRoot, "target", "release", "bundle", "macos");
 
 function fail(msg: string): never {
   console.error(`publish: ${msg}`);
   process.exit(1);
+}
+
+async function sha256(path: string): Promise<string> {
+  const bytes = await Bun.file(path).arrayBuffer();
+  const digest = await crypto.subtle.digest("SHA-256", bytes);
+  return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+async function validateRetainedHeadlessBundle(dir: string, tag: string, version: string): Promise<void> {
+  const archive = join(dir, "pantoken-headless-macos-aarch64.tar.gz");
+  const signature = `${archive}.sig`;
+  const metadataPath = join(dir, "release-metadata.json");
+  for (const path of [archive, signature, metadataPath]) if (!existsSync(path)) fail(`retained headless asset missing: ${path}`);
+  const metadata = await Bun.file(metadataPath).json() as { tag?: string; version?: string; buildSha?: string; releaseRepo?: string; assetSha256?: Record<string, string> };
+  if (metadata.tag !== tag || metadata.version !== version || metadata.releaseRepo !== RELEASE_REPO)
+    fail("retained release metadata disagrees with desktop artifact/tag/release host");
+  if (!/^[0-9a-f]{40}$/.test(metadata.buildSha ?? "")) fail("retained metadata has invalid buildSha");
+  const expected = metadata.assetSha256 ?? {};
+  for (const [name, path] of [["headlessAsset", archive], ["headlessSignature", signature]] as const) {
+    if (expected[name] !== await sha256(path)) fail(`retained metadata digest mismatch for ${name}`);
+  }
+  const validator = process.env.PANTOKEN_TAR_VALIDATOR;
+  if (validator) {
+    const checked = await capture([validator, archive]);
+    if (checked.code !== 0) fail(`retained headless archive failed tar validation: ${checked.stderr}`);
+  }
 }
 
 interface CaptureResult {
@@ -89,20 +125,20 @@ function parseArgs(argv: string[]): {
   const dryRun = argv.includes("--dry-run");
   const skipBuild = argv.includes("--skip-build");
   const flagIdx = argv.indexOf("--repo");
-  const repo =
+  const requestedRepo =
     (flagIdx >= 0 ? argv[flagIdx + 1] : undefined) ??
     process.env.PANTOKEN_RELEASE_REPO ??
-    "";
-  if (!/^[\w.-]+\/[\w.-]+$/.test(repo)) {
-    fail(
-      "no release repo. Pass --repo <owner/name> or set PANTOKEN_RELEASE_REPO — the " +
-        "public GitHub repo that hosts release artifacts (not necessarily the code remote).",
-    );
-  }
+    RELEASE_REPO;
+  if (!/^[\w.-]+\/[\w.-]+$/.test(requestedRepo))
+    fail(`invalid release repo '${requestedRepo}'`);
+  if (requestedRepo !== RELEASE_REPO)
+    fail(`release repo must be canonical ${RELEASE_REPO}, got ${requestedRepo}`);
+  const repo = requestedRepo;
   const tagIdx = argv.indexOf("--tag-must-match");
   const mustMatchTag = tagIdx >= 0 ? argv[tagIdx + 1] : undefined;
   if (tagIdx >= 0 && !mustMatchTag)
     fail("--tag-must-match needs a value (the pushed git tag, e.g. v0.2.1)");
+  if (mustMatchTag) assertReleaseTag(mustMatchTag);
   return { repo, dryRun, skipBuild, mustMatchTag };
 }
 
@@ -137,8 +173,11 @@ if (import.meta.main) {
   );
 
   // ── preflight ──
-  // A token env (Actions sets GH_TOKEN/GITHUB_TOKEN) authenticates gh on its own;
-  // `gh auth status` only interrogates interactive logins, so skip it there.
+  // Real publication must use the explicitly provisioned release-host token. Never
+  // silently fall back to the code repository's GITHUB_TOKEN.
+  if (!dryRun && !process.env.GH_TOKEN) {
+    fail("GH_TOKEN must be the explicit PANTOKEN_RELEASE_TOKEN release-host credential");
+  }
   if (!process.env.GH_TOKEN && !process.env.GITHUB_TOKEN) {
     const gh = await capture(["gh", "auth", "status"]);
     if (gh.code !== 0 && !dryRun) {
@@ -231,7 +270,7 @@ if (import.meta.main) {
     pub_date: new Date().toISOString(),
     platforms: {
       [platformKey()]: {
-        url: `https://github.com/${repo}/releases/download/${tag}/Pantoken.app.tar.gz`,
+        url: releaseAssetUrl(tag, DESKTOP_ASSET),
         signature,
       },
     },
@@ -240,9 +279,9 @@ if (import.meta.main) {
   await Bun.write(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
 
   const head = await capture(["git", "-C", repoRoot, "rev-parse", "HEAD"]);
-  const sha = head.code === 0 ? head.stdout.trim().slice(0, 12) : "unknown";
-  const endpoint = `https://github.com/${repo}/releases/latest/download/latest.json`;
-
+  const sha = head.code === 0 ? head.stdout.trim() : "unknown";
+  const endpoint = desktopUpdateEndpoint();
+  if (skipBuild) await validateRetainedHeadlessBundle(bundleDir, tag, version);
   console.log(`\nrelease ${tag} → ${repo}`);
   console.log(`  bundle:   ${tar}`);
   console.log(`  manifest: ${manifestPath}`);
@@ -253,6 +292,8 @@ if (import.meta.main) {
     console.log("[dry-run] would `gh release create` with the assets above");
     process.exit(0);
   }
+  if (!process.env.GH_TOKEN)
+    fail("missing explicit release-host token before any gh network command");
 
   // ── refuse collisions, then publish ──
   const existing = await capture([
@@ -284,11 +325,13 @@ if (import.meta.main) {
     tar,
     sig,
     manifestPath,
+    join(bundleDir, "pantoken-headless-macos-aarch64.tar.gz"),
+    join(bundleDir, "pantoken-headless-macos-aarch64.tar.gz.sig"),
   ]);
   console.log(
-    `\npublished ${tag}. Running apps poll ${endpoint} and update within a minute.\n` +
-      `First install on a new machine (curl sets no quarantine xattr — a BROWSER\n` +
-      `download of an ad-hoc-signed app gets Gatekeeper's "damaged" refusal):\n` +
-      `  curl -sSL https://github.com/${repo}/releases/latest/download/Pantoken.app.tar.gz | tar xz -C /Applications`,
+    `\npublished ${tag}. Desktop apps poll ${endpoint}; the headless service uses the ` +
+      `${DESKTOP_ASSET} release asset alongside this bundle.\n` +
+      `First install (curl sets no quarantine xattr):\n` +
+      `  curl -sSL ${releaseAssetUrl(tag, DESKTOP_ASSET)} | tar xz -C /Applications`,
   );
 }

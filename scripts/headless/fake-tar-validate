@@ -1,0 +1,42 @@
+#!/usr/bin/env bash
+# ─── Fake tar validator for updater tests ──────────────────────────
+# Always succeeds unless $FAKE_TAR_VALIDATE_REJECT=1 is set.
+# Records invocations to $FAKE_TAR_VALIDATE_LOG.
+# ───────────────────────────────────────────────────────────────────
+set -euo pipefail
+
+FAKE_TAR_VALIDATE_LOG="${FAKE_TAR_VALIDATE_LOG:-/tmp/fake-tar-validate.log}"
+FAKE_TAR_VALIDATE_REJECT="${FAKE_TAR_VALIDATE_REJECT:-0}"
+FAKE_TAR_VALIDATE_EXPECT_SHASUM="${FAKE_TAR_VALIDATE_EXPECT_SHASUM:-}"
+
+ARCHIVE="${1:-}"
+
+mkdir -p "$(dirname "$FAKE_TAR_VALIDATE_LOG")"
+{
+  printf 'invocation ts=%d archive=%s reject=%s\n' \
+    "$(date +%s)" "${ARCHIVE:-}" "${FAKE_TAR_VALIDATE_REJECT}" >> "$FAKE_TAR_VALIDATE_LOG"
+}
+
+# If we expect a specific SHA and don't get a matching file, reject
+if [[ -n "$FAKE_TAR_VALIDATE_EXPECT_SHASUM" && ! -f "$ARCHIVE" ]]; then
+  echo "fake-tar-validate: archive not found" >&2
+  exit 2
+fi
+
+# Digest record check
+DIGEST_RECORD="${0}.sha256"
+if [[ -f "$DIGEST_RECORD" ]]; then
+  expected="$(tr -d '[:space:]' < "$DIGEST_RECORD")"
+  actual="$(shasum -a 256 "$0" | awk '{print $1}')"
+  if [[ "$expected" =~ ^[0-9a-f]{64}$ && "$actual" != "$expected" ]]; then
+    echo "fake-tar-validate: digest mismatch" >&2
+    exit 2
+  fi
+fi
+
+if [[ "$FAKE_TAR_VALIDATE_REJECT" == "1" ]]; then
+  echo "fake-tar-validate: rejected" >&2
+  exit 3
+fi
+
+exit 0

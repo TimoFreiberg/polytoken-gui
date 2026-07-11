@@ -36,6 +36,8 @@ static CHECK_IN_FLIGHT: AtomicBool = AtomicBool::new(false);
 /// not the code remote. `latest` always serves the newest release's manifest.
 const DEFAULT_ENDPOINT: &str =
     "https://github.com/TimoFreiberg/polytoken-gui/releases/latest/download/latest.json";
+// Keep this literal synchronized with scripts/desktop/release-constants.ts and
+// desktop/tauri.conf.json; the release-host is not the code remote.
 
 /// Endpoint resolution: PANTOKEN_SHELL_UPDATE_URL env (the literal `off` disables checks
 /// entirely — hermetic test runs), then a `shell-update-url` file in the data dir

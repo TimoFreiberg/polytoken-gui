@@ -1,0 +1,13 @@
+[package]
+name = "pantoken-tar-validate"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+
+[[bin]]
+name = "pantoken-tar-validate"
+path = "src/main.rs"
+
+[dependencies]
+flate2 = { workspace = true }
+tar = "0.4"

@@ -1,0 +1,42 @@
+#!/usr/bin/env bash
+# ─── Fake minisign for updater tests ──────────────────────────────
+# When FAKESIGN_REJECT=1, always fails. Otherwise succeeds.
+# Records invocations to $FAKESIGN_LOG.
+# ───────────────────────────────────────────────────────────────────
+set -euo pipefail
+
+FAKESIGN_LOG="${FAKESIGN_LOG:-/tmp/fakesign.log}"
+FAKESIGN_REJECT="${FAKESIGN_REJECT:-0}"
+FAKESIGN_PUBLIC_KEY="${FAKESIGN_PUBLIC_KEY:-}"
+
+# Parse flags: -V -m <file> -x <sig> -p <key> (ignore key, accept all unless REJECT)
+MODE=""
+MARKER_FILE=""
+SIGNATURE_FILE=""
+KEY_FILE=""
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    -V) MODE="verify" ;;
+    -m) MARKER_FILE="$2"; shift ;;
+    -x) SIGNATURE_FILE="$2"; shift ;;
+    -p) KEY_FILE="$2"; shift ;;
+    *) ;;
+  esac
+  shift
+done
+
+# Record invocation
+mkdir -p "$(dirname "$FAKESIGN_LOG")"
+{
+  printf 'invocation ts=%d mode=%s marker=%s signature=%s reject=%s\n' \
+    "$(date +%s)" "${MODE:-none}" "${MARKER_FILE:-}" "${SIGNATURE_FILE:-}" "${FAKESIGN_REJECT}"
+} >> "$FAKESIGN_LOG"
+
+if [[ "$FAKESIGN_REJECT" == "1" ]]; then
+  echo "fakesign: REJECTED" >&2
+  exit 1
+fi
+
+# Accept all — in test mode the real archive is signed locally or we don't care
+exit 0

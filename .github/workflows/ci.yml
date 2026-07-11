@@ -173,11 +173,13 @@ jobs:
       - run: cargo test -p pantoken-protocol -p pantoken-daemon-types -p pantoken-server
 
   # Tag pushes only (scripts/desktop/release.ts creates them): prepare the signed
-  # bundled .app in parallel with the gates, then publish only after those gates pass.
+  # desktop and headless release bundle in parallel with the gates, then publish only
+  # after those gates pass. Releases live in TimoFreiberg/polytoken-gui, while this
+  # checkout's code remote is TimoFreiberg/pantoken.
   # The minisign key comes from the TAURI_SIGNING_PRIVATE_KEY Actions secret
   # (one-time setup: gh secret set TAURI_SIGNING_PRIVATE_KEY < ~/.tauri/pantoken-shell.key).
   release-prepare:
-    name: release — prepare signed app
+    name: release — prepare signed desktop + headless artifacts
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: macos-14 # arm64 → the darwin-aarch64 artifact installed apps expect
     timeout-minutes: 40
@@ -194,23 +196,53 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: .
-      - name: Build signed release artifacts
+      - name: Install minisign
+        run: brew install minisign
+      - name: Check minisign
+        run: minisign -V
+      - name: Build signed desktop release artifacts
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ""
+          PANTOKEN_BUILD_SHA: ${{ github.sha }}
         run: >
           bun scripts/desktop/publish.ts
           --dry-run
-          --repo ${{ github.repository }}
+          --repo TimoFreiberg/polytoken-gui
           --tag-must-match "${{ github.ref_name }}"
+      - name: Build headless release artifact
+        env:
+          PANTOKEN_BUILD_SHA: ${{ github.sha }}
+          PANTOKEN_RELEASE_BUILD: "1"
+        run: bun scripts/headless/build.ts --tag "${{ github.ref_name }}"
+      - name: Install trusted tar validator for preparation
+        run: test -x target/release/pantoken-tar-validate
+      - name: Validate headless artifact
+        env:
+          PANTOKEN_UPDATE_TEST_MODE: "1"
+          PANTOKEN_TAR_VALIDATOR: ${{ github.workspace }}/target/release/pantoken-tar-validate
+        run: bun scripts/headless/validate-artifact.ts target/release/headless/pantoken-headless-macos-aarch64.tar.gz
+      - name: Smoke-test compiled headless artifact
+        run: bun scripts/headless/smoke-test.ts target/release/headless/payload
+      - name: Mandatory macOS launchd platform gate
+        run: |
+          set -e
+          bash deploy/launchd-platform-gate.sh --evidence "$RUNNER_TEMP/launchd-gate-evidence"
+      - name: Assemble retained release bundle
+        run: |
+          set -e
+          mkdir -p target/release/release-bundle
+          cp target/release/bundle/macos/Pantoken.app.tar.gz target/release/release-bundle/
+          cp target/release/bundle/macos/Pantoken.app.tar.gz.sig target/release/release-bundle/
+          cp target/release/bundle/macos/latest.json target/release/release-bundle/
+          cp target/release/headless/pantoken-headless-macos-aarch64.tar.gz target/release/release-bundle/
+          cp target/release/headless/pantoken-headless-macos-aarch64.tar.gz.sig target/release/release-bundle/
+          cp target/release/headless/release-metadata.json target/release/release-bundle/
       - name: Upload signed release artifacts
         uses: actions/upload-artifact@v4
         with:
           name: signed-release-artifacts
-          path: |
-            target/release/bundle/macos/Pantoken.app.tar.gz
-            target/release/bundle/macos/Pantoken.app.tar.gz.sig
-            target/release/bundle/macos/latest.json
+          path: target/release/release-bundle
           retention-days: 1
 
   release:
@@ -220,7 +252,7 @@ jobs:
     runs-on: macos-14 # publish.ts validates the macOS bundle with plutil
     timeout-minutes: 10
     permissions:
-      contents: write
+      contents: read
     steps:
       - uses: actions/checkout@v4
       - uses: oven-sh/setup-bun@v2
@@ -235,14 +267,26 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: signed-release-artifacts
-          path: target/release/bundle/macos
+          path: target/release/release-bundle
+      - name: Validate retained release bundle
+        run: |
+          test -f target/release/release-bundle/Pantoken.app.tar.gz
+          test -f target/release/release-bundle/Pantoken.app.tar.gz.sig
+          test -f target/release/release-bundle/latest.json
+          test -f target/release/release-bundle/pantoken-headless-macos-aarch64.tar.gz
+          test -f target/release/release-bundle/pantoken-headless-macos-aarch64.tar.gz.sig
+          test -f target/release/release-bundle/release-metadata.json
+      - name: Validate release-host token
+        env:
+          PANTOKEN_RELEASE_TOKEN: ${{ secrets.PANTOKEN_RELEASE_TOKEN }}
+        run: test -n "$PANTOKEN_RELEASE_TOKEN"
       - name: Publish release
         env:
-          GH_TOKEN: ${{ github.token }}
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ""
+          GH_TOKEN: ${{ secrets.PANTOKEN_RELEASE_TOKEN }}
+          PANTOKEN_RELEASE_REPO: TimoFreiberg/polytoken-gui
+          PANTOKEN_RELEASE_BUNDLE_DIR: target/release/release-bundle
         run: >
           bun scripts/desktop/publish.ts
           --skip-build
-          --repo ${{ github.repository }}
+          --repo TimoFreiberg/polytoken-gui
           --tag-must-match "${{ github.ref_name }}"

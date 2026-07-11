@@ -1,0 +1,44 @@
+#!/usr/bin/env bash
+# ─── Fake launchctl for updater tests ──────────────────────────────
+# Records invocations and can force health failures via environment.
+# When RECORD_PID_FILE is set, writes the simulated PID to it.
+# When FORCE_EXIT != 0, exits nonzero to simulate failure.
+# ───────────────────────────────────────────────────────────────────
+set -euo pipefail
+
+RECORD_PID_FILE="${RECORD_PID_FILE:-}"
+FORCE_EXIT="${FORCE_EXIT:-0}"
+FORCE_HEALTH_FAIL="${FORCE_HEALTH_FAIL:-0}"
+
+FAKE_LAUNCHCTL_LOG="${HOME}/.local/state/pantoken/.launchctl.log"
+mkdir -p "$(dirname "$FAKE_LAUNCHCTL_LOG")"
+
+ARGS=""
+for arg in "$@"; do
+  ARGS+=" $arg"
+done
+
+# Record invocation
+{
+  printf 'invocation ts=%d args="%s"\n' \
+    "$(date +%s)" "$ARGS" >> "$FAKE_LAUNCHCTL_LOG"
+}
+
+# Simulate PID change: write a fake PID if asked
+if [[ -n "$RECORD_PID_FILE" ]]; then
+  printf '%s\n' "$$" > "$RECORD_PID_FILE"
+fi
+
+if [[ "$FORCE_EXIT" != "0" ]]; then
+  echo "fakelaunchctl: forced failure (exit $FORCE_EXIT)" >&2
+  exit "$FORCE_EXIT"
+fi
+
+# Simulate success for kickstart
+if [[ "$ARGS" == *"kickstart"* ]]; then
+  # If the updater is supposed to fail post-flip, we don't actually start anything
+  # — the real health check will fail because no server is running.
+  exit 0
+fi
+
+exit 0

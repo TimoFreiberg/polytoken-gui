@@ -1,7 +1,6 @@
 #!/usr/bin/env bun
-// smoke-test.ts — boot a freshly-built pantoken server in isolation and confirm it
-// actually serves before a deploy flips it live. Run against a *staged* slot by
-// auto-deploy.sh (step 4); also runnable by hand: `bun scripts/smoke-test.ts [dir]`.
+// Legacy smoke entry point. Release artifacts use scripts/headless/smoke-test.ts;
+// this development helper remains for local source-tree checks only.
 //
 // It boots with the MOCK driver on a scratch port and a throwaway data dir, so it
 // never touches real daemon state, the live instance's port, or the prod push
