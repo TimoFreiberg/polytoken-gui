@@ -106,10 +106,20 @@
     pendingDrafts.filter((d) => d.cwd === cwd);
 
   // Search-box keyboard: Enter opens the top match (first session of the first group —
-  // the visual top of the list), Esc clears a non-empty query (else blurs). The ref also
-  // lets us focus the box when the drawer opens.
+  // the visual top of the list), Esc clears a non-empty query (else closes Search). The
+  // input is focused only after explicit activation.
   let searchInput = $state<HTMLInputElement | null>(null);
+  let searchOpen = $state(false);
   const topMatch = $derived(filteredGroups[0]?.items[0] ?? null);
+  async function openSearch(): Promise<void> {
+    searchOpen = true;
+    await tick();
+    if (!isPhone()) searchInput?.focus();
+  }
+  function closeSearch(): void {
+    searchInput?.blur();
+    searchOpen = false;
+  }
   function onSearchKeydown(e: KeyboardEvent): void {
     if (e.key === "Enter") {
       if (query.trim() && topMatch) {
@@ -123,20 +133,19 @@
         e.stopPropagation();
         query = "";
       } else {
-        searchInput?.blur();
+        closeSearch();
       }
     }
   }
 
-  // Focus the search box on a closed→open transition so a keyboard user lands ready to
-  // filter. Desktop only — on a phone this pops the soft keyboard on every open, an
-  // unwanted surprise. `prev` seeds to the current state so this never fires on initial
-  // mount (where the desktop sidebar starts open) and steals focus from the composer.
+  // Search is intentionally compact whenever the drawer opens. Explicit activation is
+  // the only desktop path that focuses it; phone activation mounts it without opening the
+  // soft keyboard.
   let prevSidebarOpen = store.sidebarOpen;
   $effect(() => {
     const open = store.sidebarOpen;
-    if (open && !prevSidebarOpen && !isPhone())
-      void tick().then(() => searchInput?.focus());
+    if (!open && prevSidebarOpen) closeSearch();
+    if (open && !prevSidebarOpen) searchOpen = false;
     prevSidebarOpen = open;
   });
 
@@ -543,12 +552,77 @@
 >
   <!-- data-tauri-drag-region="deep": desktop-shell window drag, same contract as
        StatusHeader (real buttons stay clickable; needs the window-drag IPC grant). -->
-  <div class="top" data-tauri-drag-region="deep">
+  <div class="top" data-testid="sidebar-top" data-tauri-drag-region="deep">
+    <span class="shell-leading-reserve" data-testid="shell-leading-reserve" aria-hidden="true"></span>
     <IconButton
+      class="collapse-toggle"
       title="Collapse sidebar (⌘B)"
       aria-label="Collapse sidebar"
-      onclick={() => store.closeSidebar()}>‹</IconButton
-    >
+      onclick={() => store.closeSidebar()}>
+      <Chevron open={true} />
+      <span class="control-label">Collapse</span>
+    </IconButton>
+    {#if store.sessions.length > 0}
+      <div class="top-actions">
+        {#if searchOpen}
+          <div class="search-overlay">
+            <input
+              class="search-input"
+              data-testid="sidebar-search-input"
+              type="text"
+              placeholder="Search sessions…"
+              title="Search sessions by name, preview, or path (Enter opens the top match, Esc clears)"
+              aria-label="Search sessions"
+              spellcheck="false"
+              autocapitalize="off"
+              autocorrect="off"
+              bind:this={searchInput}
+              bind:value={query}
+              onkeydown={onSearchKeydown}
+            />
+            <IconButton
+              class="search-close"
+              data-testid="sidebar-search-close"
+              title="Close search"
+              aria-label="Close search"
+              onclick={closeSearch}>×</IconButton
+            >
+          </div>
+        {:else}
+          <IconButton
+            data-testid="sidebar-search-toggle"
+            title="Search sessions"
+            aria-label="Search sessions"
+            aria-expanded="false"
+            onclick={openSearch}
+          >
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
+              <circle cx="10.5" cy="10.5" r="6.5" /><path d="m16 16 5 5" />
+            </svg>
+            <span class="control-label">Search</span>
+          </IconButton>
+        {/if}
+        <div data-testid="sidebar-filter-toggle">
+          <IconButton
+            class="filter-button"
+            data-testid="filter-toggle"
+            data-state={!store.showArchived && hiddenCount > 0 ? "active" : "idle"}
+            aria-pressed={store.showArchived}
+            title={store.showArchived
+              ? "Showing all sessions incl. archived and inactive — click for active only"
+              : `Showing active sessions only${hiddenCount > 0 ? ` — ${hiddenCount} hidden` : ""} — click to show all`}
+            aria-label={store.showArchived ? "Show active sessions only" : "Show all sessions"}
+            onclick={() => store.toggleShowArchived()}
+        >
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
+            <path d="M4 6h16M7 12h10M10 18h4" />
+          </svg>
+          {#if !store.showArchived && hiddenCount > 0}<span class="filter-indicator" aria-hidden="true"></span>{/if}
+            <span class="control-label">Filter</span>
+          </IconButton>
+        </div>
+      </div>
+    {/if}
   </div>
 
   <SidebarResizeHandle
@@ -560,7 +634,7 @@
     onChange={setSidebarWidth}
   />
 
-  <div class="new">
+  <div class="new" data-testid="sidebar-new-session">
     <button
       class="new-btn"
       title="Start a new session (⌘N) — pick the project, worktree, and model in the composer (creation is deferred until you send)"
@@ -582,46 +656,13 @@
       </div>
     {/if}
   </div>
-
-  {#if store.sessions.length > 0}
-    <div class="search">
-      <input
-        class="search-input"
-        type="text"
-        placeholder="Search sessions…"
-        title="Search sessions by name, preview, or path (Enter opens the top match, Esc clears)"
-        aria-label="Search sessions"
-        spellcheck="false"
-        autocapitalize="off"
-        autocorrect="off"
-        bind:this={searchInput}
-        bind:value={query}
-        onkeydown={onSearchKeydown}
-      />
-    </div>
-    <div class="filter">
-      <button
-        class="filter-toggle"
-        data-testid="filter-toggle"
-        aria-pressed={store.showArchived}
-        title={store.showArchived
-          ? "Showing all sessions incl. archived and inactive — click for active only"
-          : "Showing active sessions only — click to also show archived and inactive"}
-        onclick={() => store.toggleShowArchived()}
-      >
-        {store.showArchived ? "Showing all" : "Active only"}
-      </button>
-      {#if !store.showArchived && hiddenCount > 0}
-        <button
-          class="hidden-count"
-          data-testid="hidden-count"
-          title="{hiddenCount} archived or inactive session{hiddenCount === 1
-            ? ''
-            : 's'} hidden — click to show all"
-          onclick={() => store.toggleShowArchived()}>{hiddenCount} hidden</button
-        >
-      {/if}
-    </div>
+  {#if store.sessions.length > 0 && !store.showArchived && hiddenCount > 0}
+    <button
+      class="hidden-count"
+      data-testid="hidden-count"
+      title="{hiddenCount} archived or inactive session{hiddenCount === 1 ? '' : 's'} hidden — click to show all"
+      onclick={() => store.toggleShowArchived()}>{hiddenCount} hidden</button
+    >
   {/if}
 
   <div class="list-wrap">
@@ -1059,15 +1100,61 @@
   }
 
   .top {
+    position: relative;
     display: flex;
     align-items: center;
-    /* No brand wordmark — leave the top-left clear for the macOS traffic
-       lights and keep the collapse control on the right. */
-    justify-content: flex-end;
+    justify-content: flex-start;
     /* Same height as StatusHeader (and the context panel's top bar), so all three
        top-row chevrons sit on one line. */
     min-height: calc(var(--header-h) + env(safe-area-inset-top));
     padding: env(safe-area-inset-top) 14px 0;
+  }
+  .shell-leading-reserve {
+    flex: 0 0 var(--shell-leading-inset);
+    height: 1px;
+  }
+  .top-actions {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    margin-left: auto;
+  }
+  .control-label {
+    display: none;
+  }
+  .search-overlay {
+    position: absolute;
+    z-index: 3;
+    inset: 0 0 auto 0;
+    min-height: calc(var(--header-h) + env(safe-area-inset-top));
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    padding: env(safe-area-inset-top) 14px 0;
+    background: var(--sidebar-bg);
+  }
+  .search-input {
+    min-width: 0;
+    flex: 1;
+  }
+  :global(.search-close) {
+    position: relative;
+    z-index: 1;
+  }
+  :global(.filter-button) {
+    position: relative;
+  }
+  [data-testid="sidebar-filter-toggle"] {
+    display: inline-flex;
+  }
+  .filter-indicator {
+    position: absolute;
+    top: 4px;
+    right: 4px;
+    width: 5px;
+    height: 5px;
+    border-radius: 50%;
+    background: var(--accent);
   }
   .new {
     padding: 0 16px 8px;
@@ -1110,9 +1197,6 @@
     margin-left: auto;
   }
 
-  .search {
-    padding: 0 16px 8px;
-  }
   .search-input {
     width: 100%;
     font-size: 13px;
@@ -1130,28 +1214,6 @@
     color: var(--text-faint);
   }
 
-  .filter {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    padding: 0 16px 8px;
-  }
-  .filter-toggle {
-    font-size: 12px;
-    color: var(--text-muted);
-    background: var(--surface);
-    border: 1px solid var(--border);
-    border-radius: var(--radius-xs);
-    padding: 4px 10px;
-  }
-  .filter-toggle:hover {
-    color: var(--text);
-    border-color: var(--border-strong);
-  }
-  .filter-toggle[aria-pressed="true"] {
-    color: var(--accent);
-    border-color: var(--accent);
-  }
   .hidden-count {
     font-size: 11px;
     color: var(--text-faint);
@@ -1618,6 +1680,13 @@
        (the transform snaps to rest via the transition the moment the drag ends). */
     .sidebar.edge-drag {
       transition: none;
+    }
+    .control-label {
+      display: inline;
+      font-size: 12px;
+    }
+    .search-input {
+      font-size: 16px;
     }
     .scrim {
       display: block;

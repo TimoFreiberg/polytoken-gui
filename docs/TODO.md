@@ -75,7 +75,7 @@ resolution is non-obvious or likely to bite again. Otherwise see `jj log`.
       context-usage circle immediately to its right with no percentage text. Keep
       the exact context value available through the control's tooltip/popover and
       preserve keyboard and touch labels/hit targets.
-- [ ] **Implement exploration 2c: sidebar top-row controls.** Keep New session as
+- [x] **Implement exploration 2c: sidebar top-row controls.** Keep New session as
       the primary button, turn Search and Filter into icon buttons in the top row,
       and pin Collapse to the left-side position it occupies in the collapsed
       layout from exploration 1f so the collapse target does not move between

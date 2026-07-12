@@ -51,6 +51,8 @@
      pin to it, so their bottom borders line up and their trailing chevrons — the
      panel's collapse and the header's expand — land on the same pixel. */
   --header-h: 64px;
+  /* Shared leading gutter for the shell-owned traffic lights and the sidebar controls. */
+  --shell-leading-inset: calc(72px + env(safe-area-inset-left));
 
   --sidebar-bg: #fcfcfa;
 

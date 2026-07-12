@@ -333,6 +333,7 @@ test("the session search filters by name, preview, and path", async ({
 }) => {
   await openSidebar(page);
   const sidebar = page.getByTestId("sidebar");
+  await sidebar.getByTestId("sidebar-search-toggle").click();
   const search = sidebar.getByPlaceholder("Search sessions…");
 
   // name match: "fold" → only "Explore the fold reducer"
@@ -359,6 +360,7 @@ test("search Enter opens the top match; Esc clears the query", async ({
 }) => {
   await openSidebar(page);
   const sidebar = page.getByTestId("sidebar");
+  await sidebar.getByTestId("sidebar-search-toggle").click();
   const search = sidebar.getByPlaceholder("Search sessions…");
 
   // Filter to a single match, then Enter opens it (becomes the active row). Assert the
@@ -381,24 +383,21 @@ test("search Enter opens the top match; Esc clears the query", async ({
   await expect(sidebar.getByText("Wire up the WebSocket bridge")).toBeVisible();
 });
 
-test("reopening the sidebar focuses the search box (desktop)", async ({
+test("reopening the sidebar starts compact; search focuses only after activation (desktop)", async ({
   page,
 }) => {
   await openSidebar(page);
-  const search = page
-    .getByTestId("sidebar")
-    .getByPlaceholder("Search sessions…");
+  const sidebar = page.getByTestId("sidebar");
 
-  // Close, then reopen — the closed→open transition lands focus in the search box so a
-  // keyboard user can filter immediately. (On a phone this is suppressed; desktop only.)
-  // ⌘B round-trips the same store toggle the removed header hamburger used to.
+  // ⌘B round-trips the store toggle. Drawer reopen must not focus a hidden input.
   await page.keyboard.press("Control+b");
-  await expect(page.getByTestId("sidebar")).toHaveAttribute(
-    "data-open",
-    "false",
-  );
+  await expect(sidebar).toHaveAttribute("data-open", "false");
   await page.keyboard.press("Control+b");
-  await expect(search).toBeFocused();
+  await expect(sidebar.getByTestId("sidebar-search-input")).toHaveCount(0);
+
+  // Explicit desktop activation mounts and focuses Search.
+  await sidebar.getByTestId("sidebar-search-toggle").click();
+  await expect(sidebar.getByTestId("sidebar-search-input")).toBeFocused();
 });
 
 test("clicking the project chip opens the directory browser", async ({

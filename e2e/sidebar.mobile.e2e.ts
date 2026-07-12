@@ -12,9 +12,11 @@ test("opening the drawer does NOT focus the search box on a phone", async ({
   // Focus-on-open is desktop-only: on a phone it would pop the soft keyboard on every
   // open. Opening the drawer (a closed→open transition) must leave the search unfocused.
   await openSidebar(page);
-  const search = page
-    .getByTestId("sidebar")
-    .getByPlaceholder("Search sessions…");
+  const sidebar = page.getByTestId("sidebar");
+  await expect(sidebar.getByTestId("sidebar-search-toggle")).toBeVisible();
+  await expect(sidebar.getByTestId("sidebar-search-input")).toHaveCount(0);
+  await sidebar.getByTestId("sidebar-search-toggle").click();
+  const search = sidebar.getByTestId("sidebar-search-input");
   await expect(search).toBeVisible();
   await expect(search).not.toBeFocused();
 });

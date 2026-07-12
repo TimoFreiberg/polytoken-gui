@@ -145,12 +145,14 @@
        ~200px right of here. Same top row, though, so it's still a click-back-and-forth. -->
   {#if !store.sidebarOpen}
     <IconButton
+      class="sidebar-open"
       data-testid="sidebar-open"
       title="Show sessions (⌘B)"
       aria-label="Show sessions"
       onclick={() => store.openSidebar()}
     >
       <Chevron open={false} />
+      <span class="sidebar-open-label">Show sessions</span>
     </IconButton>
   {/if}
   <div class="left">
@@ -272,6 +274,13 @@
     /* Keep the header controls above mobile drawer scrims so either drawer can be
        opened while the other one remains visible. The drawers themselves use z 60. */
     z-index: 70;
+  }
+  .sidebar-open {
+    margin-left: var(--shell-leading-inset);
+    gap: 6px;
+  }
+  .sidebar-open-label {
+    display: none;
   }
   .left {
     min-width: 0;
@@ -423,6 +432,12 @@
      thinking + gear + connection). Drop the text labels whose icon/LED already
      conveys their state, so the row fits the viewport instead of overflowing
      horizontally (which also shifts fixed overlays like the approval sheet). */
+  @media (max-width: 859px) {
+    .sidebar-open-label {
+      display: inline;
+      font-size: 12px;
+    }
+  }
   @media (max-width: 480px) {
     .right {
       gap: 8px;
