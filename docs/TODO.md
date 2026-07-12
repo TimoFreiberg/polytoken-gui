@@ -343,14 +343,6 @@ are REAL but **provisional** — they embed local `/Users/timo/...` paths from t
 - [ ] In-UI raw event drawer (dev-only, streams raw SessionDriverEvents)
 - [ ] Font-size / density control
 
-### Branding
-- [ ] **Rename: Pantoken → Polyscope** (2025-07-03 candidate). "Polyscope" is a
-      real word — an optical instrument that magnifies / shows many colors —
-      and contains "poly" as a nod to the polytoken driver. Rename touches:
-      project name, docs, app icon, spinner/loading visuals, PWA manifest,
-      and any user-facing strings. Hold for now; digest the name before
-      committing.
-
 ## 🎒 Patterns to steal (from paseo.sh)
 
 - [ ] Follow-on UI primitives — Toggle · Chip · Menu/Dropdown · Disclosure
