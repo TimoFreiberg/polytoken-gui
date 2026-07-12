@@ -126,28 +126,28 @@ fi
 echo ""
 echo "=== Gate 3: Bootstrap + Kickstart ==="
 
-# Install the test daemon.
+# Install the test daemon. On modern macOS, `launchctl bootstrap system`
+# requires the plist to be in /Library/LaunchDaemons/ — bootstrapping from
+# a temp path gives "Input/output error" (code 5).
 echo "  Booting test label..."
-# Boot out stale label from previous runs (ignore errors if not loaded)
+GATE_PLIST="/Library/LaunchDaemons/com.pantoken.test-gate.plist"
+GATE_PLIST_LONG="/Library/LaunchDaemons/com.pantoken.test-gate-long.plist"
+
+# Clean up stale labels from previous runs
 sudo launchctl bootout system/"$TEST_LABEL" 2>/dev/null || true
 sudo launchctl bootout system/com.pantoken.test-gate-long 2>/dev/null || true
-sleep 0.5
-# Retry bootstrap up to 3 times (macOS launchd can race with I/O errors)
-bootstrap_ok=false
-for attempt in 1 2 3; do
-  if sudo launchctl bootstrap system "$TEMP_PLIST" 2>&1; then
-    bootstrap_ok=true
-    break
-  else
-    echo "  Bootstrap attempt $attempt failed, retrying..."
-    sudo launchctl bootout system/"$TEST_LABEL" 2>/dev/null || true
-    sleep 1
-  fi
-done
-if [[ "$bootstrap_ok" == true ]]; then
+sudo rm -f "$GATE_PLIST" "$GATE_PLIST_LONG" 2>/dev/null || true
+sleep 1
+
+# Install plist to /Library/LaunchDaemons/ and bootstrap
+sudo cp "$TEMP_PLIST" "$GATE_PLIST"
+sudo chown root:wheel "$GATE_PLIST"
+sudo chmod 644 "$GATE_PLIST"
+
+if sudo launchctl bootstrap system "$GATE_PLIST" 2>&1; then
   echo "  Bootstrap: PASS"
 else
-  echo "  Bootstrap: FAIL (may need sudo)"
+  echo "  Bootstrap: FAIL"
   ((failures++))
 fi
 
@@ -190,7 +190,10 @@ cat > "$TEMP_PLIST2" <<'PLISTEOF2'
 </plist>
 PLISTEOF2
 
-sudo launchctl bootstrap system "$TEMP_PLIST2" 2>/dev/null || true
+sudo cp "$TEMP_PLIST2" "$GATE_PLIST_LONG"
+sudo chown root:wheel "$GATE_PLIST_LONG"
+sudo chmod 644 "$GATE_PLIST_LONG"
+sudo launchctl bootstrap system "$GATE_PLIST_LONG" 2>/dev/null || true
 sleep 2
 
 # Find the running PID.
@@ -239,10 +242,12 @@ echo "=== Gate 6: Cleanup ==="
 # Clean up the first test label.
 sudo launchctl bootout system/"$TEST_LABEL" 2>/dev/null || true
 rm -f "$TEMP_PLIST"
+sudo rm -f "$GATE_PLIST" 2>/dev/null || true
 
 # Clean up the long-running test label.
 sudo launchctl bootout system/com.pantoken.test-gate-long 2>/dev/null || true
 rm -f "$TEMP_PLIST2"
+sudo rm -f "$GATE_PLIST_LONG" 2>/dev/null || true
 
 echo "  Cleanup complete"
 
