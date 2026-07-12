@@ -1107,7 +1107,7 @@
     /* Same height as StatusHeader (and the context panel's top bar), so all three
        top-row chevrons sit on one line. */
     min-height: calc(var(--header-h) + env(safe-area-inset-top));
-    padding: env(safe-area-inset-top) 14px 0;
+    padding: env(safe-area-inset-top) 16px 0;
   }
   .shell-leading-reserve {
     flex: 0 0 var(--shell-leading-inset);
@@ -1130,7 +1130,7 @@
     display: flex;
     align-items: center;
     gap: 4px;
-    padding: env(safe-area-inset-top) 14px 0;
+    padding: env(safe-area-inset-top) 16px 0;
     background: var(--sidebar-bg);
   }
   .search-input {
