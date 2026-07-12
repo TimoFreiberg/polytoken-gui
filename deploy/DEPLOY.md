@@ -32,6 +32,16 @@ sudo deploy/bootstrap-tar-validator.sh \
   --sha256 <64-lowercase-hex-digest>
 ```
 
+Verify production state and set up the new-infra layout using the canonical
+preflight script (read-only checks + optional `--setup` to create the
+versioned layout + env file + rendered plist without installing the daemon):
+
+```bash
+bash deploy/mac-mini-preflight.sh                           # read-only checks
+bash deploy/mac-mini-preflight.sh --setup \
+  --version <version> --archive /path/to/extracted-payload   # create layout
+```
+
 Prepare a signed, validated headless payload, then bootstrap the version as the
 runtime user. The bootstrap renders/lints the plist and uses sudo only for the
 system plist and launchctl bootstrap:
@@ -114,6 +124,14 @@ Capture read-only Tailscale Serve status before and after cutover and abort
 without mutation if `/` is not exactly proxied to `127.0.0.1:8787`. Verify the
 real polytoken driver, authenticated WebSocket/session discovery, and one
 bounded non-destructive interaction before deleting old production state.
+
+After cutover is verified healthy, use the legacy cleanup inventory to
+systematically remove old state:
+
+```bash
+# Follow the checklist in:
+deploy/legacy-cleanup-inventory.md
+```
 
 ## Rollback
 

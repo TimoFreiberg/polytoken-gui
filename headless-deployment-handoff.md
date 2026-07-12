@@ -67,13 +67,13 @@ Static coverage remains for rollback behavior, journaling, locking, atomic flips
 
 ## Remaining engineering work
 
-- Make fixture child-process cleanup deterministic.
-- Restore healthy-update integration coverage.
-- Restore rollback integration coverage.
-- Add or finish stale-PID and rapid-respawn scenarios.
-- Finish failed-rollback and journal-recovery scenarios.
-- Finish explicit-tag recovery, retention-pruning, and concurrency integration scenarios.
-- Run the real macOS `scripts/headless/launchd-platform-gate.sh` and retain evidence.
+- ~~Make fixture child-process cleanup deterministic.~~ ✅ Fixed: `fake-launchctl` now redirects stdin from `/dev/null`, resolves PGID via `ps`, and the test harness pipes stdout/stderr to prevent orphaned FDs.
+- ~~Restore healthy-update integration coverage.~~ ✅ `test_healthy_update_full_transaction`
+- ~~Restore rollback integration coverage.~~ ✅ `test_rollback_on_health_failure`
+- ~~Add or finish stale-PID and rapid-respawn scenarios.~~ ✅ `test_stale_pid_recovery`, `test_rapid_respawn`
+- ~~Finish failed-rollback and journal-recovery scenarios.~~ ✅ `test_failed_rollback_exit_4`, `test_journal_recovery`
+- ~~Finish explicit-tag recovery, retention-pruning, and concurrency integration scenarios.~~ ✅ `test_explicit_tag_recovery`, `test_retention_pruning`, `test_concurrent_update_lock`
+- Run the real macOS `deploy/launchd-platform-gate.sh` and retain evidence. (pending — requires sudo)
 - Complete the independent implementation review.
 - Finish remaining CI/publication and deployment-documentation work.
 
@@ -81,13 +81,14 @@ Static coverage remains for rollback behavior, journaling, locking, atomic flips
 
 Before a production cutover:
 
-- Run the Mac Mini read-only preflight.
+- Run the Mac Mini read-only preflight: `bash deploy/mac-mini-preflight.sh`
+- Set up the new-infra layout: `bash deploy/mac-mini-preflight.sh --setup --version <ver> --archive <path>`
 - Verify the installed `polytoken` version, executable path, credentials, configuration, bearer-token behavior, and live-driver interaction.
 - Verify Tailscale Serve still routes `/` exactly to `http://127.0.0.1:8787`.
 - Build or obtain a locally validated signed headless artifact without publishing unless separately authorized.
 - Bootstrap the versioned release layout and rendered `com.pantoken.server` LaunchDaemon.
 - Validate local health, HTML/static assets, WebSocket behavior, authentication, live-driver interaction, process identity, and restart recovery.
-- Only after all gates pass, perform the explicitly inventoried legacy cleanup.
+- Only after all gates pass, perform the explicitly inventoried legacy cleanup (`deploy/legacy-cleanup-inventory.md`).
 - Run final post-cutover verification and record the active version and full build SHA.
 
 ## Operational boundaries

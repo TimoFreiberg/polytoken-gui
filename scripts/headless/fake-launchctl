@@ -15,6 +15,7 @@ SERVICE_PORT="${PANTOKEN_TEST_SERVICE_PORT:-8787}"
 SERVICE_FAIL_FIRST="${PANTOKEN_TEST_FAIL_FIRST:-0}"
 SERVICE_FAIL_ALWAYS="${PANTOKEN_TEST_FAIL_ALWAYS:-0}"
 SERVICE_FAIL_VERSION="${PANTOKEN_TEST_FAIL_VERSION:-}"
+SERVICE_FAIL_VERSIONS="${PANTOKEN_TEST_FAIL_VERSIONS:-}"
 
 FAKE_LAUNCHCTL_LOG="${HOME}/.local/state/pantoken/.launchctl.log"
 mkdir -p "$(dirname "$FAKE_LAUNCHCTL_LOG")"
@@ -63,14 +64,34 @@ if [[ "$ARGS" == *"kickstart"* ]]; then
   if [[ "$SERVICE_FAIL_ALWAYS" == "1" || ("$SERVICE_FAIL_FIRST" == "1" && "$count" == "1") ]]; then
     fail_health=1
   fi
-  if [[ -n "$SERVICE_FAIL_VERSION" && "$(readlink -f "$HOME/pantoken-live")" == *"/$SERVICE_FAIL_VERSION" ]]; then
+  # Resolve the live symlink portably (BSD readlink has no -f)
+  live_target=""
+  if [[ -L "$HOME/pantoken-live" ]]; then
+    live_dir="$(cd -P -- "$HOME/pantoken-live" && pwd -P)"
+    live_target="$(basename "$live_dir")"
+  fi
+  if [[ -n "$SERVICE_FAIL_VERSION" && "$live_target" == "$SERVICE_FAIL_VERSION" ]]; then
     fail_health=1
   fi
+  # Comma-separated list of versions that should fail health (for failed-rollback test)
+  if [[ -n "$SERVICE_FAIL_VERSIONS" ]]; then
+    IFS=',' read -ra _fail_vers <<< "$SERVICE_FAIL_VERSIONS"
+    for _fv in "${_fail_vers[@]}"; do
+      [[ "$_fv" == "$live_target" ]] && fail_health=1
+    done
+  fi
   mkdir -p "$(dirname "$SERVICE_PID_FILE")"
+  # Detach from the updater's stdout/stderr so the background child does not
+  # keep Bun.spawn's stream reads alive. Redirect to a log file.
   PANTOKEN_UPDATE_TEST_MODE=1 PANTOKEN_PORT="$SERVICE_PORT" PANTOKEN_TEST_SERVICE_PORT="$SERVICE_PORT" PANTOKEN_FAIL_HEALTH="$fail_health" \
-    "$HOME/pantoken-live/run.sh" >"${HOME}/.local/state/pantoken/fake-service.log" 2>&1 &
+    "$HOME/pantoken-live/run.sh" >"${HOME}/.local/state/pantoken/fake-service.log" 2>&1 </dev/null &
   service_pid=$!
   printf '%s\n' "$service_pid" > "$SERVICE_PID_FILE"
+  # Record the PGID for group-based cleanup. On macOS setsid may not be
+  # available; resolve the actual PGID from ps so the cleanup hook can
+  # kill the process group deterministically.
+  service_pgid="$(ps -o pgid= -p "$service_pid" 2>/dev/null | tr -d ' ' || true)"
+  printf '%s\n' "${service_pgid:-$service_pid}" > "${SERVICE_PGID_FILE:-${HOME}/.local/state/pantoken/fake-service.pgid}"
   # Give the interpreter a moment to exec the fixture binary before print/ps.
   sleep 0.05
   exit 0

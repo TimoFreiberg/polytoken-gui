@@ -11,6 +11,22 @@
 # ───────────────────────────────────────────────────────────────────
 set -euo pipefail
 
+# ── Portable symlink resolution ──────────────────────────────────
+# macOS BSD readlink does not support GNU -f. This works on both BSD
+# and Linux: resolve the final target of a symlink without readlink -f.
+resolve_link_target() {
+  local link="$1"
+  [[ -L "$link" ]] || { printf '%s\n' "$link"; return; }
+  local dir target
+  dir="$(cd -P -- "$(dirname -- "$link")" && pwd -P)"
+  # BSD readlink doesn't support GNU -f or the -- separator.
+  target="$(readlink "$link" 2>/dev/null || printf '%s' "$link")"
+  case "$target" in
+    /*) printf '%s\n' "$target" ;;
+    *) printf '%s/%s\n' "$dir" "$target" ;;
+  esac
+}
+
 # ── Canonical release constants ──────────────────────────────────
 RELEASE_REPO="TimoFreiberg/polytoken-gui"
 RELEASE_BASE_URL="https://github.com/${RELEASE_REPO}"
@@ -37,9 +53,6 @@ _KICKSTART_CMD="/bin/launchctl kickstart -k system/${LAUNCHD_LABEL}"
 HEALTH_URL="http://127.0.0.1:8787/health"
 HEALTH_TIMEOUT=30
 HEALTH_POLL_INTERVAL=2
-
-# ── Retention: keep last N releases ──────────────────────────────
-MAX_RETENTION=5
 
 # ── Test-mode overrides ──────────────────────────────────────────
 # ONLY active when PANTOKEN_UPDATE_TEST_MODE=1.
@@ -142,6 +155,18 @@ preflight() {
   for dir in "$VERSIONS_DIR" "$STATE_DIR"; do
     [[ -d "$dir" ]] || mkdir -p "$dir"
   done
+
+  # 7. Concurrency test seam: after lock acquisition, write a ready-file and
+  #    block on a release-file so a second updater can be started concurrently.
+  if is_test_mode && [[ "${PANTOKEN_TEST_HOLD_LOCK:-}" == "1" ]]; then
+    touch "${STATE_DIR}/.test-lock-held"
+    local hold_start="$SECONDS"
+    while [[ ! -f "${STATE_DIR}/.test-lock-release" ]]; do
+      [[ $((SECONDS - hold_start)) -gt 30 ]] && die "test hold-lock timed out" 1
+      sleep 0.2
+    done
+    rm -f "${STATE_DIR}/.test-lock-release" "${STATE_DIR}/.test-lock-held"
+  fi
 }
 
 # ── URL resolution ──────────────────────────────────────────────
@@ -169,7 +194,8 @@ resolve_urls() {
 setup_staging() {
   STAGING_DIR="$(mktemp -d "${VERSIONS_DIR}/.staging-XXXXXX")"
   # TMPDIR_DOWNLOAD is set in download phase
-  trap 'rm -rf "$TMPDIR_DOWNLOAD" "$STAGING_DIR"' EXIT
+  # Accumulate cleanup: lock + staging + download temp
+  trap 'rm -rf "$LOCK_DIR" "$TMPDIR_DOWNLOAD" "$STAGING_DIR"' EXIT
 }
 
 # ── Phase: Download ─────────────────────────────────────────────
@@ -339,7 +365,7 @@ flip_symlink() {
   local new_dir="${VERSIONS_DIR}/${version}"
 
   if [[ -L "$LIVE_LINK" ]]; then
-    old_dir="$(readlink -f "$LIVE_LINK")"
+    old_dir="$(resolve_link_target "$LIVE_LINK")"
     # Capture old Rust lock identity for post-kickstart freshness checks.
     if [[ -f "${old_dir}/pantoken.pid" ]]; then
       cp "${old_dir}/pantoken.pid" "$OLD_PID_FILE" 2>/dev/null || true
@@ -355,11 +381,12 @@ flip_symlink() {
   _journal "staged" "version=${version}" "path=${new_dir}"
 
   log "Flipping live symlink → ${new_dir}"
-  local new_link="${LIVE_LINK}.new.$$"
-  ln -s "$new_dir" "$new_link"
-  mv -f "$new_link" "$LIVE_LINK" || die "Failed to flip live symlink" 2
+  # Portable symlink swap: ln -sfn replaces the symlink itself on both Linux
+  # and macOS. On macOS BSD, `mv -f source dest` where dest is a symlink
+  # follows the symlink (modifies the target), so we use ln -sfn instead.
+  ln -sfn "$new_dir" "$LIVE_LINK" || die "Failed to flip live symlink" 2
   _journal "flipped" "new_version=${new_dir}"
-  trap 'rm -rf "$TMPDIR_DOWNLOAD"' EXIT
+  trap 'rm -rf "$LOCK_DIR" "$TMPDIR_DOWNLOAD"' EXIT
 
   STAGED_OLD_DIR="$old_dir"
 }
@@ -389,13 +416,15 @@ verify_post_flip() {
 
   # Get the new PID from launchd. Test mode uses only the explicit fake
   # controller; production always queries the real system LaunchDaemon.
+  # When PANTOKEN_TEST_DISABLE_PID_OVERRIDE=1, skip both the fake-launchctl
+  # print PID and the fake-service.pid override, forcing the ps aux fallback.
   local new_pid=""
-  if [[ -n "${_TEST_LAUNCHCTL:-}" ]]; then
+  if [[ -z "${PANTOKEN_TEST_DISABLE_PID_OVERRIDE:-}" ]] && [[ -n "${_TEST_LAUNCHCTL:-}" ]]; then
     new_pid="$($_TEST_LAUNCHCTL print "system/${LAUNCHD_LABEL}" 2>/dev/null \
       | grep -o 'pid = [0-9]*' \
       | head -1 \
       | awk '{print $3}' || true)"
-  else
+  elif [[ -z "${PANTOKEN_TEST_DISABLE_PID_OVERRIDE:-}" ]]; then
     new_pid="$(sudo launchctl print "system/${LAUNCHD_LABEL}" 2>/dev/null \
       | grep -o 'pid = [0-9]*' \
       | head -1 \
@@ -407,7 +436,7 @@ verify_post_flip() {
   if [[ -z "$new_pid" ]]; then
     new_pid="$(ps aux | grep '[p]antoken-server' | head -1 | awk '{print $2}' || true)"
   fi
-  if [[ -n "${_TEST_LAUNCHCTL:-}" && -f "${HOME}/.local/state/pantoken/fake-service.pid" ]]; then
+  if [[ -z "${PANTOKEN_TEST_DISABLE_PID_OVERRIDE:-}" ]] && [[ -n "${_TEST_LAUNCHCTL:-}" && -f "${HOME}/.local/state/pantoken/fake-service.pid" ]]; then
     new_pid="$(cat "${HOME}/.local/state/pantoken/fake-service.pid")"
   fi
 
@@ -442,19 +471,22 @@ verify_post_flip() {
 
   # Verify health endpoint
   _journal "healthy"
-  log "Waiting for health endpoint (${HEALTH_TIMEOUT}s) …"
+  local health_timeout="$HEALTH_TIMEOUT"
+  local health_interval="$HEALTH_POLL_INTERVAL"
+  if is_test_mode; then health_timeout=10; health_interval=1; fi
+  log "Waiting for health endpoint (${health_timeout}s) …"
 
-  local retries=$((HEALTH_TIMEOUT / HEALTH_POLL_INTERVAL))
+  local retries=$((health_timeout / health_interval))
   local i
   for ((i = 0; i < retries; i++)); do
-    if curl -fsSL --max-time 5 "$HEALTH_URL" 2>/dev/null | grep -q '"ok"'; then
+    if curl -fsSL --max-time 5 "$HEALTH_URL" 2>/dev/null | grep -q '"ok":true'; then
       log "Health check passed."
       return 0
     fi
-    sleep "$HEALTH_POLL_INTERVAL"
+    sleep "$health_interval"
   done
 
-  log_err "Health check failed after ${HEALTH_TIMEOUT}s"
+  log_err "Health check failed after ${health_timeout}s"
   return 1
 }
 
@@ -466,10 +498,8 @@ rollback_to() {
   log_err "Post-flip verification failed — rolling back to ${old_dir}"
 
   if [[ -n "$old_dir" && -d "$old_dir" ]]; then
-    # Atomically restore old symlink
-    local rb_link="${LIVE_LINK}.rollback.$$"
-    ln -sfn "$old_dir" "$rb_link"
-    mv -f "$rb_link" "$LIVE_LINK" || {
+    # Restore old symlink (portable: ln -sfn replaces the symlink itself)
+    ln -sfn "$old_dir" "$LIVE_LINK" || {
       _journal "rollback-flipped" "error=symlink-replace-failed"
       die "Rollback: failed to restore live symlink" 4
     }
@@ -484,10 +514,12 @@ rollback_to() {
     _journal "rollback-restarted"
 
     # Wait for old process recovery
-    sleep 3
+    if is_test_mode; then sleep 0.5; else sleep 3; fi
+    local rb_retries=15
+    is_test_mode && rb_retries=10
     local i
-    for ((i = 0; i < 15; i++)); do
-      if curl -fsSL --max-time 3 "$HEALTH_URL" >/dev/null 2>&1; then
+    for ((i = 0; i < rb_retries; i++)); do
+      if curl -fsSL --max-time 3 "$HEALTH_URL" 2>/dev/null | grep -q '"ok":true'; then
         _journal "rollback-healthy"
         log "Rollback successful: old version recovered."
         return 0
@@ -506,7 +538,11 @@ rollback_to() {
   return 1
 }
 
-# ── Retention pruning ─────────────────────────────────────────
+# ── Retention: keep active + 1 previous release ───────────────────
+# Always retain the active version (resolved from the live symlink — do NOT
+# assume it's the lexicographically newest, since explicit-tag recovery can
+# downgrade). Then keep the next-highest version as the rollback target,
+# and prune everything else. Total retained = 2.
 prune_old_versions() {
   local -a versions=()
   local d
@@ -519,32 +555,33 @@ prune_old_versions() {
   done
 
   local count=${#versions[@]}
-  (( count <= MAX_RETENTION )) && return 0
+  (( count <= 2 )) && return 0
 
-  # Always keep active version
+  # Always keep active version (resolved via portable helper)
   local active_ver
-  active_ver="$(basename "$(readlink -f "$LIVE_LINK")" 2>/dev/null || true)"
+  active_ver="$(basename "$(resolve_link_target "$LIVE_LINK")" 2>/dev/null || true)"
 
-  # Sort descending, prune oldest beyond retention
-  local -a sorted=()
+  # Sort all non-active versions descending; keep the first as "previous"
+  local -a others=()
+  local v
+  for v in "${versions[@]}"; do
+    [[ "$v" != "$active_ver" ]] && others+=("$v")
+  done
+
+  local -a sorted_others=()
   local sorted_version
   while IFS= read -r sorted_version; do
-    [[ -n "$sorted_version" ]] && sorted+=("$sorted_version")
-  done < <(printf '%s\n' "${versions[@]}" | sort -r)
+    [[ -n "$sorted_version" ]] && sorted_others+=("$sorted_version")
+  done < <(printf '%s\n' "${others[@]}" | sort -r)
 
-  local kept=0
-  local v
-  for v in "${sorted[@]}"; do
-    if [[ "$v" == "$active_ver" ]]; then
-      (( kept++ )) || true
-      continue
+  # Keep active + first (highest) other; prune the rest
+  local i=0
+  for v in "${sorted_others[@]}"; do
+    (( i++ )) || true
+    if (( i > 1 )); then
+      log "Pruning old version: ${v}"
+      rm -rf "${VERSIONS_DIR}/${v}"
     fi
-    if (( kept < 2 )); then
-      (( kept++ )) || true
-      continue
-    fi
-    log "Pruning old version: ${v}"
-    rm -rf "${VERSIONS_DIR}/${v}"
   done
 }
 
