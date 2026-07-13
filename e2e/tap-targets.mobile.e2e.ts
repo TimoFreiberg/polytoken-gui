@@ -60,7 +60,11 @@ test("the 2a composer controls are labeled and touch-safe", async ({ page }) => 
   const controls = [
     page.getByTestId("facet-badge"),
     page.getByRole("button", { name: "Attach images" }),
-    page.getByRole("button", { name: "Send", exact: true }),
+    // After 33195e14e187 the idle+empty composer labels this "Send empty
+    // prompt to continue" (a continue-signal affordance), so the accessible
+    // name is no longer stable. The `button.send` class is the stable hook;
+    // the test then asserts the aria-label is any non-empty string.
+    page.locator("button.send"),
     page.getByTestId("permission-badge"),
     page.getByTestId("model-badge"),
     page.getByTestId("thinking-badge"),
