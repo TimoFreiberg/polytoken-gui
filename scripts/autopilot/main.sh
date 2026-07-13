@@ -70,11 +70,17 @@ trap 'log ""; exit 130' INT TERM
 run_implementation() {
   local issue_number=$1 issue_url=$2 issue_title=$3 slot=$4
 
-  # 1. Create worktree
+  # 1. Create worktree (reuse if it already exists from a crashed run)
   cd "$REPO_ROOT"
+  if [ -d "$REPO_ROOT/../pantoken-autopilot-$issue_number" ]; then
+    log "Workspace for issue #$issue_number already exists — reusing"
+    # Forget the old workspace registration and re-add to be safe
+    jj workspace forget "autopilot-$issue_number" 2>/dev/null || true
+    rm -rf "$REPO_ROOT/../pantoken-autopilot-$issue_number"
+  fi
   jj workspace add "../pantoken-autopilot-$issue_number" \
-    --name "autopilot-$issue_number" 2>/dev/null || {
-    log "ERROR: workspace already exists for issue #$issue_number"
+    --name "autopilot-$issue_number" || {
+    log "ERROR: failed to create workspace for issue #$issue_number"
     return 1
   }
   cd "$REPO_ROOT/../pantoken-autopilot-$issue_number"

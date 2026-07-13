@@ -153,6 +153,31 @@ find_free_slot() {
   _release_lock
 }
 
+# Helper: release a stale claim AND clean up its orphaned workspace.
+# Called from recover_stale_claims (lock already held).
+_release_stale_claim() {
+  local issue_number=$1 reason=$2
+  local tmp
+  tmp=$(mktemp)
+  jq --argjson n "$issue_number" \
+     '.claims |= map(select(.issue_number != $n))' \
+     "$CLAIMS_FILE" > "$tmp"
+  mv "$tmp" "$CLAIMS_FILE"
+  echo "Recovered stale claim for issue #$issue_number ($reason)" >&2
+
+  # Clean up orphaned workspace (lock already held — safe to do I/O here)
+  local repo_root="${PANTOKEN_REPO_ROOT:-/Users/timo/src/pantoken}"
+  local ws_name="autopilot-$issue_number"
+  local ws_dir="$repo_root/../pantoken-autopilot-$issue_number"
+  if [ -d "$ws_dir" ]; then
+    # Forget the workspace from jj, then remove the directory
+    cd "$repo_root" 2>/dev/null && jj workspace forget "$ws_name" 2>/dev/null || true
+    rm -rf "$ws_dir"
+    echo "Cleaned up orphaned workspace $ws_name" >&2
+    cd "$CLAIMS_DIR" 2>/dev/null || true
+  fi
+}
+
 # Recover stale claims: check if daemon PID is still alive.
 # If the daemon for a claim is dead, release the claim.
 recover_stale_claims() {
@@ -177,39 +202,19 @@ recover_stale_claims() {
     startup_file="$HOME/.local/share/polytoken/sessions/$sid/startup.json"
     if [ ! -f "$startup_file" ]; then
       # No startup.json — daemon never started or was cleaned up
-      local tmp
-      tmp=$(mktemp)
-      jq --argjson n "$issue_number" \
-         '.claims |= map(select(.issue_number != $n))' \
-         "$CLAIMS_FILE" > "$tmp"
-      mv "$tmp" "$CLAIMS_FILE"
-      echo "Recovered stale claim for issue #$issue_number (no startup.json)" >&2
-      # Re-read count since we modified the file
+      _release_stale_claim "$issue_number" "no startup.json"
       count=$(jq -r '.claims | length' "$CLAIMS_FILE")
-      # Don't increment i — the next claim shifted down
       continue
     fi
 
     local pid
     pid=$(jq -r '.pid // 0' "$startup_file" 2>/dev/null || echo 0)
     if [ "$pid" = "0" ] || [ "$pid" = "null" ]; then
-      local tmp
-      tmp=$(mktemp)
-      jq --argjson n "$issue_number" \
-         '.claims |= map(select(.issue_number != $n))' \
-         "$CLAIMS_FILE" > "$tmp"
-      mv "$tmp" "$CLAIMS_FILE"
-      echo "Recovered stale claim for issue #$issue_number (no PID)" >&2
+      _release_stale_claim "$issue_number" "no PID"
       count=$(jq -r '.claims | length' "$CLAIMS_FILE")
       continue
     elif ! kill -0 "$pid" 2>/dev/null; then
-      local tmp
-      tmp=$(mktemp)
-      jq --argjson n "$issue_number" \
-         '.claims |= map(select(.issue_number != $n))' \
-         "$CLAIMS_FILE" > "$tmp"
-      mv "$tmp" "$CLAIMS_FILE"
-      echo "Recovered stale claim for issue #$issue_number (daemon PID $pid dead)" >&2
+      _release_stale_claim "$issue_number" "daemon PID $pid dead"
       count=$(jq -r '.claims | length' "$CLAIMS_FILE")
       continue
     fi
