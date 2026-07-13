@@ -186,7 +186,9 @@ if (import.meta.main) {
       );
     }
   }
-  const sign = signingEnv();
+  // Signing env is only needed when building; --skip-build publishes
+  // pre-built artifacts and doesn't sign anything.
+  const sign = skipBuild ? {} : signingEnv();
 
   // Fast tag guard before the multi-minute build: the pushed tag must match the
   // version about to be built (tauri.conf.json). The authoritative check happens
@@ -327,6 +329,7 @@ if (import.meta.main) {
     manifestPath,
     join(bundleDir, "pantoken-headless-macos-aarch64.tar.gz"),
     join(bundleDir, "pantoken-headless-macos-aarch64.tar.gz.sig"),
+    join(bundleDir, "release-metadata.json"),
   ]);
   console.log(
     `\npublished ${tag}. Desktop apps poll ${endpoint}; the headless service uses the ` +
