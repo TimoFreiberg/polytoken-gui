@@ -63,6 +63,11 @@ Plan the implementation, review the plan, hand off to execute, implement,
 review the implementation, and commit when done. Push is handled by the
 outer script — do not push yourself.
 
+**Commit message requirement:** your commit message MUST include
+\`Fixes #$ISSUE_NUMBER\` on its own line (after the subject). This links
+the commit to the GitHub issue for traceability and allows GitHub to
+auto-close the issue when the commit lands on main.
+
 Note: this workspace is a jj workspace without a .git directory, so all
 \`gh\` commands MUST include \`--repo TimoFreiberg/pantoken\` explicitly.
 
