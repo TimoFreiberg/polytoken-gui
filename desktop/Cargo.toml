@@ -1,6 +1,6 @@
 [package]
 name = "pantoken-desktop"
-version = "0.2.36"
+version = "0.2.37"
 description = "Pantoken desktop shell — supervises the Bun hub as a sidecar and hosts the web client"
 edition = "2021"
 publish = false
