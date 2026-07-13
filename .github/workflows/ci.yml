@@ -214,6 +214,7 @@ jobs:
         env:
           PANTOKEN_BUILD_SHA: ${{ github.sha }}
           PANTOKEN_RELEASE_BUILD: "1"
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
         run: bun scripts/headless/build.ts --tag "${{ github.ref_name }}"
       - name: Install trusted tar validator for preparation
         run: test -x target/release/pantoken-tar-validate
