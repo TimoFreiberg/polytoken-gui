@@ -472,6 +472,8 @@ if (import.meta.main) {
     "minisign",
     "-Vm",
     archivePath,
+    "-x",
+    `${archivePath}.sig`,
     "-P",
     rawPubKey,
   ]);
