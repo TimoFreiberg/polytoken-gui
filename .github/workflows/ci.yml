@@ -49,7 +49,7 @@ jobs:
           restore-keys: bun-${{ runner.os }}-
       - run: bun install --frozen-lockfile
       - run: bun run check
-      - run: bun test
+      - run: bun run test
 
   web-e2e:
     name: web — e2e (${{ matrix.shard }}/2)
