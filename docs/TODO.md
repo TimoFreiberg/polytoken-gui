@@ -207,7 +207,7 @@ are REAL but **provisional** — they embed local `/Users/timo/...` paths from t
         `/update/state`, verified E2E against a local manifest server. Clone mode stays
         as the dev loop.
   - [x] **Updater hosting live (2026-07-03):** public releases repo
-        `TimoFreiberg/polytoken-gui`, v0.2.0 published; endpoint baked into the shell
+        `TimoFreiberg/pantoken`, v0.2.0 published; endpoint baked into the shell
         as the default (env/file overrides remain, `PANTOKEN_SHELL_UPDATE_URL=off`
         disables), `dangerousInsecureTransportProtocol` dropped. First installs use
         `curl … | tar xz -C /Applications` — browser downloads of ad-hoc apps hit

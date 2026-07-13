@@ -6,7 +6,7 @@ const updater = readFileSync(join(import.meta.dir, "../../deploy/update-headless
 
 describe("headless updater production contract", () => {
   test("uses the canonical release host and fixed asset names", () => {
-    expect(updater).toContain('RELEASE_REPO="TimoFreiberg/polytoken-gui"');
+    expect(updater).toContain('RELEASE_REPO="TimoFreiberg/pantoken"');
     expect(updater).toContain('HEADLESS_ASSET="pantoken-headless-macos-aarch64.tar.gz"');
     expect(updater).toContain("releases/latest/download");
   });

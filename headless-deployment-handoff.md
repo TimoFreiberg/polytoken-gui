@@ -17,7 +17,7 @@ The repository is partway through the migration from the legacy source-checkout/
   - runtime wrapper
   - updater
   - tar validator
-- Canonical release-host handling for `TimoFreiberg/polytoken-gui`.
+- Canonical release-host handling for `TimoFreiberg/pantoken`.
 - Release metadata and build-SHA contracts.
 - Strict runtime environment parsing and launchd deployment foundations.
 - Signed updater foundations:

@@ -28,7 +28,7 @@ resolve_link_target() {
 }
 
 # ── Canonical release constants ──────────────────────────────────
-RELEASE_REPO="TimoFreiberg/polytoken-gui"
+RELEASE_REPO="TimoFreiberg/pantoken"
 RELEASE_BASE_URL="https://github.com/${RELEASE_REPO}"
 HEADLESS_ASSET="pantoken-headless-macos-aarch64.tar.gz"
 HEADLESS_SIGNATURE="${HEADLESS_ASSET}.sig"

@@ -32,7 +32,7 @@
     "updater": {
       "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDg2Mjg4ODNBNzJBQzM0MjkKUldRcE5LeHlPb2dvaHJOY2pRbjlDUUtmVE51ZHlrU0h0aUVNRXhLR2JUNER2cktvSVd1Q3NWUFEK",
       "endpoints": [
-        "https://github.com/TimoFreiberg/polytoken-gui/releases/latest/download/latest.json"
+        "https://github.com/TimoFreiberg/pantoken/releases/latest/download/latest.json"
       ]
     }
   }

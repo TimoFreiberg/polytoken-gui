@@ -173,10 +173,10 @@ if (import.meta.main) {
   );
 
   // ── preflight ──
-  // Real publication must use the explicitly provisioned release-host token. Never
-  // silently fall back to the code repository's GITHUB_TOKEN.
+  // Publication requires GH_TOKEN (set by CI via GITHUB_TOKEN or locally via
+  // `gh auth login`). For non-dry-run runs, GH_TOKEN must be present.
   if (!dryRun && !process.env.GH_TOKEN) {
-    fail("GH_TOKEN must be the explicit PANTOKEN_RELEASE_TOKEN release-host credential");
+    fail("GH_TOKEN is required for publication (CI sets it via secrets.GITHUB_TOKEN)");
   }
   if (!process.env.GH_TOKEN && !process.env.GITHUB_TOKEN) {
     const gh = await capture(["gh", "auth", "status"]);

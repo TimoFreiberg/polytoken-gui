@@ -75,11 +75,11 @@ describe("headless build logic", () => {
       tag: "v0.2.1",
       version: "0.2.1",
       buildSha: "0123456789abcdef0123456789abcdef01234567",
-      releaseRepo: "TimoFreiberg/polytoken-gui",
+      releaseRepo: "TimoFreiberg/pantoken",
       desktopAsset:
-        "https://github.com/TimoFreiberg/polytoken-gui/releases/download/v0.2.1/Pantoken.app.tar.gz",
+        "https://github.com/TimoFreiberg/pantoken/releases/download/v0.2.1/Pantoken.app.tar.gz",
       headlessAsset:
-        "https://github.com/TimoFreiberg/polytoken-gui/releases/download/v0.2.1/pantoken-headless-macos-aarch64.tar.gz",
+        "https://github.com/TimoFreiberg/pantoken/releases/download/v0.2.1/pantoken-headless-macos-aarch64.tar.gz",
       assetSha256: {
         headless: "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789",
         signature: "1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef",
@@ -94,7 +94,7 @@ describe("headless build logic", () => {
     expect(loaded.tag).toBe("v0.2.1");
     expect(loaded.version).toBe("0.2.1");
     expect(loaded.buildSha).toHaveLength(40);
-    expect(loaded.releaseRepo).toBe("TimoFreiberg/polytoken-gui");
+    expect(loaded.releaseRepo).toBe("TimoFreiberg/pantoken");
     expect(typeof loaded.desktopAsset).toBe("string");
     expect(typeof loaded.headlessAsset).toBe("string");
     expect(typeof loaded.assetSha256).toBe("object");

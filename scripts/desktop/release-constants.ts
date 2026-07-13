@@ -1,9 +1,9 @@
 #!/usr/bin/env bun
 
-/** Canonical public release host. The code remote is intentionally different. */
-export const RELEASE_REPO = "TimoFreiberg/polytoken-gui";
+/** Canonical public release host. */
+export const RELEASE_REPO = "TimoFreiberg/pantoken";
 export const RELEASE_OWNER = "TimoFreiberg";
-export const RELEASE_NAME = "polytoken-gui";
+export const RELEASE_NAME = "pantoken";
 export const RELEASE_BASE_URL = `https://github.com/${RELEASE_REPO}`;
 
 /** Existing Tauri updater key; do not regenerate without an explicit migration. */

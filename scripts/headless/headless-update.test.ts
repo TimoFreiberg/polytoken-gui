@@ -420,7 +420,7 @@ http.server.ThreadingHTTPServer(("127.0.0.1", port), Handler).serve_forever()
   // resolution is exercised by the "explicit tag recovery" integration test.
   test("uses canonical release host URLs", async () => {
     const script = readFileSync(UPDATER, "utf8");
-    expect(script).toContain("TimoFreiberg/polytoken-gui");
+    expect(script).toContain("TimoFreiberg/pantoken");
     expect(script).toContain("releases/download/");
     expect(script).toContain("pantoken-headless-macos-aarch64.tar.gz");
     expect(script).toContain("dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDg2Mjg4ODNBNzJBQzM0MjkKUldRcE5LeHlPb2dvaHJOY2pRbjlDUUtmVE51ZHlrU0h0aUVNRXhLR2JUNER2cktvSVd1Q3NWUFEK");

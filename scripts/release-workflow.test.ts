@@ -11,12 +11,9 @@ describe("release workflow", () => {
     expect(workflow).toContain("release-metadata.json");
   });
 
-  test("publishes only through the canonical release host token", () => {
-    expect(workflow).toContain("--repo TimoFreiberg/polytoken-gui");
-    expect(workflow).toContain("GH_TOKEN: ${{ secrets.PANTOKEN_RELEASE_TOKEN }}");
-    expect(workflow).not.toContain("github.repository");
-    expect(workflow).not.toContain("github.token");
-    expect(workflow).toContain("test -n \"$PANTOKEN_RELEASE_TOKEN\"");
+  test("publishes to the canonical release host", () => {
+    expect(workflow).toContain("--repo TimoFreiberg/pantoken");
+    expect(workflow).toContain("GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}");
   });
 
   test("validates before artifact upload", () => {

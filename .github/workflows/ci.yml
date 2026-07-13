@@ -174,8 +174,7 @@ jobs:
 
   # Tag pushes only (scripts/desktop/release.ts creates them): prepare the signed
   # desktop and headless release bundle in parallel with the gates, then publish only
-  # after those gates pass. Releases live in TimoFreiberg/polytoken-gui, while this
-  # checkout's code remote is TimoFreiberg/pantoken.
+  # after those gates pass. Releases live in TimoFreiberg/pantoken.
   # The minisign key comes from the TAURI_SIGNING_PRIVATE_KEY Actions secret
   # (one-time setup: gh secret set TAURI_SIGNING_PRIVATE_KEY < ~/.tauri/pantoken-shell.key).
   release-prepare:
@@ -209,7 +208,7 @@ jobs:
         run: >
           bun scripts/desktop/publish.ts
           --dry-run
-          --repo TimoFreiberg/polytoken-gui
+          --repo TimoFreiberg/pantoken
           --tag-must-match "${{ github.ref_name }}"
       - name: Build headless release artifact
         env:
@@ -284,17 +283,13 @@ jobs:
           test -f target/release/release-bundle/pantoken-headless-macos-aarch64.tar.gz
           test -f target/release/release-bundle/pantoken-headless-macos-aarch64.tar.gz.sig
           test -f target/release/release-bundle/release-metadata.json
-      - name: Validate release-host token
-        env:
-          PANTOKEN_RELEASE_TOKEN: ${{ secrets.PANTOKEN_RELEASE_TOKEN }}
-        run: test -n "$PANTOKEN_RELEASE_TOKEN"
       - name: Publish release
         env:
-          GH_TOKEN: ${{ secrets.PANTOKEN_RELEASE_TOKEN }}
-          PANTOKEN_RELEASE_REPO: TimoFreiberg/polytoken-gui
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PANTOKEN_RELEASE_REPO: TimoFreiberg/pantoken
           PANTOKEN_RELEASE_BUNDLE_DIR: target/release/release-bundle
         run: >
           bun scripts/desktop/publish.ts
           --skip-build
-          --repo TimoFreiberg/polytoken-gui
+          --repo TimoFreiberg/pantoken
           --tag-must-match "${{ github.ref_name }}"

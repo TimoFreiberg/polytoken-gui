@@ -80,7 +80,7 @@ bypass no longer applies to ad-hoc apps). Install without a browser instead:
 # one-liner (resolves the right arch + extracts to /Applications):
 curl -fsSL https://raw.githubusercontent.com/TimoFreiberg/pantoken/main/install.sh | bash
 # or, the bare curl+tar the script wraps:
-curl -sSL https://github.com/TimoFreiberg/polytoken-gui/releases/latest/download/Pantoken.app.tar.gz \
+curl -sSL https://github.com/TimoFreiberg/pantoken/releases/latest/download/Pantoken.app.tar.gz \
   | tar xz -C /Applications
 ```
 
@@ -130,7 +130,7 @@ card (`applyFailed`) so it offers retry.
 1. `PANTOKEN_SHELL_UPDATE_URL` env var — the literal `off` disables checks (hermetic runs)
 2. a `shell-update-url` file in the data dir (one URL on a line)
 3. the baked-in default: the public releases repo,
-   `https://github.com/TimoFreiberg/polytoken-gui/releases/latest/download/latest.json`
+   `https://github.com/TimoFreiberg/pantoken/releases/latest/download/latest.json`
 
 So installed apps update out of the box; the overrides exist for tests and for
 pointing a machine at alternative hosting (e.g. a tailnet static dir).
@@ -159,7 +159,7 @@ secrets, so the exposure is the GitHub account itself — accepted for a single-
 tool, and it doubles as a key backup.)
 
 `publish.ts` also works standalone from this machine (`--repo
-TimoFreiberg/polytoken-gui`, `--dry-run` to inspect): it builds signed (key from
+TimoFreiberg/pantoken`, `--dry-run` to inspect): it builds signed (key from
 `TAURI_SIGNING_PRIVATE_KEY` or `~/.tauri/pantoken-shell.key`), **derives `latest.json`
 from the built bundle's Info.plist** — a hand-typed manifest version over an older
 artifact makes every relaunch "update" again, an infinite install loop under the

@@ -16,9 +16,8 @@ import {
 } from "./release-constants";
 
 describe("release constants", () => {
-  test("keeps the code remote distinct from the public release host", () => {
-    expect(RELEASE_REPO).toBe("TimoFreiberg/polytoken-gui");
-    expect(RELEASE_REPO).not.toBe("TimoFreiberg/pantoken");
+  test("uses the canonical release host", () => {
+    expect(RELEASE_REPO).toBe("TimoFreiberg/pantoken");
   });
 
   test("validates strict semantic-version tags", () => {
@@ -30,7 +29,7 @@ describe("release constants", () => {
 
   test("generates canonical desktop and headless URLs", () => {
     expect(desktopUpdateEndpoint()).toBe(
-      "https://github.com/TimoFreiberg/polytoken-gui/releases/latest/download/latest.json",
+      "https://github.com/TimoFreiberg/pantoken/releases/latest/download/latest.json",
     );
     expect(releaseAssetUrl("v1.2.3", DESKTOP_ASSET)).toContain(
       "/releases/download/v1.2.3/Pantoken.app.tar.gz",

@@ -79,7 +79,7 @@ sudo -n -l /bin/launchctl kickstart -k system/com.pantoken.server
 ## Release preparation and updates
 
 Desktop and headless artifacts share signed `vMAJOR.MINOR.PATCH` tags hosted at
-`TimoFreiberg/polytoken-gui`; the code remote is `TimoFreiberg/pantoken`.
+`TimoFreiberg/pantoken`.
 The headless release is
 `pantoken-headless-macos-aarch64.tar.gz` plus its minisign `.sig`.
 

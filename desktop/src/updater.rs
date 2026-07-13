@@ -35,7 +35,7 @@ static CHECK_IN_FLIGHT: AtomicBool = AtomicBool::new(false);
 /// releases repo — public so installed apps can download without credentials; it is
 /// not the code remote. `latest` always serves the newest release's manifest.
 const DEFAULT_ENDPOINT: &str =
-    "https://github.com/TimoFreiberg/polytoken-gui/releases/latest/download/latest.json";
+    "https://github.com/TimoFreiberg/pantoken/releases/latest/download/latest.json";
 // Keep this literal synchronized with scripts/desktop/release-constants.ts and
 // desktop/tauri.conf.json; the release-host is not the code remote.
 
