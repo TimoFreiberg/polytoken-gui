@@ -244,16 +244,10 @@ async function assembleTarGz(
 
     // Build tar.gz (no wrapper prefix, direct root)
     // COPYFILE_DISABLE=1 prevents BSD tar from adding AppleDouble (._*) metadata.
-    // List files explicitly instead of "." — BSD tar with "." includes directory
-    // entries (./, ./bin/, ./client-dist/) that the validator rejects as unexpected
-    // top-level directories.
+    // The Rust tar validator handles directory entries (bin/, client-dist/) correctly,
+    // so we use a normal recursive archive command.
     const tarCmd = await capture(
-      ["tar", "czf", join(outputDir, HEADLESS_ASSET), "-C", stagingDir,
-        "VERSION", "BUILD_SHA",
-        "bin/pantoken-server", "bin/pantoken-tar-validate",
-        "run.sh", "update.sh",
-        ...listClientDistFiles(stagingDir),
-      ],
+      ["tar", "czf", join(outputDir, HEADLESS_ASSET), "-C", stagingDir, "."],
       { env: { COPYFILE_DISABLE: "1" } },
     );
     if (tarCmd.code !== 0)
@@ -350,31 +344,6 @@ function mkdirRecursively(dir: string): void {
   const parent = dir.split("/").slice(0, -1).join("/");
   if (parent && !existsSync(parent)) mkdirRecursively(parent);
   if (!existsSync(dir)) mkdirSync(dir);
-}
-
-// ── list client-dist files for tar ──
-
-/**
- * List all files under client-dist/ relative to stagingDir,
- * so they can be passed explicitly to tar (avoiding directory entries
- * that BSD tar includes when using ".").
- */
-function listClientDistFiles(stagingDir: string): string[] {
-  const clientDistDir = join(stagingDir, "client-dist");
-  if (!existsSync(clientDistDir)) return [];
-  const result: string[] = [];
-  function walkDir(dir: string, prefix: string) {
-    for (const name of readdirSync(dir)) {
-      const st = statSync(join(dir, name));
-      if (st.isFile()) {
-        result.push(`${prefix}${name}`);
-      } else if (st.isDirectory()) {
-        walkDir(join(dir, name), `${prefix}${name}/`);
-      }
-    }
-  }
-  walkDir(clientDistDir, "client-dist/");
-  return result;
 }
 
 // ── copy dir recursive ──
