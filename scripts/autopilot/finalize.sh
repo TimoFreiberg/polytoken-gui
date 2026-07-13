@@ -17,6 +17,8 @@ set -euo pipefail
 
 ISSUE_NUMBER="${1:?usage: finalize.sh <issue_number>}"
 
+log() { echo "[$(date '+%H:%M:%S')] $*" >&2; }
+
 WORKSPACE_NAME="autopilot-$ISSUE_NUMBER"
 
 # 1. Fetch latest main (another implementer or manual work may have pushed)
@@ -33,7 +35,7 @@ PRE_REBASE_OP=$(jj op log --limit 1 --no-graph -T id)
 # Guard: if main..@ is empty (no new commits), skip rebase — nothing to push.
 NEW_COMMITS=$(jj log -r 'main..@' --no-graph -T 'commit_id' 2>/dev/null | head -1)
 if [ -z "$NEW_COMMITS" ]; then
-  echo "WARN: no new commits to push (main..@ is empty) — skipping" >&2
+  log "WARN: no new commits to push (main..@ is empty) — skipping"
   exit 0
 fi
 jj rebase -s 'main..@' -d main@origin 2>/dev/null || true
@@ -58,14 +60,14 @@ $DIFF_SUMMARY
 EOF
 )" || true
 
-  echo "ERROR: rebase conflict — rolled back, posted comment on issue #$ISSUE_NUMBER" >&2
+  log "ERROR: rebase conflict — rolled back, posted comment on issue #$ISSUE_NUMBER"
   exit 1  # skip push, leave workspace intact
 fi
 
 # 5. Advance main to our tip (no --allow-backwards: if main moved forward,
 # the fetch+rebase above should have handled it; if move fails, retry)
 jj bookmark move main --to @ || {
-  echo "WARN: bookmark move failed — main may have moved. Re-fetching and retrying." >&2
+  log "WARN: bookmark move failed — main may have moved. Re-fetching and retrying."
   jj git fetch
   jj rebase -s 'main..@' -d main@origin 2>/dev/null || true
   jj bookmark move main --to @
@@ -74,4 +76,4 @@ jj bookmark move main --to @ || {
 # 6. Push
 jj git push --bookmark main
 
-echo "Successfully pushed issue #$ISSUE_NUMBER to main" >&2
+log "Successfully pushed issue #$ISSUE_NUMBER to main"

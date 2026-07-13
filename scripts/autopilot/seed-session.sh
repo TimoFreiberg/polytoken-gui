@@ -26,7 +26,7 @@ for _ in $(seq 1 30); do
   sleep 0.5
 done
 if [ "$STATE" != "ready" ]; then
-  echo "ERROR: daemon not ready after 15s (session: $SESSION_ID)" >&2
+  echo "[$(date '+%H:%M:%S')] ERROR: daemon not ready after 15s (session: $SESSION_ID)" >&2
   exit 1
 fi
 
@@ -53,14 +53,26 @@ curl -sf -X POST -H "$AUTH" -H "Content-Type: application/json" \
 
 # 6. Seed the initial prompt
 PROMPT="Implement GitHub issue $ISSUE_URL as described in the issue.
-Read the issue with \`gh issue view <N>\` (use the issue number from the URL).
+Read the issue with \`gh issue view <N> --repo TimoFreiberg/pantoken\` (use the issue number from the URL).
 Follow AGENTS.md conventions.
 Plan the implementation, review the plan, hand off to execute, implement,
 review the implementation, and commit when done. Push is handled by the
-outer script — do not push yourself."
+outer script — do not push yourself.
+
+Note: this workspace is a jj workspace without a .git directory, so all
+\`gh\` commands MUST include \`--repo TimoFreiberg/pantoken\` explicitly.
+
+If you discover during planning or implementation that the issue is
+ambiguous and you cannot proceed without a human answer, do the following:
+1. Post a comment on the GitHub issue with \`gh issue comment <N> --repo TimoFreiberg/pantoken --body \"...\"\`
+   - The comment body MUST start with \`<!-- autopilot -->\` on its own line, then a blank line, then your question.
+   - Ask one specific, answerable question.
+2. Do NOT commit or make any code changes.
+3. Stop. The outer script will handle cleanup.
+This ensures the triage loop won't re-pick this issue until the human replies."
 
 curl -sf -X POST -H "$AUTH" -H "Content-Type: application/json" \
   -d "$(jq -n --arg c "$PROMPT" '{content:$c}')" \
   "$BASE/prompt" >/dev/null
 
-echo "Session $SESSION_ID seeded successfully (plan facet, adventurous handoff on)" >&2
+echo "[$(date '+%H:%M:%S')] Session $SESSION_ID seeded successfully (plan facet, adventurous handoff on)" >&2

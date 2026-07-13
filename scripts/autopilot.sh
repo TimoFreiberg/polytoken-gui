@@ -49,7 +49,7 @@ if ! jj bookmark list main >/dev/null 2>&1; then
   exit 1
 fi
 
-echo "All dependencies present. Starting autopilot..." >&2
+echo "[$(date '+%H:%M:%S')] All dependencies present. Starting autopilot..." >&2
 
 # ─── Delegate to main.sh ─────────────────────────────────────────────────────
 

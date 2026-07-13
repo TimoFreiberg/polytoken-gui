@@ -24,6 +24,14 @@ MARKER_DIR="$HOME/.local/share/pantoken-autopilot"
 
 [ "${1:-}" = "--dry-run" ] && DRY_RUN=true
 
+# ─── Logging ─────────────────────────────────────────────────────────────────
+
+# Timestamp prefix for log lines (HH:MM:SS)
+ts() { date '+%H:%M:%S'; }
+
+# Log a message to stderr with a timestamp prefix
+log() { echo "[$(ts)] $*" >&2; }
+
 # ─── Source helpers ──────────────────────────────────────────────────────────
 
 # shellcheck source=claims.sh
@@ -37,22 +45,22 @@ SPAWNED_DAEMON_PIDS=()
 # ─── Signal handling ─────────────────────────────────────────────────────────
 
 cleanup_on_exit() {
-  echo ""
-  echo "Autopilot shutting down..." >&2
+  log ""
+  log "Autopilot shutting down..."
 
   # Kill any daemons we spawned
   for pid in "${SPAWNED_DAEMON_PIDS[@]:-}"; do
     if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
-      echo "Killing daemon PID $pid" >&2
+      log "Killing daemon PID $pid"
       kill "$pid" 2>/dev/null || true
     fi
   done
 
-  echo "Done." >&2
+  log "Done."
 }
 
 trap cleanup_on_exit EXIT
-trap 'echo ""; exit 130' INT TERM
+trap 'log ""; exit 130' INT TERM
 
 # ─── Functions ───────────────────────────────────────────────────────────────
 
@@ -66,7 +74,7 @@ run_implementation() {
   cd "$REPO_ROOT"
   jj workspace add "../pantoken-autopilot-$issue_number" \
     --name "autopilot-$issue_number" 2>/dev/null || {
-    echo "ERROR: workspace already exists for issue #$issue_number" >&2
+    log "ERROR: workspace already exists for issue #$issue_number"
     return 1
   }
   cd "$REPO_ROOT/../pantoken-autopilot-$issue_number"
@@ -80,7 +88,7 @@ run_implementation() {
   port=$(echo "$daemon_out" | sed -n 's/.*port=\([0-9]*\).*/\1/p')
 
   if [ -z "$session_id" ] || [ -z "$port" ]; then
-    echo "ERROR: failed to parse daemon output: $daemon_out" >&2
+    log "ERROR: failed to parse daemon output: $daemon_out"
     return 1
   fi
 
@@ -141,13 +149,13 @@ merge_and_cleanup_finished_slot() {
   issue_number=$(get_claim_issue "$slot")
 
   if [ -z "$issue_number" ] || [ "$issue_number" = "null" ]; then
-    echo "WARN: no claim found for slot $slot — skipping" >&2
+    log "WARN: no claim found for slot $slot — skipping"
     return 0
   fi
 
   # If implementation failed, skip finalize — just clean up and release.
   if [ "$status" = "failed" ]; then
-    echo "Implementation failed for issue #$issue_number — skipping finalize" >&2
+    log "Implementation failed for issue #$issue_number — skipping finalize"
     cd "$REPO_ROOT"
     jj workspace forget "autopilot-$issue_number" 2>/dev/null || true
     rm -rf "$REPO_ROOT/../pantoken-autopilot-$issue_number"
@@ -158,7 +166,7 @@ merge_and_cleanup_finished_slot() {
   # Finalize: linearize + push (serial — no flock needed, runs in main loop)
   cd "$REPO_ROOT/../pantoken-autopilot-$issue_number"
   if ! "$SCRIPT_DIR/finalize.sh" "$issue_number"; then
-    echo "Finalize failed — leaving workspace intact for manual resolution" >&2
+    log "Finalize failed — leaving workspace intact for manual resolution"
     cd "$REPO_ROOT"
     release_claim "$issue_number"
     return 1
@@ -177,7 +185,7 @@ merge_and_cleanup_finished_slot() {
 rm -f "$MARKER_DIR"/done-* "$MARKER_DIR"/failed-* 2>/dev/null || true
 
 while true; do
-  echo "─── Triage cycle $(date '+%H:%M:%S') ───" >&2
+  log "─── Triage cycle ───"
 
   # 1. Recover stale claims
   recover_stale_claims
@@ -186,7 +194,7 @@ while true; do
   ACTIVE_SLOTS=$(count_active_slots)
   FREE_SLOTS=$((MAX_CONCURRENT - ACTIVE_SLOTS))
 
-  echo "Active: $ACTIVE_SLOTS/$MAX_CONCURRENT slots, $FREE_SLOTS free" >&2
+  log "Active: $ACTIVE_SLOTS/$MAX_CONCURRENT slots, $FREE_SLOTS free"
 
   if [ "$FREE_SLOTS" -le 0 ]; then
     # All slots busy — wait for one to finish, then merge + cleanup
@@ -197,15 +205,16 @@ while true; do
 
   # 3. Triage (serial, headless)
   # exec stdout → tee (log) → parser; stderr is captured separately
+  # shellcheck disable=SC2034 # TRIAGE_LOG is used by tee in the pipe below
   TRIAGE_LOG="$MARKER_DIR/triage-$(date +%Y%m%d-%H%M%S).log"
-  TRIAGE_OUTPUT=$(cd "$REPO_ROOT" && polytoken exec --facet plan --max-tool-turns 30 \
+  TRIAGE_OUTPUT=$(cd "$REPO_ROOT" && polytoken exec --facet plan --max-tool-turns 15 \
     "$(cat "$SCRIPT_DIR/triage-prompt.md")" \
     | "$SCRIPT_DIR/parse-triage.sh" 2>/dev/null || echo '{"status":"error"}')
 
   STATUS=$(echo "$TRIAGE_OUTPUT" | jq -r '.status')
 
   if [ "$STATUS" = "no_work" ] || [ "$STATUS" = "error" ]; then
-    echo "No implementable issues found (status: $STATUS)" >&2
+    log "No implementable issues found (status: $STATUS)"
     # If slots are active, wait for one to finish; else sleep
     if [ "$ACTIVE_SLOTS" -gt 0 ]; then
       FINISHED_SLOT=$(wait_for_slot_to_finish)
@@ -221,19 +230,19 @@ while true; do
     ISSUE_URL=$(echo "$TRIAGE_OUTPUT" | jq -r '.issue_url')
     ISSUE_TITLE=$(echo "$TRIAGE_OUTPUT" | jq -r '.title')
 
-    echo "Triage picked issue #$ISSUE_NUMBER: $ISSUE_TITLE" >&2
+    log "Triage picked issue #$ISSUE_NUMBER: $ISSUE_TITLE"
 
     # In dry-run mode, print the triage decision and exit
     if [ "$DRY_RUN" = true ]; then
-      echo "DRY RUN: would implement issue #$ISSUE_NUMBER — $ISSUE_TITLE"
-      echo "  URL: $ISSUE_URL"
+      log "DRY RUN: would implement issue #$ISSUE_NUMBER — $ISSUE_TITLE"
+      log "  URL: $ISSUE_URL"
       exit 0
     fi
 
     # Find the lowest free slot index
     SLOT=$(find_free_slot)
     if [ "$SLOT" = "-1" ]; then
-      echo "ERROR: no free slot found despite FREE_SLOTS > 0 — waiting" >&2
+      log "ERROR: no free slot found despite FREE_SLOTS > 0 — waiting"
       FINISHED_SLOT=$(wait_for_slot_to_finish)
       merge_and_cleanup_finished_slot "$FINISHED_SLOT" || true
       continue
