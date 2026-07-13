@@ -3,6 +3,32 @@
 Backlog. Items marked [ ] are open; ~~[x]~~ notes are kept only where the
 resolution is non-obvious or likely to bite again. Otherwise see `jj log`.
 
+## 💬 Discussion needed (open product decisions)
+
+Items moved here from the original `docs/quality-gate.md` — these are
+unsettled product questions, not hard invariants. Each needs a critical
+discussion before becoming a gate (or being rejected).
+
+- [ ] **Q&A form placement: above vs. on top of composer.** Currently
+      settled (Q10 in `QUALITY.md`) as "prefer above the composer so the
+      user isn't interrupted while typing." But the original idea was
+      spontaneous — it may have drawbacks not yet considered (e.g.,
+      vertical space pressure on small screens, discoverability of a form
+      that pushes content down vs. overlays on top). Discuss before
+      finalizing.
+- [ ] **Visuals expansion: extra niceties beyond TUI parity.** In
+      addition to faithfully implementing all polytoken TUI features
+      (Q1/Q2), we want extras: searching across all discovered sessions,
+      showing all sessions on the machine grouped by project, archiving
+      all sessions, mostly-automatic Git/JJ workspace handling. These are
+      aspirational — scope, priority, and which are blocking vs. nice-to-
+      have need discussion.
+- [ ] **Notification configurability detail.** Q4 allows desktop
+      notifications for incoming questions, but requires them to be
+      configurable. The exact configuration surface (per-session mute?
+      quiet hours? distinct alert patterns?) is open — see also the
+      Notifications brainstorm items below.
+
 ## 🔴 Open bugs
 
 - ~~[x]~~ pantoken supports all the `@` references like polytoken does (files,

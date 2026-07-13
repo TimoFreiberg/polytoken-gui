@@ -136,24 +136,9 @@ This is set up so you can verify autonomously — use it.
   (the Rust server and the Svelte client).
 - The `PantokenDriver` trait is the contract for swapping mock ↔ polytoken. Add
   capabilities there, implement in both drivers.
-- **Collapse/disclosure affordances share two primitives.** The glyph is
-  `client/src/components/ui/Chevron.svelte` (stroked SVG; `variant="disclosure"`
-  for inline sections, `variant="menu"` for dropdown badges) — don't hand-roll a
-  `▸`/`▾` triangle. The open/close animation is `transition:reveal` from
-  `client/src/lib/transitions.js` (a `slide` wrapper that honours
-  `prefers-reduced-motion`) — don't call `slide` directly. The chevron inherits a
-  faint `currentColor`; brighten it on header hover with a scoped rule on the
-  parent's own header class — e.g. `.group-head:hover :global(.chevron)` in the
-  sidebar (a parent's plain class can't reach a child component's scoped element
-  without `:global`). Reference design: the sidebar project caret.
-- **Every UI action needs a hotkey and a tooltip.** Any clickable element — buttons,
-  toggles, menu items, approval actions, settings controls — must have a `title`
-  attribute naming the action (and its keyboard shortcut if one exists). Reviewers:
-  flag missing tooltips/hotkeys the same way you'd flag missing error handling.
-- **Touch corollary (phone, ≤859px):** `title` tooltips are inert and hotkeys don't
-  exist on touch, so on phone-reachable paths every action must ALSO be a visible,
-  labeled control: `aria-label` naming the action and a ≥44px hit target
-  (`tap-targets.mobile.e2e.ts` enforces the size). No hover-revealed or
-  hotkey-only affordances on phone paths. Full-screen phone views must integrate
-  with the back gesture via `client/src/lib/overlay-history.ts` — never leave a
-  phone overlay that the OS back gesture can't close.
+- **UI conventions & patterns:** when touching `client/`, read
+  [`docs/ui-conventions.md`](docs/ui-conventions.md) — it covers shared
+  primitives (Chevron, transitions, hotkey/tooltip, touch targets) that every UI
+  change must follow. **Quality invariants** (product rules the diff must
+  respect) are in [`QUALITY.md`](QUALITY.md); the `quality-review` skill checks
+  the applicable subset on review.
