@@ -48,6 +48,35 @@ test("⌘[ and ⌘] step back and forward through visited sessions", async ({
   await expect(title(page)).toContainText("Explore the fold reducer");
 });
 
+test("window.__pantokenNav steps back and forward like ⌘[ / ⌘]", async ({
+  page,
+}) => {
+  await openSidebar(page);
+  await expect(title(page)).toContainText("Wire up the WebSocket bridge");
+
+  // Visit a second session.
+  await row(page, "Explore the fold reducer").click();
+  await expect(title(page)).toContainText("Explore the fold reducer");
+
+  // Use a local cast (same pattern as __pantokenMock in e2e/live/helpers.ts)
+  // so tsc doesn't complain about the missing Window property.
+  await page.evaluate(() => {
+    const w = window as unknown as {
+      __pantokenNav?: (dir: "back" | "forward") => void;
+    };
+    w.__pantokenNav?.("back");
+  });
+  await expect(title(page)).toContainText("Wire up the WebSocket bridge");
+
+  await page.evaluate(() => {
+    const w = window as unknown as {
+      __pantokenNav?: (dir: "back" | "forward") => void;
+    };
+    w.__pantokenNav?.("forward");
+  });
+  await expect(title(page)).toContainText("Explore the fold reducer");
+});
+
 test("back history reaches a new-session draft", async ({ page }) => {
   await openSidebar(page);
   // session → draft, then back lands on the session again.

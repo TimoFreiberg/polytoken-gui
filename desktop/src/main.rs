@@ -8,6 +8,7 @@
 )]
 
 mod config;
+mod mouse_nav;
 mod proc;
 mod shell;
 mod state;
@@ -58,6 +59,10 @@ fn main() {
 
             shell::create_main_window(&handle)?;
             shell::create_tray(&handle)?;
+
+            // Native macOS mouse thumb-button (back/forward) → webview nav.
+            // No-op on non-macOS; the DOM onauxclick handler is the browser fallback.
+            mouse_nav::install(app.handle().clone());
 
             if let Some(message) = fatal {
                 shell::present_fatal(&handle, &message);

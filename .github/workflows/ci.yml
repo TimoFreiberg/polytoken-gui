@@ -156,6 +156,7 @@ jobs:
       - run: bun scripts/desktop/build-hub.ts --debug
       - run: cargo fmt --check -p pantoken-desktop
       - run: cargo clippy --locked -p pantoken-desktop --all-targets -- -D warnings
+      - run: cargo test -p pantoken-desktop
 
   rust-server:
     name: rust server — fmt, clippy, test

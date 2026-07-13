@@ -19,4 +19,14 @@ const app = mount(App, { target: document.getElementById("app")! });
 // when a new version installs. Dev-safe (no-ops without serviceWorker support).
 registerServiceWorker(() => store.markUpdateReady());
 
+// Native desktop bridge: the Tauri shell's macOS mouse thumb-button monitor
+// calls this via eval() to trigger back/forward navigation. No-op in a browser
+// (the DOM onauxclick handler covers that path). Mirrors window.__pantokenMock.
+(window as unknown as { __pantokenNav?: (dir: "back" | "forward") => void }).__pantokenNav =
+  (dir: "back" | "forward") => {
+    if (store.unauthorized) return;
+    if (dir === "back") store.navBack();
+    else store.navForward();
+  };
+
 export default app;
