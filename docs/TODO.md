@@ -264,6 +264,12 @@ are REAL but **provisional** — they embed local `/Users/timo/...` paths from t
       its own comment admits it. Post-warm liveness needs a "this session
       died" client signal before fail-fast is honest there (the restore path
       is classified now; see `polytoken/restore_error.rs`).
+- [ ] **Vite plugin timings report in CI build output.** The headless release
+      build (`scripts/headless/build.ts`) triggers a `[PLUGIN_TIMINGS]` report
+      from Vite that interleaves with build output and obscures the actual
+      asset list. Consider suppressing it (`build.rollupOptions.output`
+      `pluginTimings: false` or env var) or moving it to a separate file
+      only when `--debug` is passed.
 - ~~[x]~~ `spawn_new_daemon`/`spawn_resume_daemon` flattened `io::Error` into
       bare OS strings — a missing binary read as "No such file or directory".
       `spawn_error_message` now names the binary path while the `ErrorKind` is

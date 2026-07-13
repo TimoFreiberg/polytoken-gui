@@ -356,7 +356,11 @@ function copyDirRecursive(src: string, dst: string): void {
     if (st.isDirectory()) {
       if (name !== "assets") fail(`unexpected client-dist directory: ${name}`);
       copyDirRecursive(srcPath, dstPath);
-    } else if (name === "index.html" || src.includes(`${join("client", "dist", "assets")}`)) {
+    } else if (
+      name === "index.html" ||
+      src.includes(`${join("client", "dist", "assets")}`) ||
+      name.match(/^(apple-touch-icon|icon|favicon|manifest|sw)\b.*$/)
+    ) {
       copyFileSync(srcPath, dstPath);
     } else {
       fail(`unexpected client-dist file: ${name}`);
