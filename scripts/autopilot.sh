@@ -10,7 +10,7 @@
 #   MAX_CONCURRENT  Max simultaneous implementers (default: 2)
 set -euo pipefail
 
-REPO_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
+REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 SCRIPT_DIR="$REPO_ROOT/scripts/autopilot"
 
 # ─── Dependency checks ───────────────────────────────────────────────────────
