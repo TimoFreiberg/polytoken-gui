@@ -32,7 +32,7 @@ RELEASE_REPO="TimoFreiberg/polytoken-gui"
 RELEASE_BASE_URL="https://github.com/${RELEASE_REPO}"
 HEADLESS_ASSET="pantoken-headless-macos-aarch64.tar.gz"
 HEADLESS_SIGNATURE="${HEADLESS_ASSET}.sig"
-PUBLIC_KEY='dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEVGN0MyNTBERDA5RDg3ODUKUldTRmg1M1FEU1Y4Nys2TTc1UjFZcTJuMzJianQ4SnpkV3NKOGEzVmFzZDJLc2FNUUExdUpGVTkK'
+PUBLIC_KEY='dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDg2Mjg4ODNBNzJBQzM0MjkKUldRcE5LeHlPb2dvaHJOY2pRbjlDUUtmVE51ZHlrU0h0aUVNRXhLR2JUNER2cktvSVd1Q3NWUFEK'
 
 # ── Fixed installation layout ────────────────────────────────────
 LIVE_LINK="${HOME}/pantoken-live"
