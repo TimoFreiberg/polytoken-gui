@@ -199,7 +199,7 @@ jobs:
       - name: Install minisign
         run: brew install minisign
       - name: Check minisign
-        run: minisign -V
+        run: minisign -v
       - name: Build signed desktop release artifacts
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
