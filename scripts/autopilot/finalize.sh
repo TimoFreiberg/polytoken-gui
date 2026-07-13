@@ -64,13 +64,23 @@ EOF
   exit 1  # skip push, leave workspace intact
 fi
 
-# 5. Advance main to our tip (no --allow-backwards: if main moved forward,
-# the fetch+rebase above should have handled it; if move fails, retry)
-jj bookmark move main --to @ || {
+# 5. Advance main to the latest non-empty commit.
+# @ is the working copy — after the implementer commits, @ is an empty
+# commit on top of the actual work. We want main to point at the latest
+# commit with actual content, not the empty working copy.
+# "latest non-empty commit in main..@" = the last commit that has a diff.
+TARGET=$(jj log -r 'main..@ ~ empty()' --no-graph -T 'commit_id' 2>/dev/null | tail -1)
+if [ -z "$TARGET" ]; then
+  # Fallback: if no non-empty commits found, use @ directly
+  TARGET="@"
+fi
+jj bookmark move main --to "$TARGET" || {
   log "WARN: bookmark move failed — main may have moved. Re-fetching and retrying."
   jj git fetch
   jj rebase -s 'main..@' -d main@origin 2>/dev/null || true
-  jj bookmark move main --to @
+  TARGET=$(jj log -r 'main..@ ~ empty()' --no-graph -T 'commit_id' 2>/dev/null | tail -1)
+  if [ -z "$TARGET" ]; then TARGET="@"; fi
+  jj bookmark move main --to "$TARGET"
 }
 
 # 6. Push
