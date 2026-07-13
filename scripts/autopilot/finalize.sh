@@ -53,10 +53,11 @@ PRE_REBASE_OP=$(jj op log --limit 1 --no-graph -T id)
 # implementation work, NOT the entire history.
 # NOTE: jj rebase exits 0 even when it produces conflicts — conflicts are
 # a first-class state, not an error. We must check for conflicts AFTER.
-# Guard: if main..@ is empty (no new commits), skip rebase — nothing to push.
-NEW_COMMITS=$(jj log -r 'main..@' --no-graph -T 'commit_id' 2>/dev/null | head -1)
-if [ -z "$NEW_COMMITS" ]; then
-  log "WARN: no new commits to push (main..@ is empty) — skipping"
+# Guard: if there are no non-empty commits in main..@, there's nothing to push.
+# (@ is always a commit even when empty, so checking main..@ alone isn't enough.)
+NON_EMPTY_COMMITS=$(jj log -r 'main..@ ~ empty()' --no-graph -T 'commit_id' 2>/dev/null | head -1)
+if [ -z "$NON_EMPTY_COMMITS" ]; then
+  log "WARN: no non-empty commits in main..@ — nothing to push, skipping"
   exit 0
 fi
 jj rebase -s 'main..@' -d main@origin 2>/dev/null || true
@@ -99,18 +100,22 @@ fi
 # @ is the working copy — after the implementer commits, @ is an empty
 # commit on top of the actual work. We want main to point at the latest
 # commit with actual content, not the empty working copy.
-# "latest non-empty commit in main..@" = the last commit that has a diff.
+# The guard at step 3 already verified non-empty commits exist, so
+# TARGET will always be set here.
 TARGET=$(jj log -r 'main..@ ~ empty()' --no-graph -T 'commit_id' 2>/dev/null | tail -1)
 if [ -z "$TARGET" ]; then
-  # Fallback: if no non-empty commits found, use @ directly
-  TARGET="@"
+  log "ERROR: no non-empty commit found to advance main to (should have been caught earlier)"
+  exit 1
 fi
 jj bookmark move main --to "$TARGET" || {
   log "WARN: bookmark move failed — main may have moved. Re-fetching and retrying."
   jj git fetch
   jj rebase -s 'main..@' -d main@origin 2>/dev/null || true
   TARGET=$(jj log -r 'main..@ ~ empty()' --no-graph -T 'commit_id' 2>/dev/null | tail -1)
-  if [ -z "$TARGET" ]; then TARGET="@"; fi
+  if [ -z "$TARGET" ]; then
+    log "ERROR: no non-empty commit found after retry"
+    exit 1
+  fi
   jj bookmark move main --to "$TARGET"
 }
 

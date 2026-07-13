@@ -123,4 +123,42 @@ describeOrSkip("finalize.sh jj primitives", () => {
     const result = runBash(`bash "${finalizeSh}" 2>&1; true`, tempDir);
     expect(result.stdout).toContain("usage: finalize.sh <issue_number>");
   });
+
+  test("jj log 'main..@ ~ empty()' returns nothing when @ is an empty commit", () => {
+    run(["git", "init"], tempDir);
+    run(["jj", "git", "init", "--colocate"], tempDir);
+
+    // Create a base commit and set main there
+    writeFileSync(join(tempDir, "base.txt"), "base\n");
+    run(["jj", "describe", "-m", "base"], tempDir);
+    run(["jj", "bookmark", "set", "main", "-r", "@"], tempDir);
+
+    // Create a new empty change on top — no non-empty commits above main
+    run(["jj", "new"], tempDir);
+
+    // main..@ ~ empty() should be empty (no non-empty commits above main)
+    const result = run(["jj", "log", "-r", "main..@ ~ empty()", "--no-graph", "-T", "commit_id"], tempDir);
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout.trim()).toBe("");
+  });
+
+  test("jj log 'main..@ ~ empty()' finds non-empty commits", () => {
+    run(["git", "init"], tempDir);
+    run(["jj", "git", "init", "--colocate"], tempDir);
+
+    // Create a base commit and set main there
+    writeFileSync(join(tempDir, "base.txt"), "base\n");
+    run(["jj", "describe", "-m", "base"], tempDir);
+    run(["jj", "bookmark", "set", "main", "-r", "@"], tempDir);
+
+    // Create a real commit on top, then an empty @ on top of that
+    run(["jj", "new"], tempDir);
+    writeFileSync(join(tempDir, "file.txt"), "content\n");
+    run(["jj", "describe", "-m", "real commit"], tempDir);
+    run(["jj", "new"], tempDir); // empty @ on top
+
+    const result = run(["jj", "log", "-r", "main..@ ~ empty()", "--no-graph", "-T", "description"], tempDir);
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("real commit");
+  });
 });
