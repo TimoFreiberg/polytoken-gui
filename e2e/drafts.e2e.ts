@@ -187,6 +187,44 @@ test("a new-session draft hides the focused session's tasklist pill", async ({
   await expect(pill).toBeHidden();
 });
 
+test("a new-session draft hides the previous session's goal badge and ambient statuses", async ({
+  page,
+}) => {
+  // Set a goal + ambient statuses on the focused session.
+  await drive(page, "goalactive");
+  await drive(page, "ambient");
+
+  // Verify the goal badge and at least one ambient status are visible.
+  const badge = page.getByTestId("goal-badge");
+  await expect(badge).toBeVisible();
+  await expect(badge).toContainText("Ship the goal badge feature");
+  const ambient = page.locator(".hdr .amb");
+  await expect(ambient).toHaveCount(1);
+  await expect(ambient).toContainText("on main · 2 files changed");
+
+  // The document title should reflect the focused session.
+  await expect(page).toHaveTitle("Wire up the WebSocket bridge · pantoken");
+
+  // Open a new-session draft — the previous session's goal badge, ambient
+  // statuses, and title must not bleed into the fresh draft view.
+  await openSidebar(page);
+  await page.getByRole("button", { name: "New session…" }).click();
+  await expect(
+    page.getByPlaceholder("Describe a task or ask a question…"),
+  ).toBeVisible();
+  await expect(badge).toHaveCount(0);
+  await expect(page.locator(".hdr .amb")).toHaveCount(0);
+  await expect(page).toHaveTitle("New session · pantoken");
+
+  // Navigate back to the session — goal badge, ambient statuses, and title
+  // are restored.
+  await openSidebar(page);
+  await row(page, "Wire up the WebSocket bridge").click();
+  await expect(badge).toBeVisible();
+  await expect(page.locator(".hdr .amb")).toHaveCount(1);
+  await expect(page).toHaveTitle("Wire up the WebSocket bridge · pantoken");
+});
+
 test("a new-session draft hides the previous session's dialogs and context panel", async ({
   page,
 }) => {
@@ -204,11 +242,14 @@ test("a new-session draft hides the previous session's dialogs and context panel
   await expect(page.getByRole("dialog")).toBeHidden();
   await expect(page.getByTestId("right-sidebar")).toBeHidden();
   await expect(page.getByTestId("context-open")).toBeHidden();
+  // The document title is neutral while drafting — not the previous session's.
+  await expect(page).toHaveTitle("New session · pantoken");
 
   // Returning to the session re-surfaces the still-pending dialog.
   await openSidebar(page);
   await row(page, "Wire up the WebSocket bridge").click();
   await expect(page.getByRole("dialog")).toBeVisible();
+  await expect(page).toHaveTitle("Wire up the WebSocket bridge · pantoken");
 });
 
 test("⌘⇧C in a new-session draft changes the DRAFT's facet, not the session's", async ({

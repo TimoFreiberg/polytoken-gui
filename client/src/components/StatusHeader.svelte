@@ -178,14 +178,16 @@
     </span>
     <div class="sub">
       <span class="path" title={subtitleTitle}>{subtitle}</span>
-      {#if s.goal}
+      {#if !drafting && s.goal}
         <span class="dot-sep">·</span>
         <GoalBadge />
       {/if}
-      {#each statuses as [key, text] (key)}
-        <span class="dot-sep">·</span>
-        <span class="amb">{text}</span>
-      {/each}
+      {#if !drafting}
+        {#each statuses as [key, text] (key)}
+          <span class="dot-sep">·</span>
+          <span class="amb">{text}</span>
+        {/each}
+      {/if}
     </div>
   </div>
 

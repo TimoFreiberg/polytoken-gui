@@ -169,6 +169,10 @@
   // tab strip / app switcher instead of always reading "pantoken" (DESIGN.md SHOULD).
   // Ambient title wins over the folded snapshot title, mirroring StatusHeader.
   $effect(() => {
+    if (store.draft) {
+      document.title = "New session · pantoken";
+      return;
+    }
     const t = store.session.ambient.title || store.session.title;
     document.title = t ? `${t} · pantoken` : "pantoken";
   });
