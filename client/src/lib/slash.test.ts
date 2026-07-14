@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { CommandInfo } from "@pantoken/protocol";
-import { filterCommands, slashQuery } from "./slash.js";
+import { filterCommands, parseSlashCommand, slashQuery } from "./slash.js";
 
 const CMDS: CommandInfo[] = [
   { name: "review", source: "prompt", argumentHint: "[path]" },
@@ -61,5 +61,55 @@ describe("filterCommands", () => {
 
   test("no match yields an empty list", () => {
     expect(filterCommands(CMDS, "zzz")).toEqual([]);
+  });
+});
+
+describe("parseSlashCommand", () => {
+  test("extracts a bare command name with no args", () => {
+    expect(parseSlashCommand("/clear")).toEqual({ name: "clear", args: "" });
+  });
+
+  test("extracts a command name and args", () => {
+    expect(parseSlashCommand("/compact summary text")).toEqual({
+      name: "compact",
+      args: "summary text",
+    });
+  });
+
+  test("extracts a namespaced command name", () => {
+    expect(parseSlashCommand("/skill:debug")).toEqual({
+      name: "skill:debug",
+      args: "",
+    });
+  });
+
+  test("extracts args that look like file paths", () => {
+    expect(parseSlashCommand("/review src/foo.ts")).toEqual({
+      name: "review",
+      args: "src/foo.ts",
+    });
+  });
+
+  test("returns null for non-slash text", () => {
+    expect(parseSlashCommand("hello world")).toBeNull();
+  });
+
+  test("returns null for empty string", () => {
+    expect(parseSlashCommand("")).toBeNull();
+  });
+
+  test("trims leading whitespace before checking for a slash", () => {
+    expect(parseSlashCommand("  /clear")).toEqual({
+      name: "clear",
+      args: "",
+    });
+  });
+
+  test("returns null for a bare slash", () => {
+    expect(parseSlashCommand("/")).toBeNull();
+  });
+
+  test("returns null when a space immediately follows the slash", () => {
+    expect(parseSlashCommand("/ foo")).toBeNull();
   });
 });

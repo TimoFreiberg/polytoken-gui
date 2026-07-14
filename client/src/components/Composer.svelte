@@ -14,7 +14,7 @@
     IMAGE_LIMITS,
     prepareImageFiles,
   } from "../lib/image-attachments.js";
-  import { filterCommands, slashQuery } from "../lib/slash.js";
+  import { filterCommands, parseSlashCommand, slashQuery } from "../lib/slash.js";
   import { nextHistoryIndex } from "../lib/prompt-history.js";
   import {
     caretOnFirstVisualLine,
@@ -413,6 +413,37 @@
     return () => clearTimeout(stashTimer);
   });
 
+  /** Slash commands intercepted client-side (routed to native store methods
+   *  instead of sent as text). Compared case-insensitively to match the
+   *  daemon's case-insensitive command recognition. */
+  const BUILTIN_NAMES = new Set(["clear", "compact"]);
+
+  /** Whether a command name is a client-intercepted builtin (case-insensitive). */
+  function isBuiltin(name: string): boolean {
+    return BUILTIN_NAMES.has(name.toLowerCase());
+  }
+
+  /** Route a builtin to its native store method. Only called after isBuiltin
+   *  returns true. Args are accepted but currently ignored — see plan Risks. */
+  function dispatchBuiltin(name: string): void {
+    switch (name.toLowerCase()) {
+      case "clear":
+        store.clearContext();
+        break;
+      case "compact":
+        store.compact();
+        break;
+    }
+  }
+
+  /** Whether a non-builtin command name is known (exists in store.commands).
+   *  Case-insensitive to match the daemon's behavior. Builtins are intercepted
+   *  before this is reached, so they're not checked here. */
+  function isKnownCommand(name: string): boolean {
+    const lower = name.toLowerCase();
+    return store.commands.some((c) => c.name.toLowerCase() === lower);
+  }
+
   // Submit the composer text. Enter always sends — the polytoken driver routes
   // mid-turn sends to the queue (/turn/input) and idle sends to a new turn
   // (/prompt), so there's no separate steer/follow-up mode to pick.
@@ -423,6 +454,35 @@
     // idle (parity with the polytoken TUI). Block it mid-turn (empty steer)
     // and when drafting a new session (empty first message).
     if (!text.trim() && images.length === 0 && (streaming || drafting)) return;
+
+    // Slash-command interception (only when NOT drafting a new session —
+    // session actions target focused_id, which is the previous session in
+    // draft mode). Builtins route to native store methods; unknown slash
+    // commands are rejected with an inline error; known commands pass
+    // through as text.
+    const slash = parseSlashCommand(text);
+    if (slash !== null && !drafting) {
+      if (isBuiltin(slash.name)) {
+        dispatchBuiltin(slash.name);
+        store.composerDraft = "";
+        pickingCwd = false;
+        expanded = false;
+        attachmentStatus = null;
+        histIndex = null;
+        histWip = "";
+        queueMicrotask(autosize);
+        return;
+      }
+      if (!isKnownCommand(slash.name)) {
+        attachmentStatus = {
+          kind: "error",
+          text: `Unknown slash command: /${slash.name}`,
+        };
+        return;
+      }
+      // Known command — fall through to send as text.
+    }
+
     // These are `$state` proxies; that's fine to pass on. `savePendingPrompt` is the
     // single boundary that rebuilds plain data before IndexedDB's structured clone.
     const imgs = images.length > 0 ? images : undefined;
@@ -734,7 +794,30 @@
       if (e.key === "Enter" || e.key === "Tab") {
         e.preventDefault();
         const cmd = slashItems[slashSel];
-        if (cmd) acceptSlash(cmd);
+        if (cmd) {
+          // If the selected command is a client-intercepted builtin (and
+          // we're not drafting), dispatch it immediately instead of
+          // inserting into the draft. This avoids the two-Enter flow:
+          // menu-accept inserts "/clear " then submit() intercepts on
+          // the next Enter.
+          if (!drafting && isBuiltin(cmd.name)) {
+            dispatchBuiltin(cmd.name);
+            store.composerDraft = "";
+            slashDismissed = false;
+            slashSel = 0;
+            attachmentStatus = null;
+            // histIndex/histWip are not reset here (unlike the submit()
+            // path) because this path is reached by typing a slash command
+            // in the composer, not via history navigation — there's no
+            // in-progress history state to clear.
+            queueMicrotask(() => {
+              ta?.focus();
+              autosize();
+            });
+            return;
+          }
+          acceptSlash(cmd);
+        }
         return;
       }
       if (e.key === "Escape") {

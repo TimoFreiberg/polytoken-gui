@@ -25,6 +25,36 @@ export function slashQuery(draft: string): string | null {
  * alphabetically. An empty query returns every command, alphabetical. Descriptions
  * are shown in the menu but intentionally not matched, to keep ranking predictable.
  */
+/**
+ * Parse a submitted draft into a slash command name + args, or null if the
+ * draft doesn't start with `/`. Unlike `slashQuery` (which is for the
+ * typeahead menu and returns null once a space appears), this is for the
+ * submit path: it works on the full draft, extracting the first token after
+ * the slash as the command name and the rest as arguments.
+ *
+ * Uses trimStart() — deliberately divergent from `slashQuery`, which does NOT
+ * trim (the typeahead only activates for a clean leading slash, so a draft
+ * with leading whitespace never opens the menu). On the submit path, a user
+ * may paste with accidental leading whitespace, so trimming is the forgiving
+ * choice: `  /clear` is intercepted as `/clear`.
+ *
+ * Returns `{ name, args }` where `name` is the bare command name (no slash)
+ * and `args` is the remaining text after the first space (trimmed), or empty
+ * string if no args.
+ */
+export function parseSlashCommand(
+  text: string,
+): { name: string; args: string } | null {
+  const trimmed = text.trimStart();
+  if (!trimmed.startsWith("/")) return null;
+  const rest = trimmed.slice(1);
+  // No command name (just "/" or "/ foo") → not a command.
+  if (rest.length === 0 || /\s/.test(rest.charAt(0))) return null;
+  const spaceIdx = rest.search(/\s/);
+  if (spaceIdx === -1) return { name: rest, args: "" };
+  return { name: rest.slice(0, spaceIdx), args: rest.slice(spaceIdx + 1).trim() };
+}
+
 export function filterCommands(
   commands: readonly CommandInfo[],
   query: string,
