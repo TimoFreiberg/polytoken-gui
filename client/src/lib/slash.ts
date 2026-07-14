@@ -19,13 +19,6 @@ export function slashQuery(draft: string): string | null {
 }
 
 /**
- * Filter + rank commands for a query (the text after the leading slash, no slash).
- * Case-insensitive substring match on the command name; prefix matches rank above
- * interior ones (so `"re"` surfaces `review` before `core-review`), ties broken
- * alphabetically. An empty query returns every command, alphabetical. Descriptions
- * are shown in the menu but intentionally not matched, to keep ranking predictable.
- */
-/**
  * Parse a submitted draft into a slash command name + args, or null if the
  * draft doesn't start with `/`. Unlike `slashQuery` (which is for the
  * typeahead menu and returns null once a space appears), this is for the
@@ -55,6 +48,13 @@ export function parseSlashCommand(
   return { name: rest.slice(0, spaceIdx), args: rest.slice(spaceIdx + 1).trim() };
 }
 
+/**
+ * Filter + rank commands for a query (the text after the leading slash, no slash).
+ * Case-insensitive substring match on the command name; prefix matches rank above
+ * interior ones (so `"re"` surfaces `review` before `core-review`), ties broken
+ * alphabetically. An empty query returns every command, alphabetical. Descriptions
+ * are shown in the menu but intentionally not matched, to keep ranking predictable.
+ */
 export function filterCommands(
   commands: readonly CommandInfo[],
   query: string,
