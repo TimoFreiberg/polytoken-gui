@@ -5,8 +5,8 @@
   // Facet picker in the composer chrome. Shows the ACTUAL current facet — the
   // draft's pick while drafting a new session, else the active session's live
   // facet (composerFacet unifies the two, mirroring composerConfig); clicking
-  // opens a dropdown listing all available facets. The active facet gets an
-  // accent tint. ⌘⇧C opens this dropdown (number keys 1-9 quick-select inside it).
+  // opens a dropdown listing all available facets. ⌘⇧C opens this dropdown
+  // (number keys 1-9 quick-select inside it).
   //
   // Adventurous handoff is a compact Plan-only modifier for an existing live
   // session. Right/Left act on the highlighted Plan row without selecting it;
@@ -52,7 +52,6 @@
   groupTitle="Facet"
   count={facets.length}
   initialSel={Math.max(0, facets.indexOf(facet))}
-  accent={isPlan}
   badgeClass={isPlan ? "facet-badge plan" : "facet-badge"}
   minWidth="160px"
   closeLabel="Close facet menu"

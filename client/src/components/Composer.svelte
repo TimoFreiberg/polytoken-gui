@@ -1039,36 +1039,35 @@
     <QueueTray />
 
     {#if drafting && store.draft}
-      <!-- New-session config chips (project · worktree). Model + effort live in the
-           status row below, rebound to the draft via store.composerConfig. -->
+      <!-- New-session location controls (project · worktree). Model + effort live in
+           the status row below, rebound to the draft via store.composerConfig. -->
       <div class="chips">
         <button
           class="chip"
+          data-testid="draft-project-control"
           aria-haspopup="dialog"
           aria-expanded={pickingCwd}
           title={`Project: ${store.draft.cwd || "home"} — click to browse for a directory (⌥P)`}
           onclick={() => (pickingCwd = !pickingCwd)}
         >
-          <Chevron open={pickingCwd} variant="menu" size={10} />
           {cwdBase}
+          <Chevron open={pickingCwd} variant="menu" size={10} />
         </button>
         <button
           class="chip toggle-chip"
+          data-testid="draft-worktree-control"
           class:on={store.draft.worktree}
           aria-pressed={store.draft.worktree}
           title="Isolate this session in a jj/git worktree of the project, leaving the main tree clean (⌥W)"
           onclick={() => store.toggleDraftWorktree()}
         >
-          <span class="chip-check" aria-hidden="true">{store.draft.worktree ? "✓" : ""}</span>
           worktree
+          {#if store.draft.worktree}<span class="chip-check" aria-hidden="true">✓</span>{/if}
         </button>
       </div>
     {/if}
 
     <div class="box-wrap">
-      <div class="composer-facet-slot" data-testid="composer-facet-slot">
-        <FacetBadge />
-      </div>
       {#if pickingCwd && drafting && store.draft}
         <DirPicker
           recents={recentCwds}
@@ -1219,9 +1218,7 @@
     <div class="composer-status-row" data-testid="composer-status-row">
       <div class="status-left">
         <PermissionBadge />
-        {#if drafting}
-          <span class="draft-hint" title="A new session is created when you send">new session</span>
-        {/if}
+        <FacetBadge />
       </div>
       {#if streaming}
         <!-- A hint that Enter while the agent works queues a follow-up (the driver
@@ -1386,11 +1383,13 @@
     gap: 5px;
     font-size: 12.5px;
     font-family: var(--font-sans);
+    letter-spacing: -0.01em;
     color: var(--text-muted);
-    background: var(--surface-sunken);
-    border: 1px solid var(--border);
-    padding: 4px 11px;
-    border-radius: 999px;
+    background: transparent;
+    border: 1px solid transparent;
+    padding: 6px 8px;
+    min-height: 36px;
+    border-radius: var(--radius-xs);
     cursor: pointer;
     max-width: 60vw;
     white-space: nowrap;
@@ -1405,15 +1404,14 @@
   }
   .chip:hover {
     color: var(--text);
-    border-color: var(--border-strong);
+    background: var(--surface-sunken);
   }
   .chip:hover :global(.chevron) {
     color: var(--text-muted);
   }
-  .toggle-chip.on {
-    color: var(--accent-text);
-    background: var(--accent);
-    border-color: var(--accent);
+  .chip:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 1px;
   }
   .chip-check {
     display: inline-grid;
@@ -1421,11 +1419,6 @@
     width: 12px;
     font-size: 11px;
     line-height: 1;
-  }
-  .draft-hint {
-    font-size: 11.5px;
-    color: var(--text-faint);
-    font-family: var(--font-sans);
   }
   .box-wrap {
     /* Anchor for the slash menu, which pops upward from just above the box. */
@@ -1441,20 +1434,6 @@
     border-radius: var(--radius);
     padding: 8px 8px 8px 10px;
     transition: border-color 0.15s;
-  }
-  .composer-facet-slot {
-    position: absolute;
-    top: 0;
-    left: 14px;
-    z-index: 4;
-    transform: translateY(-50%);
-  }
-  .composer-facet-slot :global(.badge) {
-    color: var(--text-muted);
-    background: var(--surface);
-    border-color: var(--border-strong);
-    border-radius: 999px;
-    padding: 3px 9px;
   }
   .composer-attachments {
     flex: 0 0 auto;
@@ -1719,7 +1698,6 @@
     outline-offset: 1px;
   }
   @media (pointer: coarse) {
-    .composer-facet-slot :global(.badge),
     .status-left :global(.badge),
     .composer-status-right :global(.badge),
     .attach-tag,

@@ -6,8 +6,8 @@
   // Permission-monitor mode indicator in the composer toolbar (next to facet/
   // model/effort). Shows the ACTUAL current mode; clicking opens a 4-item panel
   // (Standard/Bypass/Bypass+/Autonomous) to switch. Non-standard modes get an
-  // accent tint to signal "you are not in the default safe mode". Mirrors
-  // FacetBadge's badge+panel pattern. Reads the draft's pick while drafting
+  // state class while retaining the same neutral chrome. Mirrors FacetBadge's
+  // badge+panel pattern. Reads the draft's pick while drafting
   // (composerPermissionMonitor), else the active session's live mode.
   //
   // The dropdown chrome (badge, open/close, keyboard nav, backdrop, panel CSS)
@@ -40,7 +40,6 @@
   groupTitle="Permission mode"
   count={MODES.length}
   initialSel={MODES.findIndex((m) => m.id === mode)}
-  accent={!isStandard}
   badgeClass={isStandard ? "" : "nonstandard"}
   minWidth="200px"
   closeLabel="Close permission menu"

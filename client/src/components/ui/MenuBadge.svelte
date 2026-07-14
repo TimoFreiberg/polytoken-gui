@@ -24,7 +24,6 @@
     groupTitle,
     count = 0,
     initialSel = 0,
-    accent = false,
     badgeClass = "",
     minWidth = "200px",
     closeLabel = "Close menu",
@@ -40,7 +39,6 @@
     groupTitle: string;
     count?: number;
     initialSel?: number;
-    accent?: boolean;
     badgeClass?: string;
     minWidth?: string;
     closeLabel?: string;
@@ -115,7 +113,6 @@
 <div class="anchor">
   <button
     class="badge {badgeClass}"
-    class:accent
     data-testid={testid}
     {title}
     aria-label={ariaLabel}
@@ -159,10 +156,11 @@
     font-family: var(--font-sans);
     letter-spacing: -0.01em;
     color: var(--text-muted);
-    background: var(--surface-sunken);
-    border: 1px solid var(--border);
-    padding: 3px 9px;
-    border-radius: 999px;
+    background: transparent;
+    border: 1px solid transparent;
+    padding: 6px 8px;
+    min-height: 36px;
+    border-radius: var(--radius-xs);
     cursor: pointer;
   }
   .badge-text {
@@ -170,16 +168,11 @@
     overflow: hidden;
     text-overflow: ellipsis;
   }
-  /* Accent tint — the "not the default/active" signal (plan facet, non-standard
-     permission mode). The marker class (plan/nonstandard) is also on the badge for
-     test assertions; the visual styling lives here once. */
-  .badge.accent {
-    color: var(--accent);
-    background: var(--accent-soft);
-    border-color: color-mix(in srgb, var(--accent) 30%, transparent);
-  }
+  /* The plan/nonstandard marker classes remain available for state assertions, but
+     all composer selectors deliberately share this calm, neutral treatment. */
   .badge:hover {
-    border-color: var(--border-strong);
+    color: var(--text);
+    background: var(--surface-sunken);
   }
   @media (pointer: coarse) {
     .badge {

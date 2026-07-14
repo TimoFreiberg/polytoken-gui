@@ -67,7 +67,7 @@ test("mobile: the picker chips never overflow the viewport", async ({
     ),
   ).toBe(true);
 
-  for (const id of ["composer-facet-slot", "composer-status-row", "composer-status-right"]) {
+  for (const id of ["composer-status-row", "composer-status-right"]) {
     const landmark = page.getByTestId(id);
     const box = await landmark.boundingBox();
     expect(box, `${id} should render`).not.toBeNull();

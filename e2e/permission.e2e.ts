@@ -26,7 +26,7 @@ test("permission badge shows Standard by default and switches mode", async ({
   await expect(panel).toBeVisible();
   await panel.getByRole("option", { name: /^Bypass[^+]/ }).click();
 
-  // The badge updates to the new mode (accent-tinted, non-standard).
+  // The badge updates to the new mode and exposes its non-standard state class.
   await expect(badge).toContainText("Bypass");
   await expect(badge).not.toContainText("Bypass+");
   await expect(badge).toHaveClass(/nonstandard/);

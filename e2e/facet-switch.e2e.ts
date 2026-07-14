@@ -33,16 +33,19 @@ test("clicking the facet badge opens a picker and switching works", async ({
   await expect(badge).not.toHaveClass(/plan/);
 });
 
-test("the facet badge sits on the composer box top border", async ({ page }) => {
-  const slot = page.getByTestId("composer-facet-slot");
-  const box = page.getByTestId("composer-box");
-  const slotBox = await slot.boundingBox();
-  const boxBox = await box.boundingBox();
-  expect(slotBox).not.toBeNull();
-  expect(boxBox).not.toBeNull();
-  expect(slotBox!.y).toBeLessThan(boxBox!.y + 2);
-  expect(slotBox!.x).toBeGreaterThanOrEqual(boxBox!.x);
-  expect(slotBox!.x + slotBox!.width).toBeLessThanOrEqual(boxBox!.x + boxBox!.width);
+test("the facet badge sits to the right of permission in the composer footer", async ({
+  page,
+}) => {
+  const left = page.locator("[data-testid='composer-status-row'] .status-left");
+  const permissionBox = await left
+    .getByTestId("permission-badge")
+    .boundingBox();
+  const facetBox = await left.getByTestId("facet-badge").boundingBox();
+  expect(permissionBox).not.toBeNull();
+  expect(facetBox).not.toBeNull();
+  expect(facetBox!.x).toBeGreaterThan(permissionBox!.x);
+  expect(Math.abs(facetBox!.y - permissionBox!.y)).toBeLessThanOrEqual(1);
+  await expect(page.getByTestId("composer-facet-slot")).toHaveCount(0);
 });
 
 test("Cmd+Shift+C opens the facet dropdown even when the composer is focused", async ({
@@ -100,7 +103,9 @@ test("number key quick-selects a facet from the open dropdown", async ({
   await expect(badge).toHaveText("Research");
 });
 
-test("highlighting Plan while Execute is active does not expose or toggle handoff", async ({ page }) => {
+test("highlighting Plan while Execute is active does not expose or toggle handoff", async ({
+  page,
+}) => {
   const badge = page.getByTestId("facet-badge");
   await badge.click();
   const panel = page.getByRole("listbox", { name: "Facet" });
@@ -116,7 +121,9 @@ test("highlighting Plan while Execute is active does not expose or toggle handof
   await expect(panel).toBeFocused();
 });
 
-test("Right and Left set Plan handoff from the authoritative snapshot", async ({ page }) => {
+test("Right and Left set Plan handoff from the authoritative snapshot", async ({
+  page,
+}) => {
   const badge = page.getByTestId("facet-badge");
   await badge.click();
   await page.getByRole("option", { name: "Plan" }).click();

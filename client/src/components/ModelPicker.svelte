@@ -381,7 +381,8 @@
     color: var(--text-muted);
     background: transparent;
     border: 1px solid transparent;
-    padding: 4px 2px;
+    padding: 6px 8px;
+    min-height: 36px;
     border-radius: var(--radius-xs);
     cursor: pointer;
     max-width: 42vw;
@@ -389,11 +390,13 @@
   .badge:disabled {
     cursor: default;
   }
-  .badge:hover,
-  .badge:focus-visible {
+  .badge:hover {
     color: var(--text);
-    border-color: var(--border);
     background: var(--surface-sunken);
+  }
+  .badge:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 1px;
   }
   @media (pointer: coarse) {
     .badge {
