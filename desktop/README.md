@@ -117,9 +117,8 @@ periodic loop (`src/updater.rs`) owns updates, checked every minute
 - unattended & idle (no client connected, no turn running per `/health`) → install +
   relaunch silently;
 - anything else → defer: POST `/update/state` to the server — which raises the
-  sidebar's "Update available" card, plus one notification per version. The click
-  ("Update now", or force-update from the build-stamp menu) comes back on the next 5s
-  poll and triggers the install.
+  sidebar's "Update available" card. The click ("Update now", or force-update from
+  the build-stamp menu) comes back on the next 5s poll and triggers the install.
 
 An install swaps the .app in place, relaunches, and the fresh server serves the fresh
 client — the never-restart-mid-turn guarantee holds. Install failures un-stick the

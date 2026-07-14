@@ -180,10 +180,6 @@ pub fn present_fatal(app: &AppHandle, message: &str) {
     });
 }
 
-pub fn notify(app: &AppHandle, title: &str, body: &str) {
-    let _ = app.notification().builder().title(title).body(body).show();
-}
-
 // ───────────────────────────── update overlay ─────────────────────────────
 // The frosted "Updating Pantoken…" scrim, painted INTO the page via eval rather than as a
 // native view: the DOM freezes during the apply (the client's WS is dying anyway), the

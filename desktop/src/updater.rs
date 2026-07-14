@@ -261,7 +261,6 @@ fn run_cycle_locked(app: &AppHandle, port: u16, endpoint: &str) -> Duration {
     if !unattended {
         // Defer: raise/refresh the sidebar card and learn whether the user clicked.
         let (applying, force) = report_update_state(port, Some(&version), false);
-        notify_once(app, &version);
         if !(applying || force) {
             return PENDING_POLL;
         }
@@ -311,23 +310,6 @@ fn check_endpoint(
         .build()
         .map_err(|e| e.to_string())?;
     tauri::async_runtime::block_on(updater.check()).map_err(|e| e.to_string())
-}
-
-/// Deferred-update notification, once per version (the loop re-reports every cycle).
-fn notify_once(app: &AppHandle, version: &str) {
-    let state = app.state::<AppState>();
-    let mut last = state.last_deferred.lock().unwrap();
-    if last.as_deref() != Some(version) {
-        *last = Some(version.to_string());
-        crate::shell::notify(
-            app,
-            "Pantoken update ready",
-            &format!(
-                "Pantoken {version} is ready — it installs when your session is idle, or \
-                 use the sidebar's Update now."
-            ),
-        );
-    }
 }
 
 /// POST /update/state — the hub relays it to clients as the sidebar update card.
