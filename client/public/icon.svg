@@ -1,15 +1,122 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
-  <!-- pantoken mark: a pan seen from above that is also a token —
-       gold coin with a square mint-hole, periwinkle handle swung 30°
-       below horizontal so the whole reads as a Q. The hole stays
-       upright: the coin is rotationally symmetric, so tilting it would
-       only tilt the square. -->
-  <rect width="512" height="512" rx="115" fill="#f6f4ee"/>
-  <g transform="rotate(30 232 236)">
-    <rect x="352" y="207" width="152" height="58" rx="29" fill="#4f63bf"/>
-    <circle cx="472" cy="236" r="11" fill="#f6f4ee"/>
+<svg
+  xmlns="http://www.w3.org/2000/svg"
+  width="512"
+  height="512"
+  viewBox="0 0 512 512"
+>
+  <!-- Pantoken: a periwinkle pan / magnifying glass / Q holding a gold
+       square-holed token. The deliberately ambiguous silhouette keeps the
+       original pan-token wordplay while giving the two ideas distinct parts. -->
+  <defs>
+    <linearGradient
+      id="background"
+      x1="72"
+      y1="58"
+      x2="438"
+      y2="456"
+      gradientUnits="userSpaceOnUse"
+    >
+      <stop stop-color="#292e40" />
+      <stop offset="1" stop-color="#151720" />
+    </linearGradient>
+    <linearGradient
+      id="pan"
+      x1="105"
+      y1="89"
+      x2="436"
+      y2="390"
+      gradientUnits="userSpaceOnUse"
+    >
+      <stop stop-color="#8796f3" />
+      <stop offset="1" stop-color="#5366cf" />
+    </linearGradient>
+    <linearGradient
+      id="token"
+      x1="169"
+      y1="161"
+      x2="298"
+      y2="306"
+      gradientUnits="userSpaceOnUse"
+    >
+      <stop stop-color="#f5c55b" />
+      <stop offset="0.52" stop-color="#dda22f" />
+      <stop offset="1" stop-color="#bb791a" />
+    </linearGradient>
+    <filter
+      id="mark-shadow"
+      x="34"
+      y="43"
+      width="465"
+      height="407"
+      filterUnits="userSpaceOnUse"
+    >
+      <feDropShadow
+        dx="0"
+        dy="10"
+        stdDeviation="10"
+        flood-color="#05060a"
+        flood-opacity="0.35"
+      />
+    </filter>
+  </defs>
+
+  <rect width="512" height="512" rx="115" fill="url(#background)" />
+
+  <g filter="url(#mark-shadow)">
+    <!-- The handle sits behind the bowl so the pan remains one clean silhouette. -->
+    <g transform="rotate(30 232 236)">
+      <rect x="350" y="207" width="154" height="58" rx="29" fill="url(#pan)" />
+      <circle cx="477" cy="236" r="10" fill="#181a24" />
+    </g>
+
+    <circle cx="232" cy="236" r="154" fill="url(#pan)" />
+    <circle cx="232" cy="236" r="117" fill="#181a24" />
+
+    <!-- A slightly hand-set token keeps the mark from feeling diagrammatic. -->
+    <rect
+      x="165"
+      y="169"
+      width="134"
+      height="134"
+      rx="34"
+      fill="url(#token)"
+      transform="rotate(-7 232 236)"
+    />
+    <rect
+      x="198"
+      y="202"
+      width="68"
+      height="68"
+      rx="15"
+      fill="#191b25"
+      transform="rotate(-7 232 236)"
+    />
+
+    <!-- Restrained material cue; broad enough to survive app-icon scaling. -->
+    <path
+      d="M143 151a120 120 0 0 1 108-34"
+      fill="none"
+      stroke="#c3caff"
+      stroke-width="10"
+      stroke-linecap="round"
+      opacity="0.46"
+    />
+    <path
+      d="M191 192a61 61 0 0 1 55-15"
+      fill="none"
+      stroke="#ffe4a0"
+      stroke-width="8"
+      stroke-linecap="round"
+      opacity="0.45"
+    />
   </g>
-  <circle cx="232" cy="236" r="154" fill="#cf962b"/>
-  <circle cx="232" cy="236" r="117" fill="none" stroke="#f6f4ee" stroke-width="13" opacity="0.85"/>
-  <rect x="192" y="196" width="80" height="80" rx="14" fill="#f6f4ee"/>
+
+  <path
+    d="M58 42q198-35 396 0"
+    fill="none"
+    stroke="#fff"
+    stroke-width="4"
+    stroke-linecap="round"
+    opacity="0.09"
+  />
 </svg>
