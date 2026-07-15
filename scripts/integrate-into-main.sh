@@ -76,7 +76,7 @@ acquire_lock() {
 
     # File exists — malformed metadata is conservative: never steal it.
     local existing_pid existing_sid existing_ts
-    if ! jq -e '.pid|type=="number" and . >= 1 and (.|floor)==. and .session_id|type=="string" and .timestamp|type=="number" and .timestamp >= 1 and (.timestamp|floor)==.' "$LOCK_FILE" >/dev/null 2>&1; then
+    if ! jq -e '(.pid | type == "number" and . >= 1 and floor == .) and (.session_id | type == "string") and (.timestamp | type == "number" and . >= 1 and floor == .)' "$LOCK_FILE" >/dev/null 2>&1; then
       log "Malformed or unsafe lock metadata in $LOCK_FILE; recover it manually"
       sleep "$POLL_INTERVAL"
       continue
@@ -177,6 +177,7 @@ if [ -n "$CONFLICTS" ]; then
 fi
 if [ "$REBASE_STATUS" -ne 0 ]; then
   log "ERROR: rebase failed without conflicts — rolling back to pre-rebase state"
+  log "Inspect the jj error, fix the underlying problem, then rerun 'just integrate-into-main $ISSUE_NUMBER'"
   jj op restore "$PRE_REBASE_OP" || log "WARN: failed to restore pre-rebase operation"
   release_lock
   RELEASE_ON_EXIT=false
@@ -189,6 +190,7 @@ log "Running tests..."
 # 6a. bun test
 if ! bun test; then
   log "ERROR: bun test failed — rolling back to pre-rebase state"
+  log "Fix the failing tests, then rerun 'just integrate-into-main $ISSUE_NUMBER'"
   jj op restore "$PRE_REBASE_OP"
   release_lock
   RELEASE_ON_EXIT=false
@@ -198,6 +200,7 @@ fi
 # 6b. bun run check (typecheck)
 if ! bun run check; then
   log "ERROR: bun run check (typecheck) failed — rolling back to pre-rebase state"
+  log "Fix the typecheck errors, then rerun 'just integrate-into-main $ISSUE_NUMBER'"
   jj op restore "$PRE_REBASE_OP"
   release_lock
   RELEASE_ON_EXIT=false
@@ -207,7 +210,12 @@ fi
 # 6c. cargo fmt (auto-format, not --check)
 if [ -d "server-rs" ]; then
   log "Running cargo fmt in server-rs/..."
-  (cd server-rs && cargo fmt)
+  if ! (cd server-rs && cargo fmt); then
+    log "ERROR: cargo fmt failed — inspect and fix the formatting error, then rerun 'just integrate-into-main $ISSUE_NUMBER'"
+    release_lock
+    RELEASE_ON_EXIT=false
+    exit 1
+  fi
   # If fmt produced changes, squash them into the last non-empty commit
   FMT_CHANGES=$(jj diff --summary 2>/dev/null | head -1 || true)
   if [ -n "$FMT_CHANGES" ]; then
@@ -219,7 +227,7 @@ fi
 # 7. Advance main bookmark to the latest non-empty commit
 TARGET=$(jj log -r 'main..@ ~ empty()' --no-graph -T 'commit_id' 2>/dev/null | tail -1)
 if [ -z "$TARGET" ]; then
-  log "ERROR: no non-empty commit found to advance main to"
+  log "ERROR: no non-empty commit found to advance main to — inspect the jj history and workspace commits, then rerun 'just integrate-into-main $ISSUE_NUMBER'"
   release_lock
   RELEASE_ON_EXIT=false
   exit 1
@@ -231,12 +239,17 @@ jj bookmark move main --to "$TARGET" || {
   jj rebase -s 'main..@' -d main@origin 2>/dev/null || true
   TARGET=$(jj log -r 'main..@ ~ empty()' --no-graph -T 'commit_id' 2>/dev/null | tail -1)
   if [ -z "$TARGET" ]; then
-    log "ERROR: no non-empty commit found after retry"
+    log "ERROR: no non-empty commit found after retry — inspect the jj history, fix the bookmark/rebase state, then rerun 'just integrate-into-main $ISSUE_NUMBER'"
     release_lock
     RELEASE_ON_EXIT=false
     exit 1
   fi
-  jj bookmark move main --to "$TARGET"
+  if ! jj bookmark move main --to "$TARGET"; then
+    log "ERROR: bookmark move failed after retry — inspect the jj error and main bookmark, then rerun 'just integrate-into-main $ISSUE_NUMBER'"
+    release_lock
+    RELEASE_ON_EXIT=false
+    exit 1
+  fi
 }
 
 # 8. Push
@@ -244,7 +257,12 @@ if [ "${INTEGRATE_DRY_RUN:-0}" = "1" ]; then
   log "DRY RUN: skipping jj git push"
 else
   log "Pushing to origin..."
-  jj git push --bookmark main
+  if ! jj git push --bookmark main; then
+    log "ERROR: push failed — inspect the jj/git error, fix the remote or authentication problem, then rerun 'just integrate-into-main $ISSUE_NUMBER'"
+    release_lock
+    RELEASE_ON_EXIT=false
+    exit 1
+  fi
 fi
 
 # 9. Close the issue (best-effort)
