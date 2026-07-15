@@ -416,7 +416,22 @@
   /** Slash commands intercepted client-side (routed to native store methods
    *  instead of sent as text). Compared case-insensitively to match the
    *  daemon's case-insensitive command recognition. */
-  const BUILTIN_NAMES = new Set(["clear", "compact"]);
+  const BUILTIN_NAMES = new Set([
+    "clear",
+    "compact",
+    "facet",
+    "reset-shell",
+    "daemon-reload",
+    "goal",
+    "title",
+  ]);
+
+  /** Builtins that require arguments — when accepted from the menu, they
+   *  insert `/name ` into the composer so the user can type the argument,
+   *  instead of dispatching immediately. No-arg builtins dispatch right away.
+   *  `/title` with no args clears the title override (daemon semantics), so
+   *  it dispatches immediately like other no-arg builtins. */
+  const BUILTINS_REQUIRING_ARGS = new Set(["facet", "goal"]);
 
   /** Whether a command name is a client-intercepted builtin (case-insensitive). */
   function isBuiltin(name: string): boolean {
@@ -424,16 +439,78 @@
   }
 
   /** Route a builtin to its native store method. Only called after isBuiltin
-   *  returns true. Args are accepted but currently ignored — see plan Risks. */
-  function dispatchBuiltin(name: string): void {
+   *  returns true. `args` is the text after the command name (trimmed, may be
+   *  empty). Returns true if dispatched successfully, false if the args were
+   *  invalid (caller shows the inline error). */
+  function dispatchBuiltin(name: string, args: string): boolean {
     switch (name.toLowerCase()) {
       case "clear":
         store.clearContext();
-        break;
+        return true;
       case "compact":
         store.compact();
-        break;
+        return true;
+      case "facet":
+        if (!args) {
+          attachmentStatus = {
+            kind: "error",
+            text: "Usage: /facet <name>",
+          };
+          return false;
+        }
+        store.setFacet(args);
+        return true;
+      case "reset-shell":
+        store.resetShell();
+        return true;
+      case "daemon-reload":
+        store.daemonReload();
+        return true;
+      case "title":
+        // Empty args = clear the title override (matches daemon's POST /title
+        // with an empty string, which reverts to the inferred title).
+        store.setTitle(args);
+        return true;
+      case "goal": {
+        const sub = args.split(/\s+/)[0]?.toLowerCase() ?? "";
+        const rest = args.slice(sub.length).trim();
+        switch (sub) {
+          case "set":
+            if (!rest) {
+              attachmentStatus = {
+                kind: "error",
+                text: "Usage: /goal set <text>",
+              };
+              return false;
+            }
+            store.goalSet(rest);
+            return true;
+          case "pause":
+            store.goalPause();
+            return true;
+          case "resume":
+            store.goalResume();
+            return true;
+          case "clear":
+            store.goalClear();
+            return true;
+          case "":
+          case "status":
+            attachmentStatus = {
+              kind: "info",
+              text: "Use /goal set <text>, /goal pause, /goal resume, or /goal clear",
+            };
+            return false;
+          default:
+            attachmentStatus = {
+              kind: "error",
+              text: `Unknown /goal subcommand: ${sub}`,
+            };
+            return false;
+        }
+      }
     }
+    return false;
   }
 
   /** Whether a non-builtin command name is known (exists in store.commands).
@@ -463,7 +540,8 @@
     const slash = parseSlashCommand(text);
     if (slash !== null && !drafting) {
       if (isBuiltin(slash.name)) {
-        dispatchBuiltin(slash.name);
+        const dispatched = dispatchBuiltin(slash.name, slash.args);
+        if (!dispatched) return; // error/info set in attachmentStatus
         store.composerDraft = "";
         pickingCwd = false;
         expanded = false;
@@ -801,7 +879,15 @@
           // menu-accept inserts "/clear " then submit() intercepts on
           // the next Enter.
           if (!drafting && isBuiltin(cmd.name)) {
-            dispatchBuiltin(cmd.name);
+            // Builtins that require arguments (facet, goal, title) insert
+            // "/name " into the composer so the user can type the argument —
+            // matching how non-builtin commands behave from the menu.
+            // No-arg builtins dispatch immediately.
+            if (BUILTINS_REQUIRING_ARGS.has(cmd.name.toLowerCase())) {
+              acceptSlash(cmd);
+              return;
+            }
+            dispatchBuiltin(cmd.name, "");
             store.composerDraft = "";
             slashDismissed = false;
             slashSel = 0;

@@ -2438,6 +2438,41 @@ class PantokenStore {
     send({ type: "sessionAction", action: { kind: "clearContext" } });
   }
 
+  /** Restore the shell environment to the startup baseline (POST /reset-shell). */
+  resetShell(): void {
+    send({ type: "sessionAction", action: { kind: "resetShell" } });
+  }
+
+  /** Reload daemon config: skills, facets, config files (POST /reload). */
+  daemonReload(): void {
+    send({ type: "sessionAction", action: { kind: "daemonReload" } });
+  }
+
+  /** Create or replace the current goal (POST /goal). */
+  goalSet(summary: string): void {
+    send({ type: "sessionAction", action: { kind: "goalSet", summary } });
+  }
+
+  /** Pause the active goal (POST /goal/pause). */
+  goalPause(): void {
+    send({ type: "sessionAction", action: { kind: "goalPause" } });
+  }
+
+  /** Resume a paused goal (POST /goal/resume). */
+  goalResume(): void {
+    send({ type: "sessionAction", action: { kind: "goalResume" } });
+  }
+
+  /** Clear the current goal, idempotent (POST /goal/clear). */
+  goalClear(): void {
+    send({ type: "sessionAction", action: { kind: "goalClear" } });
+  }
+
+  /** Set the session title (POST /title). */
+  setTitle(title: string): void {
+    send({ type: "sessionAction", action: { kind: "setTitle", title } });
+  }
+
   /** Manage an MCP server (enable/disable/disconnect/reconnect). */
   setMcpServer(
     serverName: string,

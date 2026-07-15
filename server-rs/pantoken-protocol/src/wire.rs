@@ -464,7 +464,11 @@ pub enum McpAction {
 /// The fire-and-forget pass-through actions carried by
 /// `ClientMessage::SessionAction`. They share one lifecycle: POST to the
 /// daemon, no direct reply — the effect arrives as later driver events
-/// (snapshots, notifications, usage updates).
+/// (snapshots, notifications, usage updates). Daemon endpoints:
+/// POST /adventurous-handoff (toggle), /notifications/autodrain, /compact,
+/// /clear (context + shell env), /mcp/{server}/{action}, /model, /thinking,
+/// /facet, /permission-monitor, /reset-shell, /reload, /goal (set/pause/resume/clear),
+/// /title.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "kind", rename_all = "camelCase")]
 pub enum SessionAction {
@@ -492,6 +496,24 @@ pub enum SessionAction {
     },
     SetPermissionMonitor {
         mode: PermissionMonitorMode,
+    },
+    /// `POST /reset-shell` — restore the shell env to the startup baseline.
+    ResetShell,
+    /// `POST /reload` — re-read config, skills, facets, etc.
+    DaemonReload,
+    /// `POST /goal` — create or replace the current goal.
+    GoalSet {
+        summary: String,
+    },
+    /// `POST /goal/pause` — pause the active goal.
+    GoalPause,
+    /// `POST /goal/resume` — resume a paused goal.
+    GoalResume,
+    /// `POST /goal/clear` — clear the current goal (idempotent).
+    GoalClear,
+    /// `POST /title` — set the session title.
+    SetTitle {
+        title: String,
     },
 }
 
@@ -819,6 +841,11 @@ mod tests {
                 "toggleAdventurousHandoff",
                 SessionAction::ToggleAdventurousHandoff,
             ),
+            ("resetShell", SessionAction::ResetShell),
+            ("daemonReload", SessionAction::DaemonReload),
+            ("goalPause", SessionAction::GoalPause),
+            ("goalResume", SessionAction::GoalResume),
+            ("goalClear", SessionAction::GoalClear),
         ] {
             let json_str = format!(
                 r#"{{"type": "sessionAction", "action": {{"kind": "{json_kind}"}}, "sessionId": "s1"}}"#
@@ -831,6 +858,31 @@ mod tests {
                 }
                 _ => panic!("expected SessionAction for kind {json_kind}"),
             }
+        }
+    }
+
+    #[test]
+    fn roundtrip_session_action_payload_variants() {
+        // goalSet
+        let json_str = r#"{"type": "sessionAction", "action": {"kind": "goalSet", "summary": "ship it"}, "sessionId": "s1"}"#;
+        let msg = parse_client_message(json_str).unwrap();
+        match msg {
+            ClientMessage::SessionAction {
+                action: SessionAction::GoalSet { summary },
+                ..
+            } => assert_eq!(summary, "ship it"),
+            _ => panic!("expected SessionAction::GoalSet"),
+        }
+
+        // setTitle
+        let json_str = r#"{"type": "sessionAction", "action": {"kind": "setTitle", "title": "my title"}, "sessionId": "s1"}"#;
+        let msg = parse_client_message(json_str).unwrap();
+        match msg {
+            ClientMessage::SessionAction {
+                action: SessionAction::SetTitle { title },
+                ..
+            } => assert_eq!(title, "my title"),
+            _ => panic!("expected SessionAction::SetTitle"),
         }
     }
 

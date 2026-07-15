@@ -16,15 +16,18 @@
 //!
 //! polytoken's commands are all daemon builtins. pantoken's `CommandInfo.source`
 //! union gains `"builtin"` for them; the client renders `source` as a string
-//! badge, so a new value needs no client change. Sending `/name args` as a
-//! normal prompt routes through polytoken's prompt path, which runs the builtin
-//! — exactly how the daemon's extension commands work.
+//! badge, so a new value needs no client change.
 //!
-//! TUI builtins like /model + /models are deliberately omitted because pantoken
-//! has native UI for those (ModelPicker drives POST /model). The rest (/compact,
-//! /rewind, /facet, /permissions, /title, /clear, …) have no first-class pantoken
-//! affordance OR are useful as quick-access text shortcuts, so they surface in
-//! the slash menu.
+//! **Builtins are client-intercepted.** Commands like `/clear`, `/compact`,
+//! `/facet`, `/reset-shell`, `/daemon-reload`, `/goal`, and `/title` are
+//! intercepted by the client (`Composer.svelte`) and routed to dedicated
+//! daemon REST endpoints — they are never sent as text prompts. The remaining
+//! daemon builtins that pantoken has no first-class UI for are filtered out by
+//! `OMITTED_CANONICALS` so they don't appear in the autosuggest menu; typing
+//! one manually yields an "Unknown slash command" error.
+//!
+//! Extension/prompt/skill commands (not daemon builtins) still pass through as
+//! text — the daemon runs them via its prompt path.
 
 use pantoken_protocol::session_driver::{CommandInfo, CommandSource};
 use serde::Deserialize;
@@ -78,11 +81,33 @@ struct RawCategory {
     title: String,
 }
 
-/// Commands pantoken has a native first-class UI for, so they don't need a
-/// slash-menu duplicate (pantoken's affordance is richer than a text command).
-/// Mirrors the original driver's omission of TUI builtins. `/model` + `/models`
-/// both drive the ModelPicker.
-const OMITTED_CANONICALS: &[&str] = &["/model", "/models"];
+/// Daemon builtins pantoken does NOT implement as a client-intercepted
+/// command, so they are filtered from the autosuggest menu. Typing one
+/// manually shows "Unknown slash command" (the server omits them, so the
+/// client never sees them as known commands).
+///
+/// Commands NOT listed here (`/clear`, `/compact`, `/facet`, `/reset-shell`,
+/// `/daemon-reload`, `/goal`, `/title`) are client-intercepted builtins — they
+/// appear in the menu and dispatch to daemon REST endpoints.
+///
+/// Note: aliases (e.g. `/models`, `/exit`, `/permission`) are in the daemon's
+/// `aliases` array, not the `commands` array — only canonical names are
+/// matched here.
+const OMITTED_CANONICALS: &[&str] = &[
+    "/model",       // native ModelPicker
+    "/jobs",        // interactive job list (no UI)
+    "/mcp",         // interactive server selection (no UI)
+    "/permissions", // interactive choice (Settings panel covers it)
+    "/todo",        // interactive choice (Todos panel covers it)
+    "/theme",       // interactive theme picker (no UI)
+    "/rewind",      // interactive rewind view (no UI)
+    "/help",        // TUI-only overlay
+    "/refresh",     // TUI-only display refresh
+    "/quit",        // TUI-only session end
+    "/detach",      // TUI-only disconnect
+    "/version",     // TUI-only version display
+    "/inputdebug",  // TUI-only diagnostic overlay
+];
 
 /// Parse `polytoken print-slash-commands --format json` stdout into
 /// `CommandInfo[]`. Pure — no I/O. Loud on non-JSON input: a parse failure
@@ -125,13 +150,15 @@ pub fn parse_slash_commands(stdout: &str) -> Vec<CommandInfo> {
 mod tests {
     use super::*;
 
-    const REAL_OUTPUT: &str = r#"{"categories":[{"id":"immediate","title":"Immediate commands"},{"id":"choice","title":"Commands that take a choice"},{"id":"free-text","title":"Commands that take free text"}],"commands":[{"canonical":"/clear","aliases":[],"category":"immediate","description":"Clears the working context. Your session history is untouched."},{"canonical":"/reset-shell","aliases":[],"category":"immediate","description":"Restores the shell environment to the state Polytoken captured when the session started."},{"canonical":"/rewind","aliases":[],"category":"immediate","description":"Opens the rewind view to return the conversation to an earlier point."},{"canonical":"/help","aliases":[],"category":"immediate","description":"Opens the help overlay."},{"canonical":"/refresh","aliases":[],"category":"immediate","description":"Refreshes the interface. Use this if the display falls out of step with the session."},{"canonical":"/quit","aliases":["/exit"],"category":"immediate","description":"Ends the session."},{"canonical":"/detach","aliases":[],"category":"immediate","description":"Disconnects the interface and leaves the session running."},{"canonical":"/version","aliases":[],"category":"immediate","description":"Shows the TUI and daemon build versions."},{"canonical":"/model","aliases":["/models"],"category":"choice","description":"Switch the active model."},{"canonical":"/facet","aliases":[],"category":"choice","description":"Switch the active facet."},{"canonical":"/permissions","aliases":["/permission"],"category":"choice","description":"Switch how tool approvals are handled."},{"canonical":"/todo","aliases":["/todos"],"category":"choice","description":"Show todos, or act on one."},{"canonical":"/jobs","aliases":["/job"],"category":"choice","description":"Show running jobs, or act on one."},{"canonical":"/mcp","aliases":[],"category":"choice","description":"Enable or disable an MCP server. Type a server name, then choose enable or disable."},{"canonical":"/title","aliases":[],"category":"free-text","description":"Sets the session title. With no argument, clears your override and reverts to the inferred title."},{"canonical":"/compact","aliases":[],"category":"free-text","description":"Summarizes the context. Optional text steers what the summary keeps."}]}"#;
+    const REAL_OUTPUT: &str = r#"{"categories":[{"id":"immediate","title":"Immediate commands"},{"id":"choice","title":"Commands that take a choice"},{"id":"free-text","title":"Commands that take free text"}],"commands":[{"canonical":"/clear","aliases":[],"category":"immediate","description":"Clears the working context. Your session history is untouched."},{"canonical":"/reset-shell","aliases":[],"category":"immediate","description":"Restores the shell environment to the state Polytoken captured when the session started."},{"canonical":"/rewind","aliases":[],"category":"immediate","description":"Opens the rewind view to return the conversation to an earlier point."},{"canonical":"/help","aliases":[],"category":"immediate","description":"Opens the help overlay."},{"canonical":"/refresh","aliases":[],"category":"immediate","description":"Refreshes the interface. Use this if the display falls out of step with the session."},{"canonical":"/quit","aliases":["/exit"],"category":"immediate","description":"Ends the session."},{"canonical":"/detach","aliases":[],"category":"immediate","description":"Disconnects the interface and leaves the session running."},{"canonical":"/version","aliases":[],"category":"immediate","description":"Shows the TUI and daemon build versions."},{"canonical":"/inputdebug","aliases":[],"category":"immediate","description":"Toggles a diagnostic overlay showing raw input events."},{"canonical":"/daemon-reload","aliases":[],"category":"immediate","description":"Reloads daemon configuration: skills, facets, config files."},{"canonical":"/model","aliases":["/models"],"category":"choice","description":"Switch the active model."},{"canonical":"/facet","aliases":[],"category":"choice","description":"Switch the active facet."},{"canonical":"/permissions","aliases":["/permission"],"category":"choice","description":"Switch how tool approvals are handled."},{"canonical":"/todo","aliases":["/todos"],"category":"choice","description":"Show todos, or act on one."},{"canonical":"/jobs","aliases":["/job"],"category":"choice","description":"Show running jobs, or act on one."},{"canonical":"/mcp","aliases":[],"category":"choice","description":"Enable or disable an MCP server. Type a server name, then choose enable or disable."},{"canonical":"/theme","aliases":["/themes"],"category":"choice","description":"Switch the interface theme."},{"canonical":"/goal","aliases":[],"category":"choice","description":"Set, pause, resume, or clear the active goal."},{"canonical":"/title","aliases":[],"category":"free-text","description":"Sets the session title. With no argument, clears your override and reverts to the inferred title."},{"canonical":"/compact","aliases":[],"category":"free-text","description":"Summarizes the context. Optional text steers what the summary keeps."}]}"#;
 
     #[test]
     fn parses_the_real_observed_output() {
         let cmds = parse_slash_commands(REAL_OUTPUT);
-        // 16 canonicals total, minus /model (omitted — pilot's ModelPicker covers it).
-        assert_eq!(cmds.len(), 15);
+        // 19 canonicals total, minus 13 omitted (interactive/TUI-only builtins
+        // with no pantoken UI). The 7 remaining are client-intercepted builtins:
+        // clear, reset-shell, daemon-reload, goal, facet, compact, title.
+        assert_eq!(cmds.len(), 7);
         let clear = cmds.iter().find(|c| c.name == "clear").unwrap();
         assert!(
             clear
@@ -152,10 +179,37 @@ mod tests {
     }
 
     #[test]
-    fn omits_model_and_models() {
+    fn omits_unsupported_commands() {
         let cmds = parse_slash_commands(REAL_OUTPUT);
-        assert!(cmds.iter().all(|c| c.name != "model"));
-        assert!(cmds.iter().all(|c| c.name != "models"));
+        // All OMITTED_CANONICALS should be absent from parsed output.
+        for omitted in OMITTED_CANONICALS {
+            let name = omitted.trim_start_matches('/');
+            assert!(
+                !cmds.iter().any(|c| c.name == name),
+                "{omitted} should be omitted but was found in parsed output"
+            );
+        }
+    }
+
+    #[test]
+    fn goal_and_daemon_reload_not_omitted() {
+        let cmds = parse_slash_commands(REAL_OUTPUT);
+        assert!(
+            cmds.iter().any(|c| c.name == "goal"),
+            "/goal should appear in parsed output"
+        );
+        assert!(
+            cmds.iter().any(|c| c.name == "daemon-reload"),
+            "/daemon-reload should appear in parsed output"
+        );
+        assert!(
+            cmds.iter().any(|c| c.name == "reset-shell"),
+            "/reset-shell should appear in parsed output"
+        );
+        assert!(
+            cmds.iter().any(|c| c.name == "title"),
+            "/title should appear in parsed output"
+        );
     }
 
     #[test]

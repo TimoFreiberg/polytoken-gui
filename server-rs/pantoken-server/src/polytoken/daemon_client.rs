@@ -2077,6 +2077,77 @@ impl DaemonClient {
         Ok(())
     }
 
+    /// `POST /reset-shell` — restore the shell env to the startup baseline.
+    pub async fn reset_shell(&self) -> Result<(), String> {
+        let res = self.post::<serde_json::Value>("/reset-shell", None).await;
+        if res.status != 200 {
+            return Err(format!(
+                "POST /reset-shell failed ({}): {}",
+                res.status,
+                res.error.as_deref().unwrap_or("")
+            ));
+        }
+        Ok(())
+    }
+
+    /// `POST /goal` — create or replace the current goal.
+    pub async fn goal_set(&self, summary: &str) -> Result<(), String> {
+        let body = GoalSetRequest {
+            summary: summary.to_string(),
+        };
+        let body_str = serde_json::to_string(&body).unwrap_or_default();
+        let res = self
+            .post::<serde_json::Value>("/goal", Some(&body_str))
+            .await;
+        if res.status != 200 {
+            return Err(format!(
+                "POST /goal failed ({}): {}",
+                res.status,
+                res.error.as_deref().unwrap_or("")
+            ));
+        }
+        Ok(())
+    }
+
+    /// `POST /goal/pause` — pause the active goal.
+    pub async fn goal_pause(&self) -> Result<(), String> {
+        let res = self.post::<serde_json::Value>("/goal/pause", None).await;
+        if res.status != 200 {
+            return Err(format!(
+                "POST /goal/pause failed ({}): {}",
+                res.status,
+                res.error.as_deref().unwrap_or("")
+            ));
+        }
+        Ok(())
+    }
+
+    /// `POST /goal/resume` — resume a paused goal.
+    pub async fn goal_resume(&self) -> Result<(), String> {
+        let res = self.post::<serde_json::Value>("/goal/resume", None).await;
+        if res.status != 200 {
+            return Err(format!(
+                "POST /goal/resume failed ({}): {}",
+                res.status,
+                res.error.as_deref().unwrap_or("")
+            ));
+        }
+        Ok(())
+    }
+
+    /// `POST /goal/clear` — clear the current goal (idempotent).
+    pub async fn goal_clear(&self) -> Result<(), String> {
+        let res = self.post::<serde_json::Value>("/goal/clear", None).await;
+        if res.status != 200 {
+            return Err(format!(
+                "POST /goal/clear failed ({}): {}",
+                res.status,
+                res.error.as_deref().unwrap_or("")
+            ));
+        }
+        Ok(())
+    }
+
     // --- MCP server management ---
 
     /// `POST /mcp/{server}/{action}` — apply an MCP server lifecycle action

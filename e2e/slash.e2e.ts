@@ -30,7 +30,9 @@ test("Enter accepts the highlighted command into the draft", async ({
   page,
 }) => {
   const box = ta(page);
-  await box.fill("/re");
+  // Use "/rev" (not "/re") so only "review" matches — builtins like
+  // "reset-shell" also prefix-match "/re" and sort before "review".
+  await box.fill("/rev");
   await expect(page.getByTestId("slash-menu")).toBeVisible();
   await box.press("Enter");
   // The bare token is replaced with `/name ` (trailing space) and the menu closes —
@@ -158,4 +160,215 @@ test("a known command passes through as text", async ({ page }) => {
 
   // The mock sends it as a normal prompt — the latest user message is "/review".
   await expect(page.locator(".row.user .btext").last()).toContainText("/review");
+});
+
+// --- New builtin interception tests ---
+
+test("/facet <name> is intercepted and switches facet", async ({ page }) => {
+  const box = ta(page);
+  await box.fill("/facet plan");
+  await box.press("Enter");
+
+  // Composer is cleared.
+  await expect(box).toHaveValue("");
+  // No user message with "/facet" is sent.
+  await expect(page.locator(".row.user .btext")).toHaveText(
+    /^((?!\/facet).)*$/s,
+  );
+  // Facet badge updates to "Plan".
+  await expect(page.getByTestId("facet-badge")).toContainText("Plan");
+});
+
+test("/facet with no args shows usage error", async ({ page }) => {
+  const box = ta(page);
+  await box.fill("/facet ");
+  await box.press("Enter");
+
+  await expect(page.getByTestId("attachment-status")).toContainText(
+    "Usage: /facet <name>",
+  );
+  await expect(box).toHaveValue("/facet ");
+});
+
+test("/reset-shell is intercepted and shows a notification", async ({
+  page,
+}) => {
+  const box = ta(page);
+  await box.fill("/reset-shell");
+  await box.press("Enter");
+
+  await expect(box).toHaveValue("");
+  await expect(page.locator(".row.user .btext")).toHaveText(
+    /^((?!\/reset-shell).)*$/s,
+  );
+  // Mock emits HostUiRequest::Notify "Shell environment restored".
+  await expect(page.locator(".row.notice .ntext")).toContainText(
+    "Shell environment restored",
+  );
+});
+
+test("/daemon-reload is intercepted and shows a notification", async ({
+  page,
+}) => {
+  const box = ta(page);
+  await box.fill("/daemon-reload");
+  await box.press("Enter");
+
+  await expect(box).toHaveValue("");
+  await expect(page.locator(".row.user .btext")).toHaveText(
+    /^((?!\/daemon-reload).)*$/s,
+  );
+  await expect(page.locator(".row.notice .ntext")).toContainText(
+    "Daemon config reloaded",
+  );
+});
+
+test("/goal set <text> is intercepted and shows the goal badge", async ({
+  page,
+}) => {
+  const box = ta(page);
+  await box.fill("/goal set ship the feature");
+  await box.press("Enter");
+
+  await expect(box).toHaveValue("");
+  await expect(page.locator(".row.user .btext")).toHaveText(
+    /^((?!\/goal).)*$/s,
+  );
+  // Goal badge appears with the summary.
+  await expect(page.getByTestId("goal-badge")).toBeVisible();
+  await expect(page.getByTestId("goal-badge")).toContainText("ship the feature");
+});
+
+test("/goal pause is intercepted and shows paused state", async ({ page }) => {
+  // Set a goal first.
+  await ta(page).fill("/goal set ship the feature");
+  await ta(page).press("Enter");
+  await expect(page.getByTestId("goal-badge")).toBeVisible();
+
+  const box = ta(page);
+  await box.fill("/goal pause");
+  await box.press("Enter");
+
+  await expect(box).toHaveValue("");
+  // Goal badge shows paused class.
+  await expect(page.getByTestId("goal-badge")).toHaveClass(/paused/);
+});
+
+test("/goal resume is intercepted and returns to active state", async ({
+  page,
+}) => {
+  // Set + pause first.
+  await ta(page).fill("/goal set ship the feature");
+  await ta(page).press("Enter");
+  await ta(page).fill("/goal pause");
+  await ta(page).press("Enter");
+  await expect(page.getByTestId("goal-badge")).toHaveClass(/paused/);
+
+  const box = ta(page);
+  await box.fill("/goal resume");
+  await box.press("Enter");
+
+  await expect(box).toHaveValue("");
+  // Goal badge no longer has paused class.
+  await expect(page.getByTestId("goal-badge")).not.toHaveClass(/paused/);
+});
+
+test("/goal clear is intercepted and removes the goal badge", async ({
+  page,
+}) => {
+  // Set a goal first.
+  await ta(page).fill("/goal set ship the feature");
+  await ta(page).press("Enter");
+  await expect(page.getByTestId("goal-badge")).toBeVisible();
+
+  const box = ta(page);
+  await box.fill("/goal clear");
+  await box.press("Enter");
+
+  await expect(box).toHaveValue("");
+  // Goal badge disappears.
+  await expect(page.getByTestId("goal-badge")).toHaveCount(0);
+});
+
+test("/title <text> is intercepted and updates the session title", async ({
+  page,
+}) => {
+  const box = ta(page);
+  await box.fill("/title my custom title");
+  await box.press("Enter");
+
+  await expect(box).toHaveValue("");
+  await expect(page.locator(".row.user .btext")).toHaveText(
+    /^((?!\/title).)*$/s,
+  );
+  // Status header title updates.
+  await expect(page.locator(".title-row .title")).toContainText(
+    "my custom title",
+  );
+});
+
+test("/title with no args clears the title override", async ({ page }) => {
+  // Set a custom title first.
+  await ta(page).fill("/title my custom title");
+  await ta(page).press("Enter");
+  await expect(page.locator(".title-row .title")).toContainText(
+    "my custom title",
+  );
+
+  // /title with no args clears the override → reverts to the inferred title.
+  const box = ta(page);
+  await box.fill("/title ");
+  await box.press("Enter");
+
+  await expect(box).toHaveValue("");
+  // Title reverts to the mock's default (no longer "my custom title").
+  await expect(page.locator(".title-row .title")).not.toContainText(
+    "my custom title",
+  );
+});
+
+test("/goal with no args shows usage info", async ({ page }) => {
+  const box = ta(page);
+  await box.fill("/goal ");
+  await box.press("Enter");
+
+  await expect(page.getByTestId("attachment-status")).toContainText(
+    "Use /goal set <text>, /goal pause, /goal resume, or /goal clear",
+  );
+});
+
+// --- Filtered commands ---
+
+test("filtered commands do not appear in the slash menu", async ({ page }) => {
+  await ta(page).fill("/jo");
+  await expect(page.getByTestId("slash-menu")).toBeVisible();
+  // /jobs is filtered (interactive, no UI), so it should not appear.
+  await expect(row(page, "jobs")).toHaveCount(0);
+});
+
+test("a filtered command typed manually shows unknown error", async ({
+  page,
+}) => {
+  const box = ta(page);
+  await box.fill("/jobs ");
+  await box.press("Enter");
+
+  await expect(page.getByTestId("attachment-status")).toContainText(
+    "Unknown slash command: /jobs",
+  );
+  await expect(box).toHaveValue("/jobs ");
+  await expect(page.locator(".row.user .btext")).toHaveText(
+    /^((?!\/jobs).)*$/s,
+  );
+});
+
+test("new builtins appear in the slash menu", async ({ page }) => {
+  await ta(page).fill("/");
+  await expect(page.getByTestId("slash-menu")).toBeVisible();
+  // Implemented builtins should be discoverable.
+  await expect(row(page, "reset-shell")).toBeVisible();
+  await expect(row(page, "daemon-reload")).toBeVisible();
+  await expect(row(page, "goal")).toBeVisible();
+  await expect(row(page, "title")).toBeVisible();
+  await expect(row(page, "facet")).toBeVisible();
 });

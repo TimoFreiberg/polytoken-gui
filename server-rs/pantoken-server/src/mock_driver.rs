@@ -150,7 +150,29 @@ fn mock_models() -> Vec<ModelOption> {
 }
 
 fn mock_commands() -> Vec<CommandInfo> {
-    vec![
+    // Daemon builtins that pantoken intercepts client-side. Mirrors the
+    // non-omitted canonicals from commands.rs's OMITTED_CANONICALS (the
+    // real driver parses these from `polytoken print-slash-commands`).
+    let builtins = [
+        ("clear", "Clears the working context"),
+        ("compact", "Summarizes the context"),
+        ("facet", "Switch the active facet"),
+        ("reset-shell", "Restore the shell environment"),
+        ("daemon-reload", "Reload daemon configuration"),
+        ("goal", "Set, pause, resume, or clear the goal"),
+        ("title", "Set the session title"),
+    ];
+    let builtin_cmds: Vec<CommandInfo> = builtins
+        .iter()
+        .map(|(name, desc)| CommandInfo {
+            name: (*name).into(),
+            description: Some((*desc).into()),
+            source: CommandSource::Builtin,
+            argument_hint: None,
+        })
+        .collect();
+    let mut cmds = builtin_cmds;
+    cmds.extend(vec![
         CommandInfo {
             name: "review".into(),
             description: Some("Review the working-copy diff for bugs".into()),
@@ -187,7 +209,8 @@ fn mock_commands() -> Vec<CommandInfo> {
             source: CommandSource::Skill,
             argument_hint: None,
         },
-    ]
+    ]);
+    cmds
 }
 
 fn mock_files() -> Vec<FileInfo> {
@@ -1739,6 +1762,10 @@ pub struct MockDriver {
     /// The adventurous-handoff flag, toggled by `toggle_adventurous_handoff`.
     /// Mirrors the TS MockDriver's `adventurousHandoff` private field.
     adventurous_handoff: Arc<std::sync::Mutex<bool>>,
+    /// The current goal, mutated by `goal_set`/`pause`/`resume`/`clear` so the
+    /// mock reflects state transitions across sequential actions.
+    /// `None` = no goal set; `Some(GoalInfo)` = active or paused goal.
+    goal: Arc<std::sync::Mutex<Option<GoalInfo>>>,
     /// In-flight script flush handle. When `play_script` starts a new script, it
     /// flushes any previous one first — mirroring TS `play()` → `flushScheduled()`,
     /// which fires all pending steps immediately (cancelling timers) so two scripts
@@ -1842,6 +1869,7 @@ impl MockDriver {
             abort_delay_ms: AtomicU64::new(0),
             pending_dialogs: Arc::new(Mutex::new(std::collections::HashMap::new())),
             adventurous_handoff: Arc::new(std::sync::Mutex::new(false)),
+            goal: Arc::new(std::sync::Mutex::new(None)),
             in_flight: Arc::new(Mutex::new(None)),
             next_script_id: AtomicU64::new(0),
             sessions: Arc::new(Mutex::new(mock_session_list())),
@@ -2844,6 +2872,95 @@ impl PantokenDriver for MockDriver {
                     },
                 });
             }
+            SessionAction::ResetShell => {
+                self.emit(SessionDriverEvent::HostUiRequest {
+                    base: base(),
+                    request: HostUiRequest::Notify {
+                        request_id: format!("reset-shell-{}", ts()),
+                        message: "Shell environment restored".into(),
+                        level: Some(NotifyLevel::Info),
+                    },
+                });
+            }
+            SessionAction::DaemonReload => {
+                self.emit(SessionDriverEvent::HostUiRequest {
+                    base: base(),
+                    request: HostUiRequest::Notify {
+                        request_id: format!("daemon-reload-{}", ts()),
+                        message: "Daemon config reloaded".into(),
+                        level: Some(NotifyLevel::Info),
+                    },
+                });
+            }
+            SessionAction::GoalSet { summary } => {
+                let goal = GoalInfo {
+                    summary: summary.clone(),
+                    lifecycle: "active".into(),
+                };
+                *self.goal.lock().unwrap() = Some(goal.clone());
+                self.emit(SessionDriverEvent::SessionUpdated {
+                    base: base(),
+                    snapshot: snap(
+                        SessionStatus::Idle,
+                        None,
+                        Some(Some(goal)),
+                        None,
+                        None,
+                        None,
+                    ),
+                });
+            }
+            SessionAction::GoalPause => {
+                let goal = {
+                    let mut g = self.goal.lock().unwrap();
+                    if let Some(goal) = g.as_mut() {
+                        goal.lifecycle = "paused".into();
+                    }
+                    g.clone()
+                };
+                // No-op when no goal is set — don't emit Some(None) which the
+                // fold reducer interprets as "goal cleared."
+                if goal.is_some() {
+                    self.emit(SessionDriverEvent::SessionUpdated {
+                        base: base(),
+                        snapshot: snap(SessionStatus::Idle, None, Some(goal), None, None, None),
+                    });
+                }
+            }
+            SessionAction::GoalResume => {
+                let goal = {
+                    let mut g = self.goal.lock().unwrap();
+                    if let Some(goal) = g.as_mut() {
+                        goal.lifecycle = "active".into();
+                    }
+                    g.clone()
+                };
+                if goal.is_some() {
+                    self.emit(SessionDriverEvent::SessionUpdated {
+                        base: base(),
+                        snapshot: snap(SessionStatus::Idle, None, Some(goal), None, None, None),
+                    });
+                }
+            }
+            SessionAction::GoalClear => {
+                *self.goal.lock().unwrap() = None;
+                self.emit(SessionDriverEvent::SessionUpdated {
+                    base: base(),
+                    snapshot: snap(SessionStatus::Idle, None, Some(None), None, None, None),
+                });
+            }
+            SessionAction::SetTitle { title } => {
+                let mut snapshot = mock_snapshot(SessionStatus::Idle);
+                // Empty title = clear override → revert to the inferred title
+                // (matches daemon's POST /title with empty string).
+                if !title.is_empty() {
+                    snapshot.title = title;
+                }
+                self.emit(SessionDriverEvent::SessionUpdated {
+                    base: base(),
+                    snapshot,
+                });
+            }
             SessionAction::SetMcpServer {
                 server_name,
                 action,
@@ -3750,6 +3867,7 @@ impl PantokenDriver for MockDriver {
         self.fail_next_session.store(false, Ordering::SeqCst);
         self.abort_delay_ms.store(0, Ordering::SeqCst);
         *self.adventurous_handoff.lock().unwrap() = false;
+        *self.goal.lock().unwrap() = None;
         // Restore the mutable session/worktree state to the fixture baseline —
         // faithful port of TS `reset()`: `this.sessions = SESSION_LIST.map(...)`,
         // `this.worktrees = seedWorktrees(SESSION_LIST)`, clear dirty/reaped sets.

@@ -2987,6 +2987,23 @@ impl PantokenDriver for PolytokenDriver {
             ),
             SessionAction::Compact => ("Compact".to_string(), ws.client.compact(None).await),
             SessionAction::ClearContext => ("Clear context".to_string(), ws.client.clear().await),
+            SessionAction::ResetShell => ("Reset shell".to_string(), ws.client.reset_shell().await),
+            SessionAction::DaemonReload => {
+                let result = ws.client.reload().await;
+                if result.is_ok() {
+                    self.inner.invalidate_all_config_caches();
+                }
+                ("Daemon reload".to_string(), result)
+            }
+            SessionAction::GoalSet { summary } => {
+                ("Goal set".to_string(), ws.client.goal_set(&summary).await)
+            }
+            SessionAction::GoalPause => ("Goal pause".to_string(), ws.client.goal_pause().await),
+            SessionAction::GoalResume => ("Goal resume".to_string(), ws.client.goal_resume().await),
+            SessionAction::GoalClear => ("Goal clear".to_string(), ws.client.goal_clear().await),
+            SessionAction::SetTitle { title } => {
+                ("Set title".to_string(), ws.client.set_title(&title).await)
+            }
             SessionAction::SetMcpServer {
                 server_name,
                 action,

@@ -306,9 +306,11 @@ export interface ResumeToken {
 
 /** The fire-and-forget pass-through actions carried by the `sessionAction`
  *  ClientMessage. They share one lifecycle: POST to the daemon, no direct
- *  reply — the effect arrives as later driver events. Daemon endpoints:
+ *  reply — the effect arrives via later driver events. Daemon endpoints:
  *  POST /adventurous-handoff (toggle), /notifications/autodrain, /compact,
- *  /clear (context + shell env), /mcp/{server}/{action}. */
+ *  /clear (context + shell env), /mcp/{server}/{action}, /model, /thinking,
+ *  /facet, /permission-monitor, /reset-shell, /reload, /goal (set/pause/resume/clear),
+ *  /title. */
 export type SessionAction =
   | { kind: "toggleAdventurousHandoff" }
   | { kind: "setNotificationAutodrain"; enabled: boolean }
@@ -322,7 +324,14 @@ export type SessionAction =
   | { kind: "setModel"; provider: string; modelId: string }
   | { kind: "setThinking"; level: string }
   | { kind: "setFacet"; facet: string }
-  | { kind: "setPermissionMonitor"; mode: PermissionMonitorMode };
+  | { kind: "setPermissionMonitor"; mode: PermissionMonitorMode }
+  | { kind: "resetShell" }
+  | { kind: "daemonReload" }
+  | { kind: "goalSet"; summary: string }
+  | { kind: "goalPause" }
+  | { kind: "goalResume" }
+  | { kind: "goalClear" }
+  | { kind: "setTitle"; title: string };
 
 export type ClientMessage =
   | { type: "hello"; auth?: string; resume?: ResumeToken }
