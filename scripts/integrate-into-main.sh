@@ -185,10 +185,30 @@ if [ -z "$NON_EMPTY_COMMITS" ]; then
   exit 0
 fi
 
-# 4. Rebase new commits onto main@origin
-log "Rebasing main..@ onto main@origin..."
+# 4. Rebase new commits onto the latest main
+#
+# Choose the rebase destination dynamically: when local main is a descendant
+# of main@origin (local is ahead or equal), rebasing onto main@origin would
+# move commits to an *older* base — a no-op at best, and at worst it detaches
+# them from local main's lineage. Use local main instead, which is a no-op
+# rebase that keeps commits in place.
+#
+# When main@origin has commits local main doesn't (remote is ahead or
+# diverged), rebase onto main@origin to incorporate them.
+REBASE_DEST="main"
+if jj log -r 'main@origin' --no-graph 2>/dev/null | grep -q .; then
+  # main@origin exists — use it only when local main is NOT a descendant
+  if ! jj log -r 'main@origin & ::main' --no-graph 2>/dev/null | grep -q .; then
+    REBASE_DEST="main@origin"
+  fi
+fi
+log "Rebasing main..@ ~ empty() onto $REBASE_DEST..."
+# Exclude the empty working-copy commit (@) from the rebase source: when @ is
+# included, jj rebases it as a separate commit onto the destination, making it
+# a sibling of the feature commit rather than its child. This breaks the
+# main..@ ~ empty() query used later to find the target commit.
 REBASE_STATUS=0
-jj rebase -s 'main..@' -d main@origin 2>/dev/null || REBASE_STATUS=$?
+jj rebase -s 'main..@ ~ empty()' -d "$REBASE_DEST" 2>/dev/null || REBASE_STATUS=$?
 
 # 5. Classify rebase failures before running tests.
 CONFLICTS=$(jj resolve --list 2>/dev/null | head -1 || true)
@@ -263,7 +283,14 @@ log "Advancing main bookmark to $TARGET..."
 jj bookmark move main --to "$TARGET" || {
   log "WARN: bookmark move failed — main may have moved. Re-fetching and retrying."
   jj git fetch
-  jj rebase -s 'main..@' -d main@origin 2>/dev/null || true
+  # Recompute REBASE_DEST after fetch (main@origin may have moved)
+  REBASE_DEST="main"
+  if jj log -r 'main@origin' --no-graph 2>/dev/null | grep -q .; then
+    if ! jj log -r 'main@origin & ::main' --no-graph 2>/dev/null | grep -q .; then
+      REBASE_DEST="main@origin"
+    fi
+  fi
+  jj rebase -s 'main..@ ~ empty()' -d "$REBASE_DEST" 2>/dev/null || true
   TARGET=$(jj log -r 'main..@ ~ empty()' --no-graph -T 'commit_id' 2>/dev/null | tail -1)
   if [ -z "$TARGET" ]; then
     log "ERROR: no non-empty commit found after retry — inspect the jj history, fix the bookmark/rebase state, then rerun 'just integrate-into-main $ISSUE_NUMBER'"

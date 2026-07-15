@@ -50,6 +50,20 @@ function createJjRepo(cwd: string): void {
   run(["jj", "bookmark", "set", "main", "-r", "@"], cwd);
 }
 
+/**
+ * Create a throwaway jj repo with a local bare origin remote.
+ * Returns the path to the bare origin repo.
+ */
+function createJjRepoWithOrigin(workspaceDir: string): string {
+  const originDir = workspaceDir + "-origin.git";
+  run(["git", "init", "--bare", originDir], "/tmp");
+  run(["git", "init"], workspaceDir);
+  run(["jj", "git", "init", "--colocate"], workspaceDir);
+  run(["jj", "git", "remote", "add", "origin", originDir], workspaceDir);
+  run(["jj", "bookmark", "set", "main", "-r", "@"], workspaceDir);
+  return originDir;
+}
+
 beforeEach(() => {
   tempDir = mkdtempSync(join(process.env.TMPDIR || "/tmp", "integrate-test-"));
 });
@@ -144,6 +158,121 @@ describeOrSkip("integrate-into-main.sh jj primitives", () => {
     const result = run(["jj", "log", "-r", "main..@ ~ empty()", "--no-graph", "-T", "description"], tempDir);
     expect(result.exitCode).toBe(0);
     expect(result.stdout).toContain("real commit");
+  });
+
+  test("rebase -s 'main..@ ~ empty()' keeps @ as descendant of feature commit when main is ahead of origin", () => {
+    // Simulates the bug from session 06277c-wilt: local main was ahead of
+    // main@origin (a release commit was made locally but not pushed).
+    // The old rebase source 'main..@' included the empty @ commit, causing
+    // jj to rebase @ as a sibling of the feature commit — breaking the
+    // main..@ ~ empty() query used to find the target.
+    createJjRepoWithOrigin(tempDir);
+
+    // Commit 1: base, push to origin (establishes main@origin)
+    writeFileSync(join(tempDir, "base.txt"), "base\n");
+    run(["jj", "describe", "-m", "base"], tempDir);
+    run(["jj", "git", "push", "--bookmark", "main"], tempDir);
+
+    // Commit 2: local-only release (main is now ahead of main@origin)
+    run(["jj", "new"], tempDir);
+    writeFileSync(join(tempDir, "release.txt"), "release\n");
+    run(["jj", "describe", "-m", "release"], tempDir);
+    run(["jj", "bookmark", "move", "main", "--to", "@"], tempDir);
+
+    // Feature commit + empty @ on top of main
+    run(["jj", "new"], tempDir);
+    writeFileSync(join(tempDir, "feature.txt"), "feature\n");
+    run(["jj", "describe", "-m", "feature"], tempDir);
+    run(["jj", "new"], tempDir);
+
+    // Before rebase, main..@ ~ empty() finds the feature commit
+    const before = run(["jj", "log", "-r", "main..@ ~ empty()", "--no-graph", "-T", "description"], tempDir);
+    expect(before.stdout).toContain("feature");
+
+    // The fix: exclude @ from rebase source, use main as dest (dynamic target)
+    // since main is a descendant of main@origin
+    const rebaseResult = run(["jj", "rebase", "-s", "main..@ ~ empty()", "-d", "main"], tempDir);
+    expect(rebaseResult.exitCode).toBe(0);
+
+    // After rebase, main..@ ~ empty() still finds the feature commit
+    const after = run(["jj", "log", "-r", "main..@ ~ empty()", "--no-graph", "-T", "description"], tempDir);
+    expect(after.stdout).toContain("feature");
+  });
+
+  test("rebase -s 'main..@' (old source) breaks main..@ ~ empty() when main is ahead of origin", () => {
+    // This test reproduces the original bug to confirm the old source is the
+    // root cause. It verifies that the bug exists with the old rebase source,
+    // so the fix (excluding @ from the source) is justified.
+    createJjRepoWithOrigin(tempDir);
+
+    writeFileSync(join(tempDir, "base.txt"), "base\n");
+    run(["jj", "describe", "-m", "base"], tempDir);
+    run(["jj", "git", "push", "--bookmark", "main"], tempDir);
+
+    run(["jj", "new"], tempDir);
+    writeFileSync(join(tempDir, "release.txt"), "release\n");
+    run(["jj", "describe", "-m", "release"], tempDir);
+    run(["jj", "bookmark", "move", "main", "--to", "@"], tempDir);
+
+    run(["jj", "new"], tempDir);
+    writeFileSync(join(tempDir, "feature.txt"), "feature\n");
+    run(["jj", "describe", "-m", "feature"], tempDir);
+    run(["jj", "new"], tempDir);
+
+    // Old source: main..@ (includes empty @)
+    const rebaseResult = run(["jj", "rebase", "-s", "main..@", "-d", "main@origin"], tempDir);
+    expect(rebaseResult.exitCode).toBe(0);
+
+    // BUG: main..@ ~ empty() returns nothing because @ became a sibling
+    const after = run(["jj", "log", "-r", "main..@ ~ empty()", "--no-graph", "-T", "description"], tempDir);
+    expect(after.stdout.trim()).toBe("");
+  });
+
+  test("dynamic rebase dest picks main when main is a descendant of main@origin", () => {
+    // When local main is ahead of main@origin, the dynamic destination logic
+    // should pick 'main' (not 'main@origin') to avoid rebasing onto an older base.
+    createJjRepoWithOrigin(tempDir);
+
+    writeFileSync(join(tempDir, "base.txt"), "base\n");
+    run(["jj", "describe", "-m", "base"], tempDir);
+    run(["jj", "git", "push", "--bookmark", "main"], tempDir);
+
+    run(["jj", "new"], tempDir);
+    writeFileSync(join(tempDir, "release.txt"), "release\n");
+    run(["jj", "describe", "-m", "release"], tempDir);
+    run(["jj", "bookmark", "move", "main", "--to", "@"], tempDir);
+
+    // main@origin & ::main should be non-empty (main is a descendant of main@origin)
+    const descendant = run(["jj", "log", "-r", "main@origin & ::main", "--no-graph", "-T", "commit_id"], tempDir);
+    expect(descendant.exitCode).toBe(0);
+    expect(descendant.stdout.length).toBeGreaterThan(0);
+  });
+
+  test("fallback to main..@ works when main@origin doesn't exist", () => {
+    // When there's no remote (or remote has no main branch), main@origin
+    // doesn't exist. The dynamic dest defaults to 'main', and main..@ ~ empty()
+    // works without needing main@origin.
+    createJjRepo(tempDir);
+
+    writeFileSync(join(tempDir, "base.txt"), "base\n");
+    run(["jj", "describe", "-m", "base"], tempDir);
+    run(["jj", "bookmark", "set", "main", "-r", "@"], tempDir);
+    run(["jj", "new"], tempDir);
+    writeFileSync(join(tempDir, "feature.txt"), "feature\n");
+    run(["jj", "describe", "-m", "feature"], tempDir);
+    run(["jj", "new"], tempDir);
+
+    // main@origin should not exist (no remote configured)
+    const originResult = run(["jj", "log", "-r", "main@origin", "--no-graph", "-T", "commit_id"], tempDir);
+    expect(originResult.exitCode).not.toBe(0);
+
+    // Rebase onto main (the fallback destination) with fixed source
+    const rebaseResult = run(["jj", "rebase", "-s", "main..@ ~ empty()", "-d", "main"], tempDir);
+    expect(rebaseResult.exitCode).toBe(0);
+
+    // main..@ ~ empty() still finds the feature commit
+    const after = run(["jj", "log", "-r", "main..@ ~ empty()", "--no-graph", "-T", "description"], tempDir);
+    expect(after.stdout).toContain("feature");
   });
 });
 
