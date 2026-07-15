@@ -27,6 +27,9 @@ test("edit-tool card: collapsed +N/−M badge, expands to a @pierre/diffs render
     "title",
     "Expand tool details",
   );
+  await expect(card.locator(".head")).toHaveAccessibleName(
+    /completed.*Edit file.*1 added.*1 removed.*took \d+ms/i,
+  );
 
   // Expanding mounts the pierre diff into a shadow root (self-contained HTML).
   await card.locator(".head").click();
@@ -197,6 +200,22 @@ test("user prompt footer offers a copy button next to rewind; it copies the prom
     (await user.locator(".bubble").textContent())?.trim() ?? "";
   expect(promptText.length).toBeGreaterThan(0);
   expect(copied).toBe(promptText);
+});
+
+test("an armed rewind footer stays visible and interactive off-hover", async ({
+  page,
+}) => {
+  const user = page.locator(".row.user").first();
+  await user.hover();
+  await user.getByRole("button", { name: "Rewind to this prompt" }).click();
+  await page.mouse.move(0, 0);
+  const footer = user.locator(".umeta");
+  await expect(footer).toHaveClass(/armed/);
+  await expect(footer).toHaveCSS("opacity", "1");
+  await expect(footer).toHaveCSS("pointer-events", "auto");
+  await expect(
+    user.getByRole("button", { name: "Rewind to this prompt" }),
+  ).toBeEnabled();
 });
 
 test("no stray working indicator after a turn ends via sessionUpdated (not runCompleted)", async ({

@@ -139,3 +139,27 @@ test("the per-turn copy button stays visible on touch (no hover to reveal it)", 
   await expect(copy).toBeVisible();
   await expect(copy).toHaveCSS("opacity", "1");
 });
+
+test("user and assistant footers are ordered, visible, and touch-safe", async ({
+  page,
+}) => {
+  for (const footer of [
+    page.locator(".row.user .umeta").first(),
+    page.locator(".row.assistant .meta").last(),
+  ]) {
+    await expect(footer).toHaveCSS("opacity", "1");
+    await expect(footer).toHaveCSS("pointer-events", "auto");
+    const tags = await footer
+      .locator(":scope > *")
+      .evaluateAll((nodes) => nodes.map((node) => node.tagName.toLowerCase()));
+    expect(tags[0]).toBe("button");
+    expect(tags.at(-1)).toBe("time");
+    for (const action of await footer.locator("button").all()) {
+      const box = await action.boundingBox();
+      expect(box).not.toBeNull();
+      expect(box!.width).toBeGreaterThanOrEqual(44);
+      expect(box!.height).toBeGreaterThanOrEqual(44);
+      await expect(action).toBeEnabled();
+    }
+  }
+});

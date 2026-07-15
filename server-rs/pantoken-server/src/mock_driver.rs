@@ -3050,6 +3050,57 @@ impl PantokenDriver for MockDriver {
                 ScriptStep { wait_ms: 0, event: SessionDriverEvent::SessionOpened { base: base(), snapshot: snap(SessionStatus::Initializing, None, None, None, None, None) } },
                 ScriptStep { wait_ms: 1200, event: SessionDriverEvent::SessionUpdated { base: base(), snapshot: snap(SessionStatus::Idle, None, None, None, None, None) } },
             ],
+            // Boundary-heavy ToolCard fixture. Dev/e2e only: exercises bounded display,
+            // full-output copy, and every visual tool status without production behavior.
+            "toolpolish" => {
+                let mut args = serde_json::Map::new();
+                args.insert("a_exact_value".into(), serde_json::Value::String("X".repeat(20_000)));
+                args.insert("b_over_value".into(), serde_json::Value::String(format!("{}ARG_TAIL", "Y".repeat(20_000))));
+                for i in 0..39 {
+                    args.insert(format!("z_field_{i:02}"), serde_json::json!(i));
+                }
+
+                let mut s = vec![ScriptStep { wait_ms: 0, event: SessionDriverEvent::SessionUpdated {
+                    base: base(), snapshot: mock_snapshot(SessionStatus::Running),
+                } }];
+                s.extend(tool_span("polish-header-exact", "header_exact", "Header exact", None,
+                    serde_json::json!({"command": "H".repeat(320)}), true, serde_json::json!("ok"), 0, 0, 1));
+                s.extend(tool_span("polish-header-over", "header_over", "Header over", None,
+                    serde_json::json!({"command": "H".repeat(321)}), true, serde_json::json!("ok"), 0, 0, 1));
+                s.extend(tool_span("polish-args", "bounded_args", "Bounded args", None,
+                    serde_json::Value::Object(args), true, serde_json::json!("ok"), 0, 0, 1));
+                s.extend(tool_span("polish-output-exact", "output_exact", "Output exact", None,
+                    serde_json::json!({}), true, serde_json::Value::String("E".repeat(50_000)), 0, 0, 1));
+                s.extend(tool_span("polish-output-over", "output_over", "Output over", None,
+                    serde_json::json!({}), true, serde_json::Value::String(format!("{}OUTPUT_TAIL", "P".repeat(50_000))), 0, 0, 1));
+                s.extend(tool_span("polish-output-blocks", "output_blocks", "Output blocks", None,
+                    serde_json::json!({}), true, serde_json::json!({"content": [
+                        {"type": "text", "text": "A".repeat(30_000)},
+                        {"type": "text", "text": format!("{}MULTI_TAIL", "B".repeat(20_000))},
+                    ]}), 0, 0, 1));
+                s.extend(tool_span("polish-error", "failed_tool", "Failed tool", None,
+                    serde_json::json!({}), false, serde_json::json!("partial failure output"), 0, 0, 1));
+
+                s.push(ScriptStep { wait_ms: 0, event: SessionDriverEvent::ToolStarted {
+                    base: base(), call_id: "polish-interrupted".into(), tool_name: "interrupted_tool".into(),
+                    label: Some("Interrupted tool".into()), description: None, input: Some(serde_json::json!({})),
+                } });
+                advance_ts(1);
+                s.push(ScriptStep { wait_ms: 0, event: SessionDriverEvent::ToolFinished {
+                    base: base(), call_id: "polish-interrupted".into(), success: false,
+                    output: Some(serde_json::json!("partial interrupted output")), images: None,
+                    interrupted: Some(true),
+                } });
+                s.push(ScriptStep { wait_ms: 0, event: SessionDriverEvent::ToolStarted {
+                    base: base(), call_id: "polish-running".into(), tool_name: "running_tool".into(),
+                    label: Some("Running tool".into()), description: None, input: Some(serde_json::json!({})),
+                } });
+                s.push(ScriptStep { wait_ms: 0, event: SessionDriverEvent::ToolUpdated {
+                    base: base(), call_id: "polish-running".into(),
+                    text: Some(format!("{}STREAM_TAIL", "S".repeat(50_000))), progress: Some(0.5),
+                } });
+                s
+            }
             "staleidle" => {
                 let mut s = vec![
                     ScriptStep { wait_ms: 0, event: SessionDriverEvent::UserMessage { base: base(), id: format!("u-stale-{}", ts()), text: "Run the long thing — but glitch the status mid-turn.".into(), images: None, entry_id: None, references: None } },

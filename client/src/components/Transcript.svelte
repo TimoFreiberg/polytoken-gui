@@ -815,7 +815,10 @@
             </div>
           {/if}
           {#if (item.text || (item.images && item.images.length > 0)) && (item.entryId || (item.ts && !item.delivery))}
-            <div class="umeta">
+            <div
+              class="umeta"
+              class:armed={item.entryId === armedRewindId}
+            >
               {#if item.text}
                 <button
                   class="copy"
@@ -879,7 +882,10 @@
                once the turn settles — turnText already excludes live turns, so a
                mid-turn paragraph followed by tool calls stays bare. -->
           {#if turnText.has(item.id)}
-            <div class="meta">
+            <div
+              class="meta"
+              class:armed={item.entryId === armedRewindId}
+            >
               <button
                 class="copy"
                 class:copied={copiedId === item.id}
@@ -1507,7 +1513,8 @@
   }
   /* Touch devices have no hover; pin the complete footer visible. */
   .scroller.touch .meta,
-  .scroller.touch .umeta {
+  .scroller.touch .umeta,
+  .meta.armed {
     opacity: 1;
     pointer-events: auto;
   }
@@ -1536,6 +1543,13 @@
   }
   .row.user .umeta .ts {
     margin-top: 0;
+  }
+  /* The parent footer owns visibility, so a destructive rewind stays discoverable after
+     the pointer leaves during its click-twice confirmation window. This rule follows the
+     user-footer base rule intentionally: its higher specificity wins the hidden default. */
+  .row.user .umeta.armed {
+    opacity: 1;
+    pointer-events: auto;
   }
   /* branch ("jump here") button — same quiet, hover-revealed treatment as copy */
   .branch {

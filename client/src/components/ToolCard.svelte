@@ -90,9 +90,9 @@
     return inlineBound(text, HEADER_PREVIEW_LIMIT);
   }
 
-  // Full argument view for the expanded body. The collapsed header only shows a
-  // truncated single-line preview() (e.g. the start of a bash command); here we
-  // render every argument in full. String values are shown raw so multi-line
+  // Detailed argument view for the expanded body. The collapsed header only shows a
+  // short single-line preview() (e.g. the start of a bash command); here we render a
+  // bounded set of individually bounded values. String values stay raw so multi-line
   // commands keep their newlines instead of becoming JSON-escaped "\n".
   function argEntries(input: unknown): { key: string; value: string }[] {
     if (input == null) return [];
@@ -119,7 +119,7 @@
   // while replayed-from-history results are already plain text. Pull the text blocks
   // out so a tool card renders the SAME before and after a reload. '' when there are
   // none (or the shape isn't the daemon's content array).
-  function contentText(out: unknown): string {
+  function contentText(out: unknown, limit?: number): string {
     if (out && typeof out === "object") {
       const content = (out as { content?: unknown }).content;
       if (Array.isArray(content)) {
@@ -131,7 +131,8 @@
             typeof (block as { text?: unknown }).text === "string"
           ) {
             text += (block as { text: string }).text;
-            if (text.length > OUTPUT_LIMIT) return bound(text, OUTPUT_LIMIT);
+            if (limit !== undefined && text.length > limit)
+              return bound(text, limit);
           }
         }
         return text;
@@ -140,11 +141,19 @@
     return "";
   }
 
+  function rawOutputText(out: unknown): string {
+    if (out == null) return "";
+    if (typeof out === "string") return out;
+    const text = contentText(out);
+    if (text) return text;
+    return stringify(out, true);
+  }
+
   function outputText(out: unknown): string {
     if (out == null) return "";
     if (typeof out === "string") return bound(out, OUTPUT_LIMIT);
-    const text = contentText(out);
-    if (text) return bound(text, OUTPUT_LIMIT);
+    const text = contentText(out, OUTPUT_LIMIT);
+    if (text) return text;
     return bound(stringify(out, true), OUTPUT_LIMIT);
   }
 
@@ -154,14 +163,17 @@
   const outImages = $derived(item.images ?? []);
   // Body text for the result. With images present, show ONLY the accompanying text note
   // (a live object → its text blocks, a replayed string → itself) — never a JSON dump.
+  // This derived display value is bounded while rawOutputText remains available lazily to
+  // the explicit Copy action, so a huge result does not enter the DOM or get lost.
   const outBodyText = $derived.by(() => {
     if (item.output === undefined) return "";
     if (outImages.length)
       return typeof item.output === "string"
         ? bound(item.output, OUTPUT_LIMIT)
-        : bound(contentText(item.output), OUTPUT_LIMIT);
+        : contentText(item.output, OUTPUT_LIMIT);
     return outputText(item.output);
   });
+  const streamBodyText = $derived(bound(item.text ?? "", OUTPUT_LIMIT));
 
   const statusLabel: Record<ToolItem["status"], string> = {
     running: "running",
@@ -397,8 +409,8 @@
     title={open ? "Collapse tool details" : "Expand tool details"}
     onclick={() => (open = !open)}
     aria-expanded={open}
-    aria-label={`${item.label ?? item.name}, ${statusLabel[item.status]}. ${open ? "Collapse" : "Expand"} tool details`}
   >
+    <span class="status-accessible">{statusLabel[item.status]}. </span>
     {#if item.status === "running"}
       <span class="status" aria-hidden="true">○</span>
     {:else if item.status === "error"}
@@ -406,6 +418,9 @@
     {/if}
     <span class="name" title={item.description || undefined}>{item.label ?? item.name}</span>
     <span class="arg">{preview(item.input)}</span>
+    {#if item.status === "interrupted"}
+      <span class="status-text" aria-hidden="true">interrupted</span>
+    {/if}
     {#if counts}
       <span class="counts" aria-label="{counts.added} added, {counts.removed} removed">
         <span class="add">+{counts.added}</span>
@@ -450,7 +465,7 @@
           {/each}
         </div>
       {/if}
-      {#if item.text}<pre class="stream">{item.text}</pre>{/if}
+      {#if streamBodyText}<pre class="stream">{streamBodyText}</pre>{/if}
       {#if edit}
         {#await diffHTML(theme)}
           <div class="diff-pending">rendering diff…</div>
@@ -481,8 +496,8 @@
               <button
                 type="button"
                 class="out-action"
-                title="Copy this tool's output to the clipboard"
-                onclick={() => copyOut(outBodyText)}>{copied ? "Copied" : "Copy"}</button
+                title="Copy this tool's full output to the clipboard"
+                onclick={() => copyOut(rawOutputText(item.output))}>{copied ? "Copied" : "Copy"}</button
               >
             </div>
             <pre class="out" class:expanded={outExpanded} bind:this={outPre}>{outBodyText}</pre>
@@ -567,6 +582,23 @@
   }
   .tool.error .status {
     color: var(--danger);
+  }
+  .status-accessible {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
+  }
+  .status-text {
+    flex-shrink: 0;
+    color: var(--text-faint);
+    font-size: 11.5px;
+    font-weight: 500;
   }
   @keyframes blink {
     50% {

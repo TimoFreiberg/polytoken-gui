@@ -28,8 +28,7 @@ test("a mixed run of tools each renders as its own card (no prose summary)", asy
   const okCards = work.locator(":scope > .tool.ok");
   await expect(okCards).toHaveCount(6);
   await expect(okCards.locator(":scope > .head > .status")).toHaveCount(0);
-  await expect(okCards.first().locator(":scope > .head")).toHaveAttribute(
-    "aria-label",
+  await expect(okCards.first().locator(":scope > .head")).toHaveAccessibleName(
     /completed/,
   );
   // No summary rows exist anymore.
