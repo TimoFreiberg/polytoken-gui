@@ -35,8 +35,7 @@ describe("implement-issue helpers", () => {
     expect(wsAdd).toContain("--revision");
     expect(wsAdd).toContain("main");
     const polytokenNew = cmds[2]!;
-    expect(polytokenNew).toContain("--config-dir");
-    expect(polytokenNew).toContain("/repo/root/scripts/polytoken-config");
+    expect(polytokenNew).not.toContain("--config-dir");
     expect(polytokenNew).toContain("new");
     expect(polytokenNew).toContain("--no-attach");
     const zellij = cmds[3]!;

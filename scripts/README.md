@@ -58,10 +58,12 @@ Manual override: `rm .merge-lock`
 
 ## Stop hook: integration guard
 
-Implementer sessions run with a dedicated polytoken config directory
-(`scripts/polytoken-config/`) passed via `polytoken --config-dir`. This
-directory contains a `hooks.json` with a single `stop` hook that fires
-when the agent would finish.
+Implementer sessions get a dedicated **project-level** hook installed into
+each issue workspace. Before spawning the daemon, the launcher copies
+`scripts/polytoken-config/hooks.json` into `<workspace>/.polytoken/hooks.json`.
+Polytoken discovers project hooks from `.polytoken/hooks.json` and merges
+them with any global hooks — so the implementer inherits the user's normal
+config (models, providers, permissions) while still getting the stop guard.
 
 The hook (`stop-check-integration.sh`) checks `jj log -r 'main..@ ~ empty()'`
 for unpushed commits. If any exist, it returns `continue` with a redirect
@@ -84,7 +86,7 @@ scripts/
   seed-prompt.md                  — the agent's initial prompt template
   integrate-into-main.sh          — jj linearize + push (lock, fetch, rebase, test, bookmark, push)
   claims.sh                       — issue claim/release/stale-recovery
-  polytoken-config/               — dedicated polytoken config dir for implementer sessions
+  polytoken-config/               — source for the project-level hook (copied into each workspace's .polytoken/)
     hooks.json                    — stop hook that redirects unintegrated agents
     hooks/stop-check-integration.sh — checks for unpushed commits before letting agent stop
   README.md                       — this file
