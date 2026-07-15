@@ -13,7 +13,7 @@ describe("contextTone", () => {
     expect(contextTone(74.9)).toBe("warning");
   });
 
-  test("dark orange from three-quarters to nearly-full", () => {
+  test("warm nickel from three-quarters to nearly-full", () => {
     expect(contextTone(75)).toBe("accent");
     expect(contextTone(89.9)).toBe("accent");
   });

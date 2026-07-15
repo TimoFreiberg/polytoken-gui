@@ -2,7 +2,7 @@
 // kept here so both render the identical scale. The tone names map 1:1 to CSS vars:
 //   ok      → --ok      (green)        below half
 //   warning → --warning (amber/yellow) half to three-quarters
-//   accent  → --accent  (dark orange)  three-quarters to nearly-full
+//   accent  → --accent  (warm nickel)  three-quarters to nearly-full
 //   danger  → --danger  (red)          90% and up
 export type ContextTone = "ok" | "warning" | "accent" | "danger";
 

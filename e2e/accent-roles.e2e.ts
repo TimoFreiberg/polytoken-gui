@@ -46,7 +46,7 @@ async function contrastRatio(
   return (lighter! + 0.05) / (darker! + 0.05);
 }
 
-test("gold actions stay distinct from blue structure in both themes", async ({
+test("gold actions stay distinct from nickel structure in both themes", async ({
   page,
 }) => {
   await drive(page, "confirm");
@@ -70,7 +70,7 @@ test("gold actions stay distinct from blue structure in both themes", async ({
   }
 });
 
-test("working and ready states combine gold attention with blue progress", async ({
+test("working and ready states combine gold attention with nickel progress", async ({
   page,
 }) => {
   await drive(page, "staleidle");

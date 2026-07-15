@@ -1,5 +1,5 @@
-/* Pantoken theme — mirrors the Claude app's warm-paper palette and quiet typography.
-   Light by default (Claude's default); the warm-charcoal dark palette lives in the
+/* Pantoken theme — a warm-paper light palette and black-lacquer dark palette with
+   restrained gold hardware and warm-nickel structure. Light by default; dark lives in the
    single `[data-theme="dark"]` block below. The theme mode (system/light/dark) is
    resolved to a concrete `data-theme` attribute on <html> — pre-paint by an inline
    script in index.html, then by lib/theme.ts — so there's no FOUC and no second
@@ -15,19 +15,19 @@
   --text-faint: #9a968f;
   --border: #e7e3da;
   --border-strong: #d8d3c8;
-  --accent: #4f63bf;
-  --accent-hover: #44569f;
-  --accent-soft: #e7eaf7;
+  --accent: #6f6a63;
+  --accent-hover: #514d47;
+  --accent-soft: #e9e5de;
   --accent-text: #ffffff;
-  /* Periwinkle is structural: focus, selection, navigation, and progress. Gold is
-     scarce emphasis: decisive actions and activity that wants the operator's eye. */
+  /* Warm nickel is structural: focus, selection, navigation, and progress. Gold is
+     scarce hardware: decisive actions and activity that wants the operator's eye. */
   --highlight: #cf962b;
   --highlight-hover: #b87f20;
   --highlight-soft: #f6ead2;
   --highlight-text: #191b25;
   /* Text-selection band (::selection). Translucent accent so it tints consistently
      over prose, bubbles, and code blocks while keeping the text readable. */
-  --select-text-bg: rgba(79, 99, 191, 0.24);
+  --select-text-bg: rgba(111, 106, 99, 0.24);
   /* Monochrome selection highlight (no accent) — choice cards / progress dots. */
   --select-bg: #f0ede6;
   --select-border: #a8a39a;
@@ -80,31 +80,31 @@
 }
 
 :root[data-theme="dark"] {
-  /* Neutral charcoal surfaces; periwinkle stays structural while gold carries
-     decisive actions and operator attention. Selection stays monochrome. */
-  --bg: #242522;
-  --bg-elevated: #292a27;
-  --surface: #302f2c;
-  --surface-sunken: #1d1e1b;
-  --text: #f1f2ee;
-  --text-muted: #aaa9a2;
-  --text-faint: #777871;
-  --border: #3b3b36;
-  --border-strong: #504d47;
-  --accent: #6f8ad9;
-  --accent-hover: #8499e0;
-  --accent-soft: #363e54;
-  --accent-text: #14181f;
-  --highlight: #e0aa3c;
-  --highlight-hover: #edbc5b;
-  --highlight-soft: #3a301f;
-  --highlight-text: #191b25;
-  /* Text-selection band (::selection). Translucent periwinkle — clearly visible on
-     charcoal yet light enough to keep selected text legible. */
-  --select-text-bg: rgba(111, 138, 217, 0.42);
+  /* Black-lacquer surfaces carry the interface. Warm nickel stays structural while
+     gold is reserved for decisive actions and operator attention. */
+  --bg: #171614;
+  --bg-elevated: #1d1b19;
+  --surface: #24211e;
+  --surface-sunken: #121110;
+  --text: #eee9e1;
+  --text-muted: #aaa39a;
+  --text-faint: #77716a;
+  --border: #332f2b;
+  --border-strong: #49433d;
+  --accent: #aaa39a;
+  --accent-hover: #c0b9b0;
+  --accent-soft: #302c28;
+  --accent-text: #1b1917;
+  --highlight: #dda536;
+  --highlight-hover: #edbb55;
+  --highlight-soft: #342a19;
+  --highlight-text: #20170c;
+  /* Text selection is structural, so it uses translucent nickel instead of spending
+     the gold highlight on ordinary editing feedback. */
+  --select-text-bg: rgba(170, 163, 154, 0.35);
   /* Monochrome selection highlight (no accent) — choice cards / progress dots. */
-  --select-bg: #37362f;
-  --select-border: #bdb9b0;
+  --select-bg: #2e2a26;
+  --select-border: #aaa39a;
   --danger: #e0786f;
   --danger-soft: #3a2422;
   --warning: #d08e58;
@@ -113,7 +113,7 @@
   --unread: var(--highlight);
   --find-match: rgba(255, 210, 70, 0.34);
   --find-current: rgba(255, 150, 40, 0.62);
-  --sidebar-bg: #2b2c29;
+  --sidebar-bg: #1a1816;
 
   --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.22), 0 4px 14px rgba(0, 0, 0, 0.28);
   --shadow-pop: 0 10px 34px rgba(0, 0, 0, 0.52);

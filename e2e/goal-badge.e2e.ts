@@ -29,6 +29,21 @@ test("the goal badge renders with the summary and a full tooltip", async ({
     "title",
     "Goal: Ship the goal badge feature (active)",
   );
+
+  // An active goal is persistent context, not an attention request: it uses the
+  // structural warm-nickel accent instead of spending the scarce gold highlight.
+  const [badgeColor, accentColor] = await Promise.all([
+    badge.evaluate((el) => getComputedStyle(el).color),
+    page.evaluate(() => {
+      const probe = document.createElement("span");
+      probe.style.color = "var(--accent)";
+      document.body.append(probe);
+      const color = getComputedStyle(probe).color;
+      probe.remove();
+      return color;
+    }),
+  ]);
+  expect(badgeColor).toBe(accentColor);
 });
 
 test("the goal badge hides when the goal is cleared", async ({ page }) => {

@@ -9,15 +9,15 @@ conventions (autoformatter, VCS, protocol purity, driver trait) stay in
 
 ### Color semantics
 
-Pantoken has two brand-color roles. Keep them semantically distinct so gold remains
+Pantoken has two brand-material roles. Keep them semantically distinct so gold remains
 a useful highlight instead of becoming general decoration:
 
-- **Periwinkle (`--accent*`) is structural:** links, focus rings, selected rows and
+- **Warm nickel (`--accent*`) is structural:** links, focus rings, selected rows and
   choices, navigation, drag targets, running/progress indicators, and soft background
   tints.
 - **Gold (`--highlight*`) is scarce emphasis:** enabled primary actions, the composer
   Send button, new/unread/ready-for-you activity, and small branded attention moments.
-  Gold fills always use `--highlight-text` (dark ink), never white; the icon gold does
+  Gold fills always use `--highlight-text` (dark ink), never white; the brand gold does
   not have enough contrast with white text.
 - **Semantic status colors stay independent:** warning, danger, and success must not be
   remapped to either brand color. Warnings use copper so they do not resemble an
@@ -26,7 +26,8 @@ a useful highlight instead of becoming general decoration:
 Prefer the shared `Button variant="primary"` for a gold call to action. Do not add a
 generic `gold` variant or use `--highlight` for ordinary selected/active state. A useful
 review question is: “does this ask the operator to act or look here?” If not, it is
-probably structural periwinkle or a neutral surface.
+probably structural warm nickel or a neutral surface. Display-only identity chips such
+as the transcript goal badge stay nickel; they do not spend gold merely for being present.
 
 ### Collapse / disclosure affordances
 

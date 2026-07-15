@@ -4,8 +4,9 @@
   // A display-only pill showing the active saved-session goal's summary in the
   // StatusHeader subtitle (the "where am I / what am I doing" bar). Mirrors
   // FacetBadge's visual language (rounded pill, surface-sunken bg, 12.5px font),
-  // but is display-only — no click handler. Lifecycle-aware color tints the pill
-  // so the goal's state is legible at a glance (active, paused, blocked, done).
+  // but is display-only — no click handler. The active state deliberately uses warm
+  // nickel rather than spending the scarce gold highlight; lifecycle exceptions remain
+  // semantic (paused, blocked, done).
   const goal = $derived(store.session.goal);
   const label = $derived(goal ? truncate(goal.summary, 30) : "");
   const lifecycleClass = $derived(goal?.lifecycle ?? "");
@@ -42,8 +43,8 @@
 
 <style>
   /* Mirrors FacetBadge's `.badge` visual language (rounded pill, surface-sunken
-     bg) so it reads as a sibling chip. Lifecycle classes tint the pill so the
-     goal's state is legible at a glance. */
+     bg) so it reads as a sibling chip. Active is neutral warm nickel; lifecycle
+     classes tint the pill only where the state itself carries meaning. */
   .badge {
     display: inline-flex;
     align-items: center;
@@ -51,9 +52,9 @@
     font-size: 12.5px;
     font-family: var(--font-sans);
     letter-spacing: -0.01em;
-    color: var(--text-muted);
+    color: var(--accent);
     background: var(--surface-sunken);
-    border: 1px solid var(--border);
+    border: 1px solid color-mix(in srgb, var(--accent) 28%, var(--border));
     padding: 3px 9px;
     border-radius: 999px;
     max-width: 200px;
