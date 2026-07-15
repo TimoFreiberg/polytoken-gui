@@ -1,5 +1,5 @@
 import { expect, type Locator, test } from "@playwright/test";
-import { drive, gotoFresh, openSettings } from "./helpers.js";
+import { drive, gotoFresh, openSettings, openSidebar } from "./helpers.js";
 
 const PNG = Buffer.from(
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl2nWQAAAAASUVORK5CYII=",
@@ -56,7 +56,23 @@ test("the sidebar and context-panel header arrows meet the 44px touch target", a
   await expectTall(page.getByTestId("context-open"));
 });
 
-test("the 2a composer controls are labeled and touch-safe", async ({ page }) => {
+test("sidebar navigation rows meet the 44px touch target", async ({ page }) => {
+  await openSidebar(page);
+  const sidebar = page.getByTestId("sidebar");
+
+  await expectTall(sidebar.locator(".new-btn"));
+  await expectTall(sidebar.locator(".group-toggle").first());
+  await expectTall(
+    sidebar
+      .locator(".row-wrap")
+      .filter({ hasText: "Wire up the WebSocket" })
+      .locator(".row"),
+  );
+});
+
+test("the 2a composer controls are labeled and touch-safe", async ({
+  page,
+}) => {
   const controls = [
     page.getByTestId("facet-badge"),
     page.getByRole("button", { name: "Attach images" }),
@@ -81,7 +97,9 @@ test("the 2a composer controls are labeled and touch-safe", async ({ page }) => 
     mimeType: "image/png",
     buffer: PNG,
   });
-  const preview = page.getByRole("button", { name: "Preview attachment 1 full screen" });
+  const preview = page.getByRole("button", {
+    name: "Preview attachment 1 full screen",
+  });
   const remove = page.getByRole("button", { name: "Remove attachment 1" });
   await expectTall(preview);
   await expectTall(remove);

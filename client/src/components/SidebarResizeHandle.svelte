@@ -127,13 +127,18 @@
     right: -1px;
     z-index: 10;
     width: 8px;
+    padding: 0;
     cursor: col-resize;
     touch-action: none;
   }
   .resize-handle::after {
     content: "";
     position: absolute;
-    inset: 0 5px;
+    top: 0;
+    bottom: 0;
+    left: 50%;
+    width: 2px;
+    transform: translateX(-50%);
     background: transparent;
     border-radius: 999px;
     transition: background 120ms ease;
