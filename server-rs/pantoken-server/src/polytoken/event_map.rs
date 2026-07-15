@@ -2900,10 +2900,71 @@ mod tests {
         let out = fold_fresh(
             json!({ "type": "tool_result", "call_id": "call1", "content": "short", "content_full": { "future_variant": { "raw": "complete" } }, "prompt_id": "p1" }),
         );
+        let live_output = event_json(&out.events[0])["output"].clone();
         assert_eq!(
-            event_json(&out.events[0])["output"],
+            live_output,
             json!({ "future_variant": { "raw": "complete" } })
         );
+
+        let replay = crate::polytoken::history_seed::history_to_seed_events(
+            &[json!({
+                "type": "tool_result",
+                "call_id": "call1",
+                "content": { "future_variant": { "raw": "complete" } },
+            })],
+            &crate::polytoken::history_seed::HistoryMapCtx {
+                r#ref: SessionRef {
+                    workspace_id: "ws".into(),
+                    session_id: "s1".into(),
+                },
+            },
+        );
+        assert_eq!(event_json(&replay[0])["output"], live_output);
+    }
+
+    #[test]
+    fn tool_result_recognized_rich_variants_use_expected_fallbacks() {
+        let cases = [
+            (
+                "empty image fallback text",
+                json!({ "image": { "data": "QUJD", "media_type": "image/png", "text_fallback": "" } }),
+                "short",
+                true,
+            ),
+            ("empty text", json!({ "text": "" }), "short", false),
+            (
+                "empty extracted blocks",
+                json!({ "blocks": [] }),
+                "short",
+                false,
+            ),
+            (
+                "empty diff summary",
+                json!({ "diff_preview": { "summary": "" } }),
+                "short",
+                false,
+            ),
+            (
+                "nonempty diff summary",
+                json!({ "diff_preview": { "summary": "full diff" } }),
+                "full diff",
+                false,
+            ),
+        ];
+
+        for (name, content_full, expected_output, expects_image) in cases {
+            let extracted = extract_tool_result(Some("short"), Some(&content_full));
+            assert_eq!(
+                extracted.output,
+                Some(json!(expected_output)),
+                "{name} output"
+            );
+            assert_eq!(
+                extracted.images.as_ref().map(Vec::len),
+                expects_image.then_some(1),
+                "{name} images"
+            );
+        }
     }
 
     #[test]

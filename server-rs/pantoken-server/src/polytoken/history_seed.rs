@@ -139,7 +139,7 @@ fn lift_tool_result(content: Option<&Value>, is_error: Option<bool>) -> LiftedTo
     }
 
     LiftedToolResult {
-        output: None,
+        output: (!obj.is_empty()).then(|| content.clone()),
         images: None,
         success,
     }
@@ -811,6 +811,31 @@ mod tests {
         match &out[0] {
             SessionDriverEvent::ToolFinished { output, .. } => {
                 assert_eq!(output.as_ref().unwrap(), &json!("foobar"));
+            }
+            other => panic!("expected ToolFinished, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn tool_result_unknown_nonempty_variant_is_preserved() {
+        let future_content = json!({ "future_variant": { "raw": "complete" } });
+        let items = vec![json!({
+            "type": "tool_result",
+            "call_id": "c1",
+            "content": future_content,
+            "is_error": false,
+        })];
+        let out = history_to_seed_events(&items, &ctx());
+        match &out[0] {
+            SessionDriverEvent::ToolFinished {
+                success,
+                output,
+                images,
+                ..
+            } => {
+                assert!(*success);
+                assert_eq!(output.as_ref(), Some(&future_content));
+                assert!(images.is_none());
             }
             other => panic!("expected ToolFinished, got {:?}", other),
         }
