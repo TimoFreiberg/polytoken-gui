@@ -53,12 +53,23 @@ control: persist it, unless it's inherently ephemeral. Add an e2e round-trip
 in `e2e/drafts.e2e.ts` for each persisted field.
 
 ## Phone attention views may cover the composer when visibly minimizable
+
 Desktop Q&A remains inline above the composer. On phones, Q&A and approvals use
 one readable full-screen attention view because the narrow viewport makes an
 inline card compete with both transcript and composer. Every such view has a
 visible 44px Minimize action and Back-gesture support; minimizing returns to the
 transcript and exposes a persistent shelf immediately above the composer. This
 satisfies the non-blocking intent of Q5/Q10 while preserving phone readability.
+
+## Phone composer settings use one summary control
+
+On phones, permission mode, facet, model, and thinking level remain visible in
+their familiar order in the composer's footer, but the footer is one 44px-or-taller
+button rather than four cramped tap targets. It opens a full-screen Session controls
+view with readable option rows, context-window details, and Back-gesture support.
+Desktop retains the individual popup controls. The image-attachment action is a bare
+paperclip with a transparent 44px hit area; Send remains the composer's emphasized
+gold action.
 
 ## Tech stack
 

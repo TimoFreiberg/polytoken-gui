@@ -1,7 +1,7 @@
 <script lang="ts">
   import { store } from "../lib/store.svelte.js";
-  import type { PermissionMonitorMode } from "@pantoken/protocol";
   import MenuBadge from "./ui/MenuBadge.svelte";
+  import { PERMISSION_MODES } from "../lib/composer-controls.js";
 
   // Permission-monitor mode indicator in the composer toolbar (next to facet/
   // model/effort). Shows the ACTUAL current mode; clicking opens a 4-item panel
@@ -14,21 +14,7 @@
   // lives in MenuBadge; this component supplies the mode items as the panel body
   // snippet.
   const mode = $derived(store.composerPermissionMonitor);
-  const MODES: { id: PermissionMonitorMode; label: string; desc: string }[] = [
-    { id: "standard", label: "Standard", desc: "Prompt for each permission" },
-    { id: "bypass", label: "Bypass", desc: "Auto-approve all permissions" },
-    {
-      id: "bypass_plus",
-      label: "Bypass+",
-      desc: "Auto-approve except deny rules",
-    },
-    {
-      id: "autonomous",
-      label: "Autonomous",
-      desc: "Classifier-driven auto-approval",
-    },
-  ];
-  const activeOpt = $derived(MODES.find((m) => m.id === mode) ?? MODES[0]!);
+  const activeOpt = $derived(PERMISSION_MODES.find((m) => m.id === mode) ?? PERMISSION_MODES[0]!);
   const isStandard = $derived(mode === "standard");
 </script>
 
@@ -38,15 +24,15 @@
   testid="permission-badge"
   ariaLabel="Permission mode"
   groupTitle="Permission mode"
-  count={MODES.length}
-  initialSel={MODES.findIndex((m) => m.id === mode)}
+  count={PERMISSION_MODES.length}
+  initialSel={PERMISSION_MODES.findIndex((m) => m.id === mode)}
   badgeClass={isStandard ? "" : "nonstandard"}
   minWidth="200px"
   closeLabel="Close permission menu"
-  onSelect={(i) => store.setPermissionMonitor(MODES[i]!.id)}
+  onSelect={(i) => store.setPermissionMonitor(PERMISSION_MODES[i]!.id)}
 >
   {#snippet body({ sel, close })}
-    {#each MODES as opt, i (opt.id)}
+    {#each PERMISSION_MODES as opt, i (opt.id)}
       <button
         class="item"
         class:active={opt.id === mode}

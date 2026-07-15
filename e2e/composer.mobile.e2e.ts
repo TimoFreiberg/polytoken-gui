@@ -39,49 +39,24 @@ test("mobile: the send button submits the prompt", async ({ page }) => {
   ).toBeVisible();
 });
 
-test("mobile: the picker chips never overflow the viewport", async ({
+test("mobile: the session-controls summary never overflows the viewport", async ({
   page,
 }) => {
-  // Regression: the model chip used to clip off the right edge at phone widths
-  // (docs/PLAN-mobile.md D5). The toolbar wraps instead; nothing may poke past
-  // the viewport or make the page horizontally scrollable.
-  const modelBadge = page.getByTestId("model-badge");
-  await expect(modelBadge).toBeVisible();
+  const summary = page.getByTestId("mobile-session-controls-trigger");
+  await expect(summary).toBeVisible();
   const vw = page.viewportSize()!.width;
-  for (const testid of [
-    "model-badge",
-    "thinking-badge",
-    "permission-badge",
-    "facet-badge",
-  ]) {
-    const box = await page.getByTestId(testid).boundingBox();
-    expect(box, `${testid} should render`).not.toBeNull();
-    expect(
-      box!.x + box!.width,
-      `${testid} inside viewport`,
-    ).toBeLessThanOrEqual(vw + 0.5);
-  }
+  const box = await summary.boundingBox();
+  expect(box).not.toBeNull();
+  expect(box!.x).toBeGreaterThanOrEqual(0);
+  expect(box!.x + box!.width).toBeLessThanOrEqual(vw + 0.5);
   expect(
     await page.evaluate(
       () => document.documentElement.scrollWidth <= window.innerWidth,
     ),
   ).toBe(true);
 
-  for (const id of ["composer-status-row", "composer-status-right"]) {
-    const landmark = page.getByTestId(id);
-    const box = await landmark.boundingBox();
-    expect(box, `${id} should render`).not.toBeNull();
-    expect(box!.x).toBeGreaterThanOrEqual(0);
-    expect(box!.x + box!.width).toBeLessThanOrEqual(vw + 0.5);
-  }
-
-  const left = await page
-    .locator("[data-testid='composer-status-row'] .status-left")
-    .boundingBox();
-  const right = await page.getByTestId("composer-status-right").boundingBox();
-  expect(left, "left status group should render").not.toBeNull();
-  expect(right, "right status group should render").not.toBeNull();
-  expect(right!.y).toBeGreaterThanOrEqual(left!.y + left!.height - 1);
+  await expect(page.getByTestId("permission-badge")).toBeHidden();
+  await expect(page.getByTestId("model-badge")).toBeHidden();
 });
 
 test("mobile: new-session controls stay tappable inside the wrapped status row", async ({
@@ -92,7 +67,6 @@ test("mobile: new-session controls stay tappable inside the wrapped status row",
 
   const status = page.getByTestId("composer-status-row");
   const left = status.locator(".status-left");
-  const right = page.getByTestId("composer-status-right");
   const project = page.getByTestId("draft-project-control");
   const worktree = page.getByTestId("draft-worktree-control");
   const vw = page.viewportSize()!.width;
@@ -116,10 +90,10 @@ test("mobile: new-session controls stay tappable inside the wrapped status row",
   }
 
   const leftBox = await left.boundingBox();
-  const rightBox = await right.boundingBox();
   expect(leftBox).not.toBeNull();
-  expect(rightBox).not.toBeNull();
-  expect(rightBox!.y).toBeGreaterThanOrEqual(leftBox!.y + leftBox!.height - 1);
+  await expect(
+    page.getByTestId("mobile-session-controls-trigger"),
+  ).toBeVisible();
 
   await project.click();
   await expect(project).toHaveAttribute("aria-expanded", "true");

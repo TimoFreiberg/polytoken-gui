@@ -34,7 +34,10 @@
   import TaskList from "./TaskList.svelte";
   import QueueTray from "./QueueTray.svelte";
   import PromptHistoryMenu from "./PromptHistoryMenu.svelte";
+  import MobileSessionControls from "./MobileSessionControls.svelte";
   import { parseTasklist } from "../lib/tasklist.js";
+  import { overlayHistory } from "../lib/overlay-history.js";
+  import { permissionModeLabel } from "../lib/composer-controls.js";
 
   let ta = $state<HTMLTextAreaElement>();
   let box = $state<HTMLDivElement>();
@@ -105,6 +108,7 @@
   // Project chip → server-side directory browser (DirPicker). The path is chosen on the
   // server's filesystem because the agent runs server-side; a native picker would see the client.
   let pickingCwd = $state(false);
+  let mobileControlsOpen = $state(false);
   // Never carry an open picker across drafts (it would auto-pop on the next new session).
   $effect(() => {
     if (!drafting) pickingCwd = false;
@@ -128,6 +132,38 @@
   const cwdBase = $derived.by(() => {
     const c = store.draft?.cwd?.replace(/\/+$/, "") ?? "";
     return c ? (c.split("/").pop() ?? c) : "home";
+  });
+  const composerCfg = $derived(store.composerConfig);
+  const composerModelLabel = $derived(
+    store.models.find(
+      (model) =>
+        model.provider === composerCfg.provider && model.modelId === composerCfg.modelId,
+    )?.label ?? composerCfg.modelId ?? "model",
+  );
+  const permissionSummary = $derived(permissionModeLabel(store.composerPermissionMonitor));
+  const facetSummary = $derived(
+    store.composerFacet.charAt(0).toUpperCase() + store.composerFacet.slice(1),
+  );
+  const thinkingSummary = $derived(composerCfg.thinkingLevel ?? "default");
+  const controlsSummary = $derived(
+    `${permissionSummary}, ${facetSummary}, ${composerModelLabel}, ${thinkingSummary}`,
+  );
+
+  function openMobileControls(): void {
+    pickingCwd = false;
+    mobileControlsOpen = true;
+    overlayHistory.opened("session-controls", () => {
+      mobileControlsOpen = false;
+    });
+  }
+
+  function closeMobileControls(): void {
+    mobileControlsOpen = false;
+    overlayHistory.closed("session-controls");
+  }
+
+  $effect(() => {
+    if (mobileControlsOpen && !store.phoneLayout) closeMobileControls();
   });
   // --- Slash-command typeahead. The menu is open when the draft is a bare slash token
   // (slashQuery != null), the user hasn't dismissed it for this token, and there are
@@ -1322,7 +1358,7 @@
               </span>
             {/each}
           {:else}
-            <IconButton disabled={addingImages} onclick={openFilePicker} title="Attach images (⌘⇧F)" aria-label="Attach images">
+            <IconButton class="attach-bare" disabled={addingImages} onclick={openFilePicker} title="Attach images (⌘⇧F)" aria-label="Attach images" data-testid="attach-images">
               <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                 <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.2a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48" />
               </svg>
@@ -1375,7 +1411,7 @@
     </div>
 
     <div class="composer-status-row" data-testid="composer-status-row">
-      <div class="status-left">
+      <div class="status-left" class:draft-controls={drafting}>
         {#if drafting && store.draft}
           <!-- Model + effort are rebound to the draft via composerConfig. -->
           <button
@@ -1405,8 +1441,7 @@
             {#if store.draft.worktree}<span class="chip-check" aria-hidden="true">✓</span>{/if}
           </button>
         {/if}
-        <PermissionBadge />
-        <FacetBadge />
+        <span class="desktop-config-left"><PermissionBadge /><FacetBadge /></span>
       </div>
       {#if streaming}
         <!-- A hint that Enter while the agent works queues a follow-up (the driver
@@ -1417,7 +1452,7 @@
           <kbd>Enter</kbd> queues a follow-up
         </div>
       {/if}
-      <div class="composer-status-right" data-testid="composer-status-right">
+      <div class="composer-status-right desktop-config-right" data-testid="composer-status-right">
         <ModelPicker />
         {#if !drafting}
           <ContextMeter />
@@ -1428,6 +1463,21 @@
           </span>
         {/if}
       </div>
+      <button
+        type="button"
+        class="mobile-config-summary"
+        data-testid="mobile-session-controls-trigger"
+        aria-haspopup="dialog"
+        aria-expanded={mobileControlsOpen}
+        aria-label={`Session controls: ${controlsSummary}`}
+        title={`Session controls: ${controlsSummary}`}
+        onclick={openMobileControls}
+      >
+        <span>{permissionSummary}</span>
+        <span>{facetSummary}</span>
+        <span>{composerModelLabel}</span>
+        <span>{thinkingSummary}</span>
+      </button>
     </div>
     </div>
 
@@ -1441,6 +1491,10 @@
     onClose={closeLightbox}
     onIndex={(i) => (lightboxIndex = i)}
   />
+{/if}
+
+{#if mobileControlsOpen}
+  <MobileSessionControls onclose={closeMobileControls} />
 {/if}
 
 <style>
@@ -1711,6 +1765,14 @@
     border-radius: var(--radius-xs);
     padding: 0 4px;
   }
+  .desktop-config-left {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .mobile-config-summary {
+    display: none;
+  }
   /* Touch has no Enter, and the row is tighter — drop the hint there. */
   @media (max-width: 859px) {
     .toolbar-hint {
@@ -1719,23 +1781,48 @@
     .composer-wrap {
       padding-inline: 16px;
     }
-    .composer-status-row {
-      align-items: flex-start;
-      flex-wrap: wrap;
-      row-gap: 6px;
-    }
+    .composer-status-row { align-items: stretch; flex-wrap: wrap; row-gap: 6px; }
     .status-left {
       flex: 1 1 100%;
       flex-wrap: wrap;
     }
-    .composer-status-right {
-      flex: 1 1 100%;
-      justify-content: flex-end;
-      flex-wrap: wrap;
-      min-width: 0;
-    }
+    .status-left:not(.draft-controls),
+    .desktop-config-left,
+    .composer-status-right.desktop-config-right { display: none; }
     .composer-attachments {
       max-width: 42vw;
+    }
+    .mobile-config-summary {
+      width: 100%;
+      min-height: 48px;
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) minmax(0, 0.9fr) minmax(0, 1.5fr) minmax(0, 0.8fr);
+      align-items: center;
+      gap: 7px;
+      padding: 4px 8px;
+      color: var(--text-muted);
+      background: transparent;
+      border: 0;
+      border-top: 1px solid var(--border);
+      border-radius: 0 0 var(--radius) var(--radius);
+      font: inherit;
+      font-size: 12px;
+      text-align: center;
+    }
+    .mobile-config-summary span {
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .mobile-config-summary:active { background: var(--surface-sunken); }
+    .mobile-config-summary:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+    :global(.attach-bare.icon-btn),
+    :global(.attach-bare.icon-btn:hover),
+    :global(.attach-bare.icon-btn:active) {
+      background: transparent;
+      border-color: transparent;
+      border-radius: 0;
     }
   }
   .composer-status-row {
