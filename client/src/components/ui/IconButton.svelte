@@ -62,7 +62,7 @@
   }
   /* Callers provide different SVG icon sets. Normalize their occupied box here while
      leaving each icon's intentional stroke/fill styling intact. */
-  .icon-btn :global(svg) {
+  .icon-btn > :global(svg) {
     display: block;
     width: 1em;
     height: 1em;

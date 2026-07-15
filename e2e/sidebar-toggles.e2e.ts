@@ -35,6 +35,11 @@ test("collapsing the left sidebar reveals a header arrow that reopens it", async
   const open = page.getByTestId("sidebar-open");
 
   await expect(open).toHaveCount(0);
+  // IconButton normalizes raw SVG children, but a nested Chevron owns its explicit
+  // size and must not be expanded to the button's inherited icon font-size.
+  const collapseChevron = collapse.locator(".chevron svg");
+  await expect(collapseChevron).toHaveAttribute("width", "11");
+  await expect(collapseChevron).toHaveCSS("width", "11px");
   const collapseBox = await collapse.boundingBox();
   await collapse.click();
   await expect(sidebar).toHaveAttribute("data-open", "false");

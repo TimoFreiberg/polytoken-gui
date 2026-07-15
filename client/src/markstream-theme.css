@@ -64,11 +64,17 @@
   padding: 14px 16px;
   max-height: min(60vh, 720px);
   overflow: auto;
-  overscroll-behavior: contain;
+  /* Keep a sideways swipe in a wide block without trapping vertical transcript scroll. */
+  overscroll-behavior-x: contain;
+  overscroll-behavior-y: auto;
   scrollbar-gutter: stable;
   /* the library tints plain code blocks with a fixed light editor color; re-point it
      at the theme foreground so it reads on the sunken surface in both themes. */
   color: var(--text);
+}
+.markstream-svelte.markdown-renderer :where(pre:focus-visible) {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }
 
 /* ── Copy-code button (injected by the copy-code action) ──

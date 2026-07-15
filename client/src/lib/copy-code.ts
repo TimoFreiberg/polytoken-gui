@@ -49,6 +49,10 @@ function makeButton(pre: HTMLPreElement): HTMLButtonElement {
 function decorate(pre: HTMLPreElement): void {
   if (pre.dataset.copyDecorated) return;
   pre.dataset.copyDecorated = "1";
+  // A capped or horizontally overflowing block is its own scroll region. Make it
+  // keyboard-reachable (arrow/Page keys) and name that stop for screen readers.
+  pre.tabIndex = 0;
+  pre.setAttribute("aria-label", "Code block");
   const parent = pre.parentNode;
   if (!parent) return;
   const wrap = document.createElement("div");

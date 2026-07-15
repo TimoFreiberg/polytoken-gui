@@ -230,6 +230,24 @@ test("transcript: code blocks get a copy button that copies the code", async ({
   // The fenced code block is wrapped with a pinned copy button (top-right).
   const wrap = row.locator(".code-block", { has: page.locator("pre") });
   await expect(wrap).toBeVisible();
+  const pre = wrap.locator("pre");
+  await expect(pre).toHaveAttribute("tabindex", "0");
+  await expect(pre).toHaveAttribute("aria-label", "Code block");
+  await pre.focus();
+  // Return via keyboard navigation so :focus-visible, rather than programmatic focus,
+  // is the modality under test.
+  await page.keyboard.press("Tab");
+  await page.keyboard.press("Shift+Tab");
+  await expect(pre).toBeFocused();
+  await expect
+    .poll(() =>
+      pre.evaluate((el) => ({
+        outline: getComputedStyle(el).outlineStyle,
+        overscrollX: getComputedStyle(el).overscrollBehaviorX,
+        overscrollY: getComputedStyle(el).overscrollBehaviorY,
+      })),
+    )
+    .toEqual({ outline: "solid", overscrollX: "contain", overscrollY: "auto" });
   const copy = wrap.getByRole("button", { name: "Copy code" });
   await expect(copy).toHaveCount(1);
   await copy.click();
@@ -239,6 +257,41 @@ test("transcript: code blocks get a copy button that copies the code", async ({
   const clip = await page.evaluate(() => navigator.clipboard.readText());
   expect(clip).toContain("function greet(name: string)");
   expect(clip).not.toContain("Markdown showcase");
+});
+
+test("transcript: long code blocks stay bounded with all content reachable", async ({
+  page,
+}) => {
+  await drive(page, "markdown");
+  const pre = page.locator(".row.assistant").last().locator(".code-block pre");
+  await pre.locator("code").evaluate((code) => {
+    code.textContent = Array.from(
+      { length: 239 },
+      (_, index) => `line ${index + 1}`,
+    ).join("\n");
+    code.append("\n");
+    const last = document.createElement("span");
+    last.dataset.testid = "last-code-line";
+    last.textContent = "line 240";
+    code.append(last);
+  });
+
+  const initial = await pre.evaluate((el) => ({
+    clientHeight: el.clientHeight,
+    scrollHeight: el.scrollHeight,
+    viewportBound: Math.min(window.innerHeight * 0.6, 720),
+  }));
+  expect(initial.scrollHeight).toBeGreaterThan(initial.clientHeight);
+  expect(initial.clientHeight).toBeLessThanOrEqual(initial.viewportBound + 1);
+
+  await pre.evaluate((el) => {
+    el.scrollTop = el.scrollHeight;
+  });
+  const reachedBottom = await pre.evaluate((el) =>
+    Math.abs(el.scrollHeight - el.clientHeight - el.scrollTop) <= 1,
+  );
+  expect(reachedBottom).toBe(true);
+  await expect(pre.getByTestId("last-code-line")).toBeInViewport();
 });
 
 test("type-to-focus: a printable key focuses the composer", async ({
