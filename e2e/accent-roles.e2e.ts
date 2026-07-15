@@ -82,105 +82,6 @@ test("paper, nickel, and prompt surfaces keep a visible hierarchy", async ({
   const prompt = page.locator(".row.user .bubble").first();
   const composer = page.locator(".composer-surface");
   await expect(prompt).toBeVisible();
- 
-   for (const theme of ["light", "dark"] as const) {
-     await page
-       .locator("html")
-       .evaluate((el, value) => el.setAttribute("data-theme", value), theme);
-     const [
-       canvas,
-       sidebarSurface,
-       promptSurface,
-       cardSurface,
-       strongBorder,
-       mutedText,
-     ] = await Promise.all([
-       resolvedToken(page, "--bg"),
-       resolvedToken(page, "--sidebar-bg"),
-       resolvedToken(page, "--prompt-bg"),
-       resolvedToken(page, "--surface"),
-       resolvedToken(page, "--border-strong"),
-       resolvedToken(page, "--text-muted"),
-     ]);
- 
-     await expect(page.locator("body")).toHaveCSS("background-color", canvas);
-     await expect(sidebar).toHaveCSS("background-color", sidebarSurface);
-     await expect(prompt).toHaveCSS("background-color", promptSurface);
-     await expect(prompt).toHaveCSS("border-color", strongBorder);
-     await expect(composer).toHaveCSS("background-color", cardSurface);
-     expect(colorContrast(mutedText, sidebarSurface)).toBeGreaterThanOrEqual(
-       4.5,
-     );
-     const ordered =
-       theme === "light"
-         ? [cardSurface, canvas, sidebarSurface, promptSurface]
-         : [promptSurface, cardSurface, sidebarSurface, canvas];
-     const lightness = ordered.map(luminance);
-     for (let i = 1; i < lightness.length; i += 1) {
-       expect(lightness[i - 1]!).toBeGreaterThan(lightness[i]!);
-       // Surface steps are deliberately subtle, but every adjacent material must retain
-       // at least a 1.05:1 luminance contrast instead of merely using unequal hex values.
-       expect(
-         colorContrast(ordered[i - 1]!, ordered[i]!),
-       ).toBeGreaterThanOrEqual(1.05);
-     }
-   }
- });
- 
-  page,
-}) => {
-  await drive(page, "staleidle");
-  const working = page.getByTestId("working-indicator");
-  await expect(working).toBeVisible();
-
-  await gotoFresh(page);
-  await openSidebar(page);
-  const row = page
-    .getByTestId("sidebar")
-    .locator(".row-wrap")
-    .filter({ hasText: "Explore the fold reducer" });
-  await drive(page, "bgrun");
-  await expect(row.getByTestId("session-status")).toHaveAttribute(
-    "data-state",
-    "done",
-  );
-  await expect(row.locator(".attention-symbol")).toHaveCSS(
-    "color",
-    await resolvedToken(page, "--highlight"),
-  );
-});
-
-test("working indicator is visible and ready states keep gold attention distinct", async ({
-  page,
-}) => {
-  await drive(page, "staleidle");
-  const working = page.getByTestId("working-indicator");
-  await expect(working).toBeVisible();
-
-  await gotoFresh(page);
-  await openSidebar(page);
-  const row = page
-    .getByTestId("sidebar")
-    .locator(".row-wrap")
-    .filter({ hasText: "Explore the fold reducer" });
-  await drive(page, "bgrun");
-  await expect(row.getByTestId("session-status")).toHaveAttribute(
-    "data-state",
-    "done",
-  );
-  await expect(row.locator(".attention-symbol")).toHaveCSS(
-    "color",
-    await resolvedToken(page, "--highlight"),
-  );
-});
-
-test("paper, nickel, and prompt surfaces keep a visible hierarchy", async ({
-  page,
-}) => {
-  const sidebar = page.getByTestId("sidebar");
-  const prompt = page.locator(".row.user .bubble").first();
-  const composer = page.locator(".composer-surface");
-  await expect(prompt).toBeVisible();
 
   for (const theme of ["light", "dark"] as const) {
     await page
@@ -217,8 +118,6 @@ test("paper, nickel, and prompt surfaces keep a visible hierarchy", async ({
     const lightness = ordered.map(luminance);
     for (let i = 1; i < lightness.length; i += 1) {
       expect(lightness[i - 1]!).toBeGreaterThan(lightness[i]!);
-      // Surface steps are deliberately subtle, but every adjacent material must retain
-      // at least a 1.05:1 luminance contrast instead of merely using unequal hex values.
       expect(
         colorContrast(ordered[i - 1]!, ordered[i]!),
       ).toBeGreaterThanOrEqual(1.05);
