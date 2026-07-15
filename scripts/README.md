@@ -54,6 +54,24 @@ it's a file, not an flock.
 
 Manual override: `rm .merge-lock`
 
+## Stop hook: integration guard
+
+Implementer sessions run with a dedicated polytoken config directory
+(`scripts/polytoken-config/`) passed via `polytoken --config-dir`. This
+directory contains a `hooks.json` with a single `stop` hook that fires
+when the agent would finish.
+
+The hook (`stop-check-integration.sh`) checks `jj log -r 'main..@ ~ empty()'`
+for unpushed commits. If any exist, it returns `continue` with a redirect
+to `just integrate-into-main <N>`, preventing the agent from stopping before
+integration is complete. A redirect counter (`.autopilot-stop-redirects`,
+capped at 3) prevents infinite loops. After 3 redirects, the agent is allowed
+to stop — it will have the integration instructions in its context.
+
+The launcher writes `.autopilot-issue-number` and `.autopilot-config-dir`
+into the workspace so the hook knows which issue is being implemented and
+where to find the hook script.
+
 ## Files
 
 ```
@@ -64,10 +82,14 @@ scripts/
   seed-prompt.md                  — the agent's initial prompt template
   integrate-into-main.sh          — jj linearize + push (lock, fetch, rebase, test, bookmark, push)
   claims.sh                       — issue claim/release/stale-recovery
+  polytoken-config/               — dedicated polytoken config dir for implementer sessions
+    hooks.json                    — stop hook that redirects unintegrated agents
+    hooks/stop-check-integration.sh — checks for unpushed commits before letting agent stop
   README.md                       — this file
   test/
     integrate-into-main.test.ts   — jj primitive + lock logic tests
     claims.test.ts                — claim management tests
+    stop-check-integration.test.ts — stop hook redirect logic tests
 ```
 
 ## Dependencies

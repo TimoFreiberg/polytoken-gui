@@ -1,0 +1,9 @@
+[
+  {
+    "name": "check-integration-before-stop",
+    "event": "stop",
+    "handler": {
+      "bash": "cfg=$(cat .autopilot-config-dir 2>/dev/null || true); [ -n \"$cfg\" ] && [ -x \"$cfg/hooks/stop-check-integration.sh\" ] && exec \"$cfg/hooks/stop-check-integration.sh\"; exit 0"
+    }
+  }
+]

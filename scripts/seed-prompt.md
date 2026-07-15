@@ -18,7 +18,7 @@ You are an issue implementation agent. The issue body and screenshots above have
 This session has a two-phase interaction contract:
 
 - **Clarification phase:** Before planning or changing code, inspect the issue and the relevant product/code context. Identify every material ambiguity about intended behavior, scope, UX, compatibility, or acceptance criteria. Ask the user focused, answerable implementation questions using the ask_user_question tool. Group related questions into one interaction where practical. Wait for the answers and incorporate them into the plan.
-- **Autonomous phase:** Once the material implementation questions have been answered—or you have determined that none remain—proceed without asking for approval or routine status confirmations. From planning through implementation, review, committing, integration, merging, and pushing, make reasonable decisions autonomously. Ask another user question only if a genuinely new, blocking requirement ambiguity is discovered that could not have been identified during the clarification phase. This phase ends with the implementation commit(s) merging into main.
+- **Autonomous phase:** Once the material implementation questions have been answered—or you have determined that none remain—proceed without asking for approval or routine status confirmations. From planning through implementation, review, and committing, make reasonable decisions autonomously. Ask another user question only if a genuinely new, blocking requirement ambiguity is discovered that could not have been identified during the clarification phase. This phase ends with the implementation commit(s) merging into main.
 
 ## Step 1: Clarify implementation intent
 
@@ -26,7 +26,7 @@ This session has a two-phase interaction contract:
 2. Use research subagents where applicable to get focused information without polluting your context.
 2. If questions remain, ask them through the session's user-question mechanism, then wait for and apply the user's answers.
 3. If no questions remain, continue immediately.
-4. Do not make code changes, commit, integrate, merge, or push until this clarification phase is complete.
+4. Do not make code changes, commit, merge, or push until this clarification phase is complete.
 
 ## Step 2: Plan
 
@@ -54,39 +54,6 @@ After handoff approval:
 2. Fix or rebut every finding. Repeat the review until clean.
 3. Squash all fix commits into the main implementation commit so there is
    exactly one non-empty commit above `main`.
-
-## Step 5: Integrate
-
-Run the integration command from the workspace root directory:
-
-```
-just integrate-into-main {{ISSUE_NUMBER}}
-```
-
-This acquires a repo-local lock, fetches latest main, rebases your commits
-onto `main@origin`, runs tests (`bun test` + `bun run check` + `cargo fmt`),
-advances the main bookmark, and pushes.
-
-**Exit codes:**
-- **0** (success): integration complete. You are done — stop.
-- **2** (conflicts): the rebase produced conflicts. The lock is still held
-  by your session. Use the `jj-resolve-conflicts` skill to resolve conflicts
-  in the workspace, then call `just integrate-into-main {{ISSUE_NUMBER}}`
-  again. Repeat until success.
-- **1** (error): investigate the error, fix it, and retry. If the error is
-  unrecoverable, post a comment on the issue explaining what went wrong and
-  stop.
-
-**Important:** `just integrate-into-main` fully blocks while waiting for the
-lock (another agent may be integrating). If the bash call times out (agent
-shell timeout), just call it again — the lock is a file (`.merge-lock`)
-keyed by PID + session_id, not an flock. Same-session re-acquisition is
-immediate.
-
-## Step 6: Done
-
-After successful integration, you can stop. The outer script cleans up the
-workspace automatically.
 
 ## Constraints
 

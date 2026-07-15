@@ -21,3 +21,6 @@ grindbot-config.toml
 .polytoken
 .merge-lock
 .autopilot-session-id
+.autopilot-issue-number
+.autopilot-config-dir
+.autopilot-stop-redirects
