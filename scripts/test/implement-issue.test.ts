@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { extractImageUrls, imageExtension, parseDaemonOutput, parseIssueReference, renderPrompt } from "../implement-issue";
+import { extractImageUrls, imageExtension, parseDaemonOutput, parseIssueReference, plannedCommands, renderPrompt } from "../implement-issue";
 
 describe("implement-issue helpers", () => {
   test("parses supported issue references and rejects ambiguity", () => {
@@ -25,6 +25,15 @@ describe("implement-issue helpers", () => {
     expect(parseDaemonOutput("ignored", { session_id: "structured", port: 65535 })).toEqual({ sessionId: "structured", port: 65535 });
     expect(() => parseDaemonOutput("session_id=x port=0")).toThrow();
     expect(() => parseDaemonOutput("port=1234")).toThrow("session_id");
+  });
+
+  test("plans workspace under <repo>/.workspaces based off main", () => {
+    const cmds = plannedCommands({ number: 42, url: "x", input: "42" }, "/repo/root");
+    const wsAdd = cmds[0]!;
+    expect(wsAdd.slice(0, 3)).toEqual(["jj", "workspace", "add"]);
+    expect(wsAdd).toContain("/repo/root/.workspaces/pantoken-issue-42");
+    expect(wsAdd).toContain("--revision");
+    expect(wsAdd).toContain("main");
   });
 
   test("renders hostile multiline issue data without shell interpolation", () => {
