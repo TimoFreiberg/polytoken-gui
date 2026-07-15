@@ -1,4 +1,4 @@
-/* Pantoken theme — a warm-paper light palette and black-lacquer dark palette with
+/* Pantoken theme — a warm-paper light palette and charcoal dark palette with
    restrained gold hardware and warm-nickel structure. Light by default; dark lives in the
    single `[data-theme="dark"]` block below. The theme mode (system/light/dark) is
    resolved to a concrete `data-theme` attribute on <html> — pre-paint by an inline
@@ -6,22 +6,24 @@
    copy of the dark tokens to keep in sync. */
 
 :root {
-  --bg: #f7f6f2;
-  --bg-elevated: #ffffff;
-  --surface: #ffffff;
-  --surface-sunken: #efece4;
+  /* Warm paper is the canvas; cream cards and nickel-tinted structural planes build
+     elevation without falling back to a generic white-and-cool-grey application. */
+  --bg: #f4f1e9;
+  --bg-elevated: #fffdf8;
+  --surface: #fbf8f1;
+  --surface-sunken: #ece7dd;
   /* Code gets its own quiet neutral plane. It should scan as technical content without
      borrowing the stronger elevation/selection semantics of the shared surfaces. */
-  --surface-code: #f1efe9;
-  --border-code: #dedad1;
+  --surface-code: #efebe3;
+  --border-code: #d9d2c7;
   --text: #1f1e1d;
-  --text-muted: #73706b;
-  --text-faint: #9a968f;
-  --border: #e7e3da;
-  --border-strong: #d8d3c8;
-  --accent: #6f6a63;
-  --accent-hover: #514d47;
-  --accent-soft: #e9e5de;
+  --text-muted: #686159;
+  --text-faint: #989087;
+  --border: #ded8cc;
+  --border-strong: #cbc3b5;
+  --accent: #6f675e;
+  --accent-hover: #514b44;
+  --accent-soft: #e2dcd1;
   --accent-text: #ffffff;
   /* Warm nickel is structural: focus, selection, navigation, and progress. Gold is
      scarce hardware: decisive actions and activity that wants the operator's eye. */
@@ -31,10 +33,10 @@
   --highlight-text: #191b25;
   /* Text-selection band (::selection). Translucent accent so it tints consistently
      over prose, bubbles, and code blocks while keeping the text readable. */
-  --select-text-bg: rgba(111, 106, 99, 0.24);
+  --select-text-bg: rgba(111, 103, 94, 0.24);
   /* Monochrome selection highlight (no accent) — choice cards / progress dots. */
-  --select-bg: #f0ede6;
-  --select-border: #a8a39a;
+  --select-bg: #e9e4da;
+  --select-border: #a69d92;
   --danger: #b4413a;
   --danger-soft: #f6e0de;
   --warning: #955a24;
@@ -76,7 +78,10 @@
   /* Shared leading gutter for the shell-owned traffic lights and the sidebar controls. */
   --shell-leading-inset: calc(72px + env(safe-area-inset-left));
 
-  --sidebar-bg: #fcfcfa;
+  /* Sidebars and sent prompts are warmer nickel materials, not elevated cards. Keeping
+     them separate avoids making every input or code-adjacent sunken surface too heavy. */
+  --sidebar-bg: #e9e4da;
+  --prompt-bg: #e5ded2;
 
   --shadow-card:
     0 1px 2px rgba(31, 30, 29, 0.04), 0 4px 14px rgba(31, 30, 29, 0.05);
@@ -93,22 +98,23 @@
 }
 
 :root[data-theme="dark"] {
-  /* Black-lacquer surfaces carry the interface. Warm nickel stays structural while
-     gold is reserved for decisive actions and operator attention. */
+  /* Charcoal is the canvas, with progressively lighter nickel-charcoal planes for
+     structure, cards, and overlays. Gold remains reserved for decisive actions and
+     operator attention. */
   --bg: #171614;
-  --bg-elevated: #1d1b19;
-  --surface: #24211e;
-  --surface-sunken: #121110;
-  --surface-code: #11100f;
-  --border-code: #2c2926;
+  --bg-elevated: #2b2824;
+  --surface: #272420;
+  --surface-sunken: #1e1c19;
+  --surface-code: #131210;
+  --border-code: #332f2b;
   --text: #eee9e1;
   --text-muted: #aaa39a;
   --text-faint: #77716a;
-  --border: #332f2b;
-  --border-strong: #49433d;
+  --border: #3d3833;
+  --border-strong: #554e47;
   --accent: #aaa39a;
   --accent-hover: #c0b9b0;
-  --accent-soft: #302c28;
+  --accent-soft: #39342f;
   --accent-text: #1b1917;
   --highlight: #dda536;
   --highlight-hover: #edbb55;
@@ -118,7 +124,7 @@
      the gold highlight on ordinary editing feedback. */
   --select-text-bg: rgba(170, 163, 154, 0.35);
   /* Monochrome selection highlight (no accent) — choice cards / progress dots. */
-  --select-bg: #2e2a26;
+  --select-bg: #36312c;
   --select-border: #aaa39a;
   --danger: #e0786f;
   --danger-soft: #3a2422;
@@ -128,7 +134,8 @@
   --unread: var(--highlight);
   --find-match: rgba(255, 210, 70, 0.34);
   --find-current: rgba(255, 150, 40, 0.62);
-  --sidebar-bg: #1a1816;
+  --sidebar-bg: #211f1c;
+  --prompt-bg: #2c2925;
 
   --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.22), 0 4px 14px rgba(0, 0, 0, 0.28);
   --shadow-pop: 0 10px 34px rgba(0, 0, 0, 0.52);

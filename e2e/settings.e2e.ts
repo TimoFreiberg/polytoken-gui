@@ -80,7 +80,7 @@ test("theme toggle drives the data-theme override and persists it", async ({
 
   await page.getByTestId("theme-light").click();
   await expect(html).toHaveAttribute("data-theme", "light");
-  await expect(themeColor).toHaveAttribute("content", "#f7f6f2");
+  await expect(themeColor).toHaveAttribute("content", "#f4f1e9");
 
   // Back to dark, then reload: the inline pre-paint script must restore both the
   // data-theme AND the theme-color, before the bundle loads.

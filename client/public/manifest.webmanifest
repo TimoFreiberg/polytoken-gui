@@ -4,8 +4,8 @@
   "description": "Remote control for your coding agent",
   "start_url": "/",
   "display": "standalone",
-  "background_color": "#f7f6f2",
-  "theme_color": "#f7f6f2",
+  "background_color": "#f4f1e9",
+  "theme_color": "#f4f1e9",
   "icons": [
     {
       "src": "/icon.svg",

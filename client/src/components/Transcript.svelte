@@ -1315,8 +1315,8 @@
     align-items: flex-end;
   }
   .user .bubble {
-    background: var(--surface-sunken);
-    border: 1px solid var(--border);
+    background: var(--prompt-bg);
+    border: 1px solid var(--border-strong);
     padding: 10px 14px;
     border-radius: var(--radius);
     border-bottom-right-radius: 4px;

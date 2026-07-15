@@ -6,7 +6,7 @@
          on-screen keyboard resizes the layout viewport, so 100dvh shrinks and the composer
          stays above it. iOS Safari ignores it and falls back to lib/keyboard-inset.ts. -->
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, interactive-widget=resizes-content" />
-    <meta name="theme-color" content="#f7f6f2" />
+    <meta name="theme-color" content="#f4f1e9" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="default" />
     <meta name="apple-mobile-web-app-title" content="pantoken" />
@@ -27,7 +27,7 @@
         // two --bg values are inlined; lib/theme.ts re-syncs from the computed token after
         // load and on every theme change).
         var tc = document.querySelector('meta[name="theme-color"]');
-        if (tc) tc.setAttribute("content", m === "dark" ? "#171614" : "#f7f6f2");
+        if (tc) tc.setAttribute("content", m === "dark" ? "#171614" : "#f4f1e9");
         // Pre-paint the transcript text-size knob (lib/font-scale.ts owns the key) so a
         // zoomed-in reader doesn't see a reflow on load.
         var fs = parseFloat(localStorage.getItem("pantoken.fontScale"));
