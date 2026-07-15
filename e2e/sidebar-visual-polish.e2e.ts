@@ -69,6 +69,26 @@ async function normalizedColor(
   }, color);
 }
 
+async function normalizedProperty(
+  locator: Locator,
+  property: string,
+  value: string,
+): Promise<string> {
+  return locator.evaluate(
+    (element, input) => {
+      const probe = document.createElement("span");
+      probe.style.setProperty(input.property, input.value);
+      element.append(probe);
+      const normalized = getComputedStyle(probe).getPropertyValue(
+        input.property,
+      );
+      probe.remove();
+      return normalized;
+    },
+    { property, value },
+  );
+}
+
 function colorAlpha(color: string): number {
   const normalized = color.trim().toLowerCase();
   if (normalized === "transparent") return 0;
@@ -121,36 +141,48 @@ async function declaredWebkitStyle(
   pseudo: string,
 ): Promise<{ background: string; borderRadius: string; width: string }> {
   return locator.evaluate((element, pseudoSelector) => {
-    const marker = element.classList.contains("list") ? ".list" : ".content";
-    const visit = (rules: CSSRuleList): CSSStyleDeclaration | null => {
+    const effective = { background: "", borderRadius: "", width: "" };
+    let matched = false;
+    const visit = (rules: CSSRuleList): void => {
       for (const rule of Array.from(rules)) {
         if (
-          rule instanceof CSSStyleRule &&
-          rule.selectorText
-            .split(",")
-            .some(
-              (selector) =>
-                selector.includes(marker) &&
-                selector.trim().endsWith(pseudoSelector),
-            )
+          rule instanceof CSSMediaRule &&
+          !matchMedia(rule.conditionText).matches
         )
-          return rule.style;
+          continue;
+        if (
+          rule instanceof CSSSupportsRule &&
+          !CSS.supports(rule.conditionText)
+        )
+          continue;
+        if (rule instanceof CSSStyleRule) {
+          const applies = rule.selectorText.split(",").some((selector) => {
+            const exact = selector.trim();
+            if (!exact.endsWith(pseudoSelector)) return false;
+            const base = exact.slice(0, -pseudoSelector.length).trim();
+            try {
+              return element.matches(base);
+            } catch {
+              return false;
+            }
+          });
+          if (applies) {
+            matched = true;
+            const background =
+              rule.style.backgroundColor || rule.style.background;
+            if (background) effective.background = background;
+            if (rule.style.borderRadius)
+              effective.borderRadius = rule.style.borderRadius;
+            if (rule.style.width) effective.width = rule.style.width;
+          }
+        }
         if ("cssRules" in rule) {
-          const nested = visit((rule as CSSGroupingRule).cssRules);
-          if (nested) return nested;
+          visit((rule as CSSGroupingRule).cssRules);
         }
       }
-      return null;
     };
-    for (const sheet of Array.from(document.styleSheets)) {
-      const style = visit(sheet.cssRules);
-      if (style)
-        return {
-          background: style.backgroundColor || style.background,
-          borderRadius: style.borderRadius,
-          width: style.width,
-        };
-    }
+    for (const sheet of Array.from(document.styleSheets)) visit(sheet.cssRules);
+    if (matched) return effective;
     throw new Error(`No scoped WebKit scrollbar rule for ${pseudoSelector}`);
   }, pseudo);
 }
@@ -254,6 +286,51 @@ test("short desktop rails share their surface and retain compact scrolling geome
     expect(expectedHoverThumb).not.toBe(expectedThumb);
   }
 
+  // Prove the CSSOM oracle follows selector applicability and source order: a later
+  // lookalike selector is ignored, while a later equally-specific rail override wins.
+  const expectedLeftThumb = await normalizedColor(
+    leftScroller,
+    "color-mix(in srgb, var(--accent) 42%, transparent)",
+  );
+  const decoy = await leftScroller.evaluate((element) => {
+    const style = document.createElement("style");
+    style.dataset.scrollbarOracle = "decoy";
+    style.textContent =
+      ".list-decoy::-webkit-scrollbar-thumb { background: rgb(1, 2, 3); }";
+    document.head.append(style);
+    return element.className;
+  });
+  expect(decoy).toContain("list");
+  expect(
+    await normalizedColor(
+      leftScroller,
+      (await declaredWebkitStyle(leftScroller, "::-webkit-scrollbar-thumb"))
+        .background,
+    ),
+  ).toBe(expectedLeftThumb);
+
+  await leftScroller.evaluate((element) => {
+    const style = document.createElement("style");
+    const exactBase = Array.from(element.classList)
+      .map((name) => `.${CSS.escape(name)}`)
+      .join("");
+    style.dataset.scrollbarOracle = "override";
+    style.textContent = `${exactBase}::-webkit-scrollbar-thumb { background: rgb(1, 2, 3); }`;
+    document.head.append(style);
+  });
+  const overridden = await declaredWebkitStyle(
+    leftScroller,
+    "::-webkit-scrollbar-thumb",
+  );
+  expect(await normalizedColor(leftScroller, overridden.background)).toBe(
+    "rgb(1, 2, 3)",
+  );
+  // A partial later declaration inherits the still-effective radius.
+  expect(overridden.borderRadius).toBe("999px");
+  await page.locator("style[data-scrollbar-oracle]").evaluateAll((styles) => {
+    for (const style of styles) style.remove();
+  });
+
   // Assert the deliberate compact geometry, including the shallow nesting step.
   expect(left.padding[1]).toBe(9);
   expect(left.padding[3]).toBe(9);
@@ -287,6 +364,91 @@ test("short desktop rails share their surface and retain compact scrolling geome
     expect(value).toBeLessThanOrEqual(36);
   }
   expect(Math.abs(projectHeight - rowHeight)).toBeLessThanOrEqual(4);
+});
+
+test("New session CTA has clear resting, hover, and focus treatment", async ({
+  page,
+}) => {
+  const button = page.getByTestId("sidebar-new-session").locator(".new-btn");
+  const icon = button.locator(".plus");
+  const expected = {
+    background: await normalizedColor(
+      button,
+      "color-mix(in srgb, var(--surface) 78%, var(--sidebar-bg))",
+    ),
+    border: await normalizedColor(
+      button,
+      "color-mix(in srgb, var(--border-strong) 70%, transparent)",
+    ),
+    focusRing: await normalizedProperty(
+      button,
+      "box-shadow",
+      "0 0 0 2px color-mix(in srgb, var(--accent) 65%, transparent)",
+    ),
+    hoverBackground: await normalizedColor(button, "var(--accent-soft)"),
+    hoverBorder: await normalizedColor(button, "var(--border-strong)"),
+    iconBackground: await normalizedColor(icon, "var(--accent-soft)"),
+    iconColor: await normalizedColor(icon, "var(--accent-hover)"),
+    iconRadius: await normalizedProperty(
+      icon,
+      "border-radius",
+      "var(--radius-xs)",
+    ),
+    restingShadow: await normalizedProperty(
+      button,
+      "box-shadow",
+      "0 1px 0 color-mix(in srgb, var(--text) 5%, transparent)",
+    ),
+    text: await normalizedColor(button, "var(--text)"),
+  };
+
+  const resting = await button.evaluate((element) => {
+    const style = getComputedStyle(element);
+    return {
+      background: style.backgroundColor,
+      border: style.borderTopColor,
+      boxShadow: style.boxShadow,
+      color: style.color,
+      fontWeight: style.fontWeight,
+    };
+  });
+  expect(resting).toEqual({
+    background: expected.background,
+    border: expected.border,
+    boxShadow: expected.restingShadow,
+    color: expected.text,
+    fontWeight: "550",
+  });
+
+  const iconStyle = await icon.evaluate((element) => {
+    const style = getComputedStyle(element);
+    return {
+      background: style.backgroundColor,
+      borderRadius: style.borderRadius,
+      color: style.color,
+      height: style.height,
+      width: style.width,
+    };
+  });
+  expect(iconStyle).toEqual({
+    background: expected.iconBackground,
+    borderRadius: expected.iconRadius,
+    color: expected.iconColor,
+    height: "18px",
+    width: "18px",
+  });
+
+  await button.hover();
+  await expect
+    .poll(() =>
+      button.evaluate((element) => getComputedStyle(element).backgroundColor),
+    )
+    .toBe(expected.hoverBackground);
+  await expect(button).toHaveCSS("border-top-color", expected.hoverBorder);
+
+  await page.keyboard.press("Tab");
+  await button.focus();
+  await expect(button).toHaveCSS("box-shadow", expected.focusRing);
 });
 
 test("resize handles paint a centered stripe for focus and drag feedback", async ({
