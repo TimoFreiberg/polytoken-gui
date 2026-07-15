@@ -76,7 +76,7 @@ test("theme toggle drives the data-theme override and persists it", async ({
   const themeColor = page.locator('meta[name="theme-color"]');
   await page.getByTestId("theme-dark").click();
   await expect(html).toHaveAttribute("data-theme", "dark");
-  await expect(themeColor).toHaveAttribute("content", "#242522");
+  await expect(themeColor).toHaveAttribute("content", "#171614");
 
   await page.getByTestId("theme-light").click();
   await expect(html).toHaveAttribute("data-theme", "light");
@@ -88,7 +88,7 @@ test("theme toggle drives the data-theme override and persists it", async ({
   await expect(html).toHaveAttribute("data-theme", "dark");
   await page.reload();
   await expect(html).toHaveAttribute("data-theme", "dark");
-  await expect(themeColor).toHaveAttribute("content", "#242522");
+  await expect(themeColor).toHaveAttribute("content", "#171614");
 
   // "System" clears the override and re-resolves to the emulated light scheme.
   await openSettings(page, "appearance");
