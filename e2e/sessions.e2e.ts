@@ -17,7 +17,7 @@ async function chooseProjectDir(
   page: import("@playwright/test").Page,
   name: string,
 ): Promise<void> {
-  await page.locator(".chips .chip").first().click();
+  await page.getByTestId("draft-project-control").click();
   const picker = page.getByTestId("dir-picker");
   await expect(picker).toBeVisible();
   // Wait for the picker's open-dir listing to land before navigating: `up()` reads
@@ -405,7 +405,7 @@ test("clicking the project chip opens the directory browser", async ({
 }) => {
   await openSidebar(page);
   await page.getByTestId("sidebar").getByText("New session…").click();
-  await page.locator(".chips .chip").first().click();
+  await page.getByTestId("draft-project-control").click();
   // The chip opens a server-side directory browser (the full browse/pick flow lives in
   // dir-picker.e2e.ts); here we only assert the chip is what surfaces it.
   await expect(page.getByTestId("dir-picker")).toBeVisible();

@@ -7,7 +7,7 @@ test.beforeEach(async ({ page }) => {
 
 const picker = (page: Page) => page.getByTestId("dir-picker");
 const filterInput = (page: Page) => picker(page).locator(".filter-input");
-const projectChip = (page: Page) => page.locator(".chips .chip").first();
+const projectChip = (page: Page) => page.getByTestId("draft-project-control");
 const draftBox = (page: Page) =>
   page.getByPlaceholder("Describe a task or ask a question…");
 

@@ -106,7 +106,7 @@ test("retargeting a draft moves its row to the new project — no ghost left beh
   await group(page, "pantoken").getByTestId("draft-row").click();
 
   // Retarget via the project chip → dir picker.
-  await page.locator('button.chip[title^="Project:"]').click();
+  await page.getByTestId("draft-project-control").click();
   await expect(page.getByTestId("dir-picker")).toBeVisible();
   // Type the target path in the always-visible filter input. Starting with /
   // enters path mode; Enter navigates there, then "Use this folder" commits.
@@ -116,7 +116,9 @@ test("retargeting a draft moves its row to the new project — no ghost left beh
   // Wait for the path-mode navigation (an async queryDir WS round-trip) to
   // land before committing — otherwise the .use button can race ahead of the
   // listing update under CI load. Mirrors dir-picker.e2e.ts's breadcrumb wait.
-  await expect(page.getByTestId("dir-picker").locator(".bc")).toContainText("scratch");
+  await expect(page.getByTestId("dir-picker").locator(".bc")).toContainText(
+    "scratch",
+  );
   // Commit the new project directory.
   await page.getByTestId("dir-picker").locator(".use").click();
 
