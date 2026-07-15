@@ -3223,10 +3223,16 @@ impl PantokenDriver for MockDriver {
                 0, 200, 480,
             ),
             "editbounds" => {
-                let old_text = format!("{}OLD_EDIT_TAIL", "old line\n".repeat(600));
-                let new_text = format!("{}NEW_EDIT_TAIL", "new line\n".repeat(600));
+                let old_text = format!(
+                    "OLD_PREVIEW_MARKER\n{}OLD_EDIT_TAIL",
+                    "old line\n".repeat(599)
+                );
+                let new_text = format!(
+                    "NEW_PREVIEW_MARKER\n{}NEW_EDIT_TAIL",
+                    "new line\n".repeat(599)
+                );
                 let patch = format!(
-                    "--- a/src/oversized.ts\n+++ b/src/oversized.ts\n@@ -1 +1 @@\n-{}\n+replacement\nPATCH_TAIL",
+                    "--- a/src/oversized.ts\n+++ b/src/oversized.ts\n@@ -1 +1 @@\n-PATCH_PREFIX_MARKER{}\n+replacement\nPATCH_TAIL",
                     "P".repeat(25_000)
                 );
                 tool_span(
@@ -3243,6 +3249,19 @@ impl PantokenDriver for MockDriver {
                     0, 0, 1,
                 )
             }
+            "editpatch" => tool_span(
+                "edit-patch-1", "edit", "Rich patch edit", Some("Exercise the rich patch preview branch"),
+                serde_json::json!({
+                    "path": "src/patch.ts",
+                    "edits": [{ "oldText": "INPUT_SIDE_OLD", "newText": "INPUT_SIDE_NEW" }]
+                }),
+                true,
+                serde_json::json!({
+                    "content": [{ "type": "text", "text": "patch applied" }],
+                    "details": { "patch": "diff --git a/src/patch.ts b/src/patch.ts\n--- a/src/patch.ts\n+++ b/src/patch.ts\n@@ -1 +1 @@\n-PATCH_BRANCH_OLD\n+PATCH_BRANCH_NEW\n" }
+                }),
+                0, 0, 1,
+            ),
             // ── Compat ─────────────────────────────────────────────────────
             "compat" => vec![
                 ScriptStep { wait_ms: 0, event: SessionDriverEvent::ExtensionCompatibilityIssue { base: base(), issue: ExtensionCompatibilityIssue {

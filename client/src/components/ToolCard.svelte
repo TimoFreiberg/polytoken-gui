@@ -267,15 +267,6 @@
   // duplicate it — only build arg rows for non-edit tools.
   const argRows = $derived(edit ? [] : argEntries(item.input));
 
-  // Build the two file blobs the diff renders from. Per the task: join each
-  // edit's oldTexts / newTexts with newlines (single legacy edit -> used directly).
-  function joinSides(edits: Edit[]): { oldFile: string; newFile: string } {
-    return {
-      oldFile: edits.map((e) => e.oldText).join("\n"),
-      newFile: edits.map((e) => e.newText).join("\n"),
-    };
-  }
-
   type BoundedEditText = { text: string; truncated: boolean };
 
   function boundEditText(text: string): BoundedEditText {
@@ -288,6 +279,38 @@
       }
     }
     return { text: text.slice(0, end), truncated: end < text.length };
+  }
+
+  // Build one bounded joined side without first allocating the full concatenation.
+  // That matters when a tool supplies many individually large edits: the protocol
+  // already owns the raw strings, so visualization should allocate only its cap.
+  function joinSideBounded(edits: Edit[], side: keyof Edit): BoundedEditText {
+    const parts: string[] = [];
+    let chars = 0;
+    let lines = 1;
+    let truncated = false;
+
+    const append = (value: string) => {
+      let end = Math.min(value.length, EDIT_PREVIEW_CHAR_LIMIT - chars);
+      for (let i = 0; i < end; i++) {
+        if (value[i] === "\n" && ++lines > EDIT_PREVIEW_LINE_LIMIT) {
+          end = i;
+          break;
+        }
+      }
+      if (end > 0) {
+        parts.push(value.slice(0, end));
+        chars += end;
+      }
+      if (end < value.length) truncated = true;
+    };
+
+    for (let i = 0; i < edits.length; i++) {
+      if (truncated) break;
+      if (i > 0) append("\n");
+      if (!truncated) append(edits[i]?.[side] ?? "");
+    }
+    return { text: parts.join(""), truncated };
   }
 
   // An agent edit result may carry a richer standard unified patch in details.patch —
@@ -309,9 +332,8 @@
   // sides still produce an honest bounded preview. Ordinary patches remain untouched.
   const diffPreview = $derived.by(() => {
     if (!edit) return null;
-    const sides = joinSides(edit.edits);
-    const oldFile = boundEditText(sides.oldFile);
-    const newFile = boundEditText(sides.newFile);
+    const oldFile = joinSideBounded(edit.edits, "oldText");
+    const newFile = joinSideBounded(edit.edits, "newText");
     const rawPatch = patchFrom(item.output);
     const patch = rawPatch ? boundEditText(rawPatch) : null;
     return {
@@ -319,66 +341,46 @@
       oldFile: oldFile.text,
       newFile: newFile.text,
       patch: patch && !patch.truncated ? patch.text : null,
-      sidesTruncated: oldFile.truncated || newFile.truncated,
       truncated: oldFile.truncated || newFile.truncated || !!patch?.truncated,
     };
   });
 
-  // Minimal LCS line diff -> added/removed line counts for the collapsed badge.
-  // Pure + dependency-free so the e2e is deterministic; the rich render below
-  // does its own (shiki-backed) diffing.
+  // Exact LCS line diff -> added/removed line counts for the collapsed badge. Keep
+  // only two rows and put the shorter side in the columns: the old full-table
+  // implementation used O(n*m) memory, which made exact counts unsafe for the very
+  // oversized edits whose visualization we now bound. The rich renderer separately
+  // receives only diffPreview's bounded strings.
   function lineCounts(oldText: string, newText: string): { added: number; removed: number } {
     const a = oldText.length ? oldText.split("\n") : [];
     const b = newText.length ? newText.split("\n") : [];
-    const n = a.length;
-    const m = b.length;
-    // LCS length table; lcs[i][j] = LCS length of a[i:] and b[j:].
-    const lcs: number[][] = Array.from({ length: n + 1 }, () => new Array<number>(m + 1).fill(0));
-    for (let i = n - 1; i >= 0; i--) {
-      const row = lcs[i] ?? [];
-      const next = lcs[i + 1] ?? [];
-      for (let j = m - 1; j >= 0; j--) {
-        row[j] = a[i] === b[j] ? (next[j + 1] ?? 0) + 1 : Math.max(next[j] ?? 0, row[j + 1] ?? 0);
+    const rows = a.length >= b.length ? a : b;
+    const columns = a.length >= b.length ? b : a;
+    let previous = new Uint32Array(columns.length + 1);
+    let current = new Uint32Array(columns.length + 1);
+    for (const row of rows) {
+      for (let j = 1; j <= columns.length; j++) {
+        current[j] =
+          row === columns[j - 1]
+            ? (previous[j - 1] ?? 0) + 1
+            : Math.max(previous[j] ?? 0, current[j - 1] ?? 0);
       }
+      [previous, current] = [current, previous];
+      current.fill(0);
     }
-    let i = 0;
-    let j = 0;
-    let added = 0;
-    let removed = 0;
-    while (i < n && j < m) {
-      const row = lcs[i] ?? [];
-      const next = lcs[i + 1] ?? [];
-      if (a[i] === b[j]) {
-        i++;
-        j++;
-      } else if ((next[j] ?? 0) >= (row[j + 1] ?? 0)) {
-        removed++;
-        i++;
-      } else {
-        added++;
-        j++;
-      }
-    }
-    removed += n - i;
-    added += m - j;
-    return { added, removed };
+    const common = previous[columns.length] ?? 0;
+    return { added: b.length - common, removed: a.length - common };
   }
 
   const counts = $derived.by(() => {
-    if (!edit || !diffPreview) return null;
-    // Preserve the established per-edit badge semantics at ordinary sizes. Only
-    // oversized source sides use the bounded aggregate, avoiding an unbounded LCS.
-    if (!diffPreview.sidesTruncated) {
-      let added = 0;
-      let removed = 0;
-      for (const e of edit.edits) {
-        const count = lineCounts(e.oldText, e.newText);
-        added += count.added;
-        removed += count.removed;
-      }
-      return { added, removed };
+    if (!edit) return null;
+    let added = 0;
+    let removed = 0;
+    for (const e of edit.edits) {
+      const count = lineCounts(e.oldText, e.newText);
+      added += count.added;
+      removed += count.removed;
     }
-    return lineCounts(diffPreview.oldFile, diffPreview.newFile);
+    return { added, removed };
   });
 
   // ── Theme: the app resolves to a CONCRETE data-theme ("light"|"dark") on <html>.

@@ -50,6 +50,9 @@ test("oversized edit preview is bounded while raw arguments and result copy exac
 }) => {
   await drive(page, "editbounds");
   const card = page.locator(".tool", { hasText: "Oversized edit" });
+  await expect(card.locator(".counts")).toHaveAccessibleName(
+    "601 added, 601 removed",
+  );
   await card.locator(".head").click();
   await expect(card.locator(".diff-note")).toContainText("Preview truncated");
   await expect
@@ -75,6 +78,9 @@ test("oversized edit preview is bounded while raw arguments and result copy exac
     };
   });
   expect(rendered.elements).toBeLessThan(2_500);
+  expect(rendered.text).toContain("OLD_PREVIEW_MARKER");
+  expect(rendered.text).toContain("NEW_PREVIEW_MARKER");
+  expect(rendered.text).not.toContain("PATCH_PREFIX_MARKER");
   expect(rendered.text).not.toContain("OLD_EDIT_TAIL");
   expect(rendered.text).not.toContain("NEW_EDIT_TAIL");
   expect(rendered.text).not.toContain("PATCH_TAIL");
@@ -86,10 +92,10 @@ test("oversized edit preview is bounded while raw arguments and result copy exac
     await page.evaluate(() => navigator.clipboard.readText()),
   ) as { edits: Array<{ oldText: string; newText: string }> };
   expect(copiedArguments.edits[0]?.oldText).toBe(
-    `${"old line\n".repeat(600)}OLD_EDIT_TAIL`,
+    `OLD_PREVIEW_MARKER\n${"old line\n".repeat(599)}OLD_EDIT_TAIL`,
   );
   expect(copiedArguments.edits[0]?.newText).toBe(
-    `${"new line\n".repeat(600)}NEW_EDIT_TAIL`,
+    `NEW_PREVIEW_MARKER\n${"new line\n".repeat(599)}NEW_EDIT_TAIL`,
   );
 
   await card
@@ -103,8 +109,38 @@ test("oversized edit preview is bounded while raw arguments and result copy exac
   };
   expect(copiedResult.content[0]?.text).toBe("edit completed RESULT_TAIL");
   expect(copiedResult.details.patch).toBe(
-    `--- a/src/oversized.ts\n+++ b/src/oversized.ts\n@@ -1 +1 @@\n-${"P".repeat(25_000)}\n+replacement\nPATCH_TAIL`,
+    `--- a/src/oversized.ts\n+++ b/src/oversized.ts\n@@ -1 +1 @@\n-PATCH_PREFIX_MARKER${"P".repeat(25_000)}\n+replacement\nPATCH_TAIL`,
   );
+});
+
+test("ordinary rich edit patch renders instead of the input-derived sides", async ({
+  page,
+}) => {
+  await drive(page, "editpatch");
+  const card = page.locator(".tool", { hasText: "Rich patch edit" });
+  await card.locator(".head").click();
+  await expect(card.locator(".diff-note")).toHaveCount(0);
+  await expect
+    .poll(
+      () =>
+        card.evaluate((el) => {
+          const host = [...el.querySelectorAll<HTMLElement>("*")].find(
+            (node) => node.shadowRoot,
+          );
+          return host?.shadowRoot?.textContent ?? "";
+        }),
+      { timeout: 8000 },
+    )
+    .toContain("PATCH_BRANCH_OLD");
+  const shadowText = await card.evaluate((el) => {
+    const host = [...el.querySelectorAll<HTMLElement>("*")].find(
+      (node) => node.shadowRoot,
+    );
+    return host?.shadowRoot?.textContent ?? "";
+  });
+  expect(shadowText).toContain("PATCH_BRANCH_NEW");
+  expect(shadowText).not.toContain("INPUT_SIDE_OLD");
+  expect(shadowText).not.toContain("INPUT_SIDE_NEW");
 });
 
 test("message timestamps render with an exact-time tooltip", async ({
