@@ -35,6 +35,8 @@ just implement-issue 42
 3. **`just integrate-into-main <N>`** → `scripts/integrate-into-main.sh`
    - Acquires a repo-local lock (`.merge-lock`, file-based with PID liveness)
    - Fetches latest main, rebases `main..@` onto `main@origin`
+   - Verifies exactly one non-empty commit above `main` (squash enforcement)
+   - Verifies at least one non-empty commit contains `Fixes #N` in its message
    - Runs `bun test` + `bun run check` + `cargo fmt`
    - Advances the main bookmark, pushes
    - On conflict: exits 2 (lock held), agent resolves and retries

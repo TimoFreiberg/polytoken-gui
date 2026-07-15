@@ -129,6 +129,29 @@ release_lock() {
   rm -f "$LOCK_FILE" 2>/dev/null || true
 }
 
+# ─── Verify commit history before taking the lock ─────────────────────────────
+# Read-only checks: no rebase or lock mutation has happened yet, so failure
+# is a clean exit 1 with no rollback needed.
+COMMIT_MESSAGES=$(jj log -r 'main..@ ~ empty()' --no-graph -T 'description' 2>/dev/null || true)
+if [ -n "$COMMIT_MESSAGES" ]; then
+  # Verify exactly one non-empty commit above main (squash enforcement)
+  NON_EMPTY_COUNT=$(jj log -r 'main..@ ~ empty()' --no-graph -T 'commit_id ++ "\n"' 2>/dev/null | grep -c . || true)
+  if [ "$NON_EMPTY_COUNT" -gt 1 ]; then
+    log "ERROR: found $NON_EMPTY_COUNT non-empty commits above main — expected exactly one."
+    log "Squash them into a single commit, then rerun 'just integrate-into-main $ISSUE_NUMBER'."
+    exit 1
+  fi
+
+  # Verify commit message includes Fixes #<issue_number>
+  log "Verifying commit message includes 'Fixes #$ISSUE_NUMBER'..."
+  if ! echo "$COMMIT_MESSAGES" | grep -Eqi "fixes #$ISSUE_NUMBER([^0-9]|$)"; then
+    log "ERROR: no commit in main..@ contains 'Fixes #$ISSUE_NUMBER' in its message."
+    log "Amend your commit message to include 'Fixes #$ISSUE_NUMBER' on its own line"
+    log "after the subject, then rerun 'just integrate-into-main $ISSUE_NUMBER'."
+    exit 1
+  fi
+fi
+
 # ─── Acquire lock ────────────────────────────────────────────────────────────
 
 acquire_lock

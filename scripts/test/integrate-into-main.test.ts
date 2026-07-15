@@ -349,3 +349,113 @@ edition = "2021"
     expect(formatted).toContain('    let x = 1;');
   });
 });
+
+describeOrSkip("integrate-into-main.sh commit message verification", () => {
+  test("grep pattern matches Fixes #N in commit message", () => {
+    createJjRepo(tempDir);
+    writeFileSync(join(tempDir, "base.txt"), "base\n");
+    run(["jj", "describe", "-m", "base"], tempDir);
+    run(["jj", "new"], tempDir);
+    writeFileSync(join(tempDir, "feature.txt"), "feature\n");
+    run(["jj", "describe", "-m", "Implement feature\n\nFixes #42"], tempDir);
+
+    const result = runBash(
+      "jj log -r 'main..@ ~ empty()' --no-graph -T 'description' | grep -Eqi 'fixes #42([^0-9]|$)' && echo MATCH || echo NOMATCH",
+      tempDir,
+    );
+    expect(result.stdout).toContain("MATCH");
+  });
+
+  test("grep pattern does not match when Fixes #N is absent", () => {
+    createJjRepo(tempDir);
+    writeFileSync(join(tempDir, "base.txt"), "base\n");
+    run(["jj", "describe", "-m", "base"], tempDir);
+    run(["jj", "new"], tempDir);
+    writeFileSync(join(tempDir, "feature.txt"), "feature\n");
+    run(["jj", "describe", "-m", "Implement feature"], tempDir);
+
+    const result = runBash(
+      "jj log -r 'main..@ ~ empty()' --no-graph -T 'description' | grep -Eqi 'fixes #42([^0-9]|$)' && echo MATCH || echo NOMATCH",
+      tempDir,
+    );
+    expect(result.stdout).toContain("NOMATCH");
+  });
+
+  test("grep pattern does not false-positive on different issue number", () => {
+    createJjRepo(tempDir);
+    writeFileSync(join(tempDir, "base.txt"), "base\n");
+    run(["jj", "describe", "-m", "base"], tempDir);
+    run(["jj", "new"], tempDir);
+    writeFileSync(join(tempDir, "feature.txt"), "feature\n");
+    run(["jj", "describe", "-m", "Implement feature\n\nFixes #420"], tempDir);
+
+    const result = runBash(
+      "jj log -r 'main..@ ~ empty()' --no-graph -T 'description' | grep -Eqi 'fixes #42([^0-9]|$)' && echo MATCH || echo NOMATCH",
+      tempDir,
+    );
+    expect(result.stdout).toContain("NOMATCH");
+  });
+
+  test("grep pattern matches case-insensitive variants", () => {
+    createJjRepo(tempDir);
+    writeFileSync(join(tempDir, "base.txt"), "base\n");
+    run(["jj", "describe", "-m", "base"], tempDir);
+    run(["jj", "new"], tempDir);
+    writeFileSync(join(tempDir, "feature.txt"), "feature\n");
+    run(["jj", "describe", "-m", "Implement feature\n\nfixes #42"], tempDir);
+
+    const result = runBash(
+      "jj log -r 'main..@ ~ empty()' --no-graph -T 'description' | grep -Eqi 'fixes #42([^0-9]|$)' && echo MATCH || echo NOMATCH",
+      tempDir,
+    );
+    expect(result.stdout).toContain("MATCH");
+  });
+});
+
+describeOrSkip("integrate-into-main.sh squash enforcement", () => {
+  test("count is 1 when there is exactly one non-empty commit", () => {
+    createJjRepo(tempDir);
+    writeFileSync(join(tempDir, "base.txt"), "base\n");
+    run(["jj", "describe", "-m", "base"], tempDir);
+    run(["jj", "new"], tempDir);
+    writeFileSync(join(tempDir, "feature.txt"), "feature\n");
+    run(["jj", "describe", "-m", "feature commit"], tempDir);
+
+    const result = runBash(
+      "jj log -r 'main..@ ~ empty()' --no-graph -T 'commit_id ++ \"\\n\"' | grep -c .",
+      tempDir,
+    );
+    expect(result.stdout.trim()).toBe("1");
+  });
+
+  test("count is >1 when there are multiple non-empty commits", () => {
+    createJjRepo(tempDir);
+    writeFileSync(join(tempDir, "base.txt"), "base\n");
+    run(["jj", "describe", "-m", "base"], tempDir);
+    run(["jj", "new"], tempDir);
+    writeFileSync(join(tempDir, "feature.txt"), "feature\n");
+    run(["jj", "describe", "-m", "first feature"], tempDir);
+    run(["jj", "new"], tempDir);
+    writeFileSync(join(tempDir, "second.txt"), "second\n");
+    run(["jj", "describe", "-m", "second feature"], tempDir);
+
+    const result = runBash(
+      "jj log -r 'main..@ ~ empty()' --no-graph -T 'commit_id ++ \"\\n\"' | grep -c .",
+      tempDir,
+    );
+    expect(Number(result.stdout.trim())).toBeGreaterThan(1);
+  });
+
+  test("count is 0 when only empty commits exist above main", () => {
+    createJjRepo(tempDir);
+    writeFileSync(join(tempDir, "base.txt"), "base\n");
+    run(["jj", "describe", "-m", "base"], tempDir);
+    run(["jj", "new"], tempDir);
+
+    const result = runBash(
+      "jj log -r 'main..@ ~ empty()' --no-graph -T 'commit_id ++ \"\\n\"' | grep -c .",
+      tempDir,
+    );
+    expect(result.stdout.trim()).toBe("0");
+  });
+});
