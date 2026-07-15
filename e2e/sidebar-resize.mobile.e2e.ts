@@ -9,7 +9,7 @@ test.beforeEach(async ({ page }) => {
   await gotoFresh(page);
 });
 
-test("mobile drawers keep responsive width and have no resize handle", async ({
+test("mobile views ignore desktop widths and have no resize handle", async ({
   page,
 }) => {
   await openSidebar(page);
@@ -17,11 +17,15 @@ test("mobile drawers keep responsive width and have no resize handle", async ({
   await expect(page.getByRole("separator")).toHaveCount(0);
   await expect(page.getByTestId("sidebar")).toHaveCSS("width", /px$/);
   await expect(page.getByTestId("right-sidebar")).toHaveCSS("width", /px$/);
+  // Sessions and Context are full-screen phone views; persisted desktop widths do
+  // not affect either surface.
   expect(
-    await page
-      .getByTestId("sidebar")
-      .evaluate((el) => el.getBoundingClientRect().width),
-  ).toBeLessThanOrEqual(320);
+    Math.round(
+      await page
+        .getByTestId("sidebar")
+        .evaluate((el) => el.getBoundingClientRect().width),
+    ),
+  ).toBe(page.viewportSize()!.width);
   // The context panel is a FULL-SCREEN view on phone (docs/PLAN-mobile.md D2) —
   // the persisted 500px desktop width must not leak into it either way.
   // Rounded: device-pixel scaling makes getBoundingClientRect subpixel (411.9999…).

@@ -20,8 +20,11 @@ test("sidebar notice shows an unread badge when the sidebar is closed", async ({
     .locator(".row-wrap")
     .filter({ hasText: "Explore the fold reducer" });
   await expect(row).toBeVisible();
-  await row.locator(".row").click({ button: "right" });
-  await sidebar.getByRole("menuitem", { name: "Archive", exact: true }).click();
+  await row.getByTestId("session-menu").click();
+  await page
+    .getByRole("dialog", { name: "Session actions" })
+    .getByRole("button", { name: "Archive", exact: true })
+    .click();
 
   // The notice is visible inside the sidebar.
   await expect(
@@ -31,7 +34,7 @@ test("sidebar notice shows an unread badge when the sidebar is closed", async ({
   // Close the sidebar (phone drawer: the collapse toggle inside the sidebar closes it).
   await page
     .getByTestId("sidebar")
-    .getByRole("button", { name: "Collapse sidebar" })
+    .getByRole("button", { name: "Close sessions" })
     .click();
   await expect(sidebar).toHaveAttribute("data-open", "false");
 
@@ -72,8 +75,11 @@ test("sidebar and chat notices stay on their own surfaces (no duplication)", asy
     .locator(".row-wrap")
     .filter({ hasText: "Wire up the WebSocket bridge" });
   await expect(row).toBeVisible();
-  await row.locator(".row").click({ button: "right" });
-  await sidebar.getByRole("menuitem", { name: "Archive", exact: true }).click();
+  await row.getByTestId("session-menu").click();
+  await page
+    .getByRole("dialog", { name: "Session actions" })
+    .getByRole("button", { name: "Archive", exact: true })
+    .click();
 
   // The sidebar notice is in the sidebar-notice container only.
   await expect(

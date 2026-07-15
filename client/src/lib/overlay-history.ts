@@ -93,6 +93,26 @@ export function createOverlayHistory(env: OverlayHistoryEnv) {
       stack.push({ id, close });
       env.pushState({ pantokenOverlay: id });
     },
+    /** Open a child surface above the current phone overlay. Unlike `opened`, this
+     *  deliberately keeps the current overlay in the stack: Back closes the child
+     *  and reveals its parent. Use this for an action sheet or an expanded search
+     *  inside a full-screen phone view, never for peer navigation views. */
+    openedNested(id: string, close: () => void): void {
+      if (!env.isPhone()) return;
+      ensureInstalled();
+      if (pendingOwnPops > 0) {
+        if (deferredOpen?.id !== id) deferredOpen?.close();
+        deferredOpen = { id, close };
+        return;
+      }
+      const existing = stack.find((e) => e.id === id);
+      if (existing) {
+        existing.close = close;
+        return;
+      }
+      stack.push({ id, close });
+      env.pushState({ pantokenOverlay: id });
+    },
     /** An overlay closed via its own UI (not the back gesture). Consumes the
      *  matching history entry when it's the top one. No-op for untracked ids, so
      *  desktop close paths can call this unconditionally. */

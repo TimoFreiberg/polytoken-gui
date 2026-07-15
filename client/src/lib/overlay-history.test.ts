@@ -119,6 +119,63 @@ describe("overlay history", () => {
     expect(f.entryCount()).toBe(0);
   });
 
+  test("nested surface gets its own entry and back reveals its parent", () => {
+    const f = fakeEnv();
+    const oh = createOverlayHistory(f.env);
+    const closed: string[] = [];
+    oh.opened("sessions", () => closed.push("sessions"));
+    oh.openedNested("session-actions", () => closed.push("actions"));
+    expect(f.entryCount()).toBe(2);
+    expect(oh.depth()).toBe(2);
+    f.userBack();
+    expect(closed).toEqual(["actions"]);
+    expect(oh.depth()).toBe(1);
+    f.userBack();
+    expect(closed).toEqual(["actions", "sessions"]);
+  });
+
+  test("UI-closing a nested surface consumes only its own entry", () => {
+    const f = fakeEnv();
+    const oh = createOverlayHistory(f.env);
+    let parentOpen = true;
+    oh.opened("sessions", () => (parentOpen = false));
+    oh.openedNested("session-actions", () => {});
+    oh.closed("session-actions");
+    expect(f.entryCount()).toBe(1);
+    expect(oh.depth()).toBe(1);
+    expect(parentOpen).toBe(true);
+    f.userBack();
+    expect(parentOpen).toBe(false);
+  });
+
+  test("reopening a nested surface waits for its UI-close Back to finish", () => {
+    let popHandler: (() => void) | null = null;
+    const log: string[] = [];
+    const oh = createOverlayHistory({
+      isPhone: () => true,
+      pushState: () => log.push("push"),
+      replaceState: () => log.push("replace"),
+      back: () => log.push("back"),
+      onPop: (handler) => {
+        popHandler = handler;
+        return () => (popHandler = null);
+      },
+    });
+    let reopened = true;
+    oh.opened("sessions", () => {});
+    oh.openedNested("session-actions", () => {});
+    oh.closed("session-actions");
+    oh.openedNested("session-actions", () => (reopened = false));
+    expect(log).toEqual(["push", "push", "back"]);
+    expect(oh.depth()).toBe(2);
+
+    (popHandler as (() => void) | null)?.();
+    expect(log).toEqual(["push", "push", "back", "push"]);
+    (popHandler as (() => void) | null)?.();
+    expect(reopened).toBe(false);
+    expect(oh.depth()).toBe(1);
+  });
+
   test("re-opening a tracked overlay does not duplicate its entry", () => {
     const f = fakeEnv();
     const oh = createOverlayHistory(f.env);

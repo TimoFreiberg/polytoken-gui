@@ -21,6 +21,7 @@
   import { pullToRefresh } from "../lib/pull-to-refresh.js";
   import { createPullRefresh } from "../lib/pull-to-refresh.svelte.js";
   import type { EdgeSwipe } from "../lib/edge-swipe.svelte.js";
+  import { overlayHistory } from "../lib/overlay-history.js";
 
   // Pull-to-refresh (touch only): pulling the session list down from the top forces a
   // reconnect + re-snapshot, same gesture as the transcript.
@@ -117,12 +118,21 @@
   const topMatch = $derived(filteredGroups[0]?.items[0] ?? null);
   async function openSearch(): Promise<void> {
     searchOpen = true;
+    if (isPhone()) {
+      overlayHistory.openedNested("sidebar-search", () => {
+        searchInput?.blur();
+        query = "";
+        searchOpen = false;
+      });
+    }
     await tick();
     if (!isPhone()) searchInput?.focus();
   }
   function closeSearch(): void {
     searchInput?.blur();
+    query = "";
     searchOpen = false;
+    overlayHistory.closed("sidebar-search");
   }
   function onSearchKeydown(e: KeyboardEvent): void {
     if (e.key === "Enter") {
@@ -164,6 +174,7 @@
   let confirmCleanup = $state<string | null>(null);
   let menuPos = $state<MenuPos | null>(null);
   let menuEl = $state<HTMLDivElement | null>(null);
+  let menuTrigger = $state<HTMLElement | null>(null);
   // The open session entry, resolved fresh from the store so the menu reflects the current
   // archived state (drives Archive vs Unarchive, and the `a` hotkey below).
   const menuSession = $derived(
@@ -175,10 +186,36 @@
     menuPos = pos;
     clampedFor = null;
   }
+  function restoreSheetFocus(trigger: HTMLElement | null): void {
+    if (!trigger) return;
+    void tick().then(() => {
+      if (trigger.isConnected) trigger.focus();
+    });
+  }
+  async function openSheet(path: string, trigger: HTMLElement | null): Promise<void> {
+    menuTrigger = trigger;
+    menuFor = path;
+    menuPos = { top: 0 };
+    clampedFor = path;
+    overlayHistory.openedNested("session-actions", () => {
+      const restore = menuTrigger;
+      menuFor = null;
+      menuPos = null;
+      confirmCleanup = null;
+      menuTrigger = null;
+      restoreSheetFocus(restore);
+    });
+    await tick();
+    menuEl?.querySelector<HTMLElement>(".menu-item, .sheet-cancel")?.focus();
+  }
   // ⋯ trigger: toggle; when opening, hang the menu just under the button, right-aligned to it.
   function toggleMenu(e: MouseEvent, path: string): void {
     if (menuFor === path) {
       closeMenu();
+      return;
+    }
+    if (isPhone()) {
+      void openSheet(path, e.currentTarget as HTMLElement);
       return;
     }
     const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
@@ -189,12 +226,20 @@
   // second right-click re-targets rather than dismissing.
   function openMenu(e: MouseEvent, path: string): void {
     e.preventDefault();
+    if (isPhone()) {
+      void openSheet(path, null);
+      return;
+    }
     openAt(path, { top: e.clientY, left: e.clientX });
   }
   function closeMenu(): void {
+    const restore = menuTrigger;
     menuFor = null;
     menuPos = null;
     confirmCleanup = null;
+    menuTrigger = null;
+    overlayHistory.closed("session-actions");
+    restoreSheetFocus(restore);
   }
   function toggleArchive(s: SessionListEntry): void {
     store.setArchived(s.path, !s.archived);
@@ -286,6 +331,22 @@
     const onKey = (e: KeyboardEvent): void => {
       if (e.key === "Escape") {
         closeMenu();
+        return;
+      }
+      if (e.key === "Tab" && isPhone() && menuEl) {
+        const focusable = Array.from(
+          menuEl.querySelectorAll<HTMLElement>("button:not(:disabled)"),
+        );
+        const first = focusable[0];
+        const last = focusable[focusable.length - 1];
+        if (!first || !last) return;
+        if (e.shiftKey && document.activeElement === first) {
+          e.preventDefault();
+          last.focus();
+        } else if (!e.shiftKey && document.activeElement === last) {
+          e.preventDefault();
+          first.focus();
+        }
         return;
       }
       if (!e.metaKey && !e.ctrlKey && !e.altKey) {
@@ -522,7 +583,10 @@
   // On a phone the sidebar is an overlay drawer — close it after navigating so the
   // transcript is visible. On desktop it stays pinned open.
   function afterNavigate(): void {
-    if (isPhone()) store.closeSidebar();
+    if (isPhone()) {
+      if (searchOpen) closeSearch();
+      store.closeSidebar();
+    }
   }
 
   function pick(s: SessionListEntry): void {
@@ -563,13 +627,23 @@
   <div class="top" data-testid="sidebar-top" data-tauri-drag-region="deep">
     <span class="shell-leading-reserve" data-testid="shell-leading-reserve" aria-hidden="true"></span>
     <IconButton
-      class="collapse-toggle"
+      class="collapse-toggle desktop-collapse"
       title="Collapse sidebar (⌘B)"
       aria-label="Collapse sidebar"
       onclick={() => store.closeSidebar()}>
       <Chevron open={true} />
-      <span class="control-label">Back</span>
     </IconButton>
+    <IconButton
+      class="collapse-toggle mobile-close"
+      title="Close sessions"
+      aria-label="Close sessions"
+      onclick={() => store.closeSidebar()}>
+      <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="m15 18-6-6 6-6" />
+      </svg>
+      <span class="back-label">Back</span>
+    </IconButton>
+    <h2 class="mobile-title">Sessions</h2>
     {#if store.sessions.length > 0}
       <div class="top-actions">
         {#if searchOpen}
@@ -745,6 +819,7 @@
               {/if}
             </button>
             <IconButton
+              class="project-new"
               size="sm"
               title={`New session in ${g.cwd}`}
               aria-label={`New session in ${basename(g.cwd)}`}
@@ -903,7 +978,7 @@
                       data-testid="session-menu"
                       title="Session actions"
                       aria-label={`Actions for ${s.displayName || s.preview || "session"}`}
-                      aria-haspopup="menu"
+                      aria-haspopup={viewportWidth <= 859 ? "dialog" : "menu"}
                       aria-expanded={menuFor === s.path}
                       onclick={(e) => toggleMenu(e, s.path)}>⋯</IconButton
                     >
@@ -929,88 +1004,103 @@
        list pushes. Position is `fixed` (viewport-relative), so lifting it out of the
        row's DOM tree doesn't change where it appears. -->
   {#if menuFor && menuPos}
+    <button
+      class="sheet-scrim"
+      aria-label="Cancel session actions"
+      title="Cancel session actions"
+      onclick={closeMenu}
+    ></button>
     <div
       class="menu"
-      role="menu"
+      class:mobile-sheet={viewportWidth <= 859}
+      role={viewportWidth <= 859 ? "dialog" : "menu"}
+      aria-modal={viewportWidth <= 859 ? "true" : undefined}
+      aria-label={viewportWidth <= 859 ? "Session actions" : undefined}
       bind:this={menuEl}
       style={`top:${menuPos.top}px;${menuPos.left != null ? `left:${menuPos.left}px` : `right:${menuPos.right}px`}`}
     >
-      {#if menuSession}
-        {#if menuSession.worktree && !menuSession.worktree.reaped}
-          <button
-            class="menu-item"
-            role="menuitem"
-            title={`Copy the worktree path to the clipboard: ${menuSession.worktree.path}`}
-            onclick={() => copyWorktreePath(menuSession)}
-            >Copy worktree path</button
-          >
-          {#if confirmCleanup === menuSession.path}
-            <button
-              class="menu-item danger"
-              role="menuitem"
-              data-testid="confirm-cleanup-worktree"
-              title="Permanently remove the worktree from disk — discards any uncommitted changes"
-              onclick={() => cleanupWorktree(menuSession)}
-              >Confirm: delete worktree</button
-            >
-          {:else}
+      <div class="sheet-head">
+        <span>Session actions</span>
+      </div>
+      <div class="sheet-actions">
+        {#if menuSession}
+          {#if menuSession.worktree && !menuSession.worktree.reaped}
             <button
               class="menu-item"
-              role="menuitem"
-              data-testid="cleanup-worktree"
-              title="Remove this worktree from disk, freeing the isolated copy (asks to confirm)"
-              onclick={() => (confirmCleanup = menuSession.path)}
-              >Clean up worktree…</button
+              role={viewportWidth <= 859 ? undefined : "menuitem"}
+              title={`Copy the worktree path to the clipboard: ${menuSession.worktree.path}`}
+              onclick={() => copyWorktreePath(menuSession)}
+              >Copy worktree path</button
             >
+            {#if confirmCleanup === menuSession.path}
+              <button
+                class="menu-item danger"
+                role={viewportWidth <= 859 ? undefined : "menuitem"}
+                data-testid="confirm-cleanup-worktree"
+                title="Permanently remove the worktree from disk — discards any uncommitted changes"
+                onclick={() => cleanupWorktree(menuSession)}
+                >Confirm: delete worktree</button
+              >
+            {:else}
+              <button
+                class="menu-item"
+                role={viewportWidth <= 859 ? undefined : "menuitem"}
+                data-testid="cleanup-worktree"
+                title="Remove this worktree from disk, freeing the isolated copy (asks to confirm)"
+                onclick={() => (confirmCleanup = menuSession.path)}
+                >Clean up worktree…</button
+              >
+            {/if}
           {/if}
+          <button
+            class="menu-item"
+            role={viewportWidth <= 859 ? undefined : "menuitem"}
+            data-testid="copy-session-id"
+            title={`Copy the session id to the clipboard: ${menuSession.sessionId}`}
+            onclick={() => copySessionId(menuSession)}
+            >Copy session ID</button
+          >
+          <button
+            class="menu-item"
+            role={viewportWidth <= 859 ? undefined : "menuitem"}
+            title="Rename this session (R)"
+            onclick={() => startRename(menuSession)}>
+            <span>Rename</span>
+            <kbd class="hotkey" aria-hidden="true">R</kbd>
+          </button
+          >
+          <button
+            class="menu-item"
+            role={viewportWidth <= 859 ? undefined : "menuitem"}
+            data-testid="reload-session"
+            title="Reload context from scratch (config + extensions reloaded) and restore the transcript — recovery for a session a buggy extension wedged (L)"
+            onclick={() => reloadSession(menuSession)}>
+            <span>Reload session</span>
+            <kbd class="hotkey" aria-hidden="true">L</kbd>
+          </button>
+          <button
+            class="menu-item"
+            role={viewportWidth <= 859 ? undefined : "menuitem"}
+            data-testid="detach-session"
+            title="Release Pantoken's attachment lease so you can take over in the terminal polytoken CLI. The daemon stays running. (D)"
+            onclick={() => detachSession(menuSession)}>
+            <span>Detach session</span>
+            <kbd class="hotkey" aria-hidden="true">D</kbd>
+          </button>
+          <button
+            class="menu-item"
+            role={viewportWidth <= 859 ? undefined : "menuitem"}
+            title={menuSession.archived
+              ? "Restore this session to the active list (A)"
+              : "Hide this session from the active list (A)"}
+            onclick={() => toggleArchive(menuSession)}
+          >
+            <span>{menuSession.archived ? "Unarchive" : "Archive"}</span>
+            <kbd class="hotkey" aria-hidden="true">A</kbd>
+          </button>
         {/if}
-        <button
-          class="menu-item"
-          role="menuitem"
-          data-testid="copy-session-id"
-          title={`Copy the session id to the clipboard: ${menuSession.sessionId}`}
-          onclick={() => copySessionId(menuSession)}
-          >Copy session ID</button
-        >
-        <button
-          class="menu-item"
-          role="menuitem"
-          title="Rename this session (R)"
-          onclick={() => startRename(menuSession)}>
-          <span>Rename</span>
-          <kbd class="hotkey" aria-hidden="true">R</kbd>
-        </button
-        >
-        <button
-          class="menu-item"
-          role="menuitem"
-          data-testid="reload-session"
-          title="Reload context from scratch (config + extensions reloaded) and restore the transcript — recovery for a session a buggy extension wedged (L)"
-          onclick={() => reloadSession(menuSession)}>
-          <span>Reload session</span>
-          <kbd class="hotkey" aria-hidden="true">L</kbd>
-        </button>
-        <button
-          class="menu-item"
-          role="menuitem"
-          data-testid="detach-session"
-          title="Release Pantoken's attachment lease so you can take over in the terminal polytoken CLI. The daemon stays running. (D)"
-          onclick={() => detachSession(menuSession)}>
-          <span>Detach session</span>
-          <kbd class="hotkey" aria-hidden="true">D</kbd>
-        </button>
-        <button
-          class="menu-item"
-          role="menuitem"
-          title={menuSession.archived
-            ? "Restore this session to the active list (A)"
-            : "Hide this session from the active list (A)"}
-          onclick={() => toggleArchive(menuSession)}
-        >
-          <span>{menuSession.archived ? "Unarchive" : "Archive"}</span>
-          <kbd class="hotkey" aria-hidden="true">A</kbd>
-        </button>
-      {/if}
+      </div>
+      <button class="sheet-cancel" title="Cancel session actions" onclick={closeMenu}>Cancel</button>
     </div>
   {/if}
   </div>
@@ -1151,6 +1241,10 @@
   }
   .control-label {
     display: none;
+  }
+  :global(.mobile-close),
+  .mobile-title {
+    display: none !important;
   }
   .search-overlay {
     position: absolute;
@@ -1599,6 +1693,14 @@
   .menu-item.danger:hover {
     background: var(--danger-soft);
   }
+  .sheet-scrim,
+  .sheet-head,
+  .sheet-cancel {
+    display: none;
+  }
+  .sheet-actions {
+    display: contents;
+  }
   /* Unified status/time slot at the row's right edge: an attention badge, the in-progress
      spinner, the unread dot, or — at rest — the last-activity timestamp. One at a time, so
      the title gets the rest of the row. Sizes to content (the timestamp is the widest). */
@@ -1765,17 +1867,76 @@
     .sidebar.edge-drag {
       transition: none;
     }
-    .control-label {
-      display: inline;
-      font-size: 12px;
+    .top {
+      display: grid;
+      grid-template-columns: minmax(88px, 1fr) auto minmax(88px, 1fr);
+      min-height: calc(52px + env(safe-area-inset-top));
+      padding: env(safe-area-inset-top) 8px 0;
+    }
+    .shell-leading-reserve,
+    :global(.desktop-collapse) {
+      display: none !important;
+    }
+    :global(.mobile-close) {
+      display: inline-flex !important;
+      grid-column: 1;
+      grid-row: 1;
+      justify-self: start;
+      width: auto;
+      min-width: 44px;
+      min-height: 44px;
+      gap: 2px;
+      padding: 0 6px 0 2px;
+      font-size: 16px;
+    }
+    .back-label {
+      font-size: 13px;
+    }
+    .mobile-title {
+      display: block !important;
+      grid-column: 2;
+      grid-row: 1;
+      margin: 0;
+      font-size: 15px;
+      font-weight: 650;
+      line-height: 1;
+      color: var(--text);
+    }
+    .top-actions {
+      grid-column: 3;
+      grid-row: 1;
+      justify-self: end;
+      margin-left: 0;
+      gap: 0;
+    }
+    .top-actions .control-label {
+      display: none;
+    }
+    .search-overlay {
+      min-height: calc(52px + env(safe-area-inset-top));
+      padding: env(safe-area-inset-top) 8px 0;
+      gap: 4px;
     }
     .search-input {
       font-size: 16px;
     }
-    .new-btn,
+    .new-btn {
+      min-height: 48px;
+    }
     .group-toggle,
-    .row,
     .footer-action {
+      min-height: 44px;
+    }
+    :global(.project-new),
+    :global(.row-menu) {
+      min-width: 44px;
+      min-height: 44px;
+    }
+    .row {
+      min-height: 48px;
+      border: 0;
+    }
+    .rename :global(button) {
       min-height: 44px;
     }
     .context-action {
@@ -1788,6 +1949,64 @@
       position: static;
       transform: none;
       opacity: 1;
+    }
+    .sheet-scrim {
+      display: block;
+      position: fixed;
+      inset: 0;
+      z-index: 89;
+      border: 0;
+      background: rgba(0, 0, 0, 0.38);
+    }
+    .menu.mobile-sheet {
+      inset: auto 8px 0 !important;
+      z-index: 90;
+      width: auto;
+      min-width: 0;
+      max-height: min(78dvh, 640px);
+      padding: 0 0 env(safe-area-inset-bottom);
+      overflow: hidden;
+      border-radius: var(--radius) var(--radius) 0 0;
+      box-shadow: var(--shadow-pop);
+    }
+    .sheet-head {
+      display: flex;
+      align-items: center;
+      min-height: 48px;
+      padding: 0 16px;
+      color: var(--text);
+      font-size: 14px;
+      font-weight: 650;
+      border-bottom: 1px solid var(--border);
+    }
+    .sheet-actions {
+      display: flex;
+      flex-direction: column;
+      min-height: 0;
+      overflow-y: auto;
+      overscroll-behavior: contain;
+      padding: 4px 8px;
+    }
+    .mobile-sheet .menu-item {
+      min-height: 48px;
+      padding: 12px 10px;
+      font-size: 14px;
+      border: 0;
+    }
+    .mobile-sheet .hotkey {
+      display: none;
+    }
+    .sheet-cancel {
+      display: block;
+      width: calc(100% - 16px);
+      min-height: 48px;
+      margin: 0 8px;
+      color: var(--text);
+      font-size: 14px;
+      font-weight: 600;
+      background: transparent;
+      border: 0;
+      border-top: 1px solid var(--border);
     }
   }
 </style>

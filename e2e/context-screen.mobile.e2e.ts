@@ -21,7 +21,7 @@ test("the header context entry shows a plain-total badge", async ({ page }) => {
   await expect(page.getByTestId("context-open")).toBeHidden();
   await openSidebar(page);
   await expect(page.getByTestId("sidebar-context")).toBeVisible();
-  await page.getByRole("button", { name: "Collapse sidebar" }).click();
+  await page.getByRole("button", { name: "Close sessions" }).click();
 
   // The context fixture: 3 flagged files + 3 jobs + 3 todos = 9, plain totals
   // (no unseen/unread semantics — D3).
