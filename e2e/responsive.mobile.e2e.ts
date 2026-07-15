@@ -68,6 +68,45 @@ test("a wide markdown table scrolls horizontally instead of overflowing", async 
   expect(fade.hasLocal).toBe(true);
 });
 
+test("a long code-line tail scrolls clear of the 44px copy control", async ({
+  page,
+}) => {
+  await drive(page, "markdown");
+  const wrap = page
+    .locator(".markstream-svelte.markdown-renderer")
+    .last()
+    .locator(".code-block");
+  const pre = wrap.locator("pre");
+  const copy = wrap.getByRole("button", { name: "Copy code" });
+  await expect(copy).toBeVisible();
+  const copyBox = await copy.boundingBox();
+  expect(copyBox).not.toBeNull();
+  expect(copyBox!.width).toBeGreaterThanOrEqual(44);
+  expect(copyBox!.height).toBeGreaterThanOrEqual(44);
+
+  await pre.locator("code").evaluate((code) => {
+    code.textContent = "start-" + "x".repeat(180);
+    const marker = document.createElement("span");
+    marker.dataset.testid = "long-line-tail";
+    marker.textContent = "-TAIL";
+    code.append(marker);
+  });
+  await pre.evaluate((el) => {
+    el.scrollLeft = el.scrollWidth;
+  });
+  const tailLocator = pre.getByTestId("long-line-tail");
+  await expect(tailLocator).toBeInViewport();
+  const tailBox = await tailLocator.boundingBox();
+  const finalCopyBox = await copy.boundingBox();
+  expect(tailBox).not.toBeNull();
+  expect(finalCopyBox).not.toBeNull();
+  // The marker deliberately lives on the first line, in the copy control's vertical
+  // band. At maximum horizontal scroll its right edge must land left of the overlay.
+  expect(tailBox!.y).toBeLessThan(finalCopyBox!.y + finalCopyBox!.height);
+  expect(tailBox!.y + tailBox!.height).toBeGreaterThan(finalCopyBox!.y);
+  expect(tailBox!.x + tailBox!.width).toBeLessThanOrEqual(finalCopyBox!.x - 1);
+});
+
 test("text inputs render at >=16px on touch (guards against iOS focus-zoom)", async ({
   page,
 }) => {

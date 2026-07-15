@@ -136,6 +136,12 @@
 }
 /* Touch devices have no hover — pin the button visible so it stays reachable. */
 @media (pointer: coarse) {
+  .markstream-svelte.markdown-renderer :where(pre) {
+    /* The pinned 44px copy target occupies the top-right of the viewport. Keep a
+       trailing scroll gutter wider than the target + its 6px inset so the tail of a
+       long first/second line can scroll fully clear of the overlay. */
+    padding-right: 60px;
+  }
   .markstream-svelte.markdown-renderer .code-block > .code-copy {
     opacity: 1;
     width: 44px;
