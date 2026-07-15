@@ -28,7 +28,7 @@ describe("implement-issue helpers", () => {
   });
 
   test("renders hostile multiline issue data without shell interpolation", () => {
-    const issue = { number: 4, url: "https://github.com/TimoFreiberg/pantoken/issues/4", title: "quotes ' \" \\", body: "line 1\n{{ISSUE_TITLE}}\n日本語" };
+    const issue = { number: 4, input: "4", url: "https://github.com/TimoFreiberg/pantoken/issues/4", title: "quotes ' \" \\", body: "line 1\n{{ISSUE_TITLE}}\n日本語" };
     expect(renderPrompt("{{ISSUE_TITLE}}\n{{ISSUE_BODY}}\n{{ISSUE_IMAGES}}", issue, [], false)).toContain(issue.body);
   });
 });
