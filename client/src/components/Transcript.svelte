@@ -1538,7 +1538,13 @@
     gap: 8px;
     margin-top: 4px;
     opacity: 0;
-    pointer-events: none;
+    /* The footer owns reserved layout below the bubble, so keep it hit-testable while
+       transparent: entering an action can then establish `.row.user:hover` and reveal
+       it before pointerdown. Disabling hit testing here makes the parent row win the
+       target check, leaving a visually hover-revealed action impossible to click. */
+    pointer-events: auto;
+    position: relative;
+    z-index: 1;
     transition: opacity 0.12s ease;
   }
   .row.user .umeta .ts {

@@ -58,6 +58,20 @@ test("rewinding from a user prompt rewinds the transcript and prefills the compo
   page,
 }) => {
   const btn = page.getByRole("button", { name: "Rewind to this prompt" });
+  // The transparent footer must participate in hit testing so entering the reserved
+  // action area reveals it; the row itself must never cover the visible control.
+  const box = await btn.boundingBox();
+  expect(box).not.toBeNull();
+  expect(
+    await page.evaluate(
+      ({ x, y }) =>
+        document
+          .elementFromPoint(x, y)
+          ?.closest("button")
+          ?.getAttribute("aria-label"),
+      { x: box!.x + box!.width / 2, y: box!.y + box!.height / 2 },
+    ),
+  ).toBe("Rewind to this prompt");
   // Click-twice confirm gate: first click arms, second click fires the rewind.
   await btn.click();
   await btn.click();
