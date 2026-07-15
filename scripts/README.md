@@ -1,6 +1,6 @@
 # Pantoken Scripts
 
-Per-issue autonomous implementation and integration tooling.
+Per-issue clarification-first implementation and autonomous integration tooling.
 
 ## Quick start
 
@@ -21,12 +21,16 @@ just implement-issue 42
    - Opens a zellij tab with the TUI and retains the workspace when integration needs manual recovery
    - `--dry-run` performs only the read-only issue query; it creates no claims, files, downloads, processes, daemon requests, or workspaces
 
-2. **The agent** (inside the TUI) runs autonomously:
+2. **The agent** (inside the TUI) starts with an interactive clarification phase:
    - Uses the prefetched issue context and local screenshots; it does not refetch them
+   - Investigates the issue and asks the user focused implementation questions through the session UI when material ambiguity exists
+   - Waits for those answers before planning or changing code
+
+   After clarification, it runs autonomously with no routine approval prompts:
    - Plans → plan-reviewer review → handoff
    - Executes → implements → commits (with `Fixes #N`)
    - Reviews via `quality-review` skill → fixes → squashes
-   - Calls `just integrate-into-main <N>`
+   - Calls `just integrate-into-main <N>` to merge and push
 
 3. **`just integrate-into-main <N>`** → `scripts/integrate-into-main.sh`
    - Acquires a repo-local lock (`.merge-lock`, file-based with PID liveness)

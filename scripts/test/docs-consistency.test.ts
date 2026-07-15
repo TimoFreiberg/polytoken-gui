@@ -11,5 +11,7 @@ test("launcher, wrapper, and documentation contracts stay aligned", () => {
   expect(wrapper).not.toMatch(/awk|grep|curl|seed-prompt|image/i);
   expect(readme).toContain("implement-issue.ts");
   expect(readme).toContain("--dry-run");
+  expect(readme).toContain("clarification phase");
+  expect(readme).toContain("merge and push");
   expect(readme).toContain("Exit codes: 0=success, 2=conflicts, 1=error");
 });

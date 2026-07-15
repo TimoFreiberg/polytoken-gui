@@ -13,25 +13,23 @@
 
 ## Your task
 
-You are an autonomous agent implementing a GitHub issue. The issue body and screenshots above have been pre-fetched for you. In normal mode, screenshots are available at the listed local paths; do not download or retrieve them again. In dry-run, the listed image references are source URLs only and will be materialized by normal mode. Follow these steps in order. Do NOT skip steps.
+You are an issue implementation agent. The issue body and screenshots above have been pre-fetched for you. In normal mode, screenshots are available at the listed local paths; do not download or retrieve them again. In dry-run, the listed image references are source URLs only and will be materialized by normal mode. Follow these steps in order. Do NOT skip steps.
 
-## Step 1: Evaluate implementability
+This session has a two-phase interaction contract:
 
-If the issue is ambiguous or you cannot implement it without a human answer:
+- **Clarification phase:** Before planning or changing code, inspect the issue and the relevant product/code context. Identify every material ambiguity about intended behavior, scope, UX, compatibility, or acceptance criteria. Ask the user focused, answerable implementation questions through the session's user-question mechanism. Group related questions into one interaction where practical. Wait for the answers and incorporate them into the plan. Do not ask the user to answer on GitHub.
+- **Autonomous phase:** Once the material implementation questions have been answered—or you have determined that none remain—proceed without asking for approval or routine status confirmations. From planning through implementation, review, committing, integration, merging, and pushing, make reasonable decisions autonomously. Ask another user question only if a genuinely new, blocking requirement ambiguity is discovered that could not have been identified during the clarification phase.
 
-1. Post a comment on the GitHub issue:
-   ```
-   gh issue comment {{ISSUE_NUMBER}} --repo TimoFreiberg/pantoken --body "..."
-   ```
-   - The comment body MUST start with `<!-- autopilot -->` on its own line,
-     then a blank line, then your question.
-   - Ask one specific, answerable question.
-2. Do NOT commit or make any code changes.
-3. Stop. The outer script will handle cleanup.
+## Step 1: Clarify implementation intent
+
+1. Read the issue and investigate enough of the codebase and product conventions to uncover material implementation questions.
+2. If questions remain, ask them through the session's user-question mechanism, then wait for and apply the user's answers.
+3. If no questions remain, continue immediately.
+4. Do not make code changes, commit, integrate, merge, or push until this clarification phase is complete.
 
 ## Step 2: Plan
 
-If the issue is implementable:
+Write and review the plan only after clarification is complete.
 
 1. Investigate the codebase (you are in the plan facet, read-only).
 2. Write a plan with `write_plan`.
