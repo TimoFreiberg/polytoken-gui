@@ -109,3 +109,32 @@ test("the 2a composer controls are labeled and touch-safe", async ({
   await expectTall(stop);
   await expect(stop).toHaveAttribute("title", /Stop/);
 });
+
+test("queue tray steer and edit buttons meet the 44px touch target and have tooltips", async ({
+  page,
+}) => {
+  await drive(page, "streamhold");
+  await drive(page, "queue");
+  const tray = page.getByTestId("queue-tray");
+
+  const steer = tray.getByTestId("steer-button");
+  await expectTall(steer);
+  await expect(steer).toHaveAttribute("title", /.+/);
+  await expect(steer).toHaveAttribute("aria-label", /.+/);
+
+  const restore = tray.getByRole("button", {
+    name: "Restore all queued messages to the composer",
+  });
+  await expectTall(restore);
+  await expect(restore).toHaveAttribute("title", /.+/);
+  await expect(restore).toHaveAttribute("aria-label", /.+/);
+
+  const edits = tray.getByTestId("edit-queued");
+  await expect(edits).toHaveCount(2);
+  for (let i = 0; i < 2; i++) {
+    const edit = edits.nth(i);
+    await expectTall(edit);
+    await expect(edit).toHaveAttribute("title", /.+/);
+    await expect(edit).toHaveAttribute("aria-label", /.+/);
+  }
+});

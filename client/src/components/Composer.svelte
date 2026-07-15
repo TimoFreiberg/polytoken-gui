@@ -1054,6 +1054,25 @@
         return;
       }
     }
+    // Plain ArrowUp restores queued prompts when the composer is empty and
+    // prompts are queued — same as Alt+Up. Takes priority over history recall.
+    if (
+      e.key === "ArrowUp" &&
+      !e.altKey &&
+      !e.ctrlKey &&
+      !e.metaKey &&
+      !e.shiftKey &&
+      !drafting &&
+      !slashOpen &&
+      !atOpen &&
+      !historyOpen &&
+      store.session.queued.length > 0 &&
+      !store.composerDraft.trim()
+    ) {
+      e.preventDefault();
+      store.restoreQueue();
+      return;
+    }
     // Readline-style prompt history. Plain ArrowUp on the first *visual* row recalls the
     // previous prompt (an empty field is the degenerate case — the just-sent prompt comes
     // back); ArrowDown on the last visual row walks back toward the live draft. Visual rows

@@ -71,3 +71,65 @@ test("Alt+Up restores all text to one editor and clears every client", async ({
   );
   await expect(other.locator("textarea")).toHaveValue("");
 });
+
+test("steer button aborts the current turn", async ({ page }) => {
+  await drive(page, "streamhold");
+  await drive(page, "queue");
+  await expect(page.getByTestId("working-indicator")).toBeVisible();
+
+  await page.getByTestId("steer-button").click();
+  // Abort stops the turn — the working indicator disappears.
+  await expect(page.getByTestId("working-indicator")).toHaveCount(0);
+});
+
+test("steer button is disabled while offline", async ({ page }) => {
+  await drive(page, "streamhold");
+  await drive(page, "queue");
+  const steer = page.getByTestId("steer-button");
+  await expect(steer).toBeEnabled();
+
+  await page.evaluate(() =>
+    window.dispatchEvent(new Event("pantoken:test-disconnect")),
+  );
+  await expect(steer).toBeDisabled();
+});
+
+test("steer button is disabled when no turn is active", async ({ page }) => {
+  await drive(page, "queue");
+  await expect(page.getByTestId("queue-tray")).toContainText("Queued · 2");
+  // No streamhold — no active turn to abort.
+  await expect(page.getByTestId("steer-button")).toBeDisabled();
+});
+
+test("edit button on a queued item restores all prompts to the composer", async ({
+  page,
+}) => {
+  await drive(page, "queue");
+  await expect(page.getByTestId("queue-tray")).toContainText("Queued · 2");
+
+  const editor = page.locator("textarea");
+  if ((await editor.inputValue()) !== "") await editor.fill("");
+  await page.getByTestId("edit-queued").first().click();
+  await expect(page.getByTestId("queue-tray")).toHaveCount(0);
+  await expect(page.locator("textarea")).toHaveValue(
+    "Please inspect the failing test first.\n\nThen summarize the fix and remaining risks.",
+  );
+});
+
+test("plain Up-arrow restores queued prompts when the composer is empty", async ({
+  page,
+}) => {
+  await drive(page, "queue");
+  await expect(page.getByTestId("queue-tray")).toContainText("Queued · 2");
+
+  const editor = page.locator("textarea");
+  await editor.focus();
+  // Ensure the composer is empty — the intercept only fires on an empty field.
+  if ((await editor.inputValue()) !== "") await editor.fill("");
+  await editor.press("ArrowUp");
+
+  await expect(page.getByTestId("queue-tray")).toHaveCount(0);
+  await expect(editor).toHaveValue(
+    "Please inspect the failing test first.\n\nThen summarize the fix and remaining risks.",
+  );
+});
