@@ -18,16 +18,17 @@
   let outExpanded = $state(false);
   let outOverflows = $state(false);
   let outPre = $state<HTMLElement>();
-  let copied = $state(false);
+  type CopyTarget = "arguments" | "stream" | "output";
+  let copied = $state<CopyTarget | null>(null);
   let copyTimer: ReturnType<typeof setTimeout> | undefined;
 
   // Copies via store.copyToClipboard so a rejection (permissions / insecure
   // context) surfaces as a visible error instead of a silent no-op.
-  async function copyOut(text: string) {
+  async function copyDetail(target: CopyTarget, text: string) {
     if (!(await store.copyToClipboard(text))) return;
-    copied = true;
+    copied = target;
     clearTimeout(copyTimer);
-    copyTimer = setTimeout(() => (copied = false), 1500);
+    copyTimer = setTimeout(() => (copied = null), 1500);
   }
 
   // Measure overflow while collapsed (scrollHeight exceeds the capped clientHeight). Keep
@@ -73,6 +74,10 @@
     } catch {
       return "[unserializable value]";
     }
+  }
+
+  function rawInputText(input: unknown): string {
+    return stringify(input, true);
   }
 
   function preview(input: unknown): string {
@@ -458,14 +463,38 @@
   {#if open}
     <div class="body" transition:reveal>
       {#if argRows.length}
-        <div class="args">
-          {#each argRows as row}
-            {#if row.key}<div class="arg-key">{row.key}</div>{/if}
-            <pre class="arg-val">{row.value}</pre>
-          {/each}
+        <div class="args-block">
+          <div class="detail-bar">
+            <button
+              type="button"
+              class="out-action"
+              title="Copy this tool's full arguments to the clipboard"
+              onclick={() => copyDetail("arguments", rawInputText(item.input))}
+              >{copied === "arguments" ? "Copied" : "Copy full arguments"}</button
+            >
+          </div>
+          <div class="args">
+            {#each argRows as row}
+              {#if row.key}<div class="arg-key">{row.key}</div>{/if}
+              <pre class="arg-val">{row.value}</pre>
+            {/each}
+          </div>
         </div>
       {/if}
-      {#if streamBodyText}<pre class="stream">{streamBodyText}</pre>{/if}
+      {#if streamBodyText}
+        <div class="stream-block">
+          <div class="detail-bar">
+            <button
+              type="button"
+              class="out-action"
+              title="Copy this tool's full progress text to the clipboard"
+              onclick={() => copyDetail("stream", item.text ?? "")}
+              >{copied === "stream" ? "Copied" : "Copy full progress"}</button
+            >
+          </div>
+          <pre class="stream">{streamBodyText}</pre>
+        </div>
+      {/if}
       {#if edit}
         {#await diffHTML(theme)}
           <div class="diff-pending">rendering diff…</div>
@@ -497,7 +526,8 @@
                 type="button"
                 class="out-action"
                 title="Copy this tool's full output to the clipboard"
-                onclick={() => copyOut(rawOutputText(item.output))}>{copied ? "Copied" : "Copy"}</button
+                onclick={() => copyDetail("output", rawOutputText(item.output))}
+                >{copied === "output" ? "Copied" : "Copy"}</button
               >
             </div>
             <pre class="out" class:expanded={outExpanded} bind:this={outPre}>{outBodyText}</pre>
@@ -680,6 +710,7 @@
     flex-direction: column;
     gap: 5px;
   }
+  .detail-bar,
   .out-bar {
     display: flex;
     justify-content: flex-end;
@@ -744,6 +775,12 @@
     flex-direction: column;
     gap: 6px;
   }
+  .args-block,
+  .stream-block {
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+  }
   .arg-key {
     font-family: var(--font-mono);
     font-size: 11px;
@@ -754,6 +791,12 @@
   }
   .arg-val {
     color: var(--text);
+  }
+  @media (max-width: 859px) {
+    .out-action {
+      min-height: 44px;
+      padding-inline: 12px;
+    }
   }
   .running,
   .interrupted {

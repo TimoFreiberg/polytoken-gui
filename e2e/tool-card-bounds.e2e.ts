@@ -39,6 +39,16 @@ test("header and detailed arguments stop at every configured boundary", async ({
   expect((await overHeader.textContent())?.length).toBe(321);
   expect((await overHeader.textContent())?.endsWith("…")).toBe(true);
 
+  const exactArgs = card(page, "Args exact 40");
+  await open(exactArgs);
+  await expect(exactArgs.locator(".arg-key")).toHaveCount(40);
+  await expect(
+    exactArgs.locator(".arg-key", { hasText: "exact_field_39" }),
+  ).toHaveCount(1);
+  await expect(exactArgs.locator(".args")).not.toContainText(
+    "arguments omitted",
+  );
+
   const args = card(page, "Bounded args");
   await open(args);
   const exactValue = args
@@ -62,6 +72,21 @@ test("header and detailed arguments stop at every configured boundary", async ({
   await expect(args.locator(".args")).toContainText(
     "… 1 more arguments omitted",
   );
+
+  const copy = args.getByRole("button", {
+    name: "Copy full arguments",
+    exact: true,
+  });
+  await copy.click();
+  await expect
+    .poll(() => page.evaluate(() => navigator.clipboard.readText()))
+    .toContain("ARG_TAIL");
+  const copiedArgs = JSON.parse(
+    await page.evaluate(() => navigator.clipboard.readText()),
+  ) as Record<string, unknown>;
+  expect(Object.keys(copiedArgs)).toHaveLength(41);
+  expect(copiedArgs.b_over_value).toBe(`${"Y".repeat(20_000)}ARG_TAIL`);
+  expect(copiedArgs.z_field_38).toBe(38);
 });
 
 test("plain and multi-block output stay bounded while Copy retains every byte", async ({
@@ -102,6 +127,12 @@ test("streamed tool text is bounded without changing the tool state", async ({
   expect(await stream.textContent()).toBe(
     `${"S".repeat(OUTPUT_LIMIT)}${TRUNCATION_MARKER}`,
   );
+  await running
+    .getByRole("button", { name: "Copy full progress", exact: true })
+    .click();
+  await expect
+    .poll(() => page.evaluate(() => navigator.clipboard.readText()))
+    .toBe(`${"S".repeat(OUTPUT_LIMIT)}STREAM_TAIL`);
   await expect(running).toHaveClass(/running/);
   const state = await (await page.request.get("/debug/state")).text();
   expect(state).toContain("STREAM_TAIL");

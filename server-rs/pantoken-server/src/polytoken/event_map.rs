@@ -543,8 +543,9 @@ struct ToolResultExtract {
 /// `content` is the short-form truncated string; `content_full` carries the rich
 /// display content (ToolLiveDisplayContent = ToolResultContent | {diff_preview}).
 /// ToolResultContent has three variants: {text}, {blocks}, {image}. We lift the
-/// image into the typed `images` field (like the original driver's splitToolResult) and extract text
-/// for `output`.
+/// image into the typed `images` field (like the original driver's splitToolResult) and extract the
+/// rich/full text for `output`. The client owns display bounding; keeping the richer value here is
+/// what makes its explicit full-output Copy escape hatch truthful.
 fn extract_tool_result(
     content: Option<&str>,
     content_full: Option<&ToolLiveDisplayContent>,
@@ -559,7 +560,11 @@ fn extract_tool_result(
                     let text_fallback = img.get("text_fallback").and_then(|v| v.as_str());
                     return ToolResultExtract {
                         output: Some(serde_json::Value::String(
-                            content.unwrap_or(text_fallback.unwrap_or("")).to_string(),
+                            text_fallback
+                                .filter(|text| !text.is_empty())
+                                .or(content)
+                                .unwrap_or("")
+                                .to_string(),
                         )),
                         images: Some(vec![ImageContent::Image {
                             data: data.to_string(),
@@ -572,7 +577,12 @@ fn extract_tool_result(
             if let Some(text) = cf_obj.get("text").and_then(|v| v.as_str()) {
                 return ToolResultExtract {
                     output: Some(serde_json::Value::String(
-                        content.unwrap_or(text).to_string(),
+                        if text.is_empty() {
+                            content.unwrap_or("")
+                        } else {
+                            text
+                        }
+                        .to_string(),
                     )),
                     images: None,
                 };
@@ -598,9 +608,11 @@ fn extract_tool_result(
                     })
                     .collect::<String>();
                 return ToolResultExtract {
-                    output: Some(serde_json::Value::String(
-                        content.unwrap_or(&text).to_string(),
-                    )),
+                    output: Some(serde_json::Value::String(if text.is_empty() {
+                        content.unwrap_or("").to_string()
+                    } else {
+                        text
+                    })),
                     images: None,
                 };
             }
@@ -609,11 +621,25 @@ fn extract_tool_result(
                 let summary = dp.get("summary").and_then(|v| v.as_str()).unwrap_or("");
                 return ToolResultExtract {
                     output: Some(serde_json::Value::String(
-                        content.unwrap_or(summary).to_string(),
+                        if summary.is_empty() {
+                            content.unwrap_or("")
+                        } else {
+                            summary
+                        }
+                        .to_string(),
                     )),
                     images: None,
                 };
             }
+        }
+        // Preserve an unrecognized future rich variant rather than silently replacing it
+        // with the daemon's truncated summary. ToolCard bounds raw objects before display
+        // and retains the complete serialized value behind its explicit Copy action.
+        if !cf.is_null() && !cf.as_object().is_some_and(serde_json::Map::is_empty) {
+            return ToolResultExtract {
+                output: Some(cf.clone()),
+                images: None,
+            };
         }
     }
     // Fallback: just the truncated content string
@@ -2824,13 +2850,13 @@ mod tests {
     }
 
     #[test]
-    fn tool_result_with_content_full_image_lifts_image_into_images_field() {
+    fn tool_result_with_content_full_image_lifts_image_and_prefers_full_fallback() {
         let out = fold_fresh(
             json!({ "type": "tool_result", "call_id": "call1", "content": "Rendered.", "content_full": { "image": { "data": "QUJD", "media_type": "image/png", "text_fallback": "img" } }, "is_error": false, "prompt_id": "p1" }),
         );
         let ev = event_json(&out.events[0]);
         assert_eq!(ev["type"], "toolFinished");
-        assert_eq!(ev["output"], "Rendered.");
+        assert_eq!(ev["output"], "img");
         assert_eq!(
             ev["images"],
             json!([{ "type": "image", "data": "QUJD", "mimeType": "image/png" }])
@@ -2838,19 +2864,54 @@ mod tests {
     }
 
     #[test]
-    fn tool_result_with_content_full_text_variant_uses_text_from_content() {
+    fn tool_result_with_content_full_text_prefers_full_and_matches_replay() {
         let out = fold_fresh(
             json!({ "type": "tool_result", "call_id": "call1", "content": "short", "content_full": { "text": "longer text" }, "prompt_id": "p1" }),
         );
-        assert_eq!(event_json(&out.events[0])["output"], "short");
+        let live_output = event_json(&out.events[0])["output"].clone();
+        assert_eq!(live_output, "longer text");
+
+        let replay = crate::polytoken::history_seed::history_to_seed_events(
+            &[json!({
+                "type": "tool_result",
+                "call_id": "call1",
+                "content": { "text": "longer text" },
+            })],
+            &crate::polytoken::history_seed::HistoryMapCtx {
+                r#ref: SessionRef {
+                    workspace_id: "ws".into(),
+                    session_id: "s1".into(),
+                },
+            },
+        );
+        assert_eq!(event_json(&replay[0])["output"], live_output);
     }
 
     #[test]
     fn tool_result_with_content_full_blocks_variant_extracts_text() {
         let out = fold_fresh(
-            json!({ "type": "tool_result", "call_id": "call1", "content_full": { "blocks": [{ "type": "text", "text": "line1 " }, { "type": "text", "text": "line2" }] }, "prompt_id": "p1" }),
+            json!({ "type": "tool_result", "call_id": "call1", "content": "short", "content_full": { "blocks": [{ "type": "text", "text": "line1 " }, { "type": "text", "text": "line2" }] }, "prompt_id": "p1" }),
         );
         assert_eq!(event_json(&out.events[0])["output"], "line1 line2");
+    }
+
+    #[test]
+    fn tool_result_preserves_unknown_content_full_variant_for_forward_compatibility() {
+        let out = fold_fresh(
+            json!({ "type": "tool_result", "call_id": "call1", "content": "short", "content_full": { "future_variant": { "raw": "complete" } }, "prompt_id": "p1" }),
+        );
+        assert_eq!(
+            event_json(&out.events[0])["output"],
+            json!({ "future_variant": { "raw": "complete" } })
+        );
+    }
+
+    #[test]
+    fn tool_result_empty_content_full_falls_back_to_short_content() {
+        let out = fold_fresh(
+            json!({ "type": "tool_result", "call_id": "call1", "content": "short", "content_full": {}, "prompt_id": "p1" }),
+        );
+        assert_eq!(event_json(&out.events[0])["output"], "short");
     }
 
     #[test]

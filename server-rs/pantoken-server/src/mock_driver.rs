@@ -3053,6 +3053,10 @@ impl PantokenDriver for MockDriver {
             // Boundary-heavy ToolCard fixture. Dev/e2e only: exercises bounded display,
             // full-output copy, and every visual tool status without production behavior.
             "toolpolish" => {
+                let mut exact_args = serde_json::Map::new();
+                for i in 0..40 {
+                    exact_args.insert(format!("exact_field_{i:02}"), serde_json::json!(i));
+                }
                 let mut args = serde_json::Map::new();
                 args.insert("a_exact_value".into(), serde_json::Value::String("X".repeat(20_000)));
                 args.insert("b_over_value".into(), serde_json::Value::String(format!("{}ARG_TAIL", "Y".repeat(20_000))));
@@ -3067,6 +3071,8 @@ impl PantokenDriver for MockDriver {
                     serde_json::json!({"command": "H".repeat(320)}), true, serde_json::json!("ok"), 0, 0, 1));
                 s.extend(tool_span("polish-header-over", "header_over", "Header over", None,
                     serde_json::json!({"command": "H".repeat(321)}), true, serde_json::json!("ok"), 0, 0, 1));
+                s.extend(tool_span("polish-args-exact", "args_exact", "Args exact 40", None,
+                    serde_json::Value::Object(exact_args), true, serde_json::json!("ok"), 0, 0, 1));
                 s.extend(tool_span("polish-args", "bounded_args", "Bounded args", None,
                     serde_json::Value::Object(args), true, serde_json::json!("ok"), 0, 0, 1));
                 s.extend(tool_span("polish-output-exact", "output_exact", "Output exact", None,
