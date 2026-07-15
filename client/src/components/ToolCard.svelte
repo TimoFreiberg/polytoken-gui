@@ -57,6 +57,12 @@
   const DETAIL_VALUE_LIMIT = 20_000;
   const OUTPUT_LIMIT = 50_000;
   const ARG_LIMIT = 40;
+  // Keep the rich diff renderer's Shadow DOM proportional even when an edit contains
+  // a generated file or minified line. Both dimensions matter: a character-only cap
+  // can still create thousands of DOM rows, while a line-only cap can admit one huge
+  // highlighted line. Exact source values remain available through the copy actions.
+  const EDIT_PREVIEW_CHAR_LIMIT = 20_000;
+  const EDIT_PREVIEW_LINE_LIMIT = 160;
 
   function bound(text: string, limit: number): string {
     return text.length <= limit
@@ -152,6 +158,11 @@
     const text = contentText(out);
     if (text) return text;
     return stringify(out, true);
+  }
+
+  function rawValueText(value: unknown): string {
+    if (value == null) return "";
+    return typeof value === "string" ? value : stringify(value, true);
   }
 
   function outputText(out: unknown): string {
@@ -265,6 +276,20 @@
     };
   }
 
+  type BoundedEditText = { text: string; truncated: boolean };
+
+  function boundEditText(text: string): BoundedEditText {
+    let end = Math.min(text.length, EDIT_PREVIEW_CHAR_LIMIT);
+    let lines = 1;
+    for (let i = 0; i < end; i++) {
+      if (text[i] === "\n" && ++lines > EDIT_PREVIEW_LINE_LIMIT) {
+        end = i;
+        break;
+      }
+    }
+    return { text: text.slice(0, end), truncated: end < text.length };
+  }
+
   // An agent edit result may carry a richer standard unified patch in details.patch —
   // prefer it when present, otherwise the input-derived oldFile/newFile is truth.
   function patchFrom(out: unknown): string | null {
@@ -276,6 +301,28 @@
     }
     return null;
   }
+
+
+  // This is the sole payload allowed across the async @pierre/diffs boundary. A
+  // truncated rich patch falls back to the independently bounded old/new sides:
+  // feeding an incomplete unified patch to the parser is unreliable, and the input
+  // sides still produce an honest bounded preview. Ordinary patches remain untouched.
+  const diffPreview = $derived.by(() => {
+    if (!edit) return null;
+    const sides = joinSides(edit.edits);
+    const oldFile = boundEditText(sides.oldFile);
+    const newFile = boundEditText(sides.newFile);
+    const rawPatch = patchFrom(item.output);
+    const patch = rawPatch ? boundEditText(rawPatch) : null;
+    return {
+      path: inlineBound(edit.path, HEADER_PREVIEW_LIMIT),
+      oldFile: oldFile.text,
+      newFile: newFile.text,
+      patch: patch && !patch.truncated ? patch.text : null,
+      sidesTruncated: oldFile.truncated || newFile.truncated,
+      truncated: oldFile.truncated || newFile.truncated || !!patch?.truncated,
+    };
+  });
 
   // Minimal LCS line diff -> added/removed line counts for the collapsed badge.
   // Pure + dependency-free so the e2e is deterministic; the rich render below
@@ -318,15 +365,20 @@
   }
 
   const counts = $derived.by(() => {
-    if (!edit) return null;
-    let added = 0;
-    let removed = 0;
-    for (const e of edit.edits) {
-      const c = lineCounts(e.oldText, e.newText);
-      added += c.added;
-      removed += c.removed;
+    if (!edit || !diffPreview) return null;
+    // Preserve the established per-edit badge semantics at ordinary sizes. Only
+    // oversized source sides use the bounded aggregate, avoiding an unbounded LCS.
+    if (!diffPreview.sidesTruncated) {
+      let added = 0;
+      let removed = 0;
+      for (const e of edit.edits) {
+        const count = lineCounts(e.oldText, e.newText);
+        added += count.added;
+        removed += count.removed;
+      }
+      return { added, removed };
     }
-    return { added, removed };
+    return lineCounts(diffPreview.oldFile, diffPreview.newFile);
   });
 
   // ── Theme: the app resolves to a CONCRETE data-theme ("light"|"dark") on <html>.
@@ -354,12 +406,11 @@
   const diffCache = new Map<string, Promise<string>>();
 
   function diffHTML(theme: "light" | "dark"): Promise<string> | null {
-    if (!edit) return null;
-    const patch = patchFrom(item.output);
-    const key = `${theme}::${patch ?? JSON.stringify(edit)}`;
+    if (!diffPreview) return null;
+    const key = `${theme}::${JSON.stringify(diffPreview)}`;
     const cached = diffCache.get(key);
     if (cached) return cached;
-    const p = renderDiff(theme, patch);
+    const p = renderDiff(theme, diffPreview);
     // Evict on failure so a transient first-load error (e.g. a theme chunk that
     // briefly failed to resolve) can retry on the next expand instead of being
     // pinned to the rejected promise.
@@ -370,7 +421,7 @@
 
   async function renderDiff(
     theme: "light" | "dark",
-    patch: string | null,
+    preview: NonNullable<typeof diffPreview>,
   ): Promise<string> {
     // Dynamic import keeps shiki + the diff machinery out of the initial PWA
     // bundle; only loaded the first time a diff is actually shown. Must use the
@@ -378,18 +429,16 @@
     // pulls in react/react-dom.
     const ssr = await import("@pierre/diffs/ssr");
     const themeOpt = { dark: "github-dark", light: "github-light" } as const;
-    if (patch) {
+    if (preview.patch) {
       const res = await ssr.preloadPatchDiff({
-        patch,
+        patch: preview.patch,
         options: { theme: themeOpt, themeType: theme, diffStyle: "unified" },
       });
       return res.prerenderedHTML;
     }
-    const { path, edits } = edit!;
-    const { oldFile, newFile } = joinSides(edits);
     return ssr.preloadDiffHTML({
-      oldFile: { name: path, contents: oldFile },
-      newFile: { name: path, contents: newFile },
+      oldFile: { name: preview.path, contents: preview.oldFile },
+      newFile: { name: preview.path, contents: preview.newFile },
       options: { theme: themeOpt, themeType: theme, diffStyle: "unified" },
     });
   }
@@ -496,6 +545,27 @@
         </div>
       {/if}
       {#if edit}
+        <div class="detail-bar edit-detail-bar">
+          <button
+            type="button"
+            class="out-action"
+            title="Copy this edit's full raw arguments to the clipboard"
+            onclick={() => copyDetail("arguments", rawInputText(item.input))}
+            >{copied === "arguments" ? "Copied" : "Copy full arguments"}</button
+          >
+          {#if item.output !== undefined}
+            <button
+              type="button"
+              class="out-action"
+              title="Copy this edit's full raw result to the clipboard"
+              onclick={() => copyDetail("output", rawValueText(item.output))}
+              >{copied === "output" ? "Copied" : "Copy full result"}</button
+            >
+          {/if}
+        </div>
+        {#if diffPreview?.truncated}
+          <div class="diff-note">Preview truncated · copy the full arguments or result above</div>
+        {/if}
         {#await diffHTML(theme)}
           <div class="diff-pending">rendering diff…</div>
         {:then html}
@@ -813,6 +883,13 @@
     font-size: 12px;
     color: var(--text-muted);
     font-style: italic;
+  }
+  .edit-detail-bar {
+    justify-content: flex-end;
+  }
+  .diff-note {
+    font-size: 11px;
+    color: var(--text-muted);
   }
   .diff-error {
     font-size: 12px;

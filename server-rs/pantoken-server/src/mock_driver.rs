@@ -3222,6 +3222,27 @@ impl PantokenDriver for MockDriver {
                 serde_json::json!("Successfully replaced 1 block(s) in server/src/health.ts"),
                 0, 200, 480,
             ),
+            "editbounds" => {
+                let old_text = format!("{}OLD_EDIT_TAIL", "old line\n".repeat(600));
+                let new_text = format!("{}NEW_EDIT_TAIL", "new line\n".repeat(600));
+                let patch = format!(
+                    "--- a/src/oversized.ts\n+++ b/src/oversized.ts\n@@ -1 +1 @@\n-{}\n+replacement\nPATCH_TAIL",
+                    "P".repeat(25_000)
+                );
+                tool_span(
+                    "edit-bounds-1", "edit", "Oversized edit", Some("Exercise bounded edit previews"),
+                    serde_json::json!({
+                        "path": "src/oversized.ts",
+                        "edits": [{ "oldText": old_text, "newText": new_text }]
+                    }),
+                    true,
+                    serde_json::json!({
+                        "content": [{ "type": "text", "text": "edit completed RESULT_TAIL" }],
+                        "details": { "patch": patch }
+                    }),
+                    0, 0, 1,
+                )
+            }
             // ── Compat ─────────────────────────────────────────────────────
             "compat" => vec![
                 ScriptStep { wait_ms: 0, event: SessionDriverEvent::ExtensionCompatibilityIssue { base: base(), issue: ExtensionCompatibilityIssue {

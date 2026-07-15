@@ -42,6 +42,69 @@ test("edit-tool card: collapsed +N/−M badge, expands to a @pierre/diffs render
       { timeout: 8000 },
     )
     .toBe(true);
+  await expect(card.locator(".diff-note")).toHaveCount(0);
+});
+
+test("oversized edit preview is bounded while raw arguments and result copy exactly", async ({
+  page,
+}) => {
+  await drive(page, "editbounds");
+  const card = page.locator(".tool", { hasText: "Oversized edit" });
+  await card.locator(".head").click();
+  await expect(card.locator(".diff-note")).toContainText("Preview truncated");
+  await expect
+    .poll(
+      () =>
+        card.evaluate((el) => {
+          const host = [...el.querySelectorAll<HTMLElement>("*")].find(
+            (node) => node.shadowRoot,
+          );
+          return host?.shadowRoot?.querySelectorAll("*").length ?? 0;
+        }),
+      { timeout: 8000 },
+    )
+    .toBeGreaterThan(0);
+
+  const rendered = await card.evaluate((el) => {
+    const host = [...el.querySelectorAll<HTMLElement>("*")].find(
+      (node) => node.shadowRoot,
+    );
+    return {
+      elements: host?.shadowRoot?.querySelectorAll("*").length ?? 0,
+      text: host?.shadowRoot?.textContent ?? "",
+    };
+  });
+  expect(rendered.elements).toBeLessThan(2_500);
+  expect(rendered.text).not.toContain("OLD_EDIT_TAIL");
+  expect(rendered.text).not.toContain("NEW_EDIT_TAIL");
+  expect(rendered.text).not.toContain("PATCH_TAIL");
+
+  await card
+    .getByRole("button", { name: "Copy full arguments", exact: true })
+    .click();
+  const copiedArguments = JSON.parse(
+    await page.evaluate(() => navigator.clipboard.readText()),
+  ) as { edits: Array<{ oldText: string; newText: string }> };
+  expect(copiedArguments.edits[0]?.oldText).toBe(
+    `${"old line\n".repeat(600)}OLD_EDIT_TAIL`,
+  );
+  expect(copiedArguments.edits[0]?.newText).toBe(
+    `${"new line\n".repeat(600)}NEW_EDIT_TAIL`,
+  );
+
+  await card
+    .getByRole("button", { name: "Copy full result", exact: true })
+    .click();
+  const copiedResult = JSON.parse(
+    await page.evaluate(() => navigator.clipboard.readText()),
+  ) as {
+    content: Array<{ text: string }>;
+    details: { patch: string };
+  };
+  expect(copiedResult.content[0]?.text).toBe("edit completed RESULT_TAIL");
+  expect(copiedResult.details.patch).toBe(
+    `--- a/src/oversized.ts\n+++ b/src/oversized.ts\n@@ -1 +1 @@\n-${"P".repeat(25_000)}\n+replacement\nPATCH_TAIL`,
+  );
 });
 
 test("message timestamps render with an exact-time tooltip", async ({
