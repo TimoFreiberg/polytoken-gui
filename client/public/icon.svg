@@ -5,8 +5,8 @@
   viewBox="0 0 512 512"
 >
   <!-- Pantoken: a periwinkle pan / magnifying glass / Q holding a gold
-       square-holed token. The deliberately ambiguous silhouette keeps the
-       original pan-token wordplay while giving the two ideas distinct parts. -->
+       square-holed token. The token leads; the quieter pan and warm ink
+       distinguish the mark from other luminous-blue developer-tool icons. -->
   <defs>
     <linearGradient
       id="background"
@@ -16,8 +16,8 @@
       y2="456"
       gradientUnits="userSpaceOnUse"
     >
-      <stop stop-color="#292e40" />
-      <stop offset="1" stop-color="#151720" />
+      <stop stop-color="#332b29" />
+      <stop offset="1" stop-color="#19181b" />
     </linearGradient>
     <linearGradient
       id="pan"
@@ -27,96 +27,70 @@
       y2="390"
       gradientUnits="userSpaceOnUse"
     >
-      <stop stop-color="#8796f3" />
-      <stop offset="1" stop-color="#5366cf" />
+      <stop stop-color="#828fe0" />
+      <stop offset="1" stop-color="#5562b9" />
     </linearGradient>
     <linearGradient
       id="token"
-      x1="169"
-      y1="161"
-      x2="298"
-      y2="306"
+      x1="153"
+      y1="149"
+      x2="316"
+      y2="320"
       gradientUnits="userSpaceOnUse"
     >
-      <stop stop-color="#f5c55b" />
-      <stop offset="0.52" stop-color="#dda22f" />
-      <stop offset="1" stop-color="#bb791a" />
+      <stop stop-color="#f7ca61" />
+      <stop offset="0.52" stop-color="#dfa431" />
+      <stop offset="1" stop-color="#bf7d1c" />
     </linearGradient>
-    <filter
-      id="mark-shadow"
-      x="34"
-      y="43"
-      width="465"
-      height="407"
-      filterUnits="userSpaceOnUse"
-    >
-      <feDropShadow
-        dx="0"
-        dy="10"
-        stdDeviation="10"
-        flood-color="#05060a"
-        flood-opacity="0.35"
-      />
-    </filter>
   </defs>
 
   <rect width="512" height="512" rx="115" fill="url(#background)" />
 
-  <g filter="url(#mark-shadow)">
-    <!-- The handle sits behind the bowl so the pan remains one clean silhouette. -->
-    <g transform="rotate(30 232 236)">
-      <rect x="350" y="207" width="154" height="58" rx="29" fill="url(#pan)" />
-      <circle cx="477" cy="236" r="10" fill="#181a24" />
-    </g>
-
-    <circle cx="232" cy="236" r="154" fill="url(#pan)" />
-    <circle cx="232" cy="236" r="117" fill="#181a24" />
-
-    <!-- A slightly hand-set token keeps the mark from feeling diagrammatic. -->
-    <rect
-      x="165"
-      y="169"
-      width="134"
-      height="134"
-      rx="34"
-      fill="url(#token)"
-      transform="rotate(-7 232 236)"
-    />
-    <rect
-      x="198"
-      y="202"
-      width="68"
-      height="68"
-      rx="15"
-      fill="#191b25"
-      transform="rotate(-7 232 236)"
-    />
-
-    <!-- Restrained material cue; broad enough to survive app-icon scaling. -->
-    <path
-      d="M143 151a120 120 0 0 1 108-34"
-      fill="none"
-      stroke="#c3caff"
-      stroke-width="10"
-      stroke-linecap="round"
-      opacity="0.46"
-    />
-    <path
-      d="M191 192a61 61 0 0 1 55-15"
-      fill="none"
-      stroke="#ffe4a0"
-      stroke-width="8"
-      stroke-linecap="round"
-      opacity="0.45"
-    />
+  <!-- The handle sits behind the bowl so the pan remains one clean silhouette. -->
+  <g transform="rotate(30 232 236)">
+    <rect x="350" y="207" width="154" height="58" rx="29" fill="url(#pan)" />
+    <circle cx="477" cy="236" r="11" fill="url(#token)" />
+    <circle cx="477" cy="236" r="5" fill="#1c1a1b" />
   </g>
 
+  <!-- A slimmer ring lets the gold token become the first read at switcher size. -->
+  <circle cx="232" cy="236" r="154" fill="url(#pan)" />
+  <circle cx="232" cy="236" r="123" fill="#1c1a1b" />
+
+  <rect
+    x="153"
+    y="157"
+    width="158"
+    height="158"
+    rx="40"
+    fill="url(#token)"
+    transform="rotate(-7 232 236)"
+  />
+  <rect
+    x="194"
+    y="198"
+    width="76"
+    height="76"
+    rx="17"
+    fill="#1c1a1b"
+    transform="rotate(-7 232 236)"
+  />
+
+  <!-- Broad, quiet highlights survive reduction without restoring the old gloss. -->
   <path
-    d="M58 42q198-35 396 0"
+    d="M134 144a131 131 0 0 1 117-31"
     fill="none"
-    stroke="#fff"
-    stroke-width="4"
+    stroke="#bcc4f6"
+    stroke-width="8"
     stroke-linecap="round"
-    opacity="0.09"
+    opacity="0.31"
+  />
+  <path
+    d="M182 184a74 74 0 0 1 64-17"
+    fill="none"
+    stroke="#ffe4a0"
+    stroke-width="9"
+    stroke-linecap="round"
+    opacity="0.45"
   />
 </svg>
