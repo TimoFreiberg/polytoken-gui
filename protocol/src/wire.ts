@@ -24,8 +24,9 @@ import type {
 // silently dropping unparseable messages. History: 1→2 = journal-first seed
 // (2026-07-03); 2→3 = the nine settings/context ClientMessage variants collapsed
 // into the single `sessionAction` envelope (a stale client's old-shape
-// setModel/compact/… now fail serde on the server).
-export const PROTOCOL_VERSION = 3;
+// setModel/compact/… now fail serde on the server); 3→4 = correlated directory
+// picker queries, preventing stale remote replies from replacing newer results.
+export const PROTOCOL_VERSION = 4;
 
 /** Pantoken-local settings (distinct from the daemon's global/session config). Persisted
  *  server-side in `pantoken-settings.json`, broadcast to every client, edited from the
@@ -70,6 +71,8 @@ export interface LoginEnvStatus {
  *  Files are omitted: you're choosing a working directory, so only child directories
  *  matter. The client sends {@link queryDir} and renders this as {@link dirListing}. */
 export interface DirListing {
+  /** Echoes the query request so clients can discard out-of-order remote replies. */
+  readonly requestId: number;
   /** The resolved absolute directory actually listed. Echoes the request so a client
    *  that has since navigated elsewhere can drop a stale response. */
   readonly path: string;
@@ -88,6 +91,8 @@ export interface DirListing {
  *  arrives. The client sends {@link statPath} (debounced) and renders the reply as a
  *  validation cue. */
 export interface PathStat {
+  /** Echoes the query request so clients can discard out-of-order remote replies. */
+  readonly requestId: number;
   /** The resolved absolute path that was checked. Echoes the request. */
   readonly path: string;
   /** True when `path` exists on the server's filesystem. */
@@ -113,6 +118,8 @@ export type ServerMessage =
       type: "hello";
       protocolVersion: number;
       serverId: string;
+      /** Human-readable identity of the machine whose filesystem this server exposes. */
+      serverLabel: string;
       dataDir: string;
       /** Full commit sha of the client bundle the server is SERVING (from
        *  dist/.pantoken-built-sha). A running client compares it against its own
@@ -469,11 +476,11 @@ export type ClientMessage =
   /** Browse a directory on the SERVER's filesystem for the new-session project picker.
    *  `path` omitted/empty -> the server's $HOME; `~`/relative segments are resolved
    *  server-side. The server responds with {@link dirListing}. */
-  | { type: "queryDir"; path?: string }
+  | { type: "queryDir"; path?: string; requestId: number }
   /** Check whether a typed path exists on the server — a quick stat for the new-session
    *  dir picker's inline validation hint (debounced). The server responds with
    *  {@link pathStat}. */
-  | { type: "statPath"; path: string }
+  | { type: "statPath"; path: string; requestId: number }
   /** Apply the staged desktop update now (the sidebar card's button). The server marks
    *  it applying and the shell's updater picks it up on its next /update/state poll —
    *  install the bundle, relaunch. No-op if nothing is staged. */

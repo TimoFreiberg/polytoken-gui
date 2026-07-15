@@ -12,11 +12,9 @@ use crate::session_driver::{
     SessionId, SessionListEntry,
 };
 
-// Must equal PROTOCOL_VERSION in protocol/src/wire.ts. 2→3: the nine
-// settings/context ClientMessage variants collapsed into `sessionAction`, so a
-// stale (v2) client's old-shape messages no longer deserialize — bump forces the
-// client's hello-mismatch guard to fire instead of silently dropping them.
-pub const PROTOCOL_VERSION: u32 = 3;
+// Must equal PROTOCOL_VERSION in protocol/src/wire.ts. 3→4 adds request correlation
+// to directory-picker queries so remote replies cannot replace newer results.
+pub const PROTOCOL_VERSION: u32 = 4;
 
 // ── PantokenSettings (server-side persisted settings) ──────────────────────
 
@@ -122,6 +120,9 @@ pub enum ServerMessage {
         protocol_version: u32,
         #[serde(rename = "serverId")]
         server_id: String,
+        #[serde(rename = "serverLabel")]
+        #[serde(default)]
+        server_label: String,
         #[serde(rename = "dataDir")]
         data_dir: String,
         #[serde(skip_serializing_if = "Option::is_none", default, rename = "buildSha")]
@@ -206,10 +207,14 @@ pub enum ServerMessage {
     DirListing {
         #[serde(flatten)]
         listing: DirListing,
+        #[serde(rename = "requestId")]
+        request_id: u64,
     },
     PathStat {
         #[serde(flatten)]
         stat: PathStat,
+        #[serde(rename = "requestId")]
+        request_id: u64,
     },
     ModelDefaults {
         defaults: ModelDefaults,
@@ -417,9 +422,13 @@ pub enum ClientMessage {
     QueryDir {
         #[serde(skip_serializing_if = "Option::is_none", default)]
         path: Option<String>,
+        #[serde(rename = "requestId")]
+        request_id: u64,
     },
     StatPath {
         path: String,
+        #[serde(rename = "requestId")]
+        request_id: u64,
     },
     TrustResponse {
         #[serde(rename = "requestId")]
@@ -931,6 +940,34 @@ mod tests {
                 assert_eq!(data_dir, "/data");
             }
             _ => panic!("expected Hello"),
+        }
+    }
+
+    #[test]
+    fn directory_queries_and_replies_echo_request_ids() {
+        let query: ClientMessage =
+            serde_json::from_str(r#"{"type":"queryDir","path":"~/src","requestId":17}"#).unwrap();
+        match query {
+            ClientMessage::QueryDir { path, request_id } => {
+                assert_eq!(path.as_deref(), Some("~/src"));
+                assert_eq!(request_id, 17);
+            }
+            _ => panic!("expected QueryDir"),
+        }
+
+        let reply: ServerMessage = serde_json::from_str(
+            r#"{"type":"dirListing","path":"/home/me/src","parent":"/home/me","entries":[],"requestId":17}"#,
+        )
+        .unwrap();
+        match reply {
+            ServerMessage::DirListing {
+                listing,
+                request_id,
+            } => {
+                assert_eq!(listing.path, "/home/me/src");
+                assert_eq!(request_id, 17);
+            }
+            _ => panic!("expected DirListing"),
         }
     }
 

@@ -108,26 +108,11 @@
   // Project chip → server-side directory browser (DirPicker). The path is chosen on the
   // server's filesystem because the agent runs server-side; a native picker would see the client.
   let pickingCwd = $state(false);
+  let projectControlRef = $state<HTMLButtonElement>();
   let mobileControlsOpen = $state(false);
   // Never carry an open picker across drafts (it would auto-pop on the next new session).
   $effect(() => {
     if (!drafting) pickingCwd = false;
-  });
-  // Distinct project dirs from existing sessions, most-recent first — surfaced as one-tap
-  // shortcuts atop the directory browser so a known project is a pick, not a full retype.
-  const recentCwds = $derived.by(() => {
-    const seen = new Set<string>();
-    const out: string[] = [];
-    for (const s of [...store.sessions].sort((a, b) =>
-      b.updatedAt.localeCompare(a.updatedAt),
-    )) {
-      const dir = s.worktree?.base ?? s.cwd;
-      if (dir && !seen.has(dir)) {
-        seen.add(dir);
-        out.push(dir);
-      }
-    }
-    return out;
   });
   const cwdBase = $derived.by(() => {
     const c = store.draft?.cwd?.replace(/\/+$/, "") ?? "";
@@ -1276,17 +1261,16 @@
     <div class="box-wrap">
       {#if pickingCwd && drafting && store.draft}
         <DirPicker
-          recents={recentCwds}
           current={store.draft.cwd}
           defaultCwd={store.defaultNewSessionCwd}
           onpick={(p) => {
             store.setDraftCwd(p);
             pickingCwd = false;
-            ta?.focus();
+            requestAnimationFrame(() => projectControlRef?.focus());
           }}
           onclose={() => {
             pickingCwd = false;
-            ta?.focus();
+            requestAnimationFrame(() => projectControlRef?.focus());
           }}
         />
       {/if}
@@ -1434,6 +1418,7 @@
         {#if drafting && store.draft}
           <!-- Model + effort are rebound to the draft via composerConfig. -->
           <button
+            bind:this={projectControlRef}
             class="chip"
             data-testid="draft-project-control"
             aria-haspopup="dialog"

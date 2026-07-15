@@ -5,14 +5,7 @@ test.beforeEach(async ({ page }) => {
   await gotoFresh(page);
 });
 
-/** Open the project chip's directory browser and choose `/Users/timo/src/<name>`. The
- *  picker opens at the active fixture session's cwd (`/Users/timo/src/pantoken` — a stable
- *  path regardless of the suite's $HOME), so we step up to `.../src` and into `name`.
- *
- *  The picker has no `..` row anymore (commit plktoqunywtt dropped it): "up" is the
- *  breadcrumb or Backspace-with-empty-filter. We use Backspace — the filter input is
- *  auto-focused on open, and Backspace navigates to the parent when the filter is empty,
- *  so this doesn't depend on breadcrumb DOM structure. */
+/** Open the server-path picker and choose `/Users/timo/src/<name>`. */
 async function chooseProjectDir(
   page: import("@playwright/test").Page,
   name: string,
@@ -20,17 +13,10 @@ async function chooseProjectDir(
   await page.getByTestId("draft-project-control").click();
   const picker = page.getByTestId("dir-picker");
   await expect(picker).toBeVisible();
-  // Wait for the picker's open-dir listing to land before navigating: `up()` reads
-  // `showing.parent`, which is undefined until the opening `queryDir` reply arrives,
-  // so a Backspace fired during that window is a no-op and the test hangs waiting for
-  // the target row. The breadcrumb renders from `showing.path`, so "src" proving it
-  // populated (every fixture cwd is /Users/timo/src/...) is the readiness signal.
-  await expect(picker.locator(".bc")).toContainText("src");
-  // The filter input is auto-focused on open; Backspace with it empty goes up one dir
-  // (/Users/timo/src/pantoken -> /Users/timo/src).
-  await picker.locator(".filter-input").press("Backspace");
-  await picker.locator(".row[data-i]", { hasText: name }).click(); // -> .../<name>
-  await picker.locator(".use").click();
+  const input = picker.getByLabel("Project directory path");
+  await input.fill(`/Users/timo/src/${name}/`);
+  await expect(picker.getByTestId("use-current-directory")).toBeVisible();
+  await picker.getByTestId("use-current-directory").click();
   await expect(picker).toBeHidden();
 }
 

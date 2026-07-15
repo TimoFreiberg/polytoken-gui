@@ -207,6 +207,32 @@ const SWAP_BUFFER_TTL_MS: u128 = 5000;
 /// The injectable file-manager spawn seam (see `SessionHub::open_in_file_manager`).
 type OpenInFileManager = Box<dyn Fn(&str) -> Result<(), String> + Send + Sync>;
 
+/// Stable, operator-readable identity for the machine whose filesystem the picker
+/// browses. Deployments may override it; the command fallback works on macOS and Linux
+/// without unsafe platform APIs. The final fallback is intentionally generic but useful.
+fn server_label() -> String {
+    if let Ok(label) = std::env::var("PANTOKEN_SERVER_LABEL") {
+        let label = label.trim();
+        if !label.is_empty() {
+            return label.to_string();
+        }
+    }
+    if matches!(
+        std::env::var("PANTOKEN_DRIVER").as_deref(),
+        Ok("mock" | "fake")
+    ) {
+        return "Pantoken test server".to_string();
+    }
+    std::process::Command::new("hostname")
+        .output()
+        .ok()
+        .filter(|output| output.status.success())
+        .and_then(|output| String::from_utf8(output.stdout).ok())
+        .map(|label| label.trim().to_string())
+        .filter(|label| !label.is_empty())
+        .unwrap_or_else(|| "Pantoken server".to_string())
+}
+
 /// The session hub. Owns journals, client map, running/attention tracking,
 /// and orchestrates the driver.
 pub struct SessionHub {
@@ -219,6 +245,7 @@ pub struct SessionHub {
     )]
     live_refresh_ms: u64,
     server_id: String,
+    server_label: String,
     data_dir: Option<PathBuf>,
     build_sha: String,
     delta_flush_ms: u64,
@@ -313,6 +340,7 @@ impl SessionHub {
             notify,
             live_refresh_ms,
             server_id,
+            server_label: server_label(),
             data_dir,
             build_sha,
             delta_flush_ms,
@@ -1218,6 +1246,7 @@ impl SessionHub {
         let _ = tx.try_send(ServerMessage::Hello {
             protocol_version: PROTOCOL_VERSION,
             server_id: self.server_id.clone(),
+            server_label: self.server_label.clone(),
             data_dir: self
                 .data_dir
                 .as_ref()
@@ -1951,30 +1980,41 @@ impl SessionHub {
                     }),
                 );
             }
-            ClientMessage::QueryDir { path } => {
+            ClientMessage::QueryDir { path, request_id } => {
                 let driver = self.driver.clone();
                 let path = path.clone();
+                let request_id = *request_id;
                 self.hub_ops.enqueue(
                     "query_dir",
                     Box::new(move |hub| {
                         Box::pin(async move {
                             let listing = driver.list_dir(path.clone()).await;
                             let h = hub.lock();
-                            h.send_to_client(client_key, ServerMessage::DirListing { listing });
+                            h.send_to_client(
+                                client_key,
+                                ServerMessage::DirListing {
+                                    listing,
+                                    request_id,
+                                },
+                            );
                         })
                     }),
                 );
             }
-            ClientMessage::StatPath { path } => {
+            ClientMessage::StatPath { path, request_id } => {
                 let driver = self.driver.clone();
                 let path = path.clone();
+                let request_id = *request_id;
                 self.hub_ops.enqueue(
                     "stat_path",
                     Box::new(move |hub| {
                         Box::pin(async move {
                             let stat = driver.stat_path(path.clone()).await;
                             let h = hub.lock();
-                            h.send_to_client(client_key, ServerMessage::PathStat { stat });
+                            h.send_to_client(
+                                client_key,
+                                ServerMessage::PathStat { stat, request_id },
+                            );
                         })
                     }),
                 );

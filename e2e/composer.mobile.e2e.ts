@@ -98,7 +98,7 @@ test("mobile: new-session controls stay tappable inside the wrapped status row",
   await project.click();
   await expect(project).toHaveAttribute("aria-expanded", "true");
   const picker = page.getByRole("dialog", { name: "Choose project directory" });
-  const filter = picker.getByRole("textbox", { name: "Filter subdirectories" });
+  const filter = picker.getByRole("textbox", { name: "Project directory path" });
   await expect(picker).toBeVisible();
   await expect(filter).toBeVisible();
   for (const [name, landmark] of [
@@ -117,8 +117,7 @@ test("mobile: new-session controls stay tappable inside the wrapped status row",
   await filter.fill("pan");
   await expect(filter).toHaveValue("pan");
   await page.keyboard.press("Escape");
-  await expect(filter).toHaveValue("");
-  await page.keyboard.press("Escape");
+  await expect(picker).toBeHidden();
   await expect(project).toHaveAttribute("aria-expanded", "false");
   await worktree.click();
   await expect(worktree).toHaveAttribute("aria-pressed", "true");

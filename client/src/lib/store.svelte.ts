@@ -88,6 +88,7 @@ import {
   send,
   setResumeProvider,
 } from "./ws.svelte.js";
+import { applyCorrelatedResponse } from "./correlated-response.js";
 
 /** Which surface a notice belongs to. Sidebar notices render at the top of the
  * sidebar (session-list operations); chat notices render in-flow above the
@@ -129,6 +130,8 @@ class PantokenStore {
    *  seed, by an error, or by navigating elsewhere. */
   openingSession = $state<SessionListEntry | null>(null);
   serverId = $state<string | null>(loadLastServerId());
+  /** Human-readable identity of the machine whose filesystem/project paths we browse. */
+  serverLabel = $state("Pantoken server");
   /** The server's data directory (absolute path), broadcast in `hello`. Shown in Settings
    *  with copy + reveal-in-Finder actions. Empty string until hello arrives (or when the
    *  server didn't provide one — older/mock servers). */
@@ -260,6 +263,8 @@ class PantokenStore {
   // Inline path validation hint for the dir picker — the most recent stat result for a
   // typed path. Null when no stat is in flight or the path has been cleared.
   pathStat = $state<PathStat | null>(null);
+  private dirRequestId = 0;
+  private statRequestId = 0;
   // Settings panel: the agent's global model defaults + favorites. Server-authoritative,
   // delivered like `models`.
   modelDefaults = $state<ModelDefaults>({ favorites: [] });
@@ -377,9 +382,7 @@ class PantokenStore {
   }
   get rightSidebarOverlay(): boolean {
     return (
-      !this.phoneLayout &&
-      this.desktopContextOverlay &&
-      !this.rightSidebarFits
+      !this.phoneLayout && this.desktopContextOverlay && !this.rightSidebarFits
     );
   }
   // Sidebar filter: false = active only (hide archived + sessions untouched >7d),
@@ -1020,6 +1023,7 @@ class PantokenStore {
           return;
         }
         this.serverId = msg.serverId;
+        this.serverLabel = msg.serverLabel;
         this.dataDir = msg.dataDir ?? "";
         persistLastServerId(msg.serverId);
         void this.hydrateOutbox(msg.serverId);
@@ -1218,20 +1222,36 @@ class PantokenStore {
         };
         break;
       case "dirListing":
-        this.dirListing = {
-          path: msg.path,
-          parent: msg.parent,
-          entries: [...msg.entries],
-          error: msg.error,
-        };
+        const listing = applyCorrelatedResponse(
+          this.dirRequestId,
+          this.dirListing,
+          msg.requestId,
+          {
+            requestId: msg.requestId,
+            path: msg.path,
+            parent: msg.parent,
+            entries: [...msg.entries],
+            error: msg.error,
+          },
+        );
+        if (!listing.accepted) break;
+        this.dirListing = listing.value;
         this.dirLoading = false;
         break;
       case "pathStat":
-        this.pathStat = {
-          path: msg.path,
-          exists: msg.exists,
-          isDir: msg.isDir,
-        };
+        const stat = applyCorrelatedResponse(
+          this.statRequestId,
+          this.pathStat,
+          msg.requestId,
+          {
+            requestId: msg.requestId,
+            path: msg.path,
+            exists: msg.exists,
+            isDir: msg.isDir,
+          },
+        );
+        if (!stat.accepted) break;
+        this.pathStat = stat.value;
         break;
       case "editorPrefill":
         // A branch landed on a user prompt — its text comes back to re-edit. Per-client
@@ -1811,16 +1831,28 @@ class PantokenStore {
   }
   /** Browse a directory on the SERVER's filesystem for the new-session project picker.
    *  Empty/omitted -> the server's $HOME. The reply arrives as a `dirListing` message
-   *  (it echoes the resolved `path` so the picker can drop a stale response). */
+   *  (it echoes a request ID so the picker can drop a stale response). */
   queryDir(path?: string): void {
     this.dirLoading = true;
-    send({ type: "queryDir", path });
+    this.dirListing = null;
+    const requestId = ++this.dirRequestId;
+    send({ type: "queryDir", path, requestId });
+  }
+  /** Invalidate replies for the previous text immediately, before input debounce. */
+  invalidateDirPickerQueries(): void {
+    this.dirRequestId++;
+    this.statRequestId++;
+    this.dirLoading = true;
+    this.dirListing = null;
+    this.pathStat = null;
   }
   /** Quick existence + type check for a path typed into the new-session dir picker.
    *  The server responds with {@link pathStat} — the picker reads it for inline
    *  validation. Debounced by the caller (the picker), not here. */
   statPath(path: string): void {
-    send({ type: "statPath", path });
+    const requestId = ++this.statRequestId;
+    this.pathStat = null;
+    send({ type: "statPath", path, requestId });
   }
   /** Rewind the session to a prior tree entry (the daemon's /rewind — destructive:
    *  drops the target entry and everything after). The server re-seeds every

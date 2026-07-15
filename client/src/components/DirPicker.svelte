@@ -1,624 +1,538 @@
 <script lang="ts">
-  import { onMount } from "svelte";
+  import { onDestroy, onMount, untrack } from "svelte";
+  import {
+    completeDirectoryInput,
+    rankDirectoryMatches,
+    splitDirectoryInput,
+  } from "../lib/directory-picker.js";
+  import { overlayHistory } from "../lib/overlay-history.js";
   import { store } from "../lib/store.svelte.js";
   import { scrollIndexIntoView } from "../lib/scroll-into-view.js";
 
-  // A server-side directory browser for the new-session project picker. The server
-  // resolves + reads paths on ITS filesystem (the agent runs server-side), so this browses the
-  // server regardless of which device the client is on — a native browser file picker
-  // would see the wrong machine and never yield a real path. Tap a folder to descend,
-  // the breadcrumb to jump up, "Use this folder" to pick the one you're in.
-  //
-  // An always-visible filter input lets you fuzzy-match subdirectories: type `pi` to
-  // narrow the list to entries whose names contain those characters in order. With a
-  // filter, Enter (or Tab, shell-style autocomplete) descends into the selected match.
-  // With the filter empty, Enter commits the directory you're standing in (same as
-  // "Use this folder"). Type a path starting with / or ~ and Enter jumps there directly
-  // (the old "go to path" escape hatch, now always available). Backspace when the filter
-  // is empty goes up one directory (there's no ".." row — use Backspace/← or the breadcrumb).
   let {
-    recents,
     current,
     defaultCwd,
     onpick,
     onclose,
   }: {
-    recents: readonly string[];
-    /** The draft's current cwd (where the picker opens), or "" for home. */
     current: string;
-    /** The server's $HOME (the "home" shortcut + the fallback open path). */
     defaultCwd: string;
     onpick: (path: string) => void;
     onclose: () => void;
   } = $props();
 
-  // The server echoes the resolved path, so we just render whatever listing it last sent
-  // (only this picker ever drives `queryDir`). Replies are a local readdir away, so the
-  // brief moment the prior directory shows between request and reply isn't worth gating on.
+  let inputRef = $state<HTMLInputElement>();
+  let dialogRef = $state<HTMLDivElement>();
+  let pathText = $state(
+    untrack(() => `${(current.trim() || defaultCwd).replace(/\/+$/, "")}/`),
+  );
+  let selected = $state(0);
+  let handledClose = false;
+  const pathParts = $derived(splitDirectoryInput(pathText));
   const showing = $derived(store.dirListing);
-  const entries = $derived(showing?.entries ?? []);
-
-  // Filter text — always visible, always typed into. Empty = show all subdirs.
-  let filterText = $state("");
-  let filterRef = $state<HTMLInputElement>();
-  // Keyboard selection index over the filtered subdirectory rows.
-  let sel = $state(0);
-  let lastPath = $state("");
-
-  // Path mode: input starts with / or ~ → Enter navigates to the raw path (server-resolved).
-  const isPathMode = $derived(
-    filterText.trim().startsWith("/") || filterText.trim().startsWith("~"),
+  const matches = $derived(rankDirectoryMatches(showing?.entries ?? [], pathParts.leaf));
+  const canUse = $derived(
+    pathParts.viewingDirectory && !!showing && !showing.error && !store.dirLoading,
   );
+  const optionCount = $derived(matches.length + (canUse ? 1 : 0));
+  const matchOffset = $derived(canUse ? 1 : 0);
 
-  // Fuzzy-filtered subdirectory entries. In path mode we show everything (the user is
-  // typing a path, not filtering); otherwise we filter by subsequence match.
-  const filtered = $derived.by(() => {
-    const q = filterText.trim();
-    if (!q || isPathMode) return entries;
-    return entries.filter((name) => fuzzyMatch(q, name));
-  });
-
-  const visibleCount = $derived(filtered.length);
-
-  // Reset filter + selection whenever the directory changes.
   $effect(() => {
-    if (showing && showing.path !== lastPath) {
-      lastPath = showing.path;
-      filterText = "";
-      sel = 0;
-    }
+    pathText;
+    selected = 0;
   });
 
-  // Auto-select the top filtered match when the user starts typing.
   $effect(() => {
-    if (filterText.trim() && !isPathMode) {
-      sel = 0;
-    }
+    if (optionCount === 0) selected = 0;
+    else if (selected >= optionCount) selected = optionCount - 1;
   });
 
-  // Clamp selection to visible rows.
+  let queryTimer: ReturnType<typeof setTimeout>;
   $effect(() => {
-    if (visibleCount > 0 && sel >= visibleCount) sel = visibleCount - 1;
+    const text = pathText;
+    const browsePath = pathParts.browsePath;
+    // The previous listing belongs to a different editable path. Hide it immediately;
+    // otherwise a fast second Enter could choose the old directory during debounce.
+    store.invalidateDirPickerQueries();
+    clearTimeout(queryTimer);
+    queryTimer = setTimeout(() => {
+      store.queryDir(browsePath);
+      if (text.trim()) store.statPath(text);
+    }, 90);
+    return () => clearTimeout(queryTimer);
   });
 
-  // Debounced path-existence check for the inline validation hint (path mode only).
-  let statTimer: ReturnType<typeof setTimeout>;
-  $effect(() => {
-    const q = filterText.trim();
-    if (isPathMode && q) {
-      clearTimeout(statTimer);
-      statTimer = setTimeout(() => store.statPath(q), 300);
-    }
-    return () => clearTimeout(statTimer);
+  onMount(() => {
+    requestAnimationFrame(() => {
+      inputRef?.focus();
+      inputRef?.setSelectionRange(pathText.length, pathText.length);
+    });
+    overlayHistory.opened("directory-picker", () => {
+      handledClose = true;
+      onclose();
+    });
   });
 
-  function refocus() {
-    // requestAnimationFrame is more reliable than queueMicrotask: it runs after
-    // the DOM has settled from any pending $state-driven re-renders.
-    requestAnimationFrame(() => filterRef?.focus());
-  }
-
-  onMount(() => refocus());
-
-  function go(path: string) {
-    store.queryDir(path);
-    refocus();
-  }
-
-  function descend(name: string) {
-    if (!showing) return;
-    const base = showing.path === "/" ? "" : showing.path;
-    go(`${base}/${name}`);
-    refocus();
-  }
-
-  function up() {
-    if (showing?.parent) go(showing.parent);
-  }
-
-  function commit() {
-    if (showing) onpick(showing.path);
-  }
-
-  // Breadcrumb: cumulative paths for each segment of the current dir.
-  const crumbs = $derived.by(() => {
-    const p = showing?.path ?? "";
-    if (!p) return [] as { label: string; path: string }[];
-    const segs = p.split("/").filter(Boolean);
-    const out = [{ label: "/", path: "/" }];
-    let acc = "";
-    for (const s of segs) {
-      acc += `/${s}`;
-      out.push({ label: s, path: acc });
-    }
-    return out;
+  onDestroy(() => {
+    if (!handledClose) overlayHistory.closed("directory-picker");
   });
 
-  const baseName = $derived.by(() => {
-    const p = showing?.path ?? "";
-    return p === "/" ? "/" : (p.split("/").pop() ?? p);
+  function closeFromUi(): void {
+    handledClose = true;
+    overlayHistory.closed("directory-picker");
+    onclose();
+  }
+
+  function useCurrent(): void {
+    if (!canUse || !showing) return;
+    handledClose = true;
+    overlayHistory.closed("directory-picker");
+    onpick(showing.path);
+  }
+
+  function complete(name: string): void {
+    pathText = completeDirectoryInput(pathText, name);
+    selected = 0;
+    requestAnimationFrame(() => {
+      inputRef?.focus();
+      inputRef?.setSelectionRange(pathText.length, pathText.length);
+    });
+  }
+
+  function activateSelected(): void {
+    if (canUse && selected === 0) {
+      useCurrent();
+      return;
+    }
+    const match = matches[selected - matchOffset];
+    if (match) complete(match.name);
+  }
+
+  function move(delta: number): void {
+    if (optionCount) selected = (selected + delta + optionCount) % optionCount;
+  }
+
+  function onInputKeydown(event: KeyboardEvent): void {
+    if (event.key === "Escape") {
+      event.preventDefault();
+      event.stopPropagation();
+      closeFromUi();
+      return;
+    }
+    if (event.key === "ArrowDown" || (event.ctrlKey && event.key === "n")) {
+      event.preventDefault();
+      move(1);
+      return;
+    }
+    if (event.key === "ArrowUp" || (event.ctrlKey && event.key === "p")) {
+      event.preventDefault();
+      move(-1);
+      return;
+    }
+    if (event.key === "Enter") {
+      event.preventDefault();
+      activateSelected();
+      return;
+    }
+    if (event.key === "Tab" && !event.shiftKey) {
+      event.preventDefault();
+      const match = matches[selected - matchOffset];
+      if (match) complete(match.name);
+      return;
+    }
+    if (
+      event.key === "ArrowRight" &&
+      inputRef?.selectionStart === pathText.length &&
+      inputRef.selectionEnd === pathText.length
+    ) {
+      const match = matches[selected - matchOffset];
+      if (match) {
+        event.preventDefault();
+        complete(match.name);
+      }
+    }
+    // Backspace (including Option+Backspace), editing shortcuts, and left-arrow movement
+    // deliberately remain native input behavior.
+  }
+
+  function onDialogKeydown(event: KeyboardEvent): void {
+    if (event.key === "Escape") {
+      event.preventDefault();
+      event.stopPropagation();
+      closeFromUi();
+      return;
+    }
+    if (event.key !== "Tab") return;
+    const focusable = [
+      ...(dialogRef?.querySelectorAll<HTMLElement>(
+        'button:not([disabled]), input:not([disabled]), [tabindex="0"]',
+      ) ?? []),
+    ].filter((element) => element.offsetParent !== null);
+    if (!focusable.length) return;
+    const first = focusable[0];
+    const last = focusable[focusable.length - 1];
+    if (event.shiftKey && document.activeElement === first) {
+      event.preventDefault();
+      last?.focus();
+    } else if (!event.shiftKey && document.activeElement === last) {
+      event.preventDefault();
+      first?.focus();
+    }
+  }
+
+  const pathState = $derived.by(() => {
+    if (!pathText.trim() || store.dirLoading) return null;
+    const stat = store.pathStat;
+    if (!stat) return null;
+    if (stat.exists && !stat.isDir) return "That path is not a directory.";
+    if (!stat.exists && !matches.length && !pathParts.viewingDirectory) {
+      return "No matching directory.";
+    }
+    return null;
   });
-
-  // Recents worth showing as shortcuts: skip the dir we're already viewing.
-  const recentShortcuts = $derived(
-    recents.filter((r) => r !== showing?.path).slice(0, 6),
-  );
-
-  function baseOf(p: string): string {
-    return p === "/" ? "/" : (p.split("/").pop() ?? p);
-  }
-
-  /** Subsequence match: every char of `query` must appear in order in `target`,
-   *  case-insensitive. The standard fuzzy-finder predicate. */
-  function fuzzyMatch(query: string, target: string): boolean {
-    const q = query.toLowerCase();
-    const t = target.toLowerCase();
-    let qi = 0;
-    for (let ti = 0; ti < t.length && qi < q.length; ti++) {
-      if (t[ti] === q[qi]) qi++;
-    }
-    return qi === q.length;
-  }
-
-  function onkeydown(e: KeyboardEvent) {
-    // The filter input's own handler stops propagation for navigation keys so they
-    // don't bubble here. Printable characters already land in the input via normal
-    // typing — the picker div doesn't need its own keydown handler anymore, but we
-    // keep a catch-all so global keys (like the / shortcut or the old edit-mode nav)
-    // don't fire while the picker is open.
-    if (e.key === "Escape") {
-      e.preventDefault();
-      e.stopPropagation();
-      if (filterText) {
-        filterText = "";
-        refocus();
-      } else {
-        onclose();
-      }
-      return;
-    }
-    if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
-      e.preventDefault();
-      commit();
-      return;
-    }
-    if (e.key === "/") {
-      // Typing / focuses the filter input so the user can start a path. Don't
-      // prevent default — let the / land in the input as a normal character.
-      refocus();
-    }
-  }
-
-  function onInputKeydown(e: KeyboardEvent) {
-    if (e.key === "Escape") {
-      e.preventDefault();
-      e.stopPropagation();
-      if (filterText) {
-        filterText = "";
-      } else {
-        onclose();
-      }
-      return;
-    }
-    if (e.key === "ArrowDown" || (e.ctrlKey && e.key === "n")) {
-      e.preventDefault();
-      if (visibleCount) sel = (sel + 1) % visibleCount;
-      return;
-    }
-    if (e.key === "ArrowUp" || (e.ctrlKey && e.key === "p")) {
-      e.preventDefault();
-      if (visibleCount) sel = (sel - 1 + visibleCount) % visibleCount;
-      return;
-    }
-    if (e.key === "Enter") {
-      e.preventDefault();
-      if (isPathMode) {
-        // Path mode: navigate to the typed path directly.
-        go(filterText.trim());
-      } else if (!filterText.trim()) {
-        // No filter: Enter commits the directory we're standing in.
-        commit();
-      } else {
-        // Filter mode: descend into the selected match.
-        const name = filtered[sel];
-        if (name) descend(name);
-      }
-      return;
-    }
-    if (e.key === "Tab") {
-      // Shell-style autocomplete: descend into the highlighted entry. preventDefault
-      // keeps Tab from moving focus out of the filter input.
-      e.preventDefault();
-      if (!isPathMode) {
-        const name = filtered[sel];
-        if (name) descend(name);
-      }
-      return;
-    }
-    if (e.key === "ArrowRight") {
-      if (!isPathMode && filtered.length > 0) {
-        e.preventDefault();
-        const name = filtered[sel];
-        if (name) descend(name);
-      }
-      return;
-    }
-    if (e.key === "ArrowLeft" || e.key === "Backspace") {
-      if (!filterText) {
-        e.preventDefault();
-        up();
-      }
-      // With text: let the browser handle cursor movement / deletion normally.
-      return;
-    }
-    if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
-      e.preventDefault();
-      commit();
-      return;
-    }
-  }
-
-  // (Keeping the keyboard-selected row in view is handled by use:scrollIndexIntoView on
-  // the picker container below.)
-
-  // Open at the draft's current dir (or home), and grab the keyboard.
-  $effect(() => {
-    go(current.trim() || defaultCwd);
-  });
-
-  // Path validation hint derived from the server's stat response.
-  const statHint = $derived.by(() => {
-    const ps = store.pathStat;
-    if (!ps || !isPathMode) return null;
-    // Only show when the query approximately matches (the server resolves ~/relative
-    // paths, so we can't do a direct string compare — use endsWith as a heuristic).
-    const q = filterText.trim();
-    if (!q) return null;
-    if (ps.exists && ps.isDir) return "ok" as const;
-    if (ps.exists && !ps.isDir) return "file" as const;
-    return "missing" as const;
-  });
-
-  function hintText(h: "ok" | "file" | "missing"): string {
-    if (h === "ok") return "✓ directory";
-    if (h === "file") return "✗ not a directory";
-    return "✗ not found";
-  }
 </script>
 
 <div
-  class="picker"
-  role="dialog"
-  aria-label="Choose project directory"
-  data-testid="dir-picker"
-  tabindex="-1"
-  use:scrollIndexIntoView={sel}
-  {onkeydown}
+  class="scrim"
+  data-testid="dir-picker-scrim"
+  role="presentation"
+  onmousedown={(event) => {
+    if (event.target === event.currentTarget) closeFromUi();
+  }}
 >
-  <!-- Path breadcrumb — clickable segments to jump to ancestors. -->
-  <div class="bc" aria-label="Current path">
-    {#each crumbs as c (c.path)}
-      <button
-        class="crumb"
-        title={`Go to ${c.path}`}
-        onmousedown={(e) => {
-          e.preventDefault();
-          go(c.path);
-        }}>{c.label}</button
-      >{#if c.path !== "/"}<span class="crumb-sep" aria-hidden="true">/</span>{/if}
-    {/each}
-    <button
-      class="home-btn"
-      title={`Go to home (${defaultCwd})`}
-      onmousedown={(e) => {
-        e.preventDefault();
-        go(defaultCwd);
-      }}>⌂ home</button
-    >
-  </div>
+  <div
+    class="picker"
+    role="dialog"
+    aria-modal="true"
+    aria-labelledby="dir-picker-title"
+    data-testid="dir-picker"
+    tabindex="-1"
+    bind:this={dialogRef}
+    onkeydown={onDialogKeydown}
+  >
+    <header>
+      <button class="back" aria-label="Close project picker" title="Close project picker (Esc)" onclick={closeFromUi}>
+        <span aria-hidden="true">‹</span><span>Back</span>
+      </button>
+      <div class="picker-heading">
+        <h2 id="dir-picker-title">Choose project directory</h2>
+        <div class="server" data-testid="dir-picker-server">
+          <svg viewBox="0 0 20 20" aria-hidden="true"><rect x="3" y="3" width="14" height="5" rx="1.5"/><rect x="3" y="12" width="14" height="5" rx="1.5"/><path d="M6 5.5h.01M6 14.5h.01"/></svg>
+          <span>{store.serverLabel}</span>
+        </div>
+      </div>
+      <button class="close" aria-label="Close project picker" title="Close project picker (Esc)" onclick={closeFromUi}>×</button>
+    </header>
 
-  <!-- Always-visible filter input. Type to narrow subdirs; start with / or ~ to jump to
-       a path. Backspace when empty goes up. -->
-  <div class="filter-row">
-    <input
-      class="filter-input"
-      type="text"
-      bind:value={filterText}
-      bind:this={filterRef}
-      placeholder={isPathMode ? "Type a path, Enter to go…" : "Filter subdirectories…"}
-      spellcheck="false"
-      autocapitalize="off"
-      autocorrect="off"
-      aria-label={isPathMode ? "Go to path" : "Filter subdirectories"}
-      title={isPathMode
-        ? "Type or paste a path, then Enter to go (Esc to clear)"
-        : "Filter subdirs — Tab/→ enters the match, Enter (empty filter) uses this folder, Backspace goes up, Esc clears"}
-      onkeydown={onInputKeydown}
-    />
-    {#if statHint}
-      <span
-        class="stat-hint"
-        class:stat-ok={statHint === "ok"}
-        class:stat-err={statHint !== "ok"}
-        aria-live="polite"
-      >
-        {hintText(statHint)}
-      </span>
-    {/if}
-  </div>
-
-  {#if recentShortcuts.length}
-    <div class="recents">
-      <span class="recents-label">recent</span>
-      {#each recentShortcuts as r (r)}
-        <button
-          class="recent-chip"
-          title={`Use ${r}`}
-          onmousedown={(e) => {
-            e.preventDefault();
-            onpick(r);
-          }}>▸ {baseOf(r)}</button
-        >
-      {/each}
+    <div class="path-row">
+      <input
+        bind:this={inputRef}
+        bind:value={pathText}
+        class="path-input"
+        aria-label="Project directory path"
+        aria-controls="directory-results"
+        aria-activedescendant={optionCount ? `dir-option-${selected}` : undefined}
+        autocomplete="off"
+        autocapitalize="off"
+        autocorrect="off"
+        spellcheck="false"
+        onkeydown={onInputKeydown}
+      />
     </div>
-  {/if}
 
-  <div class="list" role="listbox" aria-label="Subdirectories">
-    {#if store.dirLoading && !showing}
-      <div class="hint">Loading…</div>
-    {:else if showing?.error}
-      <div class="hint err">Can't read this folder. Go up or type a different path.</div>
-    {:else if showing}
-      {#each filtered as name, i (name)}
+    <div
+      id="directory-results"
+      class="results"
+      role="listbox"
+      aria-label="Directory suggestions"
+      use:scrollIndexIntoView={selected}
+    >
+      {#if canUse}
         <button
-          class="row"
-          class:sel={i === sel}
-          data-i={i}
+          id="dir-option-0"
+          class="result use"
+          class:selected={selected === 0}
+          data-i="0"
+          data-testid="use-current-directory"
           role="option"
-          aria-selected={i === sel}
-          title={`Open ${name}/ (Tab / →)`}
-          onmousedown={(e) => {
-            e.preventDefault();
-            descend(name);
-          }}
-          onmouseenter={() => (sel = i)}
+          aria-selected={selected === 0}
+          title={`Use ${showing?.path ?? pathText} as the project directory (Enter)`}
+          onmouseenter={() => (selected = 0)}
+          onclick={useCurrent}
         >
-          <span class="ico" aria-hidden="true">▸</span>
-          <span class="name">{name}</span>
+          <span class="arrow" aria-hidden="true">↗</span>
+          <span>Use this directory</span>
+        </button>
+      {/if}
+
+      {#each matches as match, index (match.name)}
+        {@const optionIndex = index + matchOffset}
+        <button
+          id={`dir-option-${optionIndex}`}
+          class="result directory"
+          class:selected={selected === optionIndex}
+          data-i={optionIndex}
+          role="option"
+          aria-selected={selected === optionIndex}
+          title={`Open ${match.name}/ (Enter or Tab)`}
+          onmouseenter={() => (selected = optionIndex)}
+          onclick={() => complete(match.name)}
+        >
+          <svg class="folder" viewBox="0 0 20 20" aria-hidden="true"><path d="M2.75 6.25A2.25 2.25 0 0 1 5 4h3l1.5 1.75H15A2.25 2.25 0 0 1 17.25 8v6A2.25 2.25 0 0 1 15 16.25H5A2.25 2.25 0 0 1 2.75 14z"/></svg>
+          <span class="name">{match.name}</span>
         </button>
       {/each}
-      {#if !filtered.length && !showing.error && !isPathMode}
-        <div class="hint">No matching subdirectories.</div>
-      {/if}
-    {/if}
-  </div>
 
-  <div class="foot">
-    <button
-      class="use"
-      title="Use this folder for the new session (↵ with empty filter, or ⌘/Ctrl+↵)"
-      onmousedown={(e) => {
-        e.preventDefault();
-        commit();
-      }}
-    >
-      Use “{baseName}”
-    </button>
-    <button
-      class="cancel"
-      title="Close without changing the project (Esc)"
-      onmousedown={(e) => {
-        e.preventDefault();
-        onclose();
-      }}
-    >
-      Cancel
-    </button>
+      {#if store.dirLoading}
+        <div class="message" role="status">Loading directories…</div>
+      {:else if showing?.error}
+        <div class="message error" role="alert">This directory can’t be read. Check the path or its permissions.</div>
+      {:else if pathState}
+        <div class="message error" role="status">{pathState}</div>
+      {:else if !optionCount}
+        <div class="message">No matching directories.</div>
+      {/if}
+    </div>
+
+    <footer aria-hidden="true">
+      <span><kbd>↑↓</kbd> select</span>
+      <span><kbd>Enter</kbd> open or choose</span>
+      <span><kbd>Tab</kbd> complete</span>
+      <span><kbd>Esc</kbd> close</span>
+    </footer>
   </div>
 </div>
 
 <style>
+  .scrim {
+    position: fixed;
+    inset: 0;
+    z-index: 120;
+    display: grid;
+    place-items: center;
+    padding: 24px;
+    background: color-mix(in srgb, var(--backdrop, #111) 52%, transparent);
+  }
   .picker {
-    position: absolute;
-    bottom: calc(100% + 8px);
-    left: 0;
-    right: 0;
-    z-index: 50;
+    width: min(640px, calc(100vw - 48px));
+    max-height: min(620px, calc(100dvh - 48px));
     display: flex;
     flex-direction: column;
-    max-height: min(60vh, 420px);
+    overflow: hidden;
+    color: var(--text);
     background: var(--surface);
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius-lg, 14px);
     box-shadow: var(--shadow-card);
-    outline: none;
   }
-  .bc {
-    display: flex;
-    align-items: center;
-    flex-wrap: wrap;
-    gap: 1px;
-    padding: 8px 10px;
+  header {
+    display: grid;
+    grid-template-columns: 44px 1fr 44px;
+    align-items: start;
     border-bottom: 1px solid var(--border);
   }
-  .crumb {
-    background: transparent;
-    border: none;
-    border-radius: var(--radius-xs);
-    padding: 2px 4px;
-    font-family: var(--font-mono);
-    font-size: 12px;
-    color: var(--text-muted);
-    cursor: pointer;
-  }
-  .crumb:hover {
-    color: var(--text);
-    background: var(--surface-sunken);
-  }
-  .crumb-sep {
-    color: var(--text-faint);
-    font-size: 11px;
-  }
-  .home-btn {
-    margin-left: auto;
-    background: transparent;
-    border: 1px solid var(--border);
-    border-radius: 999px;
-    padding: 2px 9px;
-    font-size: 11.5px;
-    color: var(--text-muted);
-    cursor: pointer;
-  }
-  .home-btn:hover {
-    color: var(--text);
-    border-color: var(--border-strong);
-  }
-  .filter-row {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    padding: 8px 10px;
-    border-bottom: 1px solid var(--border);
-  }
-  .filter-input {
-    flex: 1;
+  .picker-heading {
+    grid-column: 2;
     min-width: 0;
-    font-size: 12.5px;
-    font-family: var(--font-mono);
-    color: var(--text);
-    background: var(--surface-sunken);
-    border: 1px solid var(--border);
-    border-radius: 999px;
-    padding: 4px 12px;
-    outline: none;
+    padding: 15px 8px 13px;
   }
-  .filter-input:focus {
-    border-color: var(--accent);
-  }
-  .stat-hint {
-    flex-shrink: 0;
-    font-size: 11px;
-    font-family: var(--font-mono);
-    white-space: nowrap;
-  }
-  .stat-ok {
-    color: var(--success, #2da44e);
-  }
-  .stat-err {
-    color: var(--danger, #cf222e);
-  }
-  .recents {
-    display: flex;
-    align-items: center;
-    flex-wrap: wrap;
-    gap: 5px;
-    padding: 7px 10px;
-    border-bottom: 1px solid var(--border);
-  }
-  .recents-label {
-    font-size: 10.5px;
-    text-transform: uppercase;
-    letter-spacing: 0.04em;
-    color: var(--text-faint);
-  }
-  .recent-chip {
-    background: var(--surface-sunken);
-    border: 1px solid var(--border);
-    border-radius: 999px;
-    padding: 3px 9px;
-    font-size: 12px;
-    font-family: var(--font-mono);
-    color: var(--text-muted);
-    cursor: pointer;
-  }
-  .recent-chip:hover {
-    color: var(--text);
-    border-color: var(--border-strong);
-  }
-  .list {
-    flex: 1;
-    overflow-y: auto;
-    padding: 4px;
-  }
-  .row {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    width: 100%;
-    text-align: left;
-    background: transparent;
-    border: none;
-    border-radius: var(--radius-sm);
-    padding: 7px 9px;
-    cursor: pointer;
-    color: var(--text);
-  }
-  .row.sel {
-    background: color-mix(in srgb, var(--accent) 14%, transparent);
-  }
-  @media (pointer: coarse) {
-    .row {
-      min-height: 44px;
-    }
-  }
-  .ico {
-    flex-shrink: 0;
-    width: 14px;
-    font-size: 11px;
-    color: var(--text-faint);
+  h2 {
+    margin: 0 0 7px;
+    font-size: 15px;
+    font-weight: 600;
     text-align: center;
   }
-  .name {
-    font-family: var(--font-mono);
-    font-size: 13px;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-  .hint {
-    padding: 12px 10px;
-    font-size: 12.5px;
-    color: var(--text-faint);
-  }
-  .hint.err {
-    color: var(--danger, var(--text-muted));
-  }
-  .foot {
+  .server {
     display: flex;
-    gap: 8px;
+    justify-content: center;
     align-items: center;
-    padding: 8px 10px;
-    border-top: 1px solid var(--border);
+    gap: 7px;
+    min-width: 0;
+    color: var(--text-muted);
+    font-size: 12.5px;
   }
-  .use {
-    flex: 1;
-    background: var(--highlight);
-    color: var(--highlight-text);
-    border: 1px solid var(--highlight);
-    border-radius: var(--radius-sm);
-    padding: 7px 12px;
-    font-size: 13px;
-    font-weight: 500;
-    cursor: pointer;
+  .server svg {
+    width: 16px;
+    height: 16px;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 1.5;
+  }
+  .server span {
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
   }
-  .use:hover {
-    background: var(--highlight-hover);
-    border-color: var(--highlight-hover);
-  }
-  .cancel {
+  .back,
+  .close {
+    min-width: 44px;
+    min-height: 44px;
+    color: var(--text-muted);
     background: transparent;
+    border: 0;
+    cursor: pointer;
+  }
+  .back {
+    grid-column: 1;
+    display: none;
+  }
+  .close {
+    grid-column: 3;
+    font-size: 22px;
+  }
+  .back:hover,
+  .close:hover {
+    color: var(--text);
+  }
+  .back:focus-visible,
+  .close:focus-visible,
+  .result:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: -2px;
+  }
+  .path-row {
+    padding: 11px 12px;
+    border-bottom: 1px solid var(--border);
+  }
+  .path-input {
+    width: 100%;
+    box-sizing: border-box;
+    padding: 10px 12px;
+    color: var(--text);
+    background: var(--surface-sunken);
     border: 1px solid var(--border);
     border-radius: var(--radius-sm);
-    padding: 7px 12px;
-    font-size: 13px;
-    color: var(--text-muted);
+    outline: none;
+    font: 13.5px/1.4 var(--font-mono);
+  }
+  .path-input:focus {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 18%, transparent);
+  }
+  .results {
+    min-height: 96px;
+    flex: 1 1 auto;
+    overflow-y: auto;
+    padding: 5px;
+  }
+  .result {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    width: 100%;
+    min-height: 40px;
+    padding: 7px 10px;
+    text-align: left;
+    color: var(--text);
+    background: transparent;
+    border: 0;
+    border-radius: var(--radius-sm);
     cursor: pointer;
   }
-  .cancel:hover {
-    color: var(--text);
-    border-color: var(--border-strong);
+  .result.selected {
+    background: color-mix(in srgb, var(--accent) 15%, transparent);
+  }
+  .folder {
+    flex: 0 0 18px;
+    width: 18px;
+    height: 18px;
+    fill: none;
+    stroke: var(--text-muted);
+    stroke-width: 1.5;
+  }
+  .arrow {
+    width: 18px;
+    color: var(--text-muted);
+    text-align: center;
+    font-size: 17px;
+  }
+  .name {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-family: var(--font-mono);
+    font-size: 13.5px;
+  }
+  .message {
+    padding: 18px 12px;
+    color: var(--text-faint);
+    font-size: 12.5px;
+  }
+  .message.error {
+    color: var(--danger);
+  }
+  footer {
+    display: flex;
+    gap: 16px;
+    padding: 8px 12px;
+    color: var(--text-faint);
+    border-top: 1px solid var(--border);
+    font-size: 11px;
+  }
+  kbd {
+    font: inherit;
+    color: var(--text-muted);
+  }
+
+  @media (max-width: 859px) {
+    .scrim {
+      display: block;
+      padding: 0;
+      background: var(--surface);
+    }
+    .picker {
+      width: 100vw;
+      height: 100dvh;
+      max-height: none;
+      border: 0;
+      border-radius: 0;
+      box-shadow: none;
+      padding-bottom: env(safe-area-inset-bottom);
+    }
+    header {
+      padding-top: env(safe-area-inset-top);
+      align-items: center;
+    }
+    .picker-heading {
+      padding: 8px 4px 7px;
+    }
+    h2 {
+      margin-bottom: 2px;
+      font-size: 14px;
+    }
+    .server {
+      font-size: 11.5px;
+    }
+    .back {
+      display: inline-flex;
+      align-items: center;
+      gap: 2px;
+      padding: 0 8px;
+      font-size: 13px;
+    }
+    .back span:first-child {
+      font-size: 25px;
+      line-height: 1;
+    }
+    .close {
+      visibility: hidden;
+    }
+    .path-row {
+      padding: 10px 8px;
+    }
+    .path-input {
+      min-height: 44px;
+      font-size: 16px;
+    }
+    .results {
+      padding: 4px;
+    }
+    .result {
+      min-height: 48px;
+      padding-inline: 12px;
+    }
+    footer {
+      display: none;
+    }
   }
 </style>

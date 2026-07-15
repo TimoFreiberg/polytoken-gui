@@ -756,26 +756,24 @@ fn seed_worktrees(
         .collect()
 }
 
-/// Resolve a path the way TS `path.resolve` does for the dir-picker: normalize
-/// `.`/`..`, drop trailing slashes, and make it absolute against `/` (the mock's
-/// fixture paths are already absolute under `/Users/timo` or `$HOME`). Empty →
-/// `$HOME` (the picker's default open). Mirrors TS `listDir`/`statPath`'s
-/// `resolve(path.trim())`.
+/// Resolve picker paths like the live driver: expand `~`, normalize `.`/`..`,
+/// resolve relative paths from `$HOME`, and preserve absolute fixture paths.
 fn mock_resolve(path: Option<&str>) -> String {
     use std::path::{Component, Path, PathBuf};
+    let home = std::env::var("HOME").unwrap_or_else(|_| "/".to_string());
     let raw = path.map(|s| s.trim()).filter(|s| !s.is_empty());
-    let (mut out, rel): (PathBuf, Option<&Path>) = match raw {
-        Some(p) if Path::new(p).is_absolute() => (PathBuf::from("/"), Some(Path::new(p))),
-        // Node's `path.resolve(p)` resolves a non-empty relative path against
-        // `process.cwd()`, NOT `$HOME`. (The empty/whitespace → `$HOME` case is
-        // handled by the `None` arm below, mirroring TS `listDir`'s `homedir()`.)
-        Some(p) => (
-            std::env::current_dir().unwrap_or_else(|_| PathBuf::from("/")),
-            Some(Path::new(p)),
-        ),
-        None => return std::env::var("HOME").unwrap_or_else(|_| "/".to_string()),
+    let Some(raw) = raw else { return home };
+    let expanded = if raw == "~" {
+        PathBuf::from(&home)
+    } else if let Some(rest) = raw.strip_prefix("~/") {
+        Path::new(&home).join(rest)
+    } else if Path::new(raw).is_absolute() {
+        PathBuf::from(raw)
+    } else {
+        Path::new(&home).join(raw)
     };
-    for comp in rel.unwrap().components() {
+    let mut out = PathBuf::from("/");
+    for comp in expanded.components() {
         match comp {
             Component::CurDir => {}
             Component::ParentDir => {
@@ -787,6 +785,18 @@ fn mock_resolve(path: Option<&str>) -> String {
     }
     let s = out.to_string_lossy().into_owned();
     if s.is_empty() { "/".to_string() } else { s }
+}
+
+#[cfg(test)]
+mod directory_picker_path_tests {
+    use super::mock_resolve;
+
+    #[test]
+    fn relative_and_tilde_paths_resolve_from_mock_home_like_live() {
+        let home = std::env::var("HOME").unwrap_or_else(|_| "/".to_string());
+        assert_eq!(mock_resolve(Some("src")), format!("{home}/src"));
+        assert_eq!(mock_resolve(Some("~/src")), format!("{home}/src"));
+    }
 }
 
 /// The synthetic directory tree for the new-session picker — faithful port of TS
@@ -847,6 +857,15 @@ fn mock_dir_tree() -> &'static std::collections::HashMap<String, Vec<String>> {
                 };
                 tree.insert(key, kids.iter().map(|s| s.to_string()).collect());
             }
+        }
+        // Every listed child is an existing directory, including empty project dirs.
+        // Keep explicit empty entries so `list_dir` can distinguish them from errors.
+        let children: Vec<String> = tree
+            .iter()
+            .flat_map(|(parent, kids)| kids.iter().map(move |kid| format!("{parent}/{kid}")))
+            .collect();
+        for child in children {
+            tree.entry(child).or_default();
         }
         tree
     })
@@ -2690,12 +2709,13 @@ impl PantokenDriver for MockDriver {
             .parent()
             .map(|p| p.to_string_lossy().into_owned())
             .filter(|p| p != &dir);
-        let entries = mock_dir_tree().get(&dir).cloned().unwrap_or_default();
+        let known = mock_dir_tree().get(&dir);
+        let entries = known.cloned().unwrap_or_default();
         DirListing {
             path: dir,
             parent,
             entries,
-            error: None,
+            error: known.is_none().then_some(true),
         }
     }
     async fn stat_path(&self, path: String) -> PathStat {
