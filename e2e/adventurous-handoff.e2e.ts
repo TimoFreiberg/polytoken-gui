@@ -19,17 +19,17 @@ test("adventurous handoff toggles from the facet menu and persists in the sessio
 
   // Default: off (the mock seeds adventurousHandoff: false).
   await expect(toggle).toHaveAttribute("aria-checked", "false");
-  await expect(toggle).toContainText("Off");
+  await expect(toggle).toContainText("auto");
 
   // Toggle on — the menu stays open so the state flip is visible.
   await toggle.click();
   await expect(toggle).toHaveAttribute("aria-checked", "true");
-  await expect(toggle).toContainText("On");
+  await expect(toggle).toHaveClass(/on/);
 
   // Toggle back off.
   await toggle.click();
   await expect(toggle).toHaveAttribute("aria-checked", "false");
-  await expect(toggle).toContainText("Off");
+  await expect(toggle).not.toHaveClass(/on/);
 
   // The modifier is Plan-only, not merely a generic live-session control.
   await page.getByRole("option", { name: "Execute" }).click();

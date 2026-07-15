@@ -390,7 +390,17 @@
     const n = store.focusComposerN;
     if (n !== lastFocusN) {
       lastFocusN = n;
-      queueMicrotask(() => ta?.focus());
+      queueMicrotask(() => {
+        ta?.focus();
+        // After a focus-restore from the facet menu's forward-key path, place
+        // the caret at the insertion point (not the end of the text).
+        const ss = store.composerSelectionStart;
+        const se = store.composerSelectionEnd;
+        if (ss >= 0 && se >= 0) {
+          ta?.setSelectionRange(ss, se);
+          cursorPos = ss;
+        }
+      });
     }
   });
 
@@ -711,6 +721,10 @@
     autosize();
     // Track cursor so @-mentions work inline.
     cursorPos = ta?.selectionStart ?? 0;
+    // Sync selection range to the store so the facet menu's forward-key path
+    // can insert a typed letter at the cursor (not at the end).
+    store.composerSelectionStart = ta?.selectionStart ?? 0;
+    store.composerSelectionEnd = ta?.selectionEnd ?? 0;
     // A user keystroke ends history navigation: the edited text is the new live draft.
     histIndex = null;
     // A fresh keystroke restarts the selection at the top; leaving slash/@-reference mode
@@ -940,8 +954,8 @@
     // project/external @-mentions, and the slash menu (checked earlier) returns on its
     // own keys. Skill/subagent/model @-takeovers have no ignore-toggle
     // (ignoreToggleApplies is false), so Shift+Tab reaches here and rotates facets
-    // instead of the old browser backward-focus-nav fallthrough. ⌘⇧C still opens the
-    // full dropdown picker for keyboard selection; this is the quick-rotate shortcut.
+    // AND opens the facet menu — focus moves into the panel so the user can
+    // continue navigating by arrow keys / Enter / Escape / repeated Shift+Tab.
     if (
       e.key === "Tab" &&
       e.shiftKey &&
@@ -950,7 +964,7 @@
       !e.altKey
     ) {
       e.preventDefault();
-      store.cycleFacet(1);
+      store.cycleFacet(1, { openMenu: true });
       return;
     }
     // @-reference keyboard handling (after slash, so slash takes priority if both
@@ -1321,8 +1335,16 @@
           oninput={onInput}
           onkeydown={onKeydown}
           onpaste={onPaste}
-          onclick={() => (cursorPos = ta?.selectionStart ?? 0)}
-          onkeyup={() => (cursorPos = ta?.selectionStart ?? 0)}
+          onclick={() => {
+            cursorPos = ta?.selectionStart ?? 0;
+            store.composerSelectionStart = ta?.selectionStart ?? 0;
+            store.composerSelectionEnd = ta?.selectionEnd ?? 0;
+          }}
+          onkeyup={() => {
+            cursorPos = ta?.selectionStart ?? 0;
+            store.composerSelectionStart = ta?.selectionStart ?? 0;
+            store.composerSelectionEnd = ta?.selectionEnd ?? 0;
+          }}
           placeholder={drafting
             ? "Describe a task or ask a question…"
             : streaming

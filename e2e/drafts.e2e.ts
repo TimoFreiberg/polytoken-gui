@@ -252,7 +252,7 @@ test("a new-session draft hides the previous session's dialogs and context panel
   await expect(page).toHaveTitle("Wire up the WebSocket bridge · pantoken");
 });
 
-test("⌘⇧C in a new-session draft changes the DRAFT's facet, not the session's", async ({
+test("facet badge click in a new-session draft changes the DRAFT's facet, not the session's", async ({
   page,
 }) => {
   await openSidebar(page);
@@ -260,8 +260,8 @@ test("⌘⇧C in a new-session draft changes the DRAFT's facet, not the session'
   const badge = page.getByTestId("facet-badge");
   await expect(badge).toContainText("Execute");
 
-  // ⌘⇧C opens the facet menu; pick Plan — only the draft's pick moves.
-  await page.keyboard.press("Meta+Shift+C");
+  // Click the badge to open the facet menu; pick Plan — only the draft's pick moves.
+  await badge.click();
   await page.getByRole("option", { name: "Plan" }).click();
   await expect(badge).toContainText("Plan");
 
@@ -282,7 +282,7 @@ test("submitting a draft carries its facet into the created session", async ({
   await page.getByRole("button", { name: "New session…" }).click();
   const badge = page.getByTestId("facet-badge");
   await expect(badge).toContainText("Execute");
-  await page.keyboard.press("Meta+Shift+C");
+  await badge.click();
   await page.getByRole("option", { name: "Plan" }).click();
   await expect(badge).toContainText("Plan");
 

@@ -5,17 +5,20 @@
   // Facet picker in the composer chrome. Shows the ACTUAL current facet — the
   // draft's pick while drafting a new session, else the active session's live
   // facet (composerFacet unifies the two, mirroring composerConfig); clicking
-  // opens a dropdown listing all available facets. ⌘⇧C opens this dropdown
-  // (number keys 1-9 quick-select inside it).
+  // opens a dropdown listing all available facets. Shift+Tab rotates AND opens
+  // the menu with focus in it — repeated Shift+Tab cycles through facets while
+  // keeping the menu open; arrow keys navigate; Enter selects; Escape closes;
+  // any other typed character dismisses the menu and types into the composer.
   //
-  // Adventurous handoff is a compact Plan-only modifier for an existing live
-  // session. Right/Left act on the highlighted Plan row without selecting it;
-  // the folded session flag remains authoritative, so repeated desired-state
+  // Adventurous handoff is a compact "auto" pill inline on the Plan row — not a
+  // separate line. Right/Left act on the highlighted Plan row without selecting
+  // it; the folded session flag remains authoritative, so repeated desired-state
   // presses are no-ops once the snapshot matches.
   //
   // The dropdown chrome (badge, open/close, keyboard nav, backdrop, panel CSS)
   // lives in MenuBadge; this component supplies the facet items + modifier +
-  // reload button as the panel body snippet.
+  // reload button as the panel body snippet, plus the forward-key handler that
+  // dismisses the menu on a typed letter and inserts it into the composer.
   const facet = $derived(store.composerFacet);
   const isPlan = $derived(facet?.toLowerCase() === "plan");
   const label = $derived(isPlan ? "Plan" : facet.charAt(0).toUpperCase() + facet.slice(1));
@@ -26,6 +29,21 @@
   const handoff = $derived(store.session.adventurousHandoff ?? false);
 
   function onUnhandledKeydown(e: KeyboardEvent, sel: number): void {
+    // Shift+Tab while the menu is open: rotate to the next facet and keep the
+    // menu open (re-opens via facetMenuOpenN bump). This mirrors the composer's
+    // Shift+Tab handler so repeated rotation works from within the panel.
+    if (
+      e.key === "Tab" &&
+      e.shiftKey &&
+      !e.ctrlKey &&
+      !e.metaKey &&
+      !e.altKey
+    ) {
+      e.preventDefault();
+      e.stopPropagation();
+      store.cycleFacet(1, { openMenu: true });
+      return;
+    }
     if (
       (e.key !== "ArrowRight" && e.key !== "ArrowLeft") ||
       store.draft ||
@@ -42,11 +60,24 @@
     // arrives remains subject to the existing toggle round trip.
     if (handoff !== desired) store.toggleAdventurousHandoff();
   }
+
+  // A typed letter from the open facet menu: dismiss the menu, restore focus to
+  // the composer textarea, and insert the character at the cursor position (not
+  // at the end — honors QUALITY.md Q3 re: no silent data loss for selections).
+  function onForwardKey(e: KeyboardEvent): void {
+    const ch = e.key;
+    const draft = store.composerDraft;
+    const start = store.composerSelectionStart;
+    const end = store.composerSelectionEnd;
+    store.composerDraft = draft.slice(0, start) + ch + draft.slice(end);
+    store.composerSelectionStart = store.composerSelectionEnd = start + ch.length;
+    store.focusComposer();
+  }
 </script>
 
 <MenuBadge
   {label}
-  title={`Facet: ${facet} — ⇧Tab rotates, ⌘⇧C opens this menu`}
+  title={`Facets (⇧Tab)`}
   testid="facet-badge"
   ariaLabel="Facet"
   groupTitle="Facet"
@@ -56,44 +87,72 @@
   minWidth="160px"
   closeLabel="Close facet menu"
   openExternal={store.facetMenuOpenN}
+  forwardUnknownKeys={true}
+  onForwardKey={onForwardKey}
   onSelect={(i) => store.setFacet(facets[i] ?? "execute")}
   onKeydown={onUnhandledKeydown}
 >
   {#snippet body({ sel, close })}
     {#each facets as opt, i (opt)}
-      <button
-        class="item"
-        class:active={opt === facet}
-        class:hl={sel === i}
-        role="option"
-        aria-selected={sel === i}
-        title={opt === facet ? `Facet: ${opt} (current)` : `Switch to ${opt} facet`}
-        onclick={() => {
-          store.setFacet(opt);
-          close();
-        }}
-      >
-        <span class="item-label">
-          <span class="item-num">{i + 1}</span>
-          {opt.charAt(0).toUpperCase() + opt.slice(1)}
-        </span>
-      </button>
+      {#if opt === "plan" && isPlan && !store.draft}
+        <!-- Plan row: a div (not button) so the inline auto-pill button isn't
+             nested inside the row's select button. role=option keeps listbox
+             semantics; the select button covers the label area. -->
+        <div
+          class="item plan-row"
+          class:active={opt === facet}
+          class:hl={sel === i}
+          role="option"
+          aria-selected={sel === i}
+          title={opt === facet ? `Facet: ${opt} (current)` : `Switch to ${opt} facet`}
+        >
+          <button
+            class="plan-select"
+            type="button"
+            title={opt === facet ? `Facet: ${opt} (current)` : `Switch to ${opt} facet`}
+            onclick={() => {
+              store.setFacet(opt);
+              close();
+            }}
+          >
+            <span class="item-label">{opt.charAt(0).toUpperCase() + opt.slice(1)}</span>
+          </button>
+          <button
+            class="handoff-pill"
+            class:on={handoff}
+            role="switch"
+            aria-checked={handoff}
+            data-testid="adventurous-handoff"
+            title={handoff
+              ? "Disable adventurous handoff — plan mode waits for your approval (Left)"
+              : "Enable adventurous handoff — plan mode may start implementing autonomously (Right)"}
+            onclick={(e) => {
+              e.stopPropagation();
+              store.toggleAdventurousHandoff();
+            }}
+          >
+            auto
+          </button>
+        </div>
+      {:else}
+        <button
+          class="item"
+          class:active={opt === facet}
+          class:hl={sel === i}
+          role="option"
+          aria-selected={sel === i}
+          title={opt === facet ? `Facet: ${opt} (current)` : `Switch to ${opt} facet`}
+          onclick={() => {
+            store.setFacet(opt);
+            close();
+          }}
+        >
+          <span class="item-label">
+            {opt.charAt(0).toUpperCase() + opt.slice(1)}
+          </span>
+        </button>
+      {/if}
     {/each}
-    {#if !store.draft && isPlan}
-      <button
-        class="handoff"
-        role="switch"
-        aria-checked={handoff}
-        data-testid="adventurous-handoff"
-        title={handoff
-          ? "Disable adventurous handoff — plan mode waits for your approval (Left)"
-          : "Enable adventurous handoff — plan mode may start implementing autonomously (Right)"}
-        onclick={() => store.toggleAdventurousHandoff()}
-      >
-        <span class="item-label">Handoff</span>
-        <span class="pill" class:on={handoff}>{handoff ? "On" : "Off"}</span>
-      </button>
-    {/if}
     <button
       class="reload"
       title="Reload the facet list from disk"
@@ -110,14 +169,14 @@
 <style>
   .item {
     display: flex;
-    flex-direction: column;
-    gap: 1px;
+    align-items: center;
+    gap: 6px;
     width: 100%;
     text-align: left;
     background: transparent;
     border: none;
     border-radius: var(--radius-sm);
-    padding: 6px 8px;
+    padding: 4px 8px;
     cursor: pointer;
     color: var(--text);
   }
@@ -127,45 +186,45 @@
     align-items: center;
     gap: 6px;
   }
-  .item-num {
-    font-family: var(--font-mono);
-    font-size: 10px;
-    color: var(--text-faint);
-    min-width: 10px;
-  }
   .item.hl {
     background: var(--surface-sunken);
   }
   .item.active .item-label {
     font-weight: 600;
   }
-  .handoff {
-    display: inline-flex;
+  /* Plan row: a div containing a select button + auto-pill. Flex so the pill
+     sits on the right, the select button fills the rest. */
+  .plan-row {
+    display: flex;
     align-items: center;
-    justify-content: space-between;
-    gap: 8px;
-    width: calc(100% - 4px);
-    text-align: left;
-    background: var(--surface-sunken);
-    border: 1px solid var(--border);
-    border-radius: var(--radius-xs);
-    padding: 5px 7px;
-    margin: 4px 2px 2px;
+    gap: 6px;
+    width: 100%;
+    border-radius: var(--radius-sm);
+    padding: 4px 8px;
     cursor: pointer;
-    color: var(--text-muted);
-    font-size: 11.5px;
   }
-  .handoff:hover {
-    background: var(--surface-sunken);
+  .plan-select {
+    flex: 1;
+    text-align: left;
+    background: transparent;
+    border: none;
+    cursor: pointer;
+    color: var(--text);
+    padding: 0;
   }
-  .handoff .pill {
-    font-size: 11px;
+  .handoff-pill {
+    margin-left: auto;
+    font-size: 10px;
+    line-height: 1;
     color: var(--text-muted);
+    background: transparent;
     border: 1px solid var(--border-strong);
     border-radius: 999px;
-    padding: 1px 8px;
+    padding: 2px 8px;
+    cursor: pointer;
+    white-space: nowrap;
   }
-  .handoff .pill.on {
+  .handoff-pill.on {
     color: var(--accent);
     background: var(--accent-soft);
     border-color: color-mix(in srgb, var(--accent) 40%, transparent);

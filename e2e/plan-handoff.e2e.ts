@@ -71,7 +71,7 @@ test("facet badge shows 'Plan' when the active facet is plan", async ({
   const badge = page.getByTestId("facet-badge");
   await expect(badge).toBeVisible();
   await expect(badge).toHaveText("Plan");
-  await expect(badge).toHaveAttribute("title", /⇧Tab rotates/);
+  await expect(badge).toHaveAttribute("title", /⇧Tab/);
   // After the dwell, the script reverts to facet:"execute" and the badge returns
   // to its subtle "Execute" chip (always visible — a state readout, not a toggle
   // that hides).
