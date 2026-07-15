@@ -502,6 +502,11 @@
   .devbar {
     display: flex;
     flex-wrap: wrap;
+    /* A simulated/real phone keyboard can leave less height than the dev buttons plus
+       composer need. Let this test-only rail yield and scroll so it never pushes the
+       composer below the keyboard; production has no devbar. */
+    min-height: 0;
+    overflow-y: auto;
     gap: 6px;
     justify-content: center;
     padding: 6px;
