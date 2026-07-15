@@ -10,24 +10,42 @@ test.beforeEach(async ({ page }) => {
   await gotoFresh(page);
 });
 
-async function resolvedToken(page: Page, property: string, token: string) {
+async function resolvedCssValue(page: Page, property: string, value: string) {
   return page.evaluate(
-    ({ property, token }) => {
+    ({ property, value }) => {
       const probe = document.createElement("div");
-      probe.style.setProperty(property, `var(${token})`);
+      probe.style.setProperty(property, value);
       document.body.append(probe);
       const resolved = getComputedStyle(probe).getPropertyValue(property);
       probe.remove();
       return resolved;
     },
+    { property, value },
+  );
+}
+
+async function resolvedToken(page: Page, property: string, token: string) {
+  const definition = await page.evaluate(
+    ({ property, token }) => {
+      const value = getComputedStyle(document.documentElement)
+        .getPropertyValue(token)
+        .trim();
+      return { value, valid: CSS.supports(property, value) };
+    },
     { property, token },
   );
+  expect(definition.value, `${token} should be defined`).not.toBe("");
+  expect(definition.valid, `${token} should be valid for ${property}`).toBe(
+    true,
+  );
+  return resolvedCssValue(page, property, `var(${token})`);
 }
 
 test("2a composer chrome groups the text and status rows in one floating surface", async ({
   page,
 }) => {
   const surface = page.getByTestId("composer-surface");
+  const wrap = page.locator(".composer-wrap");
   const box = page.getByTestId("composer-box");
   const attachments = page.getByTestId("composer-attachments");
   const status = page.getByTestId("composer-status-row");
@@ -43,6 +61,28 @@ test("2a composer chrome groups the text and status rows in one floating surface
   await expect(right.getByTestId("model-badge")).toBeVisible();
   await expect(right.getByTestId("thinking-badge")).toBeVisible();
   await expect(right.getByTestId("context-trigger")).toBeVisible();
+
+  const wrapStyle = await wrap.evaluate((el) => {
+    const css = getComputedStyle(el);
+    return {
+      backgroundColor: css.backgroundColor,
+      backgroundImage: css.backgroundImage,
+      borderTopStyle: css.borderTopStyle,
+      borderTopWidth: css.borderTopWidth,
+      backdropFilter: css.backdropFilter,
+    };
+  });
+  expect(wrapStyle).toEqual({
+    backgroundColor: await resolvedCssValue(
+      page,
+      "background-color",
+      "transparent",
+    ),
+    backgroundImage: await resolvedCssValue(page, "background-image", "none"),
+    borderTopStyle: await resolvedCssValue(page, "border-top-style", "none"),
+    borderTopWidth: await resolvedCssValue(page, "border-top-width", "0px"),
+    backdropFilter: await resolvedCssValue(page, "backdrop-filter", "none"),
+  });
 
   const boxRect = await box.boundingBox();
   const surfaceRect = await surface.boundingBox();

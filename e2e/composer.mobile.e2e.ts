@@ -99,6 +99,10 @@ test("mobile: new-session controls stay tappable inside the wrapped status row",
 
   await expect(left.getByTestId("draft-project-control")).toHaveCount(1);
   await expect(left.getByTestId("draft-worktree-control")).toHaveCount(1);
+  await expect(project).toHaveAccessibleName(
+    "Browse to change project directory",
+  );
+  await expect(worktree).toHaveAccessibleName("Enable worktree isolation");
   for (const control of [project, worktree]) {
     await expect(control).toBeVisible();
     const box = await control.boundingBox();
@@ -117,10 +121,32 @@ test("mobile: new-session controls stay tappable inside the wrapped status row",
 
   await project.click();
   await expect(project).toHaveAttribute("aria-expanded", "true");
-  await project.click();
+  const picker = page.getByRole("dialog", { name: "Choose project directory" });
+  const filter = picker.getByRole("textbox", { name: "Filter subdirectories" });
+  await expect(picker).toBeVisible();
+  await expect(filter).toBeVisible();
+  for (const [name, landmark] of [
+    ["project picker", picker],
+    ["project filter", filter],
+  ] as const) {
+    const box = await landmark.boundingBox();
+    expect(box, `${name} should render`).not.toBeNull();
+    expect(box!.x).toBeGreaterThanOrEqual(0);
+    expect(box!.y).toBeGreaterThanOrEqual(0);
+    expect(box!.x + box!.width).toBeLessThanOrEqual(vw + 0.5);
+    expect(box!.y + box!.height).toBeLessThanOrEqual(
+      page.viewportSize()!.height + 0.5,
+    );
+  }
+  await filter.fill("pan");
+  await expect(filter).toHaveValue("pan");
+  await page.keyboard.press("Escape");
+  await expect(filter).toHaveValue("");
+  await page.keyboard.press("Escape");
   await expect(project).toHaveAttribute("aria-expanded", "false");
   await worktree.click();
   await expect(worktree).toHaveAttribute("aria-pressed", "true");
+  await expect(worktree).toHaveAccessibleName("Disable worktree isolation");
 });
 
 test("mobile: send button is enabled when idle and the composer is empty", async ({

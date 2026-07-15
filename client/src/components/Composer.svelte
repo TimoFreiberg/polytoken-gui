@@ -1279,6 +1279,7 @@
             data-testid="draft-project-control"
             aria-haspopup="dialog"
             aria-expanded={pickingCwd}
+            aria-label="Browse to change project directory"
             title={`Project: ${store.draft.cwd || "home"} — click to browse for a directory (⌥P)`}
             onclick={() => (pickingCwd = !pickingCwd)}
           >
@@ -1290,6 +1291,9 @@
             data-testid="draft-worktree-control"
             class:on={store.draft.worktree}
             aria-pressed={store.draft.worktree}
+            aria-label={store.draft.worktree
+              ? "Disable worktree isolation"
+              : "Enable worktree isolation"}
             title="Isolate this session in a jj/git worktree of the project, leaving the main tree clean (⌥W)"
             onclick={() => store.toggleDraftWorktree()}
           >
