@@ -60,7 +60,12 @@ export async function openSettings(
   page: Page,
   section?: "appearance" | "notifications" | "models" | "environment" | "token",
 ): Promise<void> {
-  await page.getByTestId("settings-toggle").click();
+  const settings = page.getByTestId("settings-toggle");
+  if (
+    (await page.getByTestId("sidebar").getAttribute("data-open")) !== "true"
+  )
+    await openSidebar(page);
+  await settings.click();
   if (section) await page.getByTestId(`settings-tab-${section}`).click();
 }
 
@@ -76,11 +81,18 @@ export async function openSidebar(page: Page): Promise<void> {
 }
 
 /** Ensure the right context panel (flagged files, background jobs, todos) is open.
- *  Mirrors openSidebar: desktop opens by default, the phone drawer (and a
- *  user-collapsed desktop panel) needs the header's trailing-edge chevron. */
+ *  Uses the visible desktop/badged-header entry when available; an empty phone header
+ *  stays quiet, so that path opens Context through the labeled Sessions destination. */
 export async function openRightSidebar(page: Page): Promise<void> {
   const panel = page.getByTestId("right-sidebar");
-  if ((await panel.getAttribute("data-open")) !== "true")
-    await page.getByTestId("context-open").click();
+  if ((await panel.getAttribute("data-open")) !== "true") {
+    const headerEntry = page.getByTestId("context-open");
+    if (await headerEntry.isVisible()) {
+      await headerEntry.click();
+    } else {
+      await openSidebar(page);
+      await page.getByTestId("sidebar-context").click();
+    }
+  }
   await expect(panel).toHaveAttribute("data-open", "true");
 }

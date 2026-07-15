@@ -46,14 +46,15 @@ test("settings collapse headers meet the 44px touch target", async ({
     await expectTall(page.getByTestId(`settings-tab-${id}`));
 });
 
-test("the sidebar and context-panel header arrows meet the 44px touch target", async ({
+test("the mobile header and sidebar destinations meet the 44px touch target", async ({
   page,
 }) => {
-  // Both drawers are closed by default on a phone, so both header arrows are already
-  // showing — no driving needed. They're the only tap affordance left now that the
-  // header hamburgers are gone, so a cramped hit target here would be a real regression.
+  // Sessions is always the compact header entry. Context stays quiet while empty and
+  // remains a labeled, touch-safe destination inside Sessions.
   await expectTall(page.getByTestId("sidebar-open"));
-  await expectTall(page.getByTestId("context-open"));
+  await openSidebar(page);
+  await expectTall(page.getByTestId("sidebar-context"));
+  await expectTall(page.getByTestId("settings-toggle"));
 });
 
 test("sidebar navigation rows meet the 44px touch target", async ({ page }) => {

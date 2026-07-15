@@ -10,9 +10,12 @@ test.beforeEach(async ({ page }) => {
   await gotoFresh(page);
 });
 
-test("settings panel opens from the header gear and lists its sections", async ({
+test("settings panel opens from the sidebar and lists its sections", async ({
   page,
 }) => {
+  await expect(
+    page.locator("header").getByTestId("settings-toggle"),
+  ).toHaveCount(0);
   await page.getByTestId("settings-toggle").click();
 
   const panel = page.getByTestId("settings-panel");
@@ -22,6 +25,8 @@ test("settings panel opens from the header gear and lists its sections", async (
   await expect(panel.getByText("Models", { exact: true })).toBeVisible();
   await expect(panel.getByText("Environment", { exact: true })).toBeVisible();
   await expect(panel.getByText("Access token", { exact: true })).toBeVisible();
+  await page.getByTestId("settings-tab-notifications").click();
+  await expect(page.getByTestId("connection-settings-row")).toContainText("Live");
   // The dev/mock server runs without PANTOKEN_TOKEN, so no token is saved client-side.
   // Only the active section renders, so jump to the Access token tab to see its body.
   await page.getByTestId("settings-tab-token").click();

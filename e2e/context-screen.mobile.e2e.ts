@@ -1,5 +1,10 @@
 import { expect, test } from "@playwright/test";
-import { drive, gotoFresh, openSidebar } from "./helpers.js";
+import {
+  drive,
+  gotoFresh,
+  openRightSidebar,
+  openSidebar,
+} from "./helpers.js";
 
 // The phone context experience (docs/PLAN-mobile.md D2/D3): the right panel is a
 // FULL-SCREEN view opened from a badged header entry, and overlays participate in
@@ -11,20 +16,24 @@ test.beforeEach(async ({ page }) => {
 });
 
 test("the header context entry shows a plain-total badge", async ({ page }) => {
-  // Default fixture: no flags/jobs/todos → no badge bubble.
-  await expect(page.getByTestId("context-open")).toBeVisible();
-  await expect(page.getByTestId("context-badge")).toHaveCount(0);
+  // Default fixture: no flags/jobs/todos → the quiet header entry stays hidden,
+  // while Context remains available as a labeled destination in Sessions.
+  await expect(page.getByTestId("context-open")).toBeHidden();
+  await openSidebar(page);
+  await expect(page.getByTestId("sidebar-context")).toBeVisible();
+  await page.getByRole("button", { name: "Collapse sidebar" }).click();
 
   // The context fixture: 3 flagged files + 3 jobs + 3 todos = 9, plain totals
   // (no unseen/unread semantics — D3).
   await drive(page, "context");
+  await expect(page.getByTestId("context-open")).toBeVisible();
   await expect(page.getByTestId("context-badge")).toHaveText("9");
 });
 
 test("the context view opens full-screen with a title and back arrow", async ({
   page,
 }) => {
-  await page.getByTestId("context-open").click();
+  await openRightSidebar(page);
   const panel = page.getByTestId("right-sidebar");
   await expect(panel).toHaveAttribute("data-open", "true");
 
@@ -50,7 +59,7 @@ test("the browser back gesture closes the context view without leaving the app",
   page,
 }) => {
   const url = page.url();
-  await page.getByTestId("context-open").click();
+  await openRightSidebar(page);
   const panel = page.getByTestId("right-sidebar");
   await expect(panel).toHaveAttribute("data-open", "true");
 
@@ -79,14 +88,14 @@ test("a UI close consumes the history entry so back still works cleanly after", 
   const panel = page.getByTestId("right-sidebar");
 
   // Open → close via the back arrow (a UI close, not a history pop).
-  await page.getByTestId("context-open").click();
+  await openRightSidebar(page);
   await expect(panel).toHaveAttribute("data-open", "true");
   await panel.getByRole("button", { name: "Collapse context panel" }).click();
   await expect(panel).toHaveAttribute("data-open", "false");
 
   // Open again → the back gesture must close THIS open, first try (no stale
   // entry from the previous open/close cycle in between).
-  await page.getByTestId("context-open").click();
+  await openRightSidebar(page);
   await expect(panel).toHaveAttribute("data-open", "true");
   await page.goBack();
   await expect(panel).toHaveAttribute("data-open", "false");
@@ -121,7 +130,7 @@ test("phone navigation does not clobber the desktop context preference", async (
   });
   await gotoFresh(page);
   // Open + close the context view on the phone…
-  await page.getByTestId("context-open").click();
+  await openRightSidebar(page);
   await page
     .getByTestId("right-sidebar")
     .getByRole("button", { name: "Collapse context panel" })
@@ -136,7 +145,7 @@ test("phone navigation does not clobber the desktop context preference", async (
 test("sessions and context are mutually exclusive and Back returns to transcript", async ({
   page,
 }) => {
-  await page.getByTestId("context-open").click();
+  await openRightSidebar(page);
   await expect(page.getByTestId("right-sidebar")).toHaveAttribute(
     "data-open",
     "true",
@@ -165,7 +174,7 @@ test("sessions and context are mutually exclusive and Back returns to transcript
 test("mobile focus survives a desktop breakpoint round trip", async ({
   page,
 }) => {
-  await page.getByTestId("context-open").click();
+  await openRightSidebar(page);
   await expect(page.getByTestId("right-sidebar")).toHaveAttribute(
     "data-open",
     "true",

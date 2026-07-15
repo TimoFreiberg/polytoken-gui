@@ -48,16 +48,14 @@ test("renders the greeting conversation: user, collapsed work, final answer", as
   );
 });
 
-test("the composer footer shows the model; the header shows a live connection", async ({
+test("the composer footer shows the model; healthy connection chrome stays quiet", async ({
   page,
 }) => {
   // The model label lives in the composer status row (moved out of the header).
   await expect(
     page.getByTestId("composer-status-right").getByTestId("model-badge"),
   ).toContainText("Claude Opus 4.8");
-  await expect(
-    page.locator(".hdr").getByText("live", { exact: true }),
-  ).toBeVisible();
+  await expect(page.locator(".hdr .conn")).toHaveCount(0);
 });
 
 test("tool card expands to show output", async ({ page }) => {

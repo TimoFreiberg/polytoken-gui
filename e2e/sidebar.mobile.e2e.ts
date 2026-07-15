@@ -38,21 +38,24 @@ test("the sessions drawer is closed by default on a phone, with a header arrow t
   await expect(sidebar).toHaveAttribute("data-open", "true");
 });
 
-test("the context panel is closed by default on a phone, with a header arrow to open it", async ({
+test("the context panel is closed by default and reachable from Sessions", async ({
   page,
 }) => {
   const panel = page.getByTestId("right-sidebar");
   await expect(panel).toHaveAttribute("data-open", "false");
 
-  const edgeOpen = page.getByTestId("context-open");
-  await expect(edgeOpen).toBeVisible();
-  await edgeOpen.click();
+  await expect(page.getByTestId("context-open")).toBeHidden();
+  await openSidebar(page);
+  const sidebarEntry = page.getByTestId("sidebar-context");
+  await expect(sidebarEntry).toBeVisible();
+  await sidebarEntry.click();
   await expect(panel).toHaveAttribute("data-open", "true");
   // The collapse control ("Collapse context panel") and the scrim
   // ("Close context panel", tap-outside-to-dismiss) carry distinct labels;
   // scoping keeps the control lookup local to the drawer.
   await panel.getByRole("button", { name: "Collapse context panel" }).click();
   await expect(panel).toHaveAttribute("data-open", "false");
-  await page.getByTestId("context-open").click();
+  await openSidebar(page);
+  await page.getByTestId("sidebar-context").click();
   await expect(panel).toHaveAttribute("data-open", "true");
 });

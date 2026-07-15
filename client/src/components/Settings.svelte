@@ -71,8 +71,19 @@
     testid: `theme-${t.mode}`,
   }));
 
-  // Push status copy mirrors the header bell so the two stay in step.
+  // Settings is the durable home for healthy connection and push state. The header
+  // only interrupts when either state is degraded.
   const push = $derived(store.pushState);
+  const connection = $derived(store.connection);
+  const connectionLabel = $derived(
+    connection === "connected"
+      ? "Connected"
+      : connection === "disconnected"
+        ? "Offline"
+        : connection === "connecting"
+          ? "Connecting…"
+          : "Reconnecting…",
+  );
   const pushStatus: Record<string, string> = {
     working: "Subscribing…",
     idle: "Not enabled on this device",
@@ -292,6 +303,15 @@
       <!-- Notifications -->
       {#if activeSection === "notifications"}
       <section class="group">
+        <div class="row" data-testid="connection-settings-row">
+          <div class="rinfo">
+            <div class="rlabel">Agent connection</div>
+            <div class="rdesc">{connectionLabel}</div>
+          </div>
+          <span class="connection-state {connection}" role="status">
+            {connection === "connected" ? "Live" : connection}
+          </span>
+        </div>
         <div class="row">
           <div class="rinfo">
             <div class="rlabel">Push on this device</div>
@@ -922,6 +942,27 @@
   }
   .rdesc.connected {
     color: var(--ok);
+  }
+  .connection-state {
+    flex-shrink: 0;
+    padding: 3px 8px;
+    color: var(--text-muted);
+    font-size: 11.5px;
+    text-transform: capitalize;
+    background: var(--surface-sunken);
+    border-radius: 999px;
+  }
+  .connection-state.connected {
+    color: var(--ok);
+  }
+  .connection-state.disconnected {
+    color: var(--danger);
+    background: var(--danger-soft);
+  }
+  .connection-state.connecting,
+  .connection-state.reconnecting {
+    color: var(--warning);
+    background: var(--warning-soft);
   }
   .note {
     font-size: 12px;

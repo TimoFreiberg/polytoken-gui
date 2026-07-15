@@ -88,24 +88,9 @@
   );
 
   const push = $derived(store.pushState);
-  const pushLabel: Record<string, string> = {
-    working: "…",
-    idle: "Notify",
-    subscribed: "Notify on",
-    denied: "Blocked",
-    "needs-install": "Install",
-    error: "Retry",
-    unsupported: "",
-  };
   const pushTitle: Record<string, string> = {
-    working: "Subscribing…",
-    idle: "Enable push notifications on this device",
-    subscribed: "Push on — tap to re-check / re-subscribe",
     denied: "Notifications are blocked — enable them in your browser/iOS settings",
-    "needs-install":
-      "On iOS, Add to Home Screen first, then open the app from there and tap again",
     error: "Couldn't subscribe — tap to retry (see console for details)",
-    unsupported: "",
   };
 
   const connLabel: Record<string, string> = {
@@ -192,18 +177,21 @@
   </div>
 
   <div class="right">
-    {#if push !== "unsupported"}
+    <!-- Healthy/unconfigured notification state is deliberately silent. A blocked or
+         failed subscription remains visible and actionable; complete status and setup
+         controls live in Settings. -->
+    {#if push === "denied" || push === "error"}
       <button
         class="bell {push}"
         title={pushTitle[push]}
-        disabled={push === "working"}
+        aria-label={push === "denied" ? "Notifications blocked" : "Retry notifications"}
         onclick={() => store.enablePush()}
       >
         <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
           <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9" />
           <path d="M13.73 21a2 2 0 0 1-3.46 0" />
         </svg>
-        <span class="bell-label">{pushLabel[push]}</span>
+        <span class="bell-label">{push === "denied" ? "Blocked" : "Retry"}</span>
       </button>
     {/if}
     {#if s.activePlan && !drafting}
@@ -219,20 +207,11 @@
         </svg>
       </IconButton>
     {/if}
-    <IconButton
-      data-testid="settings-toggle"
-      title="Settings (⌘,)"
-      aria-label="Settings"
-      onclick={() => store.openSettings()}
-    >
-      <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-        <circle cx="12" cy="12" r="3" />
-        <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
-      </svg>
-    </IconButton>
-    <span class="conn {conn}" title={conn}>
+    {#if conn !== "connected"}
+    <span class="conn {conn}" title={conn} role="status">
       <span class="led"></span><span class="conn-label">{connLabel[conn]}</span>
     </span>
+    {/if}
     <!-- Reopen the collapsed context panel. Lives flush at the header's trailing
          edge — i.e. exactly where the panel's own collapse chevron sits once it's
          open — so collapse/expand is the same pixel, clickable back and forth.
@@ -241,7 +220,9 @@
          points back toward the panel it summons. -->
     {#if !store.rightSidebarOpen && !drafting}
       <IconButton
+        class={contextCount === 0 ? "context-entry context-empty" : "context-entry"}
         data-testid="context-open"
+        data-context-count={contextCount}
         title="Show context panel (⌘⇧J)"
         aria-label="Show context panel"
         onclick={() => store.openRightSidebar()}
@@ -323,9 +304,11 @@
     align-items: center;
     gap: 7px;
     min-width: 0;
+    overflow: hidden;
   }
   .title {
     display: block;
+    min-width: 0;
     font-weight: 600;
     font-size: 14.5px;
     color: var(--text);
@@ -401,6 +384,29 @@
     pointer-events: none;
   }
   @media (max-width: 859px) {
+    .hdr {
+      gap: 4px;
+      padding: calc(2px + env(safe-area-inset-top)) 8px 2px;
+      min-height: calc(48px + env(safe-area-inset-top));
+    }
+    .sub {
+      display: none;
+    }
+    .sidebar-open {
+      width: 44px;
+      min-width: 44px;
+      height: 44px;
+      min-height: 44px;
+      margin-left: 0;
+    }
+    .bell {
+      min-width: 44px;
+      min-height: 44px;
+      justify-content: center;
+    }
+    :global(.context-entry.context-empty) {
+      display: none;
+    }
     .chevron-mirror {
       display: none;
     }
@@ -460,16 +466,6 @@
     color: var(--warning);
     border-color: color-mix(in srgb, var(--warning) 40%, var(--border));
   }
-  /* On a phone the header gets crowded (sidebar toggle + title + bell + model +
-     thinking + gear + connection). Drop the text labels whose icon/LED already
-     conveys their state, so the row fits the viewport instead of overflowing
-     horizontally (which also shifts fixed overlays like the approval sheet). */
-  @media (max-width: 859px) {
-    .sidebar-open-label {
-      display: inline;
-      font-size: 12px;
-    }
-  }
   @media (max-width: 480px) {
     .right {
       gap: 8px;
@@ -477,8 +473,7 @@
     .bell {
       padding: 4px 7px;
     }
-    .bell-label,
-    .conn-label {
+    .bell-label {
       display: none;
     }
   }
