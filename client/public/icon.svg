@@ -4,9 +4,9 @@
   height="512"
   viewBox="0 0 512 512"
 >
-  <!-- Pantoken: a periwinkle pan / magnifying glass / Q holding a gold
-       square-holed token. The token leads; the quieter pan and warm ink
-       distinguish the mark from other luminous-blue developer-tool icons. -->
+  <!-- Pantoken: a warm-nickel pan / magnifying glass / Q holding a gold
+       square-holed token. The token leads; the quieter metal and warm ink
+       distinguish the mark from luminous developer-tool icons. -->
   <defs>
     <linearGradient
       id="background"
@@ -27,8 +27,8 @@
       y2="390"
       gradientUnits="userSpaceOnUse"
     >
-      <stop stop-color="#828fe0" />
-      <stop offset="1" stop-color="#5562b9" />
+      <stop stop-color="#b9b2a9" />
+      <stop offset="1" stop-color="#716a63" />
     </linearGradient>
     <linearGradient
       id="token"
@@ -80,7 +80,7 @@
   <path
     d="M134 144a131 131 0 0 1 117-31"
     fill="none"
-    stroke="#bcc4f6"
+    stroke="#ded8d0"
     stroke-width="8"
     stroke-linecap="round"
     opacity="0.31"
