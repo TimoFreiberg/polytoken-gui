@@ -18,3 +18,5 @@ server-rs/target/
 grindbot-config.toml
 .grindbot
 .polytoken
+.merge-lock
+.autopilot-session-id

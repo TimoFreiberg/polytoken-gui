@@ -3,12 +3,15 @@
 #
 # Waits for the daemon to become ready (polling startup.json), then performs:
 #   1. Switch to plan facet (default is execute)
-#   2. Enable adventurous handoff (toggle on if not already on)
-#   3. Set the saved-session goal
-#   4. Seed the initial prompt
+#   2. Set permission mode to bypass_plus
+#   3. Enable adventurous handoff (toggle on if not already on)
+#   4. Set the saved-session goal
+#   5. Seed the initial prompt (from seed-prompt.md template)
 #
 # Usage: seed-session.sh <session_id> <port> <issue_url> <issue_title>
 set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
 SESSION_ID="${1:?usage: seed-session.sh <session_id> <port> <issue_url> <issue_title>}"
 PORT="${2:?port required}"
@@ -42,46 +45,33 @@ BASE="http://localhost:$PORT"
 curl -sf -X POST -H "$AUTH" -H "Content-Type: application/json" \
   -d '{"facet":"plan"}' "$BASE/facet" >/dev/null
 
-# 4. Enable adventurous handoff (toggle only if not already on)
+# 4. Set permission mode to bypass_plus
+curl -sf -X POST -H "$AUTH" -H "Content-Type: application/json" \
+  -d '{"mode":"bypass_plus"}' \
+  "$BASE/permission-monitor" >/dev/null
+
+# 5. Enable adventurous handoff (toggle only if not already on)
 ENABLED=$(curl -sf -H "$AUTH" "$BASE/adventurous-handoff" | jq -r '.enabled')
 if [ "$ENABLED" != "true" ]; then
   curl -sf -X POST -H "$AUTH" "$BASE/adventurous-handoff" >/dev/null
 fi
 
-# 5. Set the goal
+# 6. Set the goal
 curl -sf -X POST -H "$AUTH" -H "Content-Type: application/json" \
   -d "$(jq -n --arg s "Implement $ISSUE_TITLE ($ISSUE_URL)" '{summary:$s}')" \
   "$BASE/goal" >/dev/null
 
-# 6. Seed the initial prompt
-PROMPT="Implement GitHub issue #$ISSUE_NUMBER: $ISSUE_TITLE
-
-Issue URL: $ISSUE_URL
-Read the issue with \`gh issue view <N> --repo TimoFreiberg/pantoken\` (use the issue number from the URL).
-Follow AGENTS.md conventions.
-Plan the implementation, review the plan, hand off to execute, implement,
-review the implementation, and commit when done. Push is handled by the
-outer script — do not push yourself.
-
-**Commit message requirement:** your commit message MUST include
-\`Fixes #$ISSUE_NUMBER\` on its own line (after the subject). This links
-the commit to the GitHub issue for traceability and allows GitHub to
-auto-close the issue when the commit lands on main.
-
-Note: this workspace is a jj workspace without a .git directory, so all
-\`gh\` commands MUST include \`--repo TimoFreiberg/pantoken\` explicitly.
-
-If you discover during planning or implementation that the issue is
-ambiguous and you cannot proceed without a human answer, do the following:
-1. Post a comment on the GitHub issue with \`gh issue comment <N> --repo TimoFreiberg/pantoken --body \"...\"\`
-   - The comment body MUST start with \`<!-- autopilot -->\` on its own line, then a blank line, then your question.
-   - Ask one specific, answerable question.
-2. Do NOT commit or make any code changes.
-3. Stop. The outer script will handle cleanup.
-This ensures the triage loop won't re-pick this issue until the human replies."
+# 7. Seed the initial prompt (from template, with placeholders substituted)
+PROMPT=$(ISSUE_NUMBER="$ISSUE_NUMBER" ISSUE_URL="$ISSUE_URL" ISSUE_TITLE="$ISSUE_TITLE" \
+  awk '
+    $0 == "{{ISSUE_NUMBER}}" { print ENVIRON["ISSUE_NUMBER"]; next }
+    $0 == "{{ISSUE_URL}}" { print ENVIRON["ISSUE_URL"]; next }
+    $0 == "{{ISSUE_TITLE}}" { print ENVIRON["ISSUE_TITLE"]; next }
+    { print }
+  ' "$SCRIPT_DIR/seed-prompt.md")
 
 curl -sf -X POST -H "$AUTH" -H "Content-Type: application/json" \
   -d "$(jq -n --arg c "$PROMPT" '{content:$c}')" \
   "$BASE/prompt" >/dev/null
 
-echo "[$(date '+%H:%M:%S')] Session $SESSION_ID seeded successfully (plan facet, adventurous handoff on)" >&2
+echo "[$(date '+%H:%M:%S')] Session $SESSION_ID seeded successfully (plan facet, bypass_plus, adventurous handoff on)" >&2

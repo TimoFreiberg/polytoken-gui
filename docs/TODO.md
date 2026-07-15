@@ -264,16 +264,15 @@ are REAL but **provisional** — they embed local `/Users/timo/...` paths from t
 
 ## 🤖 Automation
 
-- [ ] **Autopilot loop** (`scripts/autopilot.sh`) — continuously triages open
-      GitHub issues, picks implementable ones, runs a plan→review→handoff→
-      execute loop in a visible Polytoken TUI (adventurous handoff enabled),
-      and pushes to `main` when the TUI closes. Issues needing clarification
-      get a comment with an `<!-- autopilot -->` marker and are skipped until
-      the human replies. Supports up to `MAX_CONCURRENT` (default 2) concurrent
-      implementers in separate zellij tabs + jj workspaces. Serial triage,
-      serial merge, concurrent implementers. See `scripts/autopilot/README.md`.
-      Status: implemented, unit tests pass (25/25); manual integration tests
-      pending (AC.4–AC.8 require live gh + polytoken + zellij).
+- [ ] **Per-issue autopilot** (`just implement-issue <url>`) — spawns one
+      polytoken TUI agent per GitHub issue in a new zellij tab, seeded with
+      bypass_plus permissions, plan facet, and adventurous handoff. The agent
+      runs the full plan→review→execute→review loop using the `quality-review`
+      skill, then calls `just integrate-into-main` which acquires a repo-local
+      lock, rebases onto `main@origin`, runs tests, advances the main bookmark,
+      and pushes. Conflict resolution is delegated back to the agent (hybrid
+      lock model). The operator picks issues manually — no auto-triage. See
+      `scripts/README.md`.
 
 ## 🧹 Minor
 

@@ -5,20 +5,20 @@
 # which issues are currently being worked on. All operations are serialized
 # with a mkdir-based lock (portable: works on macOS and Linux without flock).
 #
-# This file is sourced (not executed) by main.sh — it provides functions.
-# The claims file is initialized by main.sh before these functions are called.
+# This file is sourced (not executed) by implement-issue.sh — it provides
+# functions. The claims file is initialized by implement-issue.sh before
+# these functions are called.
 #
 # Claim structure:
-# {"issue_number":23,"session_id":"abc","slot":0,"claimed_at":"2026-07-13T08:14:22Z"}
+# {"issue_number":23,"session_id":"abc","claimed_at":"2026-07-13T08:14:22Z"}
 #
 # Functions:
-#   claim_issue <issue_number> <slot>
+#   claim_issue <issue_number>
 #   release_claim <issue_number>
 #   update_claim_session <issue_number> <session_id>
-#   get_claim_issue <slot>
 #   get_claim_session_id <issue_number>
-#   count_active_slots
-#   find_free_slot
+#   is_issue_claimed <issue_number>
+#   list_claimed_issues
 #   recover_stale_claims
 
 CLAIMS_DIR="$HOME/.local/share/pantoken-autopilot"
@@ -65,9 +65,9 @@ _release_lock() {
   rmdir "$LOCK_DIR" 2>/dev/null || true
 }
 
-# Claim an issue: claim_issue <issue_number> <slot>
+# Claim an issue: claim_issue <issue_number>
 claim_issue() {
-  local issue_number=$1 slot=$2
+  local issue_number=$1
   local claimed_at
   claimed_at=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 
@@ -75,10 +75,9 @@ claim_issue() {
   local tmp
   tmp=$(mktemp)
   jq --argjson n "$issue_number" \
-     --argjson s "$slot" \
      --arg t "$claimed_at" \
      --arg sid "" \
-     '.claims += [{"issue_number":$n,"session_id":$sid,"slot":$s,"claimed_at":$t}]' \
+     '.claims += [{"issue_number":$n,"session_id":$sid,"claimed_at":$t}]' \
      "$CLAIMS_FILE" > "$tmp"
   mv "$tmp" "$CLAIMS_FILE"
   _release_lock
@@ -111,16 +110,6 @@ update_claim_session() {
   _release_lock
 }
 
-# Get the issue number for a given slot: get_claim_issue <slot>
-get_claim_issue() {
-  local slot=$1
-  _acquire_lock || return 1
-  jq -r --argjson s "$slot" \
-    '.claims[] | select(.slot == $s) | .issue_number' \
-    "$CLAIMS_FILE"
-  _release_lock
-}
-
 # Get session_id for an issue: get_claim_session_id <issue_number>
 get_claim_session_id() {
   local issue_number=$1
@@ -128,28 +117,6 @@ get_claim_session_id() {
   jq -r --argjson n "$issue_number" \
     '.claims[] | select(.issue_number == $n) | .session_id' \
     "$CLAIMS_FILE"
-  _release_lock
-}
-
-# Count active slots
-count_active_slots() {
-  _acquire_lock || return 1
-  jq -r '.claims | length' "$CLAIMS_FILE"
-  _release_lock
-}
-
-# Find the lowest free slot index (0..MAX_CONCURRENT-1)
-find_free_slot() {
-  _acquire_lock || return 1
-  for slot in $(seq 0 $((MAX_CONCURRENT - 1))); do
-    if ! jq -e --argjson s "$slot" '.claims[] | select(.slot == $s)' \
-         "$CLAIMS_FILE" >/dev/null 2>&1; then
-      echo "$slot"
-      _release_lock
-      return
-    fi
-  done
-  echo "-1"  # no free slot
   _release_lock
 }
 
@@ -187,8 +154,8 @@ _release_stale_claim() {
 
   # Clean up orphaned workspace (lock already held — safe to do I/O here)
   local repo_root="${PANTOKEN_REPO_ROOT:-/Users/timo/src/pantoken}"
-  local ws_name="autopilot-$issue_number"
-  local ws_dir="$repo_root/../pantoken-autopilot-$issue_number"
+  local ws_name="issue-$issue_number"
+  local ws_dir="$repo_root/../pantoken-issue-$issue_number"
   if [ -d "$ws_dir" ]; then
     # Forget the workspace from jj, then remove the directory
     cd "$repo_root" 2>/dev/null && jj workspace forget "$ws_name" 2>/dev/null || true
