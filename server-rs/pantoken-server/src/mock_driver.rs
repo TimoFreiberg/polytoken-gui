@@ -3253,7 +3253,10 @@ impl PantokenDriver for MockDriver {
                 "edit-patch-1", "edit", "Rich patch edit", Some("Exercise the rich patch preview branch"),
                 serde_json::json!({
                     "path": "src/patch.ts",
-                    "edits": [{ "oldText": "INPUT_SIDE_OLD", "newText": "INPUT_SIDE_NEW" }]
+                    "edits": [{
+                        "oldText": "INPUT_SIDE_OLD".repeat(2_000),
+                        "newText": "INPUT_SIDE_NEW".repeat(2_000)
+                    }]
                 }),
                 true,
                 serde_json::json!({
@@ -3262,6 +3265,26 @@ impl PantokenDriver for MockDriver {
                 }),
                 0, 0, 1,
             ),
+            "editcountguard" => {
+                let old_text = format!(
+                    "GUARD_OLD_START\n{}GUARD_OLD_TAIL",
+                    "guard old\n".repeat(4_999)
+                );
+                let new_text = format!(
+                    "GUARD_NEW_START\n{}GUARD_NEW_TAIL",
+                    "guard new\n".repeat(399)
+                );
+                tool_span(
+                    "edit-count-guard-1", "edit", "Huge line-count edit", Some("Exercise the edit count work guard"),
+                    serde_json::json!({
+                        "path": "src/huge-lines.ts",
+                        "edits": [{ "oldText": old_text, "newText": new_text }]
+                    }),
+                    true,
+                    serde_json::json!("large edit applied"),
+                    0, 0, 1,
+                )
+            }
             // ── Compat ─────────────────────────────────────────────────────
             "compat" => vec![
                 ScriptStep { wait_ms: 0, event: SessionDriverEvent::ExtensionCompatibilityIssue { base: base(), issue: ExtensionCompatibilityIssue {

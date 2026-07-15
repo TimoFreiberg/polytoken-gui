@@ -63,6 +63,7 @@
   // highlighted line. Exact source values remain available through the copy actions.
   const EDIT_PREVIEW_CHAR_LIMIT = 20_000;
   const EDIT_PREVIEW_LINE_LIMIT = 160;
+  const EDIT_COUNT_WORK_LIMIT = 500_000;
 
   function bound(text: string, limit: number): string {
     return text.length <= limit
@@ -336,21 +337,40 @@
     const newFile = joinSideBounded(edit.edits, "newText");
     const rawPatch = patchFrom(item.output);
     const patch = rawPatch ? boundEditText(rawPatch) : null;
+    const selectedPatch = patch && !patch.truncated ? patch.text : null;
     return {
       path: inlineBound(edit.path, HEADER_PREVIEW_LIMIT),
       oldFile: oldFile.text,
       newFile: newFile.text,
-      patch: patch && !patch.truncated ? patch.text : null,
-      truncated: oldFile.truncated || newFile.truncated || !!patch?.truncated,
+      patch: selectedPatch,
+      // Report truncation only for the branch the user actually sees. A complete
+      // rich patch does not become partial merely because its unused input sides
+      // exceed the side-preview cap.
+      truncated: selectedPatch ? false : oldFile.truncated || newFile.truncated,
     };
   });
 
-  // Exact LCS line diff -> added/removed line counts for the collapsed badge. Keep
-  // only two rows and put the shorter side in the columns: the old full-table
-  // implementation used O(n*m) memory, which made exact counts unsafe for the very
-  // oversized edits whose visualization we now bound. The rich renderer separately
-  // receives only diffPreview's bounded strings.
-  function lineCounts(oldText: string, newText: string): { added: number; removed: number } {
+  type ExactLineCounts = { added: number; removed: number; work: number };
+
+  function lineCount(text: string): number {
+    if (!text.length) return 0;
+    let count = 1;
+    for (let i = 0; i < text.length; i++) if (text[i] === "\n") count++;
+    return count;
+  }
+
+  // Exact LCS line counts with O(min(oldLines,newLines)) auxiliary memory. The
+  // caller supplies the remaining comparison-work budget, keeping quadratic CPU
+  // off the UI thread for edits whose line matrix is too large.
+  function lineCounts(
+    oldText: string,
+    newText: string,
+    workBudget: number,
+  ): ExactLineCounts | null {
+    const oldLines = lineCount(oldText);
+    const newLines = lineCount(newText);
+    const work = oldLines * newLines;
+    if (work > workBudget) return null;
     const a = oldText.length ? oldText.split("\n") : [];
     const b = newText.length ? newText.split("\n") : [];
     const rows = a.length >= b.length ? a : b;
@@ -368,19 +388,26 @@
       current.fill(0);
     }
     const common = previous[columns.length] ?? 0;
-    return { added: b.length - common, removed: a.length - common };
+    return {
+      added: b.length - common,
+      removed: a.length - common,
+      work,
+    };
   }
 
   const counts = $derived.by(() => {
     if (!edit) return null;
     let added = 0;
     let removed = 0;
+    let workRemaining = EDIT_COUNT_WORK_LIMIT;
     for (const e of edit.edits) {
-      const count = lineCounts(e.oldText, e.newText);
+      const count = lineCounts(e.oldText, e.newText, workRemaining);
+      if (!count) return { kind: "omitted" } as const;
       added += count.added;
       removed += count.removed;
+      workRemaining -= count.work;
     }
-    return { added, removed };
+    return { kind: "exact", added, removed } as const;
   });
 
   // ── Theme: the app resolves to a CONCRETE data-theme ("light"|"dark") on <html>.
@@ -477,11 +504,17 @@
     {#if item.status === "interrupted"}
       <span class="status-text" aria-hidden="true">interrupted</span>
     {/if}
-    {#if counts}
+    {#if counts?.kind === "exact"}
       <span class="counts" aria-label="{counts.added} added, {counts.removed} removed">
         <span class="add">+{counts.added}</span>
         <span class="del">−{counts.removed}</span>
       </span>
+    {:else if counts?.kind === "omitted"}
+      <span
+        class="counts-omitted"
+        title="Line counts omitted for large edit"
+        aria-label="Line counts omitted for large edit">large edit</span
+      >
     {/if}
     {#if durationLabel}
       <span class="duration" title={`Took ${durationLabel}`} aria-label={`took ${durationLabel}`}>{durationLabel}</span>
@@ -737,6 +770,12 @@
   }
   .counts .del {
     color: var(--danger);
+  }
+  .counts-omitted {
+    color: var(--text-faint);
+    font-family: var(--font-mono);
+    font-size: 11.5px;
+    flex-shrink: 0;
   }
   /* Elapsed-duration badge — muted + monospace so it reads as metadata, not status. */
   .duration {

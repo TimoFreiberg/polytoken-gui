@@ -143,6 +143,38 @@ test("ordinary rich edit patch renders instead of the input-derived sides", asyn
   expect(shadowText).not.toContain("INPUT_SIDE_NEW");
 });
 
+test("large line matrix omits counts and still renders its bounded preview promptly", async ({
+  page,
+}) => {
+  await drive(page, "editcountguard");
+  const card = page.locator(".tool", { hasText: "Huge line-count edit" });
+  await expect(card).toBeVisible({ timeout: 2_000 });
+  await expect(card.locator(".counts")).toHaveCount(0);
+  const omitted = card.locator(".counts-omitted");
+  await expect(omitted).toHaveText("large edit");
+  await expect(omitted).toHaveAccessibleName(
+    "Line counts omitted for large edit",
+  );
+  await expect(omitted).toHaveAttribute(
+    "title",
+    "Line counts omitted for large edit",
+  );
+
+  await card.locator(".head").click();
+  await expect
+    .poll(
+      () =>
+        card.evaluate((el) => {
+          const host = [...el.querySelectorAll<HTMLElement>("*")].find(
+            (node) => node.shadowRoot,
+          );
+          return host?.shadowRoot?.textContent ?? "";
+        }),
+      { timeout: 5_000 },
+    )
+    .toContain("GUARD_OLD_START");
+});
+
 test("message timestamps render with an exact-time tooltip", async ({
   page,
 }) => {
