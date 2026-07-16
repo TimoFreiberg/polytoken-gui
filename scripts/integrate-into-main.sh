@@ -203,10 +203,19 @@ if jj log -r 'main@origin' --no-graph 2>/dev/null | grep -q .; then
   fi
 fi
 log "Rebasing main..@ ~ empty() onto $REBASE_DEST..."
+# Capture the content commit's change ID before rebase. jj preserves change
+# IDs across rebase, so we can reattach @ afterward by its change ID even if
+# the rebase detaches the working copy from the content commit.
+CONTENT_CHANGE=$(jj log -r 'main..@ ~ empty()' --no-graph -T 'change_id' 2>/dev/null | tail -1)
+
 # Exclude the empty working-copy commit (@) from the rebase source: when @ is
 # included, jj rebases it as a separate commit onto the destination, making it
 # a sibling of the feature commit rather than its child. This breaks the
 # main..@ ~ empty() query used later to find the target commit.
+#
+# Side effect: excluding @ also means jj doesn't move @ on top of the rebased
+# content commit — it leaves @ behind at its old position. We reattach it
+# with `jj new` after the conflict check below.
 REBASE_STATUS=0
 jj rebase -s 'main..@ ~ empty()' -d "$REBASE_DEST" 2>/dev/null || REBASE_STATUS=$?
 
@@ -225,6 +234,14 @@ if [ "$REBASE_STATUS" -ne 0 ]; then
   release_lock
   RELEASE_ON_EXIT=false
   exit 1
+fi
+
+# 5b. Reattach the working copy on top of the rebased content commit.
+# The rebase excluded @ (to keep it from becoming a sibling), but that also
+# means @ is left behind at its old position. Move it on top of the content
+# commit so main..@ includes it and `jj new`/`jj squash` operations work.
+if [ -n "$CONTENT_CHANGE" ]; then
+  jj new "$CONTENT_CHANGE" 2>/dev/null || true
 fi
 
 # 6. Run tests

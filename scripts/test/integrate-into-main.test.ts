@@ -274,6 +274,80 @@ describeOrSkip("integrate-into-main.sh jj primitives", () => {
     const after = run(["jj", "log", "-r", "main..@ ~ empty()", "--no-graph", "-T", "description"], tempDir);
     expect(after.stdout).toContain("feature");
   });
+
+  test("rebase -s 'main..@ ~ empty()' onto new base detaches @; jj new reattaches it", () => {
+    // Reproduces the bug from session 062tjg-lance: when the rebase destination
+    // is NOT already the parent of the content commit (i.e., the rebase actually
+    // moves the commit), excluding @ from the rebase source leaves @ behind at
+    // its old position. main..@ ~ empty() then returns nothing because the
+    // content commit is no longer an ancestor of @. The fix: `jj new` on top
+    // of the content commit's change ID (stable across rebase) reattaches @.
+    createJjRepoWithOrigin(tempDir);
+
+    // Base commit, push to origin
+    writeFileSync(join(tempDir, "base.txt"), "base\n");
+    run(["jj", "describe", "-m", "base"], tempDir);
+    run(["jj", "git", "push", "--bookmark", "main"], tempDir);
+
+    // Content commit on top of main
+    run(["jj", "new"], tempDir);
+    writeFileSync(join(tempDir, "feature.txt"), "feature\n");
+    run(["jj", "describe", "-m", "feature"], tempDir);
+
+    // Capture the change ID before rebase (jj preserves it across rebase)
+    const changeId = run(
+      ["jj", "log", "-r", "main..@ ~ empty()", "--no-graph", "-T", "change_id"],
+      tempDir,
+    ).stdout.trim();
+    expect(changeId.length).toBeGreaterThan(0);
+
+    // Empty working copy on top
+    run(["jj", "new"], tempDir);
+
+    // Simulate main@origin advancing (another commit landed on origin).
+    // We do this by creating a new commit and pushing it, so main@origin
+    // moves ahead of our local main. Then rebase onto main@origin to get
+    // a real (non-noop) rebase.
+    // Instead of a second push, we just rebase onto main@origin directly —
+    // since main@origin == local main (base), the rebase is onto base.
+    // To get a *moving* rebase, we create a sibling commit at main and
+    // rebase onto it.
+    run(["jj", "new", "main"], tempDir);
+    writeFileSync(join(tempDir, "sibling.txt"), "sibling\n");
+    run(["jj", "describe", "-m", "sibling base for rebase dest"], tempDir);
+    const siblingCommit = run(
+      ["jj", "log", "-r", "@", "--no-graph", "-T", "commit_id"],
+      tempDir,
+    ).stdout.trim();
+    run(["jj", "new", "main"], tempDir); // back to a child of main
+
+    // Now rebase the content commit (by change ID) onto the sibling.
+    // This is a real move: the content commit goes from child-of-main to
+    // child-of-sibling. @ (empty, child of content commit) is excluded.
+    const rebaseResult = run(
+      ["jj", "rebase", "-s", "main..@ ~ empty()", "-d", siblingCommit],
+      tempDir,
+    );
+    expect(rebaseResult.exitCode).toBe(0);
+
+    // BUG: @ is now detached — main..@ ~ empty() returns nothing
+    const beforeReattach = run(
+      ["jj", "log", "-r", "main..@ ~ empty()", "--no-graph", "-T", "description"],
+      tempDir,
+    );
+    expect(beforeReattach.stdout.trim()).toBe("");
+
+    // FIX: reattach @ on top of the content commit by its change ID
+    const newResult = run(["jj", "new", changeId], tempDir);
+    expect(newResult.exitCode).toBe(0);
+
+    // Now main..@ ~ empty() finds the feature commit again
+    const afterReattach = run(
+      ["jj", "log", "-r", "main..@ ~ empty()", "--no-graph", "-T", "description"],
+      tempDir,
+    );
+    expect(afterReattach.stdout).toContain("feature");
+  });
 });
 
 describeOrSkip("integrate-into-main.sh lock logic", () => {
