@@ -59,20 +59,19 @@ test("mobile: the session-controls summary never overflows the viewport", async 
   await expect(page.getByTestId("model-badge")).toBeHidden();
 });
 
-test("mobile: new-session controls stay tappable inside the wrapped status row", async ({
+test("mobile: new-session draft-setup chips stay tappable above the composer surface", async ({
   page,
 }) => {
   await openSidebar(page);
   await page.getByRole("button", { name: "New session…" }).click();
 
-  const status = page.getByTestId("composer-status-row");
-  const left = status.locator(".status-left");
+  const setup = page.getByTestId("draft-setup");
   const project = page.getByTestId("draft-project-control");
   const worktree = page.getByTestId("draft-worktree-control");
   const vw = page.viewportSize()!.width;
 
-  await expect(left.getByTestId("draft-project-control")).toHaveCount(1);
-  await expect(left.getByTestId("draft-worktree-control")).toHaveCount(1);
+  await expect(setup.getByTestId("draft-project-control")).toHaveCount(1);
+  await expect(setup.getByTestId("draft-worktree-control")).toHaveCount(1);
   const visibleProjectBase = (await project.innerText()).trim();
   expect(visibleProjectBase).not.toBe("");
   await expect(project).toHaveAccessibleName(
@@ -89,8 +88,6 @@ test("mobile: new-session controls stay tappable inside the wrapped status row",
     expect(box!.x + box!.width).toBeLessThanOrEqual(vw + 0.5);
   }
 
-  const leftBox = await left.boundingBox();
-  expect(leftBox).not.toBeNull();
   await expect(
     page.getByTestId("mobile-session-controls-trigger"),
   ).toBeVisible();
@@ -98,7 +95,9 @@ test("mobile: new-session controls stay tappable inside the wrapped status row",
   await project.click();
   await expect(project).toHaveAttribute("aria-expanded", "true");
   const picker = page.getByRole("dialog", { name: "Choose project directory" });
-  const filter = picker.getByRole("textbox", { name: "Project directory path" });
+  const filter = picker.getByRole("textbox", {
+    name: "Project directory path",
+  });
   await expect(picker).toBeVisible();
   await expect(filter).toBeVisible();
   for (const [name, landmark] of [

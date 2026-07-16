@@ -1290,6 +1290,38 @@
 
     <QueueTray />
 
+    {#if drafting && store.draft}
+      <div class="draft-setup" data-testid="draft-setup">
+        <button
+          bind:this={projectControlRef}
+          class="chip"
+          data-testid="draft-project-control"
+          aria-haspopup="dialog"
+          aria-expanded={pickingCwd}
+          aria-label={`${cwdBase} — browse to change project directory`}
+          title={`Project: ${store.draft.cwd || "home"} — click to browse for a directory (⌥P)`}
+          onclick={() => (pickingCwd = !pickingCwd)}
+        >
+          {cwdBase}
+          <Chevron open={pickingCwd} variant="menu" size={10} />
+        </button>
+        <button
+          class="chip toggle-chip"
+          data-testid="draft-worktree-control"
+          class:on={store.draft.worktree}
+          aria-pressed={store.draft.worktree}
+          aria-label={store.draft.worktree
+            ? "Disable worktree isolation"
+            : "Enable worktree isolation"}
+          title="Isolate this session in a jj/git worktree of the project, leaving the main tree clean (⌥W)"
+          onclick={() => store.toggleDraftWorktree()}
+        >
+          worktree
+          {#if store.draft.worktree}<span class="chip-check" aria-hidden="true">✓</span>{/if}
+        </button>
+      </div>
+    {/if}
+
     <div class="composer-surface" data-testid="composer-surface">
     <div class="box-wrap">
       {#if pickingCwd && drafting && store.draft}
@@ -1438,37 +1470,7 @@
     </div>
 
     <div class="composer-status-row" data-testid="composer-status-row">
-      <div class="status-left" class:draft-controls={drafting}>
-        {#if drafting && store.draft}
-          <!-- Model + effort are rebound to the draft via composerConfig. -->
-          <button
-            bind:this={projectControlRef}
-            class="chip"
-            data-testid="draft-project-control"
-            aria-haspopup="dialog"
-            aria-expanded={pickingCwd}
-            aria-label={`${cwdBase} — browse to change project directory`}
-            title={`Project: ${store.draft.cwd || "home"} — click to browse for a directory (⌥P)`}
-            onclick={() => (pickingCwd = !pickingCwd)}
-          >
-            {cwdBase}
-            <Chevron open={pickingCwd} variant="menu" size={10} />
-          </button>
-          <button
-            class="chip toggle-chip"
-            data-testid="draft-worktree-control"
-            class:on={store.draft.worktree}
-            aria-pressed={store.draft.worktree}
-            aria-label={store.draft.worktree
-              ? "Disable worktree isolation"
-              : "Enable worktree isolation"}
-            title="Isolate this session in a jj/git worktree of the project, leaving the main tree clean (⌥W)"
-            onclick={() => store.toggleDraftWorktree()}
-          >
-            worktree
-            {#if store.draft.worktree}<span class="chip-check" aria-hidden="true">✓</span>{/if}
-          </button>
-        {/if}
+      <div class="status-left">
         <span class="desktop-config-left"><PermissionBadge /><FacetBadge /></span>
       </div>
       <div class="composer-status-right desktop-config-right" data-testid="composer-status-right">
@@ -1545,6 +1547,29 @@
     display: flex;
     flex-direction: column;
     gap: 8px;
+  }
+  /* Draft-setup header: a narrow tab above the composer card, visible only while
+     drafting. Its bottom border merges into the composer surface's top border via
+     margin-bottom: -8px (negating .col's gap) and border-bottom: 0. No box-shadow
+     here — the surface's own shadow provides the card depth, and a second shadow
+     at the seam would render darker at the overlap. */
+  .draft-setup {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 11px 6px;
+    background: var(--surface);
+    border: 1px solid var(--border-strong);
+    border-bottom: 0;
+    border-radius: var(--radius) var(--radius) 0 0;
+    width: 100%;
+    margin-bottom: -8px;
+  }
+  /* When the header is present, square the composer surface's top corners so the
+     borders merge seamlessly into one card. */
+  .draft-setup + .composer-surface {
+    border-top-left-radius: 0;
+    border-top-right-radius: 0;
   }
   .widget {
     background: var(--surface-sunken);
@@ -1746,11 +1771,7 @@
       padding-inline: 16px;
     }
     .composer-status-row { align-items: stretch; flex-wrap: wrap; row-gap: 6px; }
-    .status-left {
-      flex: 1 1 100%;
-      flex-wrap: wrap;
-    }
-    .status-left:not(.draft-controls),
+    .status-left,
     .desktop-config-left,
     .composer-status-right.desktop-config-right { display: none; }
     .composer-attachments {
