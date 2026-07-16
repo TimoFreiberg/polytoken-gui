@@ -94,32 +94,28 @@ test("a pending new-session draft's worktree toggle survives a reload", async ({
   );
 });
 
-// Pick a non-default model (Sonnet — same anthropic group as the Opus default, which is
-// seeded open) and a non-default thinking level (high), then assert the badges reflect it.
+// Pick a non-default model (Sonnet) and a non-default thinking level (high)
+// using the combined picker, then assert the badge reflects both.
 async function pickNonDefaultModelAndThinking(page: Page): Promise<void> {
-  await page
-    .locator(".mp .badge")
-    .filter({ hasText: "Claude Opus 4.8" })
-    .click();
-  await page.locator(".mp .panel").getByText("Claude Sonnet 4.6").click();
-  await expect(
-    page.locator(".mp .badge").filter({ hasText: "Claude Sonnet 4.6" }),
-  ).toBeVisible();
+  // Open the combined picker.
+  await page.getByTestId("model-badge").click();
+  const panel = page.locator(".mp .panel");
+  const filter = panel.getByPlaceholder("Type to filter…");
 
-  await page.locator(".mp .badge").filter({ hasText: "medium" }).click();
-  await page.locator(".mp .item").filter({ hasText: "high" }).click();
-  await expect(
-    page.locator(".mp .badge").filter({ hasText: "high" }),
-  ).toBeVisible();
+  // Arrow down to Claude Sonnet 4.6, then cycle effort to "high".
+  await filter.press("ArrowDown");
+  await filter.press("ArrowRight");
+  await filter.press("ArrowRight");
+
+  // Enter applies the combined model + effort.
+  await filter.press("Enter");
+  await expect(page.getByTestId("model-badge")).toContainText("Claude Sonnet 4.6");
+  await expect(page.getByTestId("model-badge")).toContainText("high");
 }
 
 async function expectNonDefaultModelAndThinking(page: Page): Promise<void> {
-  await expect(
-    page.locator(".mp .badge").filter({ hasText: "Claude Sonnet 4.6" }),
-  ).toBeVisible();
-  await expect(
-    page.locator(".mp .badge").filter({ hasText: "high" }),
-  ).toBeVisible();
+  await expect(page.getByTestId("model-badge")).toContainText("Claude Sonnet 4.6");
+  await expect(page.getByTestId("model-badge")).toContainText("high");
 }
 
 test("a pending new-session draft's model + thinking survive leaving and reopening", async ({

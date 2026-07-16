@@ -117,6 +117,7 @@ fn mock_models() -> Vec<ModelOption> {
                 "medium".into(),
                 "high".into(),
             ]),
+            default_thinking_level: Some("medium".into()),
         },
         ModelOption {
             provider: "anthropic".into(),
@@ -128,12 +129,14 @@ fn mock_models() -> Vec<ModelOption> {
                 "medium".into(),
                 "high".into(),
             ]),
+            default_thinking_level: Some("medium".into()),
         },
         ModelOption {
             provider: "deepseek".into(),
             model_id: "deepseek-v4-flash".into(),
             label: "DeepSeek V4 Flash".into(),
             thinking_levels: Some(vec!["off".into()]),
+            default_thinking_level: Some("off".into()),
         },
         ModelOption {
             provider: "openai".into(),
@@ -145,6 +148,7 @@ fn mock_models() -> Vec<ModelOption> {
                 "medium".into(),
                 "high".into(),
             ]),
+            default_thinking_level: Some("medium".into()),
         },
     ]
 }
@@ -2832,10 +2836,17 @@ impl PantokenDriver for MockDriver {
     // context actions round-trip through hub → client in dev/e2e.
     async fn session_action(&self, action: SessionAction, _session_id: Option<SessionId>) {
         match action {
-            SessionAction::SetModel { provider, model_id } => {
+            SessionAction::SetModel {
+                provider,
+                model_id,
+                thinking_level,
+            } => {
                 let mut config = self.config.lock();
                 config.provider = Some(provider);
                 config.model_id = Some(model_id);
+                if let Some(level) = thinking_level {
+                    config.thinking_level = Some(level);
+                }
                 let mut snapshot = snap(SessionStatus::Idle, None, None, None, None, None);
                 snapshot.config = Some(config.clone());
                 drop(config);

@@ -39,7 +39,7 @@ test("the model and effort pickers live beside the context ring", async ({
 }) => {
   const right = page.getByTestId("composer-status-right");
   await expect(right.getByTestId("model-badge")).toContainText("Claude Opus 4.8");
-  await expect(right.getByTestId("thinking-badge")).toContainText("medium");
+  await expect(right.getByTestId("model-badge")).toContainText("medium");
   await expect(right.getByTestId("context-trigger")).toBeVisible();
   await expect(page.locator(".hdr .mp")).toHaveCount(0);
 });

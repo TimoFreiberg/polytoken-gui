@@ -231,6 +231,7 @@ async fn model_switches_post_full_registry_model_id() {
             pantoken_protocol::wire::SessionAction::SetModel {
                 provider: "deepseek".into(),
                 model_id: "deepseek/deepseek-v4-pro".into(),
+                thinking_level: None,
             },
             Some(fake.session_id.clone()),
         )

@@ -174,7 +174,11 @@
                     checked={cfg.provider === model.provider &&
                       cfg.modelId === model.modelId}
                     onchange={() =>
-                      store.setModel(model.provider, model.modelId)}
+                      store.setModel(
+                        model.provider,
+                        model.modelId,
+                        model.defaultThinkingLevel,
+                      )}
                   />
                 </label>
               {/each}

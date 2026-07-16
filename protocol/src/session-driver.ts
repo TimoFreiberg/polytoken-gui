@@ -115,6 +115,11 @@ export interface ModelOption {
    *  new-session draft's effort picker offer accurate options before a session exists —
    *  per-session `availableThinkingLevels` is only known once a model is warm. */
   readonly thinkingLevels?: readonly string[];
+  /** This model's default effort level (the daemon's `(default)` marker).
+   *  The picker stages this when a model is first selected. Undefined when the
+   *  daemon didn't report a default — the picker falls back to the first sorted
+   *  level or `undefined` ("default"). */
+  readonly defaultThinkingLevel?: string;
 }
 
 /** One slash command the composer's typeahead can offer — a JSON-safe projection of

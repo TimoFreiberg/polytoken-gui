@@ -450,9 +450,7 @@ class PantokenStore {
   // from `swUpdateReady` (that's the PWA asset-cache refresh).
   appUpdate = $state<{ sha: string; applying: boolean } | null>(null);
   // Global hotkey dispatch — incremented so $effect catches every keystroke.
-  hotkeyAction = $state<{ which: "model" | "thinking"; n: number } | null>(
-    null,
-  );
+  hotkeyAction = $state<{ n: number } | null>(null);
   // Bump to ask the composer textarea to retake focus — e.g. after the model/effort
   // menu closes from a keyboard-driven flow. A counter so each request re-fires.
   focusComposerN = $state(0);
@@ -2476,27 +2474,19 @@ class PantokenStore {
       ? (this.draft.permissionMonitor ?? "standard")
       : (this.session.permissionMonitor ?? "standard");
   }
-  setModel(provider: string, modelId: string): void {
+  setModel(provider: string, modelId: string, thinkingLevel?: string): void {
     if (this.draft) {
-      // Switching model can change supported thinking levels; clamp the draft's level
-      // to the new model's set so the effort chip never shows an unsupported option.
-      const levels = this.models.find(
-        (m) => m.provider === provider && m.modelId === modelId,
-      )?.thinkingLevels;
-      const cur = this.draft.thinking;
-      const thinking =
-        levels && cur && !levels.includes(cur)
-          ? levels.includes("medium")
-            ? "medium"
-            : levels[levels.length - 1]
-          : cur;
-      this.draft = { ...this.draft, model: { provider, modelId }, thinking };
+      this.draft = {
+        ...this.draft,
+        model: { provider, modelId },
+        thinking: thinkingLevel,
+      };
       this.persistDraftConfig();
       return;
     }
     send({
       type: "sessionAction",
-      action: { kind: "setModel", provider, modelId },
+      action: { kind: "setModel", provider, modelId, thinkingLevel },
     });
   }
   setThinking(level: string): void {

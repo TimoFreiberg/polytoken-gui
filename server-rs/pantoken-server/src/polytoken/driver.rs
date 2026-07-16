@@ -2931,9 +2931,15 @@ impl PantokenDriver for PolytokenDriver {
             return;
         };
         let (what, result) = match action {
-            SessionAction::SetModel { model_id, .. } => (
+            SessionAction::SetModel {
+                model_id,
+                thinking_level,
+                ..
+            } => (
                 "Model switch".to_string(),
-                ws.client.set_model(&model_post_key(&model_id), None).await,
+                ws.client
+                    .set_model(&model_post_key(&model_id), thinking_level.as_deref())
+                    .await,
             ),
             SessionAction::SetThinking { level } => {
                 // POST /model needs the model key alongside the level; without a

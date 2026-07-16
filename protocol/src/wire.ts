@@ -328,7 +328,7 @@ export type SessionAction =
       serverName: string;
       action: "enable" | "disable" | "disconnect" | "reconnect";
     }
-  | { kind: "setModel"; provider: string; modelId: string }
+  | { kind: "setModel"; provider: string; modelId: string; thinkingLevel?: string }
   | { kind: "setThinking"; level: string }
   | { kind: "setFacet"; facet: string }
   | { kind: "setPermissionMonitor"; mode: PermissionMonitorMode }

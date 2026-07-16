@@ -2,27 +2,21 @@
   import { tick } from "svelte";
   import type { ModelOption } from "@pantoken/protocol";
   import { store } from "../lib/store.svelte.js";
+  import { reveal } from "../lib/transitions.js";
   import Chevron from "./ui/Chevron.svelte";
+  import { rankModels, sortEfforts } from "../lib/model-picker-helpers.js";
 
-  // Not built on MenuBadge (unlike FacetBadge / PermissionBadge): ModelPicker has
-  // two menus (model + thinking) sharing one open/sel state, a filter-as-you-type
-  // search input, per-provider collapsible groups, wrapping (not clamped) arrow
-  // navigation with Ctrl-n/Ctrl-p, focus management (refocus the composer on
-  // close when opened via hotkey), hotkey integration via store.hotkeyAction,
-  // Space-to-select, scroll-into-view, an empty-match state, and a disabled badge.
-  // Forcing those into the shared primitive would need so many configuration
-  // props it would defeat the dedup. The simple badge+listbox pickers use
-  // MenuBadge; this one stays hand-rolled.
-  type Open = "none" | "model" | "thinking";
-  type ModelGroup = { provider: string; items: ModelOption[] };
-  const MODEL_GROUP_MIN_ITEMS = 3;
-  let open = $state<Open>("none");
+  // Combined model+effort picker — one badge, one popup, one atomic action.
+  // Replaces the former two-badge/two-menu structure (model ⌘⇧M + effort ⌘⇧E).
+  // The picker shows a flat, fuzzy-filterable list of models, each with an inline
+  // effort control (‹ medium ›) that cycles via ←/→ or [/]. Model and effort are
+  // applied together in one setModel call.
+  let open = $state(false);
 
-  // Current selection: the active session's folded config, or — while drafting a new
-  // session — the draft's chosen model/effort (composerConfig unifies the two). The
-  // switchable set arrives separately as store.models.
+  // Current config: the active session's folded config, or — while drafting a new
+  // session — the draft's chosen model/effort (composerConfig unifies the two).
   const cfg = $derived(store.composerConfig);
-  // Show the friendly label (e.g. "Opus 4.8") in the badge, matching the Claude
+  // Show the friendly label (e.g. "Claude Opus 4.8") in the badge, matching the Claude
   // app; fall back to the raw id before the model list arrives or if the active
   // model isn't in it. The raw provider:id stays available in the tooltip.
   const activeModel = $derived(
@@ -38,137 +32,93 @@
           : cfg.modelId
       : "model",
   );
-  const thinking = $derived(cfg.thinkingLevel);
-  const levels = $derived(cfg.availableThinkingLevels ?? []);
-
-  // Group the picker's models by provider, like a standard model picker. `pickerModels` is
-  // filtered to favorites (when any are set), always keeping the active model visible.
-  const groups = $derived.by(() => {
-    const m = new Map<string, ModelOption[]>();
-    for (const opt of store.pickerModels) {
-      const arr = m.get(opt.provider);
-      if (arr) arr.push(opt);
-      else m.set(opt.provider, [opt]);
-    }
-    return [...m.entries()].map(([provider, items]) => ({ provider, items }));
-  });
-  const groupedProviders = $derived(groups.filter(shouldGroupModels));
-
+  // Always show the effort in the badge — even off/none (e.g. "Claude Opus 4.8 · off").
+  const thinking = $derived(cfg.thinkingLevel ?? "off");
   const hasModels = $derived(store.models.length > 0);
-  const filtering = $derived(store.modelDefaults.favorites.length > 0);
 
-  // Filter-as-you-type search within the model menu (label / id / provider), since the
-  // list grows quickly with many providers connected.
-  let modelQuery = $state("");
-  const mq = $derived(modelQuery.trim().toLowerCase());
-  const filteredGroups = $derived.by(() => {
-    if (!mq) return groups;
-    const out: { provider: string; items: ModelOption[] }[] = [];
-    for (const g of groups) {
-      const items = g.items.filter(
-        (m) =>
-          m.label.toLowerCase().includes(mq) ||
-          m.modelId.toLowerCase().includes(mq) ||
-          m.provider.toLowerCase().includes(mq),
-      );
-      if (items.length > 0) out.push({ provider: g.provider, items });
-    }
-    return out;
-  });
-  // Per-provider collapse. Only real groups get headers; one- and two-model
-  // buckets render as plain rows so the menu does not become an accordion of
-  // singletons. A non-empty search query auto-expands every matching real group.
-  let expandedProviders = $state<Set<string>>(new Set());
-  function shouldGroupModels(group: ModelGroup): boolean {
-    return group.items.length >= MODEL_GROUP_MIN_ITEMS;
-  }
-  function isExpanded(provider: string): boolean {
-    return mq !== "" || expandedProviders.has(provider);
-  }
-  function toggleProvider(provider: string): void {
-    const next = new Set(expandedProviders);
-    if (next.has(provider)) next.delete(provider);
-    else next.add(provider);
-    expandedProviders = next;
-    sel = 0; // the visible list changed; keep the highlight valid
-  }
-  // Flat list of the VISIBLE model rows, in render order — arrow-key navigation
-  // walks this, and `sel` indexes into it.
-  const flatModelItems = $derived(
-    filteredGroups.flatMap((g) =>
-      !shouldGroupModels(g) || isExpanded(g.provider) ? g.items : [],
-    ),
-  );
+  // Filter-as-you-type search within the model list (label / id / provider).
+  let query = $state("");
+  const ranked = $derived(rankModels(store.pickerModels, query));
 
-  // Keyboard-highlight index into the open menu's item list (model rows or levels).
+  // Keyboard-highlight index into the flat ranked list.
   let sel = $state(0);
+  // Staged effort per model: a map keyed by `${provider}:${modelId}` holding the
+  // effort the user has cycled to. Seeded from the model's defaultThinkingLevel
+  // (or the first sorted level) when a model is first highlighted; the active
+  // model starts with its current effort. `undefined` means "no effort control"
+  // (the model has no thinkingLevels at all).
+  let stagedEffort = $state<Record<string, string | undefined>>({});
+
   // Element handles for focus management + scroll-into-view.
   let searchEl = $state<HTMLInputElement>();
-  let modelPanelEl = $state<HTMLDivElement>();
-  let thinkingPanelEl = $state<HTMLDivElement>();
-  // Whether the open menu was opened via its hotkey. Gates returning focus to the
+  let panelEl = $state<HTMLDivElement>();
+  // Whether the picker was opened via its hotkey. Gates returning focus to the
   // composer on close, so a plain mouse/tap interaction never pops up the keyboard.
   let openedViaKeyboard = false;
 
-  // Clear the query whenever the model menu closes, so it's fresh on next open.
+  function effortKey(m: ModelOption): string {
+    return `${m.provider}:${m.modelId}`;
+  }
+
+  /** Resolve the effective effort to show for a model row: the staged value if
+   *  the user has cycled it, else the model's defaultThinkingLevel, else the
+   *  first sorted level, else undefined (no effort control). */
+  function effortFor(m: ModelOption): string | undefined {
+    const key = effortKey(m);
+    if (key in stagedEffort) return stagedEffort[key];
+    if (m.defaultThinkingLevel) return m.defaultThinkingLevel;
+    const levels = m.thinkingLevels;
+    if (levels && levels.length > 0) return sortEfforts(levels)[0];
+    return undefined;
+  }
+
+  /** The sorted effort levels for a model (empty if it has none). */
+  function levelsFor(m: ModelOption): string[] {
+    return m.thinkingLevels ? sortEfforts(m.thinkingLevels) : [];
+  }
+
+  // Clear the query whenever the popup closes, so it's fresh on next open.
   $effect(() => {
-    if (open !== "model") modelQuery = "";
-  });
-  // Seed the active model's provider open whenever the menu opens (so your current pick is
-  // visible); everything else starts collapsed. Falls back to the first group if no active
-  // provider. Picking a model closes the menu first, so this never re-collapses mid-use.
-  $effect(() => {
-    if (open !== "model") return;
-    // A favorites-filtered list is already curated; keep grouped favorites open.
-    // If there are no real groups, this is intentionally empty: tiny buckets have
-    // no header and are always visible.
-    if (filtering) {
-      expandedProviders = new Set(groupedProviders.map((g) => g.provider));
-    } else {
-      const activeGroup = groupedProviders.find((g) => g.provider === cfg.provider);
-      const seed = activeGroup?.provider || groupedProviders[0]?.provider;
-      expandedProviders = new Set(seed ? [seed] : []);
+    if (!open) {
+      query = "";
+      stagedEffort = {};
     }
   });
-  // Keep the highlight in range as filtering/collapsing shrinks the model list under the
-  // cursor. Gated to the model menu: `sel` is shared with the thinking menu, and the model
-  // list can now be empty (all providers collapsed), which would otherwise clamp the
-  // thinking highlight to 0.
+  // Keep the highlight in range as filtering shrinks the list.
   $effect(() => {
-    if (open === "model" && sel >= flatModelItems.length) sel = 0;
+    if (open && sel >= ranked.length) sel = 0;
   });
-  // Scroll the keyboard-highlighted model row into view as the user arrows past the fold.
+  // Scroll the keyboard-highlighted row into view as the user arrows past the fold.
   $effect(() => {
-    if (open !== "model") return;
+    if (!open) return;
     sel;
     tick().then(() =>
-      modelPanelEl?.querySelector(".item.hl")?.scrollIntoView({ block: "nearest" }),
+      panelEl?.querySelector(".item.hl")?.scrollIntoView({ block: "nearest" }),
     );
   });
 
-  function focusMenu(which: "model" | "thinking"): void {
-    if (which === "model") searchEl?.focus();
-    else thinkingPanelEl?.focus();
-  }
-
-  function openMenu(which: "model" | "thinking", viaKeyboard: boolean): void {
-    open = which;
+  function openPicker(viaKeyboard: boolean): void {
+    open = true;
     openedViaKeyboard = viaKeyboard;
-    // Start on the active level for thinking (so Enter is a no-op until you move);
-    // start at the top for models.
-    sel = which === "thinking" ? Math.max(0, thinking ? levels.indexOf(thinking) : 0) : 0;
-    if (viaKeyboard) tick().then(() => focusMenu(which));
+    sel = 0;
+    // Seed the active model's staged effort with its current effort so the
+    // active row shows the live value, not the model default.
+    if (activeModel) {
+      const key = effortKey(activeModel);
+      stagedEffort = { [key]: cfg.thinkingLevel };
+    }
+    if (viaKeyboard) tick().then(() => searchEl?.focus());
   }
 
-  function closeMenu(refocus: boolean): void {
-    open = "none";
+  function closePicker(refocus: boolean): void {
+    open = false;
     openedViaKeyboard = false;
     if (refocus) store.focusComposer();
   }
 
-  function toggle(which: "model" | "thinking", viaKeyboard = false): void {
-    if (open === which) closeMenu(viaKeyboard);
-    else openMenu(which, viaKeyboard);
+  function toggle(viaKeyboard = false): void {
+    if (open) closePicker(viaKeyboard);
+    else openPicker(viaKeyboard);
   }
 
   // React to global hotkeys dispatched from StatusHeader via the store.
@@ -177,58 +127,65 @@
     const hk = store.hotkeyAction;
     if (hk && hk.n !== lastHotkeyN) {
       lastHotkeyN = hk.n;
-      toggle(hk.which, true);
+      toggle(true);
     }
   });
 
-  function pickModel(provider: string, modelId: string, refocus: boolean): void {
-    if (!(provider === cfg.provider && modelId === cfg.modelId))
-      store.setModel(provider, modelId);
-    closeMenu(refocus);
-  }
-  function pickThinking(level: string, refocus: boolean): void {
-    if (level !== thinking) store.setThinking(level);
-    closeMenu(refocus);
+  function stageEffort(m: ModelOption, level: string): void {
+    stagedEffort = { ...stagedEffort, [effortKey(m)]: level };
   }
 
-  function onModelKeydown(e: KeyboardEvent): void {
-    const n = flatModelItems.length;
-    if (e.key === "ArrowDown" || (e.ctrlKey && e.key === "n")) {
+  function cycleEffort(m: ModelOption, dir: 1 | -1): void {
+    const levels = levelsFor(m);
+    if (levels.length === 0) return;
+    const cur = effortFor(m);
+    let idx = cur ? levels.indexOf(cur) : -1;
+    if (idx < 0) idx = dir > 0 ? 0 : levels.length - 1;
+    else idx = idx + dir;
+    // Clamp (no wrapping).
+    idx = Math.max(0, Math.min(levels.length - 1, idx));
+    const next = levels[idx];
+    if (next) stageEffort(m, next);
+  }
+
+  function applyModel(m: ModelOption, refocus: boolean): void {
+    const effort = effortFor(m);
+    if (!(m.provider === cfg.provider && m.modelId === cfg.modelId) || effort !== cfg.thinkingLevel) {
+      store.setModel(m.provider, m.modelId, effort);
+    }
+    closePicker(refocus);
+  }
+
+  function onKeydown(e: KeyboardEvent): void {
+    const n = ranked.length;
+    if (e.key === "ArrowDown") {
       e.preventDefault();
-      if (n) sel = (sel + 1) % n;
-    } else if (e.key === "ArrowUp" || (e.ctrlKey && e.key === "p")) {
+      if (n) sel = Math.min(sel + 1, n - 1);
+    } else if (e.key === "ArrowUp") {
       e.preventDefault();
-      if (n) sel = (sel - 1 + n) % n;
+      if (n) sel = Math.max(sel - 1, 0);
+    } else if (e.key === "ArrowRight" || e.key === "]") {
+      e.preventDefault();
+      const it = ranked[sel];
+      if (it) cycleEffort(it.model, 1);
+    } else if (e.key === "ArrowLeft" || e.key === "[") {
+      e.preventDefault();
+      const it = ranked[sel];
+      if (it) cycleEffort(it.model, -1);
     } else if (e.key === "Enter") {
       e.preventDefault();
-      const it = flatModelItems[sel];
-      if (it) pickModel(it.provider, it.modelId, true);
+      const it = ranked[sel];
+      if (it) applyModel(it.model, true);
     } else if (e.key === "Escape") {
       e.preventDefault();
-      closeMenu(true);
-    }
-  }
-
-  function onThinkingKeydown(e: KeyboardEvent): void {
-    const n = levels.length;
-    if (e.key === "ArrowDown" || (e.ctrlKey && e.key === "n")) {
-      e.preventDefault();
-      if (n) sel = (sel + 1) % n;
-    } else if (e.key === "ArrowUp" || (e.ctrlKey && e.key === "p")) {
-      e.preventDefault();
-      if (n) sel = (sel - 1 + n) % n;
-    } else if (e.key === "Enter" || e.key === " ") {
-      e.preventDefault();
-      const lvl = levels[sel];
-      if (lvl) pickThinking(lvl, true);
-    } else if (e.key === "Escape") {
-      e.preventDefault();
-      closeMenu(true);
-    } else if (e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey) {
-      // The thinking panel (a focused div, not an input) would otherwise let a bare
-      // printable key bubble to the composer's type-to-focus handler, yanking focus
-      // out of the open menu. Swallow it — the menu has nothing to type into.
-      e.stopPropagation();
+      if (query) {
+        // First Esc clears a nonempty filter.
+        query = "";
+        sel = 0;
+      } else {
+        // Second Esc closes the popup.
+        closePicker(true);
+      }
     }
   }
 </script>
@@ -239,126 +196,96 @@
       <button
         class="badge"
         title={modelTitle + " (⌘⇧M)"}
-        aria-label={`Model: ${modelLabel}`}
+        aria-label={`Model: ${modelLabel}, effort: ${thinking}`}
         disabled={!hasModels}
-        onclick={() => toggle("model")}
+        onclick={() => toggle()}
         data-testid="model-badge"
       >
         <span class="badge-text">{modelLabel}</span>
-        {#if hasModels}<Chevron open={open === "model"} variant="menu" size={10} />{/if}
+        <span class="badge-sep" aria-hidden="true">·</span>
+        <span class="badge-effort">{thinking}</span>
+        {#if hasModels}<Chevron open={open} variant="menu" size={10} />{/if}
       </button>
-      {#if open === "model"}
-        <div class="panel" bind:this={modelPanelEl}>
-          <input
-            class="model-search"
-            type="text"
-            placeholder="Search models…"
-            title="Filter models by name, id, or provider (↑↓ to move · ↵ select · esc cancel)"
-            aria-label="Search models"
-            spellcheck="false"
-            autocapitalize="off"
-            autocorrect="off"
-            bind:this={searchEl}
-            bind:value={modelQuery}
-            oninput={() => (sel = 0)}
-            onkeydown={onModelKeydown}
-          />
-          {#each filteredGroups as g (g.provider)}
-            {@const grouped = shouldGroupModels(g)}
-            {@const expanded = !grouped || isExpanded(g.provider)}
-            {#if grouped}
-              <button
-                class="group-title"
-                type="button"
-                aria-expanded={expanded}
-                title={expanded
-                  ? `Collapse ${g.provider}`
-                  : `Expand ${g.provider} (${g.items.length} models)`}
-                onclick={() => toggleProvider(g.provider)}
-              >
-                <Chevron open={expanded} size={10} />
-                <span class="group-name">{g.provider}</span>
-                <span class="group-count">{g.items.length}</span>
-              </button>
-            {/if}
-            {#if expanded}
-              {#each g.items as opt (opt.modelId)}
-                {@const active =
-                  opt.provider === cfg.provider && opt.modelId === cfg.modelId}
-                <button
-                  class="item"
-                  class:active
-                  class:hl={flatModelItems[sel] === opt}
-                  title={active ? `${opt.label} (current model)` : `Switch to ${opt.label}`}
-                  onclick={() => pickModel(opt.provider, opt.modelId, openedViaKeyboard)}
-                >
-                  <span class="item-label">{opt.label}</span>
-                  {#if active}
-                    <span class="item-meta"
-                      >active{#if filtering && !store.isFavorite(opt.provider, opt.modelId)}<span
-                          class="off"
-                          title="Not in favorites — switch from Settings to manage the list"
-                          > · not favorited</span
-                        >{/if}</span
-                    >
-                  {/if}
-                </button>
-              {/each}
-            {/if}
-          {/each}
-          {#if filteredGroups.length === 0}
-            <div class="model-empty">No models match</div>
-          {:else}
-            <div class="kbd-hint">↑↓ move · ↵ select · esc cancel</div>
-          {/if}
-        </div>
-      {/if}
-    </div>
-  {/if}
-
-  {#if thinking}
-    <div class="anchor">
-      <button class="badge" title="Thinking level (⌘⇧E)" aria-label={`Thinking level: ${thinking}`} onclick={() => toggle("thinking")} data-testid="thinking-badge">
-        <span class="badge-text">{thinking}</span>
-        {#if levels.length > 0}<Chevron open={open === "thinking"} variant="menu" size={10} />{/if}
-      </button>
-      {#if open === "thinking" && levels.length > 0}
-        <!-- Focusable container (tabindex -1) so the hotkey lands keyboard focus here
-             and arrow/enter/esc drive the list. -->
-        <div
-          class="panel"
-          role="listbox"
-          tabindex="-1"
-          aria-label="Thinking level"
-          bind:this={thinkingPanelEl}
-          onkeydown={onThinkingKeydown}
-        >
-          <div class="group-title">Thinking</div>
-          {#each levels as lvl, i (lvl)}
-            <button
+      {#if open}
+        <div class="panel" bind:this={panelEl} transition:reveal>
+          {#each ranked as { model }, i (model.modelId)}
+            {@const active = model.provider === cfg.provider && model.modelId === cfg.modelId}
+            {@const levels = levelsFor(model)}
+            {@const effort = effortFor(model)}
+            {@const hasEffort = levels.length > 1}
+            {@const effIdx = effort ? levels.indexOf(effort) : -1}
+            <div
               class="item"
-              class:active={lvl === thinking}
+              class:active
               class:hl={sel === i}
               role="option"
               aria-selected={sel === i}
-              title={lvl === thinking ? `Thinking: ${lvl} (current)` : `Set thinking level to ${lvl}`}
-              onclick={() => pickThinking(lvl, openedViaKeyboard)}
+              title={active ? `${model.label} (current)` : `Switch to ${model.label}`}
             >
-              <span class="item-label">{lvl}</span>
-              {#if lvl === thinking}<span class="item-meta">active</span>{/if}
-            </button>
+              <button
+                class="item-label-btn"
+                onclick={() => applyModel(model, openedViaKeyboard)}
+              >
+                <span class="item-label">{model.label}</span>
+              </button>
+              {#if hasEffort}
+                <div class="effort" data-testid="effort-control">
+                  <button
+                    class="eff-arrow"
+                    disabled={effIdx <= 0}
+                    title="Lower effort"
+                    aria-label="Lower effort"
+                    onclick={() => cycleEffort(model, -1)}
+                  >‹</button>
+                  <span class="eff-val">{effort ?? "default"}</span>
+                  <button
+                    class="eff-arrow"
+                    disabled={effIdx >= levels.length - 1}
+                    title="Higher effort"
+                    aria-label="Higher effort"
+                    onclick={() => cycleEffort(model, 1)}
+                  >›</button>
+                </div>
+              {:else}
+                <button
+                  class="select-btn"
+                  onclick={() => applyModel(model, openedViaKeyboard)}
+                >select</button>
+              {/if}
+            </div>
           {/each}
-          <div class="kbd-hint">↑↓ move · ↵ select · esc cancel</div>
+          {#if ranked.length === 0}
+            <div class="empty">No models match</div>
+          {/if}
+          <div class="footer">
+            <input
+              class="filter"
+              type="text"
+              placeholder="Type to filter…"
+              aria-label="Filter models"
+              spellcheck="false"
+              autocapitalize="off"
+              autocorrect="off"
+              bind:this={searchEl}
+              bind:value={query}
+              oninput={() => (sel = 0)}
+              onkeydown={onKeydown}
+              data-testid="model-filter"
+            />
+          </div>
         </div>
       {/if}
     </div>
   {/if}
-
-  {#if open !== "none"}
-    <button class="backdrop" aria-label="Close model menu" onclick={() => closeMenu(openedViaKeyboard)}
-    ></button>
-  {/if}
 </div>
+
+{#if open}
+  <button
+    class="backdrop"
+    aria-label="Close model picker"
+    onclick={() => closePicker(openedViaKeyboard)}
+  ></button>
+{/if}
 
 <style>
   .mp {
@@ -374,8 +301,6 @@
     align-items: center;
     gap: 4px;
     font-size: 12.5px;
-    /* Sans (not mono) to match the Claude app, where model/effort read as UI
-       labels rather than raw IDs. Slight negative tracking tightens the label. */
     font-family: var(--font-sans);
     letter-spacing: -0.01em;
     color: var(--text-muted);
@@ -410,6 +335,13 @@
     overflow: hidden;
     text-overflow: ellipsis;
   }
+  .badge-sep {
+    color: var(--text-faint);
+  }
+  .badge-effort {
+    color: var(--text-muted);
+    white-space: nowrap;
+  }
   .backdrop {
     position: fixed;
     inset: 0;
@@ -418,11 +350,6 @@
     z-index: 40;
     cursor: default;
   }
-  .panel:focus {
-    /* The keyboard highlight (.item.hl) shows position; the container's own focus
-       ring would just be noise. */
-    outline: none;
-  }
   .panel {
     position: absolute;
     /* Opens UPWARD: the picker lives in the composer footer at the bottom of the
@@ -430,116 +357,127 @@
     bottom: calc(100% + 6px);
     right: 0;
     z-index: 50;
-    width: max(180px, 100%);
+    width: min(440px, calc(100vw - 40px));
     max-height: 60vh;
     overflow-y: auto;
     background: var(--surface);
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    box-shadow: var(--shadow-card);
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius-sm);
+    box-shadow: var(--shadow-pop);
     padding: 4px;
   }
-  .model-search {
-    width: 100%;
-    box-sizing: border-box;
-    font-size: 12.5px;
+  .item {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 112px;
+    align-items: center;
+    gap: 8px;
+    height: 39px;
+    padding: 0 4px 0 0;
+    border-radius: var(--radius-sm);
+  }
+  .item.hl {
+    box-shadow: inset 0 0 0 1.5px var(--accent);
+  }
+  .item.active {
+    background: color-mix(in srgb, var(--accent) 14%, transparent);
+  }
+  .item-label-btn {
+    text-align: left;
+    background: transparent;
+    border: none;
+    padding: 0 8px;
+    cursor: pointer;
+    color: var(--text);
+    overflow: hidden;
+  }
+  .item-label {
+    font-size: 13px;
+    font-family: var(--font-sans);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .effort {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0;
+  }
+  .eff-arrow {
+    width: 24px;
+    height: 28px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    background: transparent;
+    border: none;
+    border-radius: var(--radius-xs);
+    color: var(--text-muted);
+    font-size: 14px;
+    cursor: pointer;
+    flex-shrink: 0;
+  }
+  .eff-arrow:hover:not(:disabled) {
     color: var(--text);
     background: var(--surface-sunken);
+  }
+  .eff-arrow:disabled {
+    opacity: 0.3;
+    cursor: default;
+  }
+  .eff-val {
+    flex: 1;
+    text-align: center;
+    font-size: 12px;
+    font-family: var(--font-sans);
+    color: var(--text-muted);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .select-btn {
+    justify-self: end;
+    background: transparent;
     border: 1px solid var(--border);
-    border-radius: var(--radius-sm);
-    padding: 6px 8px;
-    margin-bottom: 4px;
+    border-radius: var(--radius-xs);
+    padding: 4px 10px;
+    font-size: 12px;
+    font-family: var(--font-sans);
+    color: var(--text-muted);
+    cursor: pointer;
   }
-  .model-search:focus {
-    outline: none;
-    border-color: var(--accent);
+  .select-btn:hover {
+    color: var(--text);
+    background: var(--surface-sunken);
   }
-  .model-empty {
+  .empty {
     padding: 8px;
     font-size: 12px;
     color: var(--text-faint);
     text-align: center;
   }
-  .group-title {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    width: 100%;
-    padding: 6px 8px 5px;
-    background: none;
-    border: 0;
-    font-size: 11px;
-    color: var(--text-faint);
-    text-transform: uppercase;
-    letter-spacing: 0.04em;
-    cursor: pointer;
-  }
-  .group-title:hover {
-    color: var(--text-muted);
-  }
-  .group-title:hover :global(.chevron),
-  .group-title:focus-visible :global(.chevron) {
-    color: var(--text-muted);
-  }
-  .group-title:focus-visible {
-    outline: none;
-    color: var(--text);
-    border-radius: var(--radius-xs);
-    box-shadow: inset 0 0 0 1.5px var(--accent);
-  }
-  .group-name {
-    flex: 1;
-    text-align: left;
-  }
-  .group-count {
-    font-variant-numeric: tabular-nums;
-    opacity: 0.75;
-  }
-  .item {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 8px;
-    width: 100%;
-    text-align: left;
-    background: transparent;
-    border: none;
-    border-radius: var(--radius-sm);
-    padding: 7px 8px;
-    cursor: pointer;
-    color: var(--text);
-  }
-  .item:hover {
-    background: var(--surface-sunken);
-  }
-  .item.active {
-    background: color-mix(in srgb, var(--accent) 14%, transparent);
-  }
-  /* Keyboard highlight — a ring rather than a fill, so it reads clearly even on the
-     active row (which already has the accent-tinted background). */
-  .item.hl {
-    box-shadow: inset 0 0 0 1.5px var(--accent);
-  }
-  .item-label {
-    font-size: 13px;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-  }
-  .item-meta {
-    font-size: 11px;
-    color: var(--accent);
-    flex-shrink: 0;
-  }
-  .off {
-    color: var(--text-faint);
-  }
-  .kbd-hint {
-    padding: 6px 8px 3px;
+  .footer {
+    padding: 4px 6px 4px;
     margin-top: 2px;
     border-top: 1px solid var(--border);
-    font-size: 11px;
+  }
+  .filter {
+    width: 126px;
+    box-sizing: border-box;
+    font-size: 12.5px;
+    font-family: var(--font-sans);
+    color: var(--text);
+    background: transparent;
+    border: none;
+    border-bottom: 1px solid transparent;
+    border-radius: 0;
+    padding: 4px 2px;
+  }
+  .filter:focus {
+    outline: none;
+    border-bottom-color: var(--accent);
+  }
+  .filter::placeholder {
     color: var(--text-faint);
-    text-align: center;
   }
 </style>

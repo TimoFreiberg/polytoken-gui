@@ -26,7 +26,6 @@ test("the footer is one touch-safe button with all four current values", async (
   await expect(page.getByTestId("permission-badge")).toBeHidden();
   await expect(page.getByTestId("facet-badge")).toBeHidden();
   await expect(page.getByTestId("model-badge")).toBeHidden();
-  await expect(page.getByTestId("thinking-badge")).toBeHidden();
 });
 
 test("changing controls updates the summary and Back does not summon the composer", async ({

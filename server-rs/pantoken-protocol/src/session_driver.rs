@@ -181,6 +181,12 @@ pub struct ModelOption {
         rename = "thinkingLevels"
     )]
     pub thinking_levels: Option<Vec<String>>,
+    #[serde(
+        skip_serializing_if = "Option::is_none",
+        default,
+        rename = "defaultThinkingLevel"
+    )]
+    pub default_thinking_level: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]

@@ -146,6 +146,7 @@ pub fn parse_models(stdout: &str) -> ParsedModels {
             model_id: id.clone(),
             label: id.clone(),
             thinking_levels,
+            default_thinking_level: model_default_level.clone(),
         });
         *cprov = None;
         *creason = None;
@@ -518,6 +519,26 @@ models:
         let out = parse_models("default_model: umans/umans-glm-5.2\n- stray dash line\n");
         assert!(out.models.is_empty());
         assert_eq!(out.default_model.as_deref(), Some("umans/umans-glm-5.2"));
+    }
+
+    #[test]
+    fn per_model_default_thinking_level_retained() {
+        let out = parse_models(REAL_OUTPUT);
+        // deepseek-v4-pro: `high (default)`
+        assert_eq!(
+            out.models[0].default_thinking_level.as_deref(),
+            Some("high")
+        );
+        // umans-glm-5.2: `high (default)`
+        assert_eq!(
+            out.models[1].default_thinking_level.as_deref(),
+            Some("high")
+        );
+        // umans-flash: `medium (default)`
+        assert_eq!(
+            out.models[2].default_thinking_level.as_deref(),
+            Some("medium")
+        );
     }
 
     #[test]

@@ -496,6 +496,12 @@ pub enum SessionAction {
         provider: String,
         #[serde(rename = "modelId")]
         model_id: String,
+        #[serde(
+            skip_serializing_if = "Option::is_none",
+            default,
+            rename = "thinkingLevel"
+        )]
+        thinking_level: Option<String>,
     },
     SetThinking {
         level: String,
@@ -892,6 +898,49 @@ mod tests {
                 ..
             } => assert_eq!(title, "my title"),
             _ => panic!("expected SessionAction::SetTitle"),
+        }
+    }
+
+    #[test]
+    fn roundtrip_session_action_set_model_with_thinking_level() {
+        // SetModel with thinkingLevel — the combined model+effort action.
+        let json_str = r#"{"type": "sessionAction", "action": {"kind": "setModel", "provider": "anthropic", "modelId": "claude-opus", "thinkingLevel": "high"}, "sessionId": "s1"}"#;
+        let msg = parse_client_message(json_str).unwrap();
+        match msg {
+            ClientMessage::SessionAction {
+                action:
+                    SessionAction::SetModel {
+                        provider,
+                        model_id,
+                        thinking_level,
+                    },
+                ..
+            } => {
+                assert_eq!(provider, "anthropic");
+                assert_eq!(model_id, "claude-opus");
+                assert_eq!(thinking_level.as_deref(), Some("high"));
+            }
+            _ => panic!("expected SessionAction::SetModel"),
+        }
+
+        // SetModel without thinkingLevel — the field is optional (defaults to None).
+        let json_str = r#"{"type": "sessionAction", "action": {"kind": "setModel", "provider": "openai", "modelId": "gpt-5"}, "sessionId": "s1"}"#;
+        let msg = parse_client_message(json_str).unwrap();
+        match msg {
+            ClientMessage::SessionAction {
+                action:
+                    SessionAction::SetModel {
+                        provider,
+                        model_id,
+                        thinking_level,
+                    },
+                ..
+            } => {
+                assert_eq!(provider, "openai");
+                assert_eq!(model_id, "gpt-5");
+                assert!(thinking_level.is_none());
+            }
+            _ => panic!("expected SessionAction::SetModel"),
         }
     }
 

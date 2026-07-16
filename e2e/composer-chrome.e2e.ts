@@ -59,7 +59,6 @@ test("2a composer chrome groups the text and status rows in one floating surface
   await expect(status.getByTestId("permission-badge")).toBeVisible();
   await expect(status.getByTestId("facet-badge")).toBeVisible();
   await expect(right.getByTestId("model-badge")).toBeVisible();
-  await expect(right.getByTestId("thinking-badge")).toBeVisible();
   await expect(right.getByTestId("context-trigger")).toBeVisible();
 
   const wrapStyle = await wrap.evaluate((el) => {
@@ -100,7 +99,6 @@ test("2a composer chrome groups the text and status rows in one floating surface
   const rightRect = await right.boundingBox();
   const contextRect = await right.getByTestId("context-trigger").boundingBox();
   const modelRect = await right.getByTestId("model-badge").boundingBox();
-  const thinkingRect = await right.getByTestId("thinking-badge").boundingBox();
 
   expect(boxRect).not.toBeNull();
   expect(surfaceRect).not.toBeNull();
@@ -113,7 +111,6 @@ test("2a composer chrome groups the text and status rows in one floating surface
   expect(rightRect).not.toBeNull();
   expect(contextRect).not.toBeNull();
   expect(modelRect).not.toBeNull();
-  expect(thinkingRect).not.toBeNull();
 
   expect(facetRect!.x).toBeGreaterThan(permissionRect!.x);
   expect(Math.abs(facetRect!.y - permissionRect!.y)).toBeLessThanOrEqual(1);
@@ -127,7 +124,6 @@ test("2a composer chrome groups the text and status rows in one floating surface
         (rightRect!.y + rightRect!.height / 2),
     ),
   ).toBeLessThanOrEqual(1);
-  expect(contextRect!.x).toBeGreaterThan(thinkingRect!.x);
   expect(contextRect!.x).toBeGreaterThan(modelRect!.x);
   expect(contextRect!.x + contextRect!.width).toBeLessThanOrEqual(
     statusRect!.x + statusRect!.width + 1,
@@ -176,25 +172,15 @@ test("2a composer chrome groups the text and status rows in one floating surface
     .toBe(await resolvedToken(page, "border-color", "--accent"));
 });
 
-test("model and thinking remain separate popup controls", async ({ page }) => {
+test("the model picker opens and closes", async ({ page }) => {
   const model = page.getByTestId("model-badge");
-  const thinking = page.getByTestId("thinking-badge");
 
   await model.click();
-  const search = page.getByPlaceholder("Search models…");
-  await expect(search).toBeVisible();
-  await search.focus();
+  const filter = page.getByPlaceholder("Type to filter…");
+  await expect(filter).toBeVisible();
+  await filter.focus();
   await page.keyboard.press("Escape");
   await expect(page.locator(".mp .panel").first()).not.toBeVisible();
-
-  await thinking.click();
-  const thinkingPanel = page.getByRole("listbox", { name: "Thinking level" });
-  await expect(thinkingPanel).toBeVisible();
-  await thinkingPanel.focus();
-  await page.keyboard.press("Escape");
-  await expect(
-    page.getByRole("listbox", { name: "Thinking level" }),
-  ).not.toBeVisible();
 });
 
 test("new-session controls use calm chrome and pair permission with facet", async ({
@@ -208,8 +194,7 @@ test("new-session controls use calm chrome and pair permission with facet", asyn
   const permission = page.getByTestId("permission-badge");
   const facet = page.getByTestId("facet-badge");
   const model = page.getByTestId("model-badge");
-  const thinking = page.getByTestId("thinking-badge");
-  const controls = [project, worktree, permission, facet, model, thinking];
+  const controls = [project, worktree, permission, facet, model];
 
   await expect(page.getByTestId("composer-facet-slot")).toHaveCount(0);
   await expect(

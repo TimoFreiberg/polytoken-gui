@@ -3868,6 +3868,7 @@ mod hub_models_tests {
                 action: pantoken_protocol::wire::SessionAction::SetModel {
                     provider: "deepseek".into(),
                     model_id: "deepseek-v4-flash".into(),
+                    thinking_level: Some("high".into()),
                 },
                 session_id: None,
             },
@@ -3875,7 +3876,7 @@ mod hub_models_tests {
         let config = receive_session_config(&mut rx).await;
         assert_eq!(config.provider.as_deref(), Some("deepseek"));
         assert_eq!(config.model_id.as_deref(), Some("deepseek-v4-flash"));
-        assert_eq!(config.thinking_level.as_deref(), Some("medium"));
+        assert_eq!(config.thinking_level.as_deref(), Some("high"));
 
         hub.lock().handle_client(
             client_key,

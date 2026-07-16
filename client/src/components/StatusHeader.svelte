@@ -12,11 +12,7 @@
     if (!mod || !e.shiftKey) return;
     if (e.key === "m" || e.key === "M") {
       e.preventDefault();
-      store.hotkeyAction = { which: "model", n: ++hotkeyN };
-    } else if (e.key === "e" || e.key === "E") {
-      // ⌘⇧E — thinking/effort level.
-      e.preventDefault();
-      store.hotkeyAction = { which: "thinking", n: ++hotkeyN };
+      store.hotkeyAction = { n: ++hotkeyN };
     } else if (e.key === "j" || e.key === "J") {
       // ⌘⇧J — the right context panel (todos, jobs, flagged files). Inert while
       // drafting: the panel shows the ACTIVE session's context and is unmounted

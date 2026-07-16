@@ -269,18 +269,21 @@ mod tests {
                 model_id: "claude-sonnet-4-6".into(),
                 label: "Claude Sonnet 4.6".into(),
                 thinking_levels: None,
+                default_thinking_level: None,
             },
             ModelOption {
                 provider: "anthropic".into(),
                 model_id: "claude-opus-4-8".into(),
                 label: "Claude Opus 4.8".into(),
                 thinking_levels: None,
+                default_thinking_level: None,
             },
             ModelOption {
                 provider: "openai".into(),
                 model_id: "gpt-5".into(),
                 label: "GPT-5".into(),
                 thinking_levels: None,
+                default_thinking_level: None,
             },
         ]
     }
@@ -372,6 +375,7 @@ mod tests {
             model_id: "gpt-5".into(),
             label: "Other GPT-5".into(),
             thinking_levels: None,
+            default_thinking_level: None,
         });
         let r = resolve_background_model(Some("gpt-5"), &models);
         assert!(r.model.is_some() || r.warning.is_some());
@@ -390,12 +394,14 @@ mod tests {
                 model_id: "claude-x-4-5-20250101".into(),
                 label: "Claude X 4.5 (dated)".into(),
                 thinking_levels: None,
+                default_thinking_level: None,
             },
             ModelOption {
                 provider: "anthropic".into(),
                 model_id: "claude-x-4-5".into(),
                 label: "Claude X 4.5 (alias)".into(),
                 thinking_levels: None,
+                default_thinking_level: None,
             },
         ];
         let r = resolve_background_model(Some("claude-x-4-5"), &models);
@@ -417,12 +423,14 @@ mod tests {
                 model_id: "claude-x-4-5-20250101".into(),
                 label: "dated".into(),
                 thinking_levels: None,
+                default_thinking_level: None,
             },
             ModelOption {
                 provider: "anthropic".into(),
                 model_id: "claude-x-4-5-latest".into(),
                 label: "latest".into(),
                 thinking_levels: None,
+                default_thinking_level: None,
             },
         ];
         let r = resolve_background_model(Some("claude-x-4-5-latest"), &models);
@@ -458,12 +466,14 @@ mod tests {
                 model_id: "dupe".into(),
                 label: "Dupe 1".into(),
                 thinking_levels: None,
+                default_thinking_level: None,
             },
             ModelOption {
                 provider: "anthropic".into(),
                 model_id: "dupe".into(),
                 label: "Dupe 2".into(),
                 thinking_levels: None,
+                default_thinking_level: None,
             },
         ];
         let r = resolve_background_model(Some("anthropic/dupe"), &dup);
