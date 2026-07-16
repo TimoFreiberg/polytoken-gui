@@ -13,6 +13,12 @@ import type { FileInfo, ModelOption } from "@pantoken/protocol";
  *  middle of a word like `email@domain`). */
 const TOKEN_BREAKS = new Set([" ", "\t", "\n", "\r", ",", ";", "(", "[", "{"]);
 
+/** Cap on @-mention file rows rendered in the menu. Shared between `buildAtItems`
+ *  (the live menu builder) and `staleServerFiles` (the stale-while-revalidate
+ *  re-filter, which must cap at the same limit so stale results don't overflow the
+ *  menu). The Composer imports this constant directly. */
+export const AT_MENU_LIMIT = 50;
+
 /** The result of extracting an active @-mention from the draft. */
 export interface AtQuery {
   /** Text after the `@` (empty when the user just typed `@` and hasn't started a
@@ -123,6 +129,128 @@ export function filterFiles(
   });
 
   return scored.slice(0, limit).map((s) => s.f);
+}
+
+/** The mode of an active @-mention that uses the server-backed file query —
+ *  `"external"` for `@~/`, `@/`, `@../` (server-only: no local index outside the
+ *  project), `"project"` for project-mode when it falls back to the server search
+ *  (truncated index, drafting a new session, or Shift+Tab ignore-toggle on). */
+export type ServerFileMode = "external" | "project";
+
+/** A cached snapshot of the last fresh server file results, captured for the
+ *  stale-while-revalidate display so the @-mention menu doesn't blank during the
+ *  in-flight window between a keystroke and the debounced server response. */
+export interface CachedServerFiles {
+  /** The file items the server returned. */
+  files: readonly FileInfo[];
+  /** The `atQ` these results answered (the full text after `@`). */
+  query: string;
+  /** The `ignoreOff` (Shift+Tab) toggle state the server responded with. */
+  includeIgnored: boolean;
+  /** The mention mode these results belong to — prevents external↔project bleed. */
+  mode: ServerFileMode;
+}
+
+/** The fresh server file state from `store.files` — the latest server response,
+ *  `{ items, query, includeIgnored }`. `query` is the server-echoed query from the
+ *  response, so comparing it to the current `atQ` tells us whether these results are
+ *  fresh (match) or stale (in-flight). */
+export interface FreshServerFiles {
+  items: readonly FileInfo[];
+  query: string;
+  includeIgnored: boolean;
+}
+
+/**
+ * Mirror the server's `split_external_query`: split an external `atQ` into its
+ * directory prefix (everything before the last `/`) and trailing partial
+ * (everything after). A slash-free query (`~`, `..`, `notes`) is entirely the
+ * directory prefix with an empty partial. A leading root slash (e.g. `/etc`) keeps
+ * `/` as the dir-prefix when that's the only slash, rather than collapsing to `""`.
+ *
+ * Used to (a) guard against a directory drill-down returning stale parent-dir
+ * results, and (b) re-filter only by the trailing partial (the directory's children
+ * match the partial, not the full `~/proj` path).
+ */
+export function splitExternalQuery(query: string): {
+  dirPrefix: string;
+  partial: string;
+} {
+  const idx = query.lastIndexOf("/");
+  if (idx === -1) return { dirPrefix: query, partial: "" };
+  let dirPrefix = query.slice(0, idx);
+  // A leading root slash (e.g. "/etc") — keep "/" rather than collapsing to "".
+  if (dirPrefix === "" && query.startsWith("/")) dirPrefix = "/";
+  return { dirPrefix, partial: query.slice(idx + 1) };
+}
+
+/**
+ * Stale-while-revalidate for the server-backed @-mention menu. Returns the file
+ * items to display right now:
+ *
+ *   - **Fresh match** — `fresh.query === atQ && fresh.includeIgnored === ignoreOff`:
+ *     the latest server response is for exactly the current query + toggle state.
+ *     Return `fresh.items` (the caller's capture effect will cache them).
+ *
+ *   - **Stale but usable** — no fresh match, but a `cached` snapshot exists with the
+ *     same `mode` and `includeIgnored`: the user typed another letter (or toggled
+ *     nothing) and a new response is in-flight. Re-filter the cached items against
+ *     the current query so only still-relevant entries stay visible — the menu
+ *     stays populated instead of blanking.
+ *       - **project mode**: cached results are full-tree path matches, so re-filter
+ *         by the full `atQ` via `filterFiles`.
+ *       - **external mode**: cached results are one browsed directory's children.
+ *         A **directory-prefix guard** compares the current `atQ`'s dir-prefix to
+ *         the cached query's — if they differ (a drill-down into a different
+ *         directory), the old results are the *parent* dir's children and are
+ *         invalid → return `[]`. Otherwise re-filter by the trailing partial only
+ *         (after the last `/`), since the children match the partial, not the full
+ *         `~/proj` path.
+ *
+ *   - **No usable cache** — `cached` is `null`, or its `mode`/`includeIgnored`
+ *     doesn't match: return `[]` (first keystroke on a fresh mention, after
+ *     invalidation, cross-mode/cross-toggle transition, or an external dir-prefix
+ *     mismatch). The menu is empty until the first response arrives — correct, not
+ *     a flicker.
+ *
+ * Extracted as a pure function so the stale-while-revalidate logic is unit-testable
+ * without a Svelte component harness.
+ */
+export function staleServerFiles(
+  fresh: FreshServerFiles,
+  cached: CachedServerFiles | null,
+  atQ: string,
+  mode: ServerFileMode,
+  ignoreOff: boolean,
+): readonly FileInfo[] {
+  // Fresh match — the latest server response answers the current query + toggle.
+  if (fresh.query === atQ && fresh.includeIgnored === ignoreOff) {
+    return fresh.items;
+  }
+
+  // In-flight: re-filter the cached results, if they're still valid for this
+  // mode + toggle combination.
+  if (
+    cached !== null &&
+    cached.mode === mode &&
+    cached.includeIgnored === ignoreOff
+  ) {
+    if (mode === "external") {
+      const cachedSplit = splitExternalQuery(cached.query);
+      const currentSplit = splitExternalQuery(atQ);
+      // Directory drill-down guard: the cached results are one directory's
+      // children. If the current query browses a different directory, the cached
+      // children are the *parent* dir's and must not show — return [].
+      if (cachedSplit.dirPrefix !== currentSplit.dirPrefix) return [];
+      // Same directory — re-filter by the trailing partial only. The children
+      // match the partial (e.g. "pr"), not the full `~/pr` path.
+      return filterFiles(cached.files, currentSplit.partial, AT_MENU_LIMIT);
+    }
+    // project mode: full-tree path matches — re-filter by the full atQ.
+    return filterFiles(cached.files, atQ, AT_MENU_LIMIT);
+  }
+
+  return [];
 }
 
 /** Which kind of reference an @-mention query resolves to, and the text left over
@@ -363,8 +491,10 @@ export function buildAtItems(params: BuildAtItemsParams): AtItem[] {
     // for a real session, the mock's synthetic external tree for dev/e2e). No local
     // index involvement (there isn't one outside the project), no badged kind
     // matches, no sigils — just the as-typed file/dir rows the server returned for
-    // the current query (the caller already filters `serverFiles` to the current
-    // query via the `store.files.query === atQ` echo guard).
+    // the current query. The caller (Composer.svelte) passes `serverFilesStale`,
+    // which is either the fresh `store.files.items` (when the echo guard
+    // `store.files.query === atQ` matches) or the re-filtered stale cache (during
+    // the in-flight window) — see `staleServerFiles` for the contract.
     return serverFiles
       .slice(0, limit)
       .map((file): AtItem => ({ kind: "file", file }));

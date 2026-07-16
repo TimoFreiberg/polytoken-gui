@@ -7,8 +7,12 @@ import {
   filterFiles,
   filterModels,
   filterNames,
+  splitExternalQuery,
+  staleServerFiles,
   stepLevel,
   type AtItem,
+  type CachedServerFiles,
+  type FreshServerFiles,
 } from "./file-autocomplete.js";
 
 describe("extractAtQuery", () => {
@@ -663,5 +667,298 @@ describe("buildAtItems", () => {
       { kind: "file", file: f("foo/a.ts") },
       { kind: "file", file: f("bar/a.ts") },
     ] satisfies AtItem[]);
+  });
+});
+
+describe("splitExternalQuery", () => {
+  test("bare tilde is the dir-prefix, empty partial", () => {
+    expect(splitExternalQuery("~")).toEqual({ dirPrefix: "~", partial: "" });
+  });
+  test("bare .. is the dir-prefix, empty partial", () => {
+    expect(splitExternalQuery("..")).toEqual({ dirPrefix: "..", partial: "" });
+  });
+  test("trailing slash: dir-prefix, empty partial", () => {
+    expect(splitExternalQuery("~/projects/")).toEqual({
+      dirPrefix: "~/projects",
+      partial: "",
+    });
+  });
+  test("root-anchored single segment keeps / as dir-prefix", () => {
+    expect(splitExternalQuery("/etc")).toEqual({ dirPrefix: "/", partial: "etc" });
+  });
+  test("root-anchored dir + partial", () => {
+    expect(splitExternalQuery("/etc/ho")).toEqual({
+      dirPrefix: "/etc",
+      partial: "ho",
+    });
+  });
+  test("tilde dir + partial", () => {
+    expect(splitExternalQuery("~/proj")).toEqual({
+      dirPrefix: "~",
+      partial: "proj",
+    });
+  });
+});
+
+describe("staleServerFiles", () => {
+  const f = (path: string, isDirectory = false): FileInfo => ({
+    path,
+    isDirectory,
+  });
+
+  // External-mode fixtures: the synthetic `~` home's children (mock_external_tree).
+  const HOME_CHILDREN: readonly FileInfo[] = [
+    f("~/notes.md"),
+    f("~/todo.txt"),
+    f("~/projects", true),
+  ];
+
+  const fresh = (items: readonly FileInfo[], query: string, includeIgnored = false): FreshServerFiles => ({
+    items,
+    query,
+    includeIgnored,
+  });
+
+  const cache = (
+    files: readonly FileInfo[],
+    query: string,
+    mode: "external" | "project",
+    includeIgnored = false,
+  ): CachedServerFiles => ({
+    files,
+    query,
+    mode,
+    includeIgnored,
+  });
+
+  test("AC.3 — fresh match returns fresh.items, not the re-filtered cache", () => {
+    const cached = cache(HOME_CHILDREN, "~/", "external");
+    // The fresh response matches the current query + toggle → return fresh items.
+    const result = staleServerFiles(
+      fresh(HOME_CHILDREN, "~/p", false),
+      cached,
+      "~/p",
+      "external",
+      false,
+    );
+    expect(result).toBe(HOME_CHILDREN);
+  });
+
+  test("AC.2 — external in-flight: re-filters cached results by the trailing partial", () => {
+    // Cached results answered `~/` (all home children). Now the user typed `~/p`
+    // — the fresh response hasn't arrived yet, so re-filter the cache by "p".
+    const cached = cache(HOME_CHILDREN, "~/", "external");
+    const result = staleServerFiles(
+      fresh([], "~/old", false), // stale: server still echoes the old query
+      cached,
+      "~/p",
+      "external",
+      false,
+    );
+    const paths = result.map((r) => r.path);
+    // Only ~/projects contains "p" as a substring.
+    expect(paths).toEqual(["~/projects"]);
+  });
+
+  test("AC.2 — external in-flight: narrowing further re-filters by the new partial", () => {
+    // Cached answered `~/p` → only ~/projects matched. Now typing `~/pr` — re-filter
+    // the cached ~/projects by "pr".
+    const cached = cache([f("~/projects", true)], "~/p", "external");
+    const result = staleServerFiles(
+      fresh([], "~/p", false), // stale
+      cached,
+      "~/pr",
+      "external",
+      false,
+    );
+    const paths = result.map((r) => r.path);
+    expect(paths).toEqual(["~/projects"]);
+  });
+
+  test("AC.2 — external in-flight: a partial that matches nothing returns empty", () => {
+    const cached = cache(HOME_CHILDREN, "~/", "external");
+    const result = staleServerFiles(
+      fresh([], "~/old", false),
+      cached,
+      "~/zzz",
+      "external",
+      false,
+    );
+    expect(result).toEqual([]);
+  });
+
+  test("AC.2 — external empty partial (same dir listing): returns cached head unchanged", () => {
+    // Cached answered `~/` (empty partial). User re-types `~/` — same dir-prefix,
+    // empty partial → filterFiles returns the cached head.
+    const cached = cache(HOME_CHILDREN, "~/", "external");
+    const result = staleServerFiles(
+      fresh([], "~/old", false),
+      cached,
+      "~/",
+      "external",
+      false,
+    );
+    expect(result.map((r) => r.path)).toEqual([
+      "~/notes.md",
+      "~/todo.txt",
+      "~/projects",
+    ]);
+  });
+
+  test("AC.5 — external drill-down (dir-prefix change) returns []", () => {
+    // Cache holds `~`'s children (~/notes.md, ~/todo.txt, ~/projects).
+    // User accepted ~/projects/ and is now browsing ~/projects/blog — the cache's
+    // dir-prefix is `~`, the current query's is `~/projects` → mismatch → [].
+    const cached = cache(HOME_CHILDREN, "~/", "external");
+    const result = staleServerFiles(
+      fresh([], "~/old", false),
+      cached,
+      "~/projects/b",
+      "external",
+      false,
+    );
+    expect(result).toEqual([]);
+  });
+
+  test("AC.5 — external drill-down: empty partial on a different dir still returns []", () => {
+    // Even with an empty partial (bare `~/projects/`), the dir-prefix guard fires
+    // first — the parent dir's children must not show as candidates for the new dir.
+    const cached = cache(HOME_CHILDREN, "~/", "external");
+    const result = staleServerFiles(
+      fresh([], "~/old", false),
+      cached,
+      "~/projects/",
+      "external",
+      false,
+    );
+    expect(result).toEqual([]);
+  });
+
+  test("AC.2 — project mode in-flight: re-filters cached results by the full query", () => {
+    // Project-mode server results are full-tree path matches, so re-filter by the
+    // full atQ (no dir-prefix guard, no partial split).
+    const cachedFiles: readonly FileInfo[] = [
+      f("src/server.ts"),
+      f("src/client.ts"),
+      f("lib/utils.ts"),
+    ];
+    const cached = cache(cachedFiles, "serv", "project");
+    const result = staleServerFiles(
+      fresh([], "old", false), // stale
+      cached,
+      "server",
+      "project",
+      false,
+    );
+    expect(result.map((r) => r.path)).toEqual(["src/server.ts"]);
+  });
+
+  test("AC.3 — project mode fresh match returns fresh.items", () => {
+    const cachedFiles: readonly FileInfo[] = [f("src/old.ts")];
+    const cached = cache(cachedFiles, "old", "project");
+    const freshItems: readonly FileInfo[] = [f("src/server.ts")];
+    const result = staleServerFiles(
+      fresh(freshItems, "server", false),
+      cached,
+      "server",
+      "project",
+      false,
+    );
+    expect(result).toBe(freshItems);
+  });
+
+  test("AC.6 — cross-mode isolation: project cache is ignored in external mode", () => {
+    const cached = cache([f("src/server.ts")], "serv", "project");
+    const result = staleServerFiles(
+      fresh([], "~/old", false), // stale
+      cached,
+      "~/s",
+      "external",
+      false,
+    );
+    expect(result).toEqual([]);
+  });
+
+  test("AC.6 — cross-mode isolation: external cache is ignored in project mode", () => {
+    const cached = cache(HOME_CHILDREN, "~/", "external");
+    const result = staleServerFiles(
+      fresh([], "old", false), // stale
+      cached,
+      "notes",
+      "project",
+      false,
+    );
+    expect(result).toEqual([]);
+  });
+
+  test("AC.6 — cross-toggle isolation: ignoreOff mismatch skips the cache", () => {
+    // Cache has includeIgnored=false. Current ignoreOff=true → skip cache → [].
+    const cached = cache(HOME_CHILDREN, "~/", "external", false);
+    const result = staleServerFiles(
+      fresh([], "~/old", true), // stale (server echoes old query, toggle=true)
+      cached,
+      "~/p",
+      "external",
+      true, // current ignoreOff
+    );
+    expect(result).toEqual([]);
+  });
+
+  test("AC.6 — cross-toggle: matching ignoreOff uses the cache", () => {
+    // Cache has includeIgnored=true. Current ignoreOff=true → use cache, re-filter.
+    // Both ~/projects and ~/.secrets contain "s" as a substring, so both match.
+    const cached = cache(
+      [f("~/projects", true), f("~/.secrets")],
+      "~/",
+      "external",
+      true,
+    );
+    const result = staleServerFiles(
+      fresh([], "~/old", true), // stale
+      cached,
+      "~/s",
+      "external",
+      true,
+    );
+    // filterFiles ranks dirs before files → ~/projects first, then ~/.secrets.
+    expect(result.map((r) => r.path)).toEqual(["~/projects", "~/.secrets"]);
+  });
+
+  test("no cache (null) returns []", () => {
+    const result = staleServerFiles(
+      fresh([], "old", false),
+      null,
+      "~/p",
+      "external",
+      false,
+    );
+    expect(result).toEqual([]);
+  });
+
+  test("external root-anchored: same dir-prefix re-filters by partial", () => {
+    // /etc/ho → dir-prefix /etc, partial "ho". Cache answered /etc/ (dir-prefix
+    // /etc, empty partial) → same dir → re-filter by "ho".
+    const cached = cache([f("/etc/hosts")], "/etc/", "external");
+    const result = staleServerFiles(
+      fresh([], "/etc/old", false),
+      cached,
+      "/etc/ho",
+      "external",
+      false,
+    );
+    expect(result.map((r) => r.path)).toEqual(["/etc/hosts"]);
+  });
+
+  test("external root-anchored: different dir-prefix returns []", () => {
+    // /etc → dir-prefix /. Cache answered / (dir-prefix /) → mismatch with /etc → [].
+    const cached = cache([f("/etc")], "/", "external");
+    const result = staleServerFiles(
+      fresh([], "/old", false),
+      cached,
+      "/etc/ho",
+      "external",
+      false,
+    );
+    expect(result).toEqual([]);
   });
 });

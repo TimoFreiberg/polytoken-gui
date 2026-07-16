@@ -8,7 +8,10 @@
     classifyAtQuery,
     buildAtItems,
     stepLevel,
+    staleServerFiles,
+    AT_MENU_LIMIT,
     type AtItem,
+    type CachedServerFiles,
   } from "../lib/file-autocomplete.js";
   import {
     IMAGE_LIMITS,
@@ -237,7 +240,6 @@
   // merging its results into the local ones. "external" mode (`~/…`, `/…`, `../…`) has no
   // local index at all — there's nothing to prefetch for paths outside the project — so it
   // ALWAYS uses the debounced server query; see the effect below.
-  const AT_MENU_LIMIT = 50;
   // Fire the server fallback only when local matches are thinner than this — a comfortably
   // full menu means the wanted file is almost certainly already shown, so don't round-trip.
   const FALLBACK_MIN = 25;
@@ -282,15 +284,26 @@
       ? []
       : filterFiles(store.fileIndex.files, atQ, AT_MENU_LIMIT),
   );
-  // Server fallback results, but only while they match the *current* query AND toggle state
-  // (both echoed back by the server) — either one being stale (an in-flight response from a
-  // newer keystroke, or from before/after a Shift+Tab flip) must not land in the menu.
-  const serverFileItems = $derived(
-    atQ !== null &&
-      store.files.query === atQ &&
-      store.files.includeIgnored === ignoreOff
-      ? store.files.items
-      : [],
+  // Server fallback results — stale-while-revalidate. `store.files` holds the latest
+  // server response, but its `query`/`includeIgnored` are the SERVER-ECHOED values from
+  // that response. The instant the user types a letter (or toggles Shift+Tab), the
+  // current `atQ`/`ignoreOff` diverge from `store.files.query`/`.includeIgnored`, so a
+  // naive echo guard (`store.files.query === atQ`) blanks the menu during the in-flight
+  // window. Instead we keep a cached snapshot of the last fresh results and re-filter it
+  // against the current query so the menu stays populated (stale-while-revalidate).
+  //
+  // `cachedServerFiles` is captured by the effect below whenever `store.files` matches
+  // the current query + toggle, and invalidated when the active mention changes or an
+  // item is accepted (a directory drill-down must not show the parent dir's stale rows).
+  let cachedServerFiles = $state<CachedServerFiles | null>(null);
+  const serverFilesStale = $derived(
+    staleServerFiles(
+      store.files,
+      cachedServerFiles,
+      atQ ?? "",
+      atClass?.mode === "external" ? "external" : "project",
+      ignoreOff,
+    ),
   );
   // The full kind-aware menu list: file/skill/subagent/model/sigil rows, built by the pure
   // `buildAtItems` helper so the ordering/filtering logic is unit-testable independent of
@@ -301,7 +314,7 @@
     return buildAtItems({
       query: atQ,
       files: drafting || ignoreOff ? [] : store.fileIndex.files,
-      serverFiles: serverFileItems,
+      serverFiles: serverFilesStale,
       skills: store.atRefs.skills,
       subagents: store.atRefs.subagents,
       models: store.models,
@@ -336,13 +349,47 @@
   // narrow the query while the toggle is on doesn't immediately re-hide what it just
   // revealed. Also deliberately NOT keyed on `atOpen`: toggling `ignoreOff` on is ITSELF
   // what flips a zero-local-match menu open once the server responds (bypassing the local
-  // index and waiting on `serverFileItems`) — depending on `atOpen` here would reset the
-  // toggle the instant that response arrived and the menu opened, undoing itself in a
-  // feedback loop (open → reset → server items invalidated by the guard → closes again).
+  // index and waiting on the stale-while-revalidate derived) — depending on `atOpen` here
+  // would reset the toggle the instant that response arrived and the menu opened, undoing
+  // itself in a feedback loop (open → reset → server items invalidated by the guard →
+  // closes again).
   $effect(() => {
     atTokenPos;
     atDismissed;
     ignoreOff = false;
+    // A new mention (or none) must not show the previous mention's stale server results
+    // — clear the cache alongside the ignoreOff reset, mirroring the same identity-keyed
+    // invalidation. `atTokenPos` covers "a different `@` became active"; `atDismissed`
+    // covers Escape-dismiss. (Directory drill-down via acceptAtItem clears the cache
+    // separately in acceptAtItem, since it keeps the same atPos.)
+    cachedServerFiles = null;
+  });
+
+  // Capture fresh server results into the stale-while-revalidate cache whenever
+  // `store.files` matches the current query + toggle (the echo-guard success condition).
+  // This snapshot is what `serverFilesStale` re-filters against during the next in-flight
+  // window. The mode is read from `atClass?.mode` so external↔project transitions don't
+  // bleed the wrong results across modes.
+  $effect(() => {
+    const q = atQ;
+    const off = ignoreOff;
+    const mode = atClass?.mode;
+    if (
+      q !== null &&
+      mode !== null &&
+      mode !== "skill" &&
+      mode !== "subagent" &&
+      mode !== "model" &&
+      store.files.query === q &&
+      store.files.includeIgnored === off
+    ) {
+      cachedServerFiles = {
+        files: store.files.items,
+        query: q,
+        includeIgnored: off,
+        mode: mode === "external" ? "external" : "project",
+      };
+    }
   });
 
   // Debounced server fallback: ALWAYS fires in external mode (`~/…`, `/…`, `../…`) —
@@ -784,6 +831,11 @@
   function acceptAtItem(item: AtItem) {
     const m = atMatch;
     if (!m) return;
+    // Clear the stale-while-revalidate cache: a directory accept drills into a new
+    // directory (the cache holds the parent dir's children), and any accept settles the
+    // current mention — stale results must not linger. The dir-prefix guard in
+    // staleServerFiles is the backstop, but clearing here avoids a flash of stale rows.
+    cachedServerFiles = null;
     const draft = store.composerDraft;
     let inserted: string;
     switch (item.kind) {

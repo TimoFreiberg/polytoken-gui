@@ -31,15 +31,18 @@ test("a draft's @-mention searches the draft cwd via the server; a real session 
   // A new-session draft searches via the server fallback scoped to its target cwd, so the
   // cwd-derived marker appears — and ordinary fixture files still resolve too.
   await page.getByRole("button", { name: "New session…" }).click();
-  await box.click();
+  // The draft renders its own Composer inside the sidebar's .new-session — target that
+  // one specifically (the main bottom composer is also still in the DOM).
+  const draftBox = page.locator(".new-session .composer-wrap textarea");
+  await draftBox.click();
   await page.keyboard.type("@DRAFT-CWD");
   await expect(menu(page)).toBeVisible();
   await expect(
     menu(page).getByText("DRAFT-CWD.md", { exact: false }),
   ).toBeVisible();
 
-  await box.fill("");
-  await box.click();
+  await draftBox.fill("");
+  await draftBox.click();
   await page.keyboard.type("@Composer");
   await expect(
     menu(page).getByText("client/src/components/Composer.svelte"),
@@ -414,4 +417,66 @@ test("Escape still dismisses the menu after the ignore toggle has been used", as
   await box.press("Escape");
   await expect(menu(page)).toHaveCount(0);
   await expect(box).toHaveValue("@~/");
+});
+
+// Stale-while-revalidate (issue #17): when typing narrows a server-backed query, the
+// menu must NOT blank out and reappear on every keystroke. It should keep showing the
+// previous results, re-filtered against the new query, until fresh server results arrive.
+// The mock driver's list_files is synchronous, so we intercept the WS `fileList` frame
+// and hold it to make the in-flight window observable.
+test("no flicker: narrowing @~/p keeps re-filtered rows visible during the in-flight window", async ({
+  page,
+}) => {
+  // A flag the WS handler reads to decide whether to delay fileList responses. Toggled
+  // from the test to gate the in-flight window.
+  let delayFileList = false;
+  // Stored in an array so TS doesn't narrow the type to `never` (the assignment happens
+  // inside the routeWebSocket closure, which TS's control-flow analysis can't track).
+  const pendingFileList: Array<() => void> = [];
+
+  // Install BEFORE navigation: routeWebSocket patches the page's WebSocket at document init.
+  await page.routeWebSocket(/./, (ws) => {
+    const server = ws.connectToServer();
+    server.onMessage((message) => {
+      const data = message as string;
+      try {
+        const parsed = JSON.parse(data);
+        if (parsed.type === "fileList" && delayFileList) {
+          // Hold the response until the test releases it.
+          pendingFileList.push(() => ws.send(data));
+          return;
+        }
+      } catch {
+        // non-JSON — forward untouched
+      }
+      ws.send(data);
+    });
+    ws.onMessage((message) => server.send(message as string));
+  });
+
+  await gotoFresh(page);
+  const box = ta(page);
+  await box.click();
+
+  // Type @~/p — the first response arrives (no delay yet), showing ~/projects.
+  await page.keyboard.type("@~/p");
+  await expect(menu(page)).toBeVisible();
+  await expect(row(page, "file:~/projects")).toBeVisible();
+  await expect(row(page, "file:~/notes.md")).toHaveCount(0);
+
+  // Now arm the delay so the NEXT keystroke's response is held in-flight.
+  delayFileList = true;
+
+  // Type "r" → @~/pr. The fresh response is held, but the stale-while-revalidate cache
+  // re-filters the previous results by "pr" — ~/projects still matches, so the menu
+  // stays visible with a non-zero row count.
+  await page.keyboard.type("r");
+  await expect(menu(page)).toBeVisible();
+  await expect(row(page, "file:~/projects")).toBeVisible();
+
+  // Release the held response — fresh results arrive and replace the stale-filtered display.
+  delayFileList = false;
+  for (const send of pendingFileList.splice(0)) send();
+  await expect(menu(page)).toBeVisible();
+  await expect(row(page, "file:~/projects")).toBeVisible();
 });
