@@ -39,7 +39,6 @@ test("mobile keyboard inset keeps a long draft bounded above the keyboard", asyn
   page,
 }) => {
   const input = page.getByPlaceholder("Describe a task or ask a question…");
-  await page.getByRole("button", { name: "Expand composer" }).click();
   await input.fill(
     Array.from({ length: 24 }, (_, i) => `A useful long line ${i + 1}`).join(
       "\n",

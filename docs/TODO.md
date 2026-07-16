@@ -322,9 +322,6 @@ are REAL but **provisional** — they embed local `/Users/timo/...` paths from t
 - [ ] Warm-rename durability leans on the daemon flushing `overridden_title`
       to `session.json` on its own cadence (empirically true; not
       contractual).
-- [ ] Composer `expanded` is the one sticky-looking UI state left
-      unpersisted — by design (auto-resets on send). Product call before
-      persisting.
 
 ## 💡 Brainstorm (unfiltered — triage into the lanes above)
 

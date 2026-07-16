@@ -45,9 +45,6 @@
   let ta = $state<HTMLTextAreaElement>();
   let box = $state<HTMLDivElement>();
   let fileInput = $state<HTMLInputElement>();
-  // Expand toggle: collapsed keeps the composer modest so more of the session
-  // shows; expanded trades that for reading a long prompt whole. Auto-resets on send.
-  let expanded = $state(false);
   // Tracked so the caps re-derive on window resize (the cap scales with viewport).
   let winH = $state(window.innerHeight);
 
@@ -438,12 +435,9 @@
     return () => clearTimeout(fileDebounce);
   });
 
-  // Max textarea height in px. Collapsed: floor at 3 lines so a scrollbar
-  // never shows below that, grow a little with the window, cap ~6.5 lines. Expanded:
-  // up to 62vh (well under "eats the whole screen") so a long prompt is readable.
-  const maxH = $derived(
-    expanded ? Math.min(winH * 0.62, 560) : Math.max(80, Math.min(winH * 0.22, 168)),
-  );
+  // Max textarea height in px. Floor at 3 lines so a scrollbar never shows
+  // below that, grow a little with the window, cap ~6.5 lines.
+  const maxH = $derived(Math.max(80, Math.min(winH * 0.22, 168)));
 
   function autosize() {
     if (box) box.style.setProperty("--composer-max", `${maxH}px`);
@@ -452,7 +446,7 @@
     ta.style.height = `${Math.min(ta.scrollHeight, maxH)}px`;
   }
 
-  // Re-fit whenever the cap changes (expand toggle or window resize).
+  // Re-fit whenever the cap changes (window resize).
   $effect(() => {
     maxH;
     autosize();
@@ -626,7 +620,6 @@
         if (!dispatched) return; // error/info set in attachmentStatus
         store.composerDraft = "";
         pickingCwd = false;
-        expanded = false;
         attachmentStatus = null;
         histIndex = null;
         histWip = "";
@@ -657,7 +650,6 @@
     }
     if (!queued) return;
     pickingCwd = false;
-    expanded = false;
     attachmentStatus = null;
     // Restart history navigation so the next ArrowUp recalls the just-sent prompt.
     histIndex = null;
@@ -682,14 +674,6 @@
         autosize();
       });
     }
-  }
-
-  function toggleExpand() {
-    expanded = !expanded;
-    queueMicrotask(() => {
-      ta?.focus();
-      autosize();
-    });
   }
 
   function openFilePicker() {
@@ -880,8 +864,7 @@
   }
 
   function onKeydown(e: KeyboardEvent) {
-    // Pi parity: Alt+Up restores every queued steer/follow-up to the editor. Keep the
-    // composer's expand/collapse hotkey on Alt+Shift+Up/Down so the actions don't collide.
+    // Pi parity: Alt+Up restores every queued steer/follow-up to the editor.
     if (
       e.altKey &&
       !e.shiftKey &&
@@ -891,16 +874,6 @@
     ) {
       e.preventDefault();
       store.restoreQueue();
-      return;
-    }
-    if (
-      e.altKey &&
-      e.shiftKey &&
-      (e.key === "ArrowUp" || e.key === "ArrowDown")
-    ) {
-      e.preventDefault();
-      expanded = e.key === "ArrowUp";
-      queueMicrotask(autosize);
       return;
     }
     // New-session draft shortcut: Escape (with an empty prompt and no slash menu open)
@@ -1361,15 +1334,6 @@
         />
       {/if}
       <div class="box" class:streaming bind:this={box} data-testid="composer-box">
-        <button
-          class="expand"
-          class:expanded
-          onclick={toggleExpand}
-          aria-pressed={expanded}
-          aria-label={expanded ? "Collapse composer" : "Expand composer"}
-          title={expanded ? "Collapse composer (⌥⇧↓)" : "Expand composer (⌥⇧↑)"}
-          tabindex="-1"
-        >{expanded ? "⌄" : "⌃"}</button>
         <div class="composer-attachments" data-testid="composer-attachments">
           <!-- Hidden file input for image attachments. -->
           <input
@@ -1706,36 +1670,6 @@
     gap: 5px;
     max-width: min(30vw, 180px);
     flex-wrap: wrap;
-  }
-  /* Drag-handle-style expand toggle, straddling the top border. Greyed out at
-     rest; revealed on hover (desktop) or focus-within (touch, which has no hover). */
-  .expand {
-    position: absolute;
-    top: 0;
-    left: 50%;
-    transform: translate(-50%, -50%);
-    width: 32px;
-    height: 16px;
-    display: grid;
-    place-items: center;
-    border: 1px solid var(--border-strong);
-    border-radius: 999px;
-    background: var(--surface);
-    color: var(--text-faint);
-    font-size: 11px;
-    line-height: 1;
-    opacity: 0;
-    cursor: pointer;
-    z-index: 2;
-    transition: opacity 0.15s, color 0.15s;
-  }
-  .box:hover .expand,
-  .box:focus-within .expand,
-  .expand.expanded {
-    opacity: 1;
-  }
-  .expand:hover {
-    color: var(--text-muted);
   }
   textarea {
     flex: 1;

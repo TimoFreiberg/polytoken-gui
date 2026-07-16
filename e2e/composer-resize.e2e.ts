@@ -50,33 +50,8 @@ test("composer: grows with lines, then caps with a vertical scrollbar", async ({
   );
   const many = await metrics(page);
   expect(many.scrollH).toBeGreaterThan(many.clientH + 10);
-  // Collapsed cap on the 850px-tall desktop viewport is ~168px (≈6.5 lines),
+  // The cap on the 850px-tall desktop viewport is ~168px (≈6.5 lines),
   // well under "eats the screen".
   expect(many.clientH).toBeLessThanOrEqual(180);
   expect(many.scrollW).toBeLessThanOrEqual(many.clientW + 1);
-});
-
-test("composer: expand toggle grows the cap and carries a tooltip", async ({
-  page,
-}) => {
-  await page.fill(
-    ta,
-    Array.from({ length: 40 }, (_, i) => `line ${i}`).join("\n"),
-  );
-  const collapsed = await metrics(page);
-
-  const expand = page.locator(".composer-wrap .expand");
-  await expect(expand).toHaveAttribute("title", "Expand composer (⌥⇧↑)");
-
-  await expand.click();
-  await expect
-    .poll(async () => (await metrics(page)).clientH)
-    .toBeGreaterThan(collapsed.clientH + 50);
-
-  // Collapsing restores the lower cap; tooltip flips too.
-  await expect(expand).toHaveAttribute("title", "Collapse composer (⌥⇧↓)");
-  await expand.click();
-  await expect
-    .poll(async () => (await metrics(page)).clientH)
-    .toBeLessThanOrEqual(collapsed.clientH + 1);
 });
