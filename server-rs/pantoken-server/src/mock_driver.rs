@@ -1774,6 +1774,13 @@ pub struct MockDriver {
     /// One-shot artificial delay before abort settles. Dev/e2e-only: exercises the
     /// client-side stop confirmation deadline without weakening normal mock aborts.
     abort_delay_ms: AtomicU64,
+    /// One-shot delay before the terminal `RunCompleted` event fires after an
+    /// accepted abort. When set, `abort()` returns `Ok(())` immediately (so
+    /// `AbortResult { accepted: true }` is sent quickly) but defers the
+    /// `RunCompleted` emit by this many ms. Mirrors the real daemon during a
+    /// tool call: accepts the cancel (202) fast, but takes time to interrupt
+    /// the running tool and emit the terminal event. Dev/e2e-only.
+    abort_settle_delay_ms: AtomicU64,
     /// Pending host-UI dialogs (keyed by requestId), so respondUi can look up the
     /// original request (e.g. a Q&A's questions) when forming the tool result.
     /// Mirrors the TS MockDriver's `pendingDialogs`.
@@ -1886,6 +1893,7 @@ impl MockDriver {
             fail_next_new_session: Arc::new(AtomicBool::new(false)),
             fail_next_session: Arc::new(AtomicBool::new(false)),
             abort_delay_ms: AtomicU64::new(0),
+            abort_settle_delay_ms: AtomicU64::new(0),
             pending_dialogs: Arc::new(Mutex::new(std::collections::HashMap::new())),
             adventurous_handoff: Arc::new(std::sync::Mutex::new(false)),
             goal: Arc::new(std::sync::Mutex::new(None)),
@@ -2190,6 +2198,38 @@ impl PantokenDriver for MockDriver {
             tokio::time::sleep(Duration::from_millis(delay_ms)).await;
         }
         self.cancel_timers();
+
+        let settle_delay_ms = self.abort_settle_delay_ms.swap(0, Ordering::SeqCst);
+        if settle_delay_ms > 0 {
+            // Return Ok immediately so AbortResult { accepted: true } is sent.
+            // Delay the terminal RunCompleted event to simulate a tool call
+            // that takes time to interrupt — mirrors the real daemon's behavior:
+            // accepts the cancel (202) quickly but needs time to settle.
+            let listeners = self.listeners.clone();
+            let generation = self.generation.clone();
+            let start_gen = generation.load(Ordering::Relaxed);
+            tokio::spawn(async move {
+                tokio::time::sleep(Duration::from_millis(settle_delay_ms)).await;
+                // Abort if reset() was called since we started — same generation
+                // guard as play_script, so a stale RunCompleted can't land on a
+                // fresh test's listeners.
+                if generation.load(Ordering::Relaxed) != start_gen {
+                    return;
+                }
+                let b = base();
+                let listeners = listeners.lock();
+                for (_, tx) in listeners.iter() {
+                    let _ = tx.try_send(SessionDriverEvent::RunCompleted {
+                        base: b.clone(),
+                        snapshot: mock_snapshot(SessionStatus::Idle),
+                        user_entry_id: None,
+                        assistant_entry_id: None,
+                    });
+                }
+            });
+            return Ok(());
+        }
+
         let b = base();
         self.emit(SessionDriverEvent::RunCompleted {
             base: b,
@@ -3022,10 +3062,22 @@ impl PantokenDriver for MockDriver {
 
     fn run_script(&self, name: String) {
         let steps: Vec<ScriptStep> = match name.as_str() {
-            // Keep this one-shot delay out of normal fixtures. It exists solely to
-            // verify the 500ms stop confirmation contract in browser e2e.
+            // Keep this one-shot delay out of normal fixtures. It delays the
+            // entire abort() call by 1000ms, so no abortResult arrives within
+            // the 500ms no-response timeout — tests the no-response path: the
+            // timer fires and the stop button shows a retryable "unconfirmed"
+            // state (on the stop button only, no chat toast or sidebar error).
             "slowabort" => {
                 self.abort_delay_ms.store(1000, Ordering::SeqCst);
+                return;
+            }
+            // Simulates the real daemon's behavior during a tool call: the
+            // cancel is accepted immediately (abortResult { accepted: true }
+            // arrives fast) but the terminal RunCompleted event is delayed by
+            // 1000ms (the tool takes time to interrupt). Tests the core fix —
+            // an accepted stop must NOT produce a false "unconfirmed" state.
+            "toolhold" => {
+                self.abort_settle_delay_ms.store(1000, Ordering::SeqCst);
                 return;
             }
             // ── Approval dialogs ────────────────────────────────────────────
@@ -3945,6 +3997,7 @@ impl PantokenDriver for MockDriver {
         self.fail_next_new_session.store(false, Ordering::SeqCst);
         self.fail_next_session.store(false, Ordering::SeqCst);
         self.abort_delay_ms.store(0, Ordering::SeqCst);
+        self.abort_settle_delay_ms.store(0, Ordering::SeqCst);
         *self.adventurous_handoff.lock().unwrap() = false;
         *self.goal.lock().unwrap() = None;
         // Restore the mutable session/worktree state to the fixture baseline —

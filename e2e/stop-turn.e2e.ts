@@ -46,7 +46,10 @@ test("the Stop pill disables while offline (a remote turn can't be stopped)", as
 test("a slow stop becomes an explicit retry state, then reports late settlement", async ({
   page,
 }) => {
-  // The mock delays this one abort beyond the client's 500ms confirmation window.
+  // The mock delays the entire abort() call by 1000ms, so no abortResult
+  // arrives within the 500ms no-response timeout. The timer fires and the
+  // stop button shows a retryable "unconfirmed" state — on the stop button
+  // only (no chat toast, no sidebar error).
   await drive(page, "slowabort");
   await drive(page, "streamhold");
   const stop = page.getByTestId("stop-button");
@@ -57,28 +60,56 @@ test("a slow stop becomes an explicit retry state, then reports late settlement"
 
   await expect(stop).toHaveText("↻ Retry stop", { timeout: 1_500 });
   await expect(stop).toBeEnabled();
-  await expect(
-    page.getByTestId("chat-notice").getByTestId("toast").filter({
-      hasText: "Couldn't confirm the stop within 500ms",
-    }),
-  ).toBeVisible();
 
-  // The delayed server outcome still settles the transcript and explains that it
-  // arrived after the deadline instead of silently removing the recovery state.
+  // No chat notice appears — the unconfirmed state is consolidated to the
+  // stop button only.
+  await expect(
+    page.getByTestId("chat-notice").getByTestId("toast"),
+  ).toHaveCount(0);
+
+  // No sidebar error either.
+  await expect(page.getByTestId("sidebar").getByTestId("toast")).toHaveCount(0);
+
+  // The delayed abort settles at 1000ms — the terminal RunCompleted event
+  // clears the turn. No "late confirmation" chat notice; the stop button +
+  // working indicator simply disappear.
   await expect(stop).toHaveCount(0);
   await expect(page.getByTestId("working-indicator")).toHaveCount(0);
   await expect(
-    page
-      .getByTestId("sidebar")
-      .getByText("Couldn't confirm the stop within 500ms", {
-        exact: false,
-      }),
+    page.getByTestId("chat-notice").getByTestId("toast"),
   ).toHaveCount(0);
+});
+
+test("stopping during a tool call does not produce a false unconfirmed state", async ({
+  page,
+}) => {
+  // The toolhold script arms a 1000ms delay on the terminal RunCompleted event
+  // after an accepted abort — simulating a tool call that takes time to
+  // interrupt. The abort itself returns Ok immediately, so abortResult
+  // { accepted: true } arrives well within the 500ms no-response timeout.
+  await drive(page, "toolhold");
+  await drive(page, "streamhold");
+  const stop = page.getByTestId("stop-button");
+  await stop.click();
+
+  // The accepted abortResult clears the stop operation quickly (well under
+  // the 500ms timer). The "Stopping…" transient is sub-100ms against an
+  // instant-return mock, so we assert the negative: "↻ Retry stop" never
+  // appears within the window — that's the core fix.
+  await expect(stop).not.toHaveText("↻ Retry stop", { timeout: 1_500 });
+
+  // No chat notice and no sidebar error.
   await expect(
-    page.getByTestId("chat-notice").getByTestId("toast").filter({
-      hasText: "The agent stopped after Pantoken's 500ms confirmation window.",
-    }),
-  ).toBeVisible();
+    page.getByTestId("chat-notice").getByTestId("toast"),
+  ).toHaveCount(0);
+  await expect(page.getByTestId("sidebar").getByTestId("toast")).toHaveCount(0);
+
+  // After the 1000ms settle delay, the terminal RunCompleted event arrives
+  // and settles the transcript — the working indicator disappears.
+  await expect(page.getByTestId("working-indicator")).toHaveCount(0, {
+    timeout: 2_000,
+  });
+  await expect(stop).toHaveCount(0);
 });
 
 test("the Stop pill survives a stray mid-turn idle snapshot (turn still in flight)", async ({

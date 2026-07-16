@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { drive, gotoFresh, openSidebar } from "./helpers.js";
+import { gotoFresh, openSidebar } from "./helpers.js";
 
 // Mobile-only: when the sidebar is closed and a sidebar-scoped notice exists,
 // the sidebar-open control shows an unread badge. Sidebar and chat notices stay
@@ -51,23 +51,9 @@ test("sidebar notice shows an unread badge when the sidebar is closed", async ({
   ).toBeVisible();
 });
 
-test("sidebar and chat notices stay on their own surfaces (no duplication)", async ({
+test("sidebar notices stay in the sidebar (no duplication to chat area)", async ({
   page,
 }) => {
-  // Trigger a chat-scoped notice (stop confirmation timeout).
-  await drive(page, "slowabort");
-  await drive(page, "streamhold");
-  const stop = page.getByTestId("stop-button");
-  await stop.click();
-
-  // The chat notice appears in the chat-notice container.
-  await expect(
-    page
-      .getByTestId("chat-notice")
-      .getByTestId("toast")
-      .filter({ hasText: "Couldn't confirm the stop within 500ms" }),
-  ).toBeVisible();
-
   // Open the sidebar and archive a session (sidebar-scoped notice).
   await openSidebar(page);
   const sidebar = page.getByTestId("sidebar");
@@ -90,18 +76,5 @@ test("sidebar and chat notices stay on their own surfaces (no duplication)", asy
       .getByTestId("chat-notice")
       .getByTestId("toast")
       .filter({ hasText: "Archived" }),
-  ).toHaveCount(0);
-
-  // The chat notice is in the chat-notice container only, not in the sidebar.
-  await expect(
-    page
-      .getByTestId("chat-notice")
-      .getByTestId("toast")
-      .filter({ hasText: "Couldn't confirm the stop within 500ms" }),
-  ).toBeVisible();
-  await expect(
-    sidebar
-      .getByTestId("toast")
-      .filter({ hasText: "Couldn't confirm the stop within 500ms" }),
   ).toHaveCount(0);
 });

@@ -108,6 +108,11 @@ export interface Toast {
  * while this records whether the user's control action received an outcome. */
 export { type StopState } from "./store-helpers.js";
 
+/** No-response timeout for a stop request: if the server hasn't replied with
+ * an `abortResult` within this window, the stop is marked unconfirmed so the
+ * user can retry. It is NOT a confirmation window — an accepted `abortResult`
+ * clears the timer immediately, so this only fires when the server never
+ * responds at all. */
 const STOP_CONFIRMATION_TIMEOUT_MS = 500;
 
 /** A view in the back/forward navigation history (⌘[ / ⌘]): a focused session, or a
@@ -851,10 +856,10 @@ class PantokenStore {
    * each folded event. When an unconfirmed stop sees the agent resume
    * (`turnActive` true), clear it so the user can stop again; only clear a
    * matching lastError, so a newer error is preserved. A still-confirming stop
-   * remains pending while active. When the turn settles, clear the operation
-   * and explain an unconfirmed stop as a late confirmation. The decision itself
-   * stays pure so it can be tested without instantiating this Svelte rune-based
-   * store. */
+   * remains pending while active. When the turn settles, clear the operation;
+   * the stop button + working indicator disappearing is the feedback. The
+   * decision itself stays pure so it can be tested without instantiating this
+   * Svelte rune-based store. */
   private settleStopOperation(): void {
     const result = settleStopOperation(
       this.stopOperation,
@@ -873,14 +878,9 @@ class PantokenStore {
     this.clearStopConfirmationTimer();
     this.stopOperation = result.operation;
     if (result.clearError) this.lastError = null;
-    if (result.lateConfirmation) {
-      this.chatNotice(
-        "The agent stopped after Pantoken's 500ms confirmation window.",
-        {
-          durationMs: 8000,
-        },
-      );
-    }
+    // The late-confirmation chat notice is intentionally gone: the stop
+    // button + working indicator disappearing when the turn settles IS the
+    // confirmation feedback.
   }
 
   private markStopUnconfirmed(requestId: string, message: string): void {
@@ -895,8 +895,6 @@ class PantokenStore {
       activityVersion: this.activityVersion,
       error: message,
     };
-    this.lastError = message;
-    this.chatNotice(message, { durationMs: 8000 });
   }
 
   /** Estimated tokens the model has streamed into the focused session's CURRENT turn —
@@ -1301,11 +1299,15 @@ class PantokenStore {
             operation.requestId,
             msg.error ?? "Pantoken couldn't send the stop request.",
           );
-        } else if (operation.state === "unconfirmed") {
-          this.chatNotice(
-            "Pantoken accepted the stop request after 500ms; waiting for the agent to settle.",
-            { durationMs: 8000 },
-          );
+        } else {
+          // The daemon accepted the cancel request. Clear the confirmation
+          // timer and the stop operation — the terminal SSE event
+          // (turn_cancelled → sessionUpdated) settles the transcript
+          // independently. We don't need a client-side confirmation window:
+          // the 202 is the daemon's acceptance, and the TUI trusts it the
+          // same way.
+          this.clearStopConfirmationTimer();
+          this.stopOperation = null;
         }
         break;
       }
@@ -1729,7 +1731,7 @@ class PantokenStore {
     this.stopConfirmationTimer = setTimeout(() => {
       this.markStopUnconfirmed(
         requestId,
-        "Couldn't confirm the stop within 500ms — the agent may still be running.",
+        "No response to the stop request — the agent may still be running.",
       );
     }, STOP_CONFIRMATION_TIMEOUT_MS);
   }

@@ -42,28 +42,25 @@ test("archive undo notice appears inside the sidebar, not as a fixed overlay", a
   await expect(page.getByTestId("chat-notice")).toHaveCount(0);
 });
 
-test("stop error notice appears in the chat area, not in the sidebar", async ({
+test("stop unconfirmed state appears on the stop button, not as a chat notice or sidebar error", async ({
   page,
 }) => {
-  // Trigger a stop confirmation timeout (chat-scoped notice).
+  // Trigger a stop no-response timeout (the slowabort script delays the
+  // entire abort() by 1000ms, so the 500ms timer fires first).
   await drive(page, "slowabort");
   await drive(page, "streamhold");
   const stop = page.getByTestId("stop-button");
   await stop.click();
 
-  // The unconfirmed-stop notice appears in the chat-notice container.
-  const notice = page
-    .getByTestId("chat-notice")
-    .getByTestId("toast")
-    .filter({ hasText: "Couldn't confirm the stop within 500ms" });
-  await expect(notice).toBeVisible();
+  // The stop button shows the retry state.
+  await expect(stop).toHaveText("↻ Retry stop", { timeout: 1_500 });
 
-  // It is in-flow (not position:fixed).
-  const position = await notice.evaluate((el) =>
-    window.getComputedStyle(el).getPropertyValue("position"),
-  );
-  expect(position).not.toBe("fixed");
+  // No chat notice appears — the unconfirmed state is consolidated to the
+  // stop button only.
+  await expect(
+    page.getByTestId("chat-notice").getByTestId("toast"),
+  ).toHaveCount(0);
 
-  // The notice is NOT inside the sidebar element.
+  // No sidebar error either.
   await expect(page.getByTestId("sidebar").getByTestId("toast")).toHaveCount(0);
 });
