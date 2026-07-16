@@ -19,7 +19,7 @@ test("adventurous handoff toggles from the facet menu and persists in the sessio
 
   // Default: off (the mock seeds adventurousHandoff: false).
   await expect(toggle).toHaveAttribute("aria-checked", "false");
-  await expect(toggle).toContainText("auto");
+  await expect(toggle).toHaveAttribute("aria-label", "Adventurous handoff");
 
   // Toggle on — the menu stays open so the state flip is visible.
   await toggle.click();

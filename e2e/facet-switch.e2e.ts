@@ -24,13 +24,13 @@ test("clicking the facet badge opens a picker and switching works", async ({
   await badge.click();
   await page.getByRole("option", { name: "Plan" }).click();
   await expect(badge).toHaveText("Plan");
-  await expect(badge).toHaveClass(/plan/);
+  await expect(badge).toHaveClass(/facet-(plan|auto)/);
 
   // Click the badge → opens the picker again. Click "Execute" to switch back.
   await badge.click();
   await page.getByRole("option", { name: "Execute" }).click();
   await expect(badge).toHaveText("Execute");
-  await expect(badge).not.toHaveClass(/plan/);
+  await expect(badge).not.toHaveClass(/facet-(plan|auto)/);
 });
 
 test("the facet badge sits to the right of permission in the composer footer", async ({
@@ -209,16 +209,16 @@ test("typing a letter from the open facet menu dismisses it and types in the com
   await expect(textarea).toHaveValue("h");
 });
 
-test("the handoff auto-pill is inline on the Plan row, not a separate line", async ({
+test("the handoff slide-toggle is inline on the Plan row, not a separate line", async ({
   page,
 }) => {
-  // Switch to Plan first so the pill is present when the menu opens.
+  // Switch to Plan first so the toggle is present when the menu opens.
   const badge = page.getByTestId("facet-badge");
   await badge.click();
   await page.getByRole("option", { name: "Plan" }).click();
   await expect(badge).toHaveText("Plan");
 
-  // Open the menu — the handoff pill is inside the Plan row (.plan-row).
+  // Open the menu — the handoff toggle is inside the Plan row (.plan-row).
   await badge.click();
   const panel = page.getByRole("listbox", { name: "Facet" });
   const planRow = panel.locator(".plan-row");
@@ -228,12 +228,15 @@ test("the handoff auto-pill is inline on the Plan row, not a separate line", asy
   // The toggle is a child of the Plan row, not a separate sibling.
   await expect(planRow.getByTestId("adventurous-handoff")).toBeVisible();
 
-  // Clicking the pill toggles handoff and keeps the menu open (stopPropagation).
+  // Clicking the toggle toggles handoff and keeps the menu open (stopPropagation).
   await expect(toggle).toHaveAttribute("aria-checked", "false");
   await toggle.click();
   await expect(toggle).toHaveAttribute("aria-checked", "true");
   await expect(panel).toBeVisible();
   await expect(toggle).toHaveClass(/on/);
+
+  // No .handoff-pill should exist — it was replaced by the slide-toggle.
+  await expect(page.locator(".handoff-pill")).toHaveCount(0);
 });
 
 test("FacetBadge tooltip names the Shift+Tab hotkey", async ({ page }) => {

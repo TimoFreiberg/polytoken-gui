@@ -522,6 +522,16 @@
             Restart Pantoken to apply the new login shell.
           </p>
         {/if}
+        <div class="row">
+          <div class="rinfo">
+            <div class="rlabel">Reload facets</div>
+            <div class="rdesc">Re-read available facet definitions from disk (use after editing facet files).</div>
+          </div>
+          <Button
+            title="Reload the facet list from disk"
+            onclick={() => store.refreshFacets()}
+          >Reload</Button>
+        </div>
       </section>
       {/if}
 

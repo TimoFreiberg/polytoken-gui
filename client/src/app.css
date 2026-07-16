@@ -90,6 +90,17 @@
     0 1px 2px rgba(31, 30, 29, 0.04), 0 4px 14px rgba(31, 30, 29, 0.05);
   --shadow-pop: 0 8px 30px rgba(31, 30, 29, 0.14);
 
+  /* Facet state tints — soft hues on warm paper. Execute = amber (the "running"
+     mode), plan = dusty blue, plan+adventurous = muted lavender (blue+red blend).
+     Used on the facet badge + dropdown rows. Execute borrows --warning so the
+     active mode reads as warm/alert-adjacent; plan and auto get distinct hues. */
+  --facet-execute: var(--warning);
+  --facet-execute-soft: var(--warning-soft);
+  --facet-plan: #4a6a8a;
+  --facet-plan-soft: #e0e8f0;
+  --facet-auto: #6a5a7a;
+  --facet-auto-soft: #ece4f0;
+
   /* Reading measure for prose + chrome. --maxw-wide is the breakout ceiling: only
      fenced code and tables in assistant turns may grow into it, using the desktop
      gutter that prose deliberately leaves empty. */
@@ -140,6 +151,17 @@
   --find-current: rgba(255, 150, 40, 0.62);
   --sidebar-bg: #211f1c;
   --prompt-bg: #2c2925;
+
+  /* Facet state tints — adjusted for dark backgrounds: lighter hues, dark softs.
+     Execute borrows --warning (copper-amber) because execute is the "active/
+     running" mode — the hue overlap is intentional, not a warning/status
+     collision (the facet badge has its own visible label distinguishing it). */
+  --facet-execute: var(--warning);
+  --facet-execute-soft: var(--warning-soft);
+  --facet-plan: #8aabcd;          /* lighter dusty blue — clears WCAG AA on dark soft */
+  --facet-plan-soft: #2a3340;
+  --facet-auto: #aa9aba;          /* lighter muted lavender — clears WCAG AA on dark soft */
+  --facet-auto-soft: #332a3a;
 
   --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.22), 0 4px 14px rgba(0, 0, 0, 0.28);
   --shadow-pop: 0 10px 34px rgba(0, 0, 0, 0.52);
