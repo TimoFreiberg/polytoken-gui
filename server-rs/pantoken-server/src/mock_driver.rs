@@ -3244,6 +3244,65 @@ impl PantokenDriver for MockDriver {
                 } });
                 s
             }
+            // ── Clean tool previews ────────────────────────────────────────
+            // Exercises every tool whose collapsed-header `.arg` preview was
+            // refined in #28, so e2e can assert the per-tool field selection.
+            "cleantools" => {
+                let mut s = vec![
+                    ScriptStep { wait_ms: 0, event: SessionDriverEvent::UserMessage { base: base(), id: format!("u-{}", ts()), text: "Show me the clean tool previews.".into(), images: None, entry_id: None, references: None } },
+                    ScriptStep { wait_ms: 0, event: SessionDriverEvent::SessionUpdated { base: base(), snapshot: mock_snapshot(SessionStatus::Running) } },
+                ];
+                for chunk in deltas("Running the full set of tools for header-preview verification.", 3) {
+                    s.push(ScriptStep { wait_ms: 28, event: SessionDriverEvent::AssistantDelta { base: base(), text: chunk, channel: Some(AssistantDeltaChannel::Text), entry_id: None } });
+                }
+                // write_plan / edit_plan / handoff_plan — empty previews
+                s.extend(tool_span("ct-write-plan", "write_plan", "Write plan", None,
+                    serde_json::json!({"content": "# Goal\nDo the thing"}), true, serde_json::json!("Plan written"), 0, 0, 1));
+                s.extend(tool_span("ct-edit-plan", "edit_plan", "Edit plan", None,
+                    serde_json::json!({"old_string": "old", "new_string": "new"}), true, serde_json::json!("Plan edited"), 0, 0, 1));
+                s.extend(tool_span("ct-handoff-plan", "handoff_plan", "Hand off plan", None,
+                    serde_json::json!({"facet": "execute"}), true, serde_json::json!("Plan handed off"), 0, 0, 1));
+                // todo tools
+                s.extend(tool_span("ct-todo-create", "todo_create", "Create todo", None,
+                    serde_json::json!({"title": "Fix the bug", "description": "..."}), true, serde_json::json!("Todo created"), 0, 0, 1));
+                s.extend(tool_span("ct-todo-list", "todo_list", "List todos", None,
+                    serde_json::json!({"status_filter": "pending"}), true, serde_json::json!("3 todos found"), 0, 0, 1));
+                s.extend(tool_span("ct-todo-update", "todo_update", "Update todo", None,
+                    serde_json::json!({"id": 2, "title": "Updated title"}), true, serde_json::json!("Todo updated"), 0, 0, 1));
+                s.extend(tool_span("ct-todo-complete", "todo_complete", "Complete todo", None,
+                    serde_json::json!({"id": 1}), true, serde_json::json!("Todo completed"), 0, 0, 1));
+                // subagent (model_override null → omitted from preview)
+                s.extend(tool_span("ct-subagent", "subagent", "Run subagent", None,
+                    serde_json::json!({"name": "code-reviewer", "subagent_type": "general-purpose", "model_override": null, "prompt": "..."}), true, serde_json::json!("Done"), 0, 0, 1));
+                // skill
+                s.extend(tool_span("ct-skill", "skill", "Load skill", None,
+                    serde_json::json!({"name": "debug"}), true, serde_json::json!("Skill loaded"), 0, 0, 1));
+                // job_status / job_block
+                s.extend(tool_span("ct-job-status", "job_status", "Check job status", None,
+                    serde_json::json!({"job_id": "general-purpose:example"}), true, serde_json::json!("completed"), 0, 0, 1));
+                s.extend(tool_span("ct-job-block", "job_block", "Wait for job", None,
+                    serde_json::json!({"job_id": "general-purpose:example", "wait_seconds": 60, "timeout_seconds": 90}), true, serde_json::json!("finished"), 0, 0, 1));
+                // block_goal — amber terminal_reason
+                s.extend(tool_span("ct-block-goal", "block_goal", "Block goal", None,
+                    serde_json::json!({"terminal_reason": "Waiting on missing credentials"}), true, serde_json::json!("Goal blocked"), 0, 0, 1));
+                // propose_goal
+                s.extend(tool_span("ct-propose-goal", "propose_goal", "Propose goal", None,
+                    serde_json::json!({"summary": "Finish implementing the feature"}), true, serde_json::json!("Goal proposed"), 0, 0, 1));
+                // popd — empty input
+                s.extend(tool_span("ct-popd", "popd", "Pop directory", None,
+                    serde_json::json!({}), true, serde_json::json!("Popped"), 0, 0, 1));
+                // web_search — output is a plain string containing a JSON array,
+                // matching the live daemon's serde_json::Value::String shape.
+                s.extend(tool_span("ct-web-search", "web_search", "Web search", None,
+                    serde_json::json!({"query": "weather munich"}), true,
+                    serde_json::json!("[{\"title\":\"Weather in Munich\",\"url\":\"https://example.com/1\"},{\"title\":\"Munich Forecast\",\"url\":\"https://example.com/2\"}]"),
+                    0, 0, 1));
+                for chunk in deltas("All tools ran.", 3) {
+                    s.push(ScriptStep { wait_ms: 28, event: SessionDriverEvent::AssistantDelta { base: base(), text: chunk, channel: Some(AssistantDeltaChannel::Text), entry_id: None } });
+                }
+                s.push(ScriptStep { wait_ms: 60, event: SessionDriverEvent::RunCompleted { base: base(), snapshot: mock_snapshot(SessionStatus::Idle), user_entry_id: None, assistant_entry_id: None } });
+                s
+            }
             "staleidle" => {
                 let mut s = vec![
                     ScriptStep { wait_ms: 0, event: SessionDriverEvent::UserMessage { base: base(), id: format!("u-stale-{}", ts()), text: "Run the long thing — but glitch the status mid-turn.".into(), images: None, entry_id: None, references: None } },

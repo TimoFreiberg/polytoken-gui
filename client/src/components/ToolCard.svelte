@@ -5,6 +5,7 @@
   import Chevron from "./ui/Chevron.svelte";
   import { imageViewer } from "../lib/image-viewer.svelte.js";
   import { store } from "../lib/store.svelte.js";
+  import { toolPreview } from "../lib/tool-preview.js";
 
   // `flat` drops the card chrome (border/background/rounded box) so the call renders as a
   // bare row. Currently unused (the merge layer that passed flat=true was removed), but
@@ -102,6 +103,11 @@
     }
     return inlineBound(text, HEADER_PREVIEW_LIMIT);
   }
+
+  // Collapsed-header preview: per-tool field selection (matching the TUI's
+  // cleaner rendering) instead of a raw JSON dump. block_goal gets an amber
+  // treatment via the arg-warning class on the span.
+  const argPreview = $derived(toolPreview(item.name, item.input, item.output));
 
   // Detailed argument view for the expanded body. The collapsed header only shows a
   // short single-line preview() (e.g. the start of a bash command); here we render a
@@ -526,7 +532,7 @@
       <span class="status" aria-hidden="true">✕</span>
     {/if}
     <span class="name" title={item.description || undefined}>{item.label ?? item.name}</span>
-    <span class="arg">{preview(item.input)}</span>
+    <span class="arg" class:arg-warning={item.name === "block_goal"}>{argPreview}</span>
     {#if item.status === "interrupted"}
       <span class="status-text" aria-hidden="true">interrupted</span>
     {/if}
@@ -781,6 +787,10 @@
     flex: 1;
     min-width: 0;
     max-width: 52ch;
+  }
+  /* block_goal's terminal_reason is a warning — render it amber. */
+  .arg.arg-warning {
+    color: var(--warning);
   }
   .counts {
     display: inline-flex;
