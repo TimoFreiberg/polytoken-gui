@@ -74,6 +74,7 @@ describeOrSkip("stop-check-integration.sh", () => {
     const parsed = JSON.parse(result.stdout);
     expect(parsed.outcome).toBe("continue");
     expect(parsed.reason).toContain("just integrate-into-main 42");
+    expect(parsed.reason).toContain("Fixes #42");
     expect(parsed.reason).toContain("NOT yet integrated");
   });
 

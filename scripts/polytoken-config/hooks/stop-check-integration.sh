@@ -63,5 +63,5 @@ echo $((redirect_count + 1)) > "$REDIRECT_FILE"
 
 # Return continue with a redirect message the agent will see.
 cat <<JSON
-{"outcome":"continue","reason":"You have NOT yet integrated your work into main. There are unpushed commits above main. Run the integration command now:\n\njust integrate-into-main ${issue_number}\n\nThis acquires a lock, rebases onto latest main, runs tests, and pushes. If it exits 2 (conflicts), resolve them with the jj-resolve-conflicts skill and retry. Do not stop until integration succeeds (exit 0) or you have posted a comment explaining a blocking failure."}
+{"outcome":"continue","reason":"You have NOT yet integrated your work into main. There are unpushed commits above main. Before running integration, ensure your commit message includes exactly 'Fixes #${issue_number}' on its own line after the subject. Run the integration command now:\n\njust integrate-into-main ${issue_number}\n\nThis acquires a lock, rebases onto latest main, runs tests, and pushes. If it exits 2 (conflicts), resolve them with the jj-resolve-conflicts skill and retry. Do not stop until integration succeeds (exit 0) or you have posted a comment explaining a blocking failure."}
 JSON
