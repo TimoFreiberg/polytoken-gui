@@ -17,7 +17,7 @@
     size?: number;
   } = $props();
 
-  const dividerX = side === "right" ? 15 : 9;
+  const dividerX = $derived(side === "right" ? 15 : 9);
 </script>
 
 <span class="panel-icon" aria-hidden="true">
