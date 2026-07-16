@@ -11,15 +11,7 @@ export async function gotoFresh(page: Page): Promise<void> {
   // session-switch assertions. Scoped to this one key (drafts/theme/etc. persist).
   // addInitScript runs before each navigation in this page's lifetime — once per test,
   // no extra reload.
-  page.addInitScript(() => {
-    localStorage.removeItem("pantoken.scrollPositions");
-    // Prior tests push overlay history entries (pantokenOverlay markers) via
-    // history.pushState. page.goto to the same URL doesn't discard those entries,
-    // so a subsequent page.goBack() can land on a stale marker or about:blank.
-    // Replace the current entry with a clean state so the app boots from a known
-    // history position.
-    history.replaceState(null, "", location.href);
-  });
+  page.addInitScript(() => localStorage.removeItem("pantoken.scrollPositions"));
   await page.goto("/?dev");
   // The final text starts rendering before the fixture emits runCompleted. Wait for
   // the settled work block instead: its appearance proves the turn finished and the

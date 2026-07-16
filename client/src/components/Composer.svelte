@@ -117,6 +117,14 @@
   $effect(() => {
     if (!drafting) pickingCwd = false;
   });
+  // Starting a draft unmounts this Composer (App.svelte guards it with {#if !store.draft}).
+  // Clean up the mobile controls overlay entry on teardown so the overlay-history stack
+  // doesn't strand a stale "session-controls" entry that would break browser back.
+  $effect(() => {
+    return () => {
+      if (mobileControlsOpen) overlayHistory.closed("session-controls");
+    };
+  });
   const cwdBase = $derived.by(() => {
     const c = store.draft?.cwd?.replace(/\/+$/, "") ?? "";
     return c ? (c.split("/").pop() ?? c) : "home";
