@@ -225,9 +225,13 @@
   .panel {
     position: absolute;
     /* Opens UPWARD: the picker lives in the composer footer at the bottom of the
-       viewport, so a downward panel would fall off-screen. */
+       viewport, so a downward panel would fall off-screen.
+       LEFT-anchored (not right): the badge's left edge is stable when its label
+       width changes (e.g. facet rotation via Shift+Tab), so the panel stays put.
+       Both badges live on the left side of the footer, so left-anchoring also
+       keeps the panel on-screen. */
     bottom: calc(100% + 6px);
-    right: 0;
+    left: 0;
     z-index: 50;
     background: var(--surface);
     border: 1px solid var(--border);

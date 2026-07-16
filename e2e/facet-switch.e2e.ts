@@ -147,6 +147,47 @@ test("Shift+Tab rotates through facets and opens the menu with focus in it", asy
   await expect(panel).toBeVisible();
 });
 
+test("the facet panel stays anchored (left edge stable) when cycling with Shift+Tab", async ({
+  page,
+}) => {
+  const badge = page.getByTestId("facet-badge");
+  await expect(badge).toHaveText("Execute");
+
+  // Focus the composer textarea, then Shift+Tab to open the facet menu (rotates
+  // to Plan). The panel opens upward and is left-anchored to the badge.
+  await page.getByPlaceholder("Message pantoken…").focus();
+  await page.keyboard.press("Shift+Tab");
+  await expect(badge).toHaveText("Plan");
+  const panel = page.getByRole("listbox", { name: "Facet" });
+  // Wait for the panel to settle: visible, then focused (focus moves in after
+  // open — this also lets the reveal transition finish before measuring).
+  await expect(panel).toBeVisible();
+  await expect(panel).toBeFocused();
+
+  // The panel's left edge should align with the badge's left edge (left-anchored).
+  const panelBox1 = await panel.boundingBox();
+  const badgeBox1 = await badge.boundingBox();
+  expect(panelBox1).not.toBeNull();
+  expect(badgeBox1).not.toBeNull();
+  expect(Math.abs(panelBox1!.x - badgeBox1!.x)).toBeLessThanOrEqual(1);
+
+  // Shift+Tab again (rotates to Research) — the panel's left edge must not move.
+  await page.keyboard.press("Shift+Tab");
+  await expect(badge).toHaveText("Research");
+  await expect(panel).toBeVisible();
+  const panelBox2 = await panel.boundingBox();
+  expect(panelBox2).not.toBeNull();
+  expect(panelBox2!.x).toBe(panelBox1!.x);
+
+  // Shift+Tab again (wraps to Execute) — still stable.
+  await page.keyboard.press("Shift+Tab");
+  await expect(badge).toHaveText("Execute");
+  await expect(panel).toBeVisible();
+  const panelBox3 = await panel.boundingBox();
+  expect(panelBox3).not.toBeNull();
+  expect(panelBox3!.x).toBe(panelBox1!.x);
+});
+
 test("arrow keys navigate the open facet menu and Enter selects", async ({
   page,
 }) => {

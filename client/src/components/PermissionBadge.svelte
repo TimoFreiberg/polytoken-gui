@@ -26,7 +26,7 @@
   groupTitle="Permission mode"
   count={PERMISSION_MODES.length}
   initialSel={PERMISSION_MODES.findIndex((m) => m.id === mode)}
-  badgeClass={isStandard ? "" : "nonstandard"}
+  badgeClass={`permission-badge ${isStandard ? "" : "nonstandard"}`}
   minWidth="200px"
   closeLabel="Close permission menu"
   onSelect={(i) => store.setPermissionMonitor(PERMISSION_MODES[i]!.id)}
@@ -55,6 +55,16 @@
 </MenuBadge>
 
 <style>
+  /* Fixed min-width on the label so the badge doesn't resize when cycling
+     permission modes (Standard/Bypass/Bypass+/Autonomous). Sized for
+     "Autonomous" (10 chars) — the longest label in PERMISSION_MODES.
+     12ch gives headroom: `ch` = width of '0', but proportional fonts render
+     letters like 'm'/'A' wider, so 10 chars ≠ 10ch.
+     Targets .badge-text (rendered by MenuBadge) so the chevron stays
+     adjacent to the text rather than floating mid-badge. */
+  :global(.permission-badge .badge-text) {
+    min-width: 12ch;
+  }
   .item {
     display: flex;
     flex-direction: column;

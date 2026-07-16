@@ -82,6 +82,46 @@ test("⌘⇧P cycles permission mode", async ({ page }) => {
   await expect(badge).toContainText("Standard");
 });
 
+test("permission badge width is stable when cycling through all modes", async ({
+  page,
+}) => {
+  const badge = page.getByTestId("permission-badge");
+  await expect(badge).toContainText("Standard");
+
+  // Measure the badge width in the initial (Standard) state.
+  const box0 = await badge.boundingBox();
+  expect(box0).not.toBeNull();
+  const initialWidth = box0!.width;
+
+  // Cycle through all 4 modes via ⌘⇧P. After each cycle, measure the badge
+  // width — it must stay constant (the .permission-badge .badge-text min-width
+  // reserves space for the longest label, "Autonomous").
+  await page.keyboard.press("Control+Shift+P"); // Standard → Bypass
+  await expect(badge).toContainText("Bypass");
+  await expect(badge).not.toContainText("Bypass+");
+  const box1 = await badge.boundingBox();
+  expect(box1).not.toBeNull();
+  expect(box1!.width).toBe(initialWidth);
+
+  await page.keyboard.press("Control+Shift+P"); // Bypass → Bypass+
+  await expect(badge).toContainText("Bypass+");
+  const box2 = await badge.boundingBox();
+  expect(box2).not.toBeNull();
+  expect(box2!.width).toBe(initialWidth);
+
+  await page.keyboard.press("Control+Shift+P"); // Bypass+ → Autonomous
+  await expect(badge).toContainText("Autonomous");
+  const box3 = await badge.boundingBox();
+  expect(box3).not.toBeNull();
+  expect(box3!.width).toBe(initialWidth);
+
+  await page.keyboard.press("Control+Shift+P"); // Autonomous → Standard (wrap)
+  await expect(badge).toContainText("Standard");
+  const box4 = await badge.boundingBox();
+  expect(box4).not.toBeNull();
+  expect(box4!.width).toBe(initialWidth);
+});
+
 test("permission badge round-trips all 4 modes via picker", async ({ page }) => {
   const badge = page.getByTestId("permission-badge");
   await expect(badge).toContainText("Standard");
