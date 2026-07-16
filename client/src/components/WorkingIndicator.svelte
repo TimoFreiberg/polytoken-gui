@@ -88,8 +88,7 @@
       <span
         class="elapsed"
         data-testid="working-elapsed"
-        aria-hidden="true"
-        title="Time elapsed on the current turn">{elapsed}</span
+        aria-hidden="true">{elapsed}</span
       >
     {/if}
     {#if store.turnActive}

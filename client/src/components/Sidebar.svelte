@@ -156,11 +156,29 @@
   // the only desktop path that focuses it; phone activation mounts it without opening the
   // soft keyboard.
   let prevSidebarOpen = store.sidebarOpen;
+  // When ⌘K opens the sidebar and search together, this flag prevents the
+  // sidebar-open handler below from resetting searchOpen=false.
+  let suppressSearchResetOnOpen = false;
   $effect(() => {
     const open = store.sidebarOpen;
     if (!open && prevSidebarOpen) closeSearch();
-    if (open && !prevSidebarOpen) searchOpen = false;
+    if (open && !prevSidebarOpen && !suppressSearchResetOnOpen) searchOpen = false;
+    if (open && !prevSidebarOpen) suppressSearchResetOnOpen = false;
     prevSidebarOpen = open;
+  });
+
+  // ⌘K — open (or re-focus) the sidebar session search on each store bump.
+  // Opens the sidebar first if it's collapsed, so ⌘K works from any state.
+  let prevSidebarSearchFocusN = store.sidebarSearchFocusN;
+  $effect(() => {
+    const n = store.sidebarSearchFocusN;
+    if (n === prevSidebarSearchFocusN) return;
+    prevSidebarSearchFocusN = n;
+    if (!store.sidebarOpen) {
+      suppressSearchResetOnOpen = true;
+      store.openSidebar();
+    }
+    openSearch();
   });
 
   // Per-row actions menu (the ⋯ overflow) — a floating popover anchored under the ⋯ trigger
@@ -653,7 +671,6 @@
               data-testid="sidebar-search-input"
               type="text"
               placeholder="Search sessions…"
-              title="Search sessions by name, preview, or path (Enter opens the top match, Esc clears)"
               aria-label="Search sessions"
               spellcheck="false"
               autocapitalize="off"
@@ -673,9 +690,8 @@
         {:else}
           <IconButton
             data-testid="sidebar-search-toggle"
-            title="Search sessions"
-            aria-label="Search sessions"
-            aria-expanded="false"
+            aria-label="Search sessions (⌘K)"
+            aria-expanded={searchOpen}
             onclick={openSearch}
           >
             <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
@@ -721,10 +737,10 @@
   <div class="new" data-testid="sidebar-new-session">
     <button
       class="new-btn"
-      title="Start a new session (⌘N) — pick the project, worktree, and model in the composer (creation is deferred until you send)"
       onclick={() => startDraft(activeCwd)}
     >
       <span class="plus">+</span> New session…
+      <kbd class="hotkey-hint">⌘N</kbd>
     </button>
     {#if store.lastError}
       <div class="err" role="alert">
@@ -821,7 +837,6 @@
             <IconButton
               class="project-new"
               size="sm"
-              title={`New session in ${g.cwd}`}
               aria-label={`New session in ${basename(g.cwd)}`}
               onclick={() => startDraft(g.cwd)}>+</IconButton
             >
@@ -884,10 +899,6 @@
                       class="row"
                       class:active={s.sessionId === store.viewedSessionId &&
                         !store.draft}
-                      data-status={st}
-                      title={activity
-                        ? `${s.displayName || s.preview || "Session"} — ${activity}`
-                        : `Open ${s.displayName || s.preview || "session"}`}
                       onclick={() => pick(s)}
                       oncontextmenu={(e) => openMenu(e, s.path)}
                     >
@@ -912,8 +923,6 @@
                       </span>
                       <span
                         class="name"
-                        data-tip-single
-                        title={s.displayName ?? (s.preview ? s.preview.split('\n')[0] : '(untitled)')}
                         >{s.displayName || s.preview || "(untitled)"}</span
                       >
                       <span class="meta">
@@ -1323,6 +1332,21 @@
     border-radius: var(--radius-xs);
     font-weight: 700;
     line-height: 1;
+  }
+  .hotkey-hint {
+    margin-left: auto;
+    font-family: var(--font-mono);
+    font-size: 10.5px;
+    color: var(--text-muted);
+    background: var(--surface-sunken);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-xs);
+    padding: 0 4px;
+    opacity: 0;
+    transition: opacity 120ms ease;
+  }
+  .new-btn:hover .hotkey-hint {
+    opacity: 1;
   }
   .err {
     display: flex;
@@ -1811,12 +1835,6 @@
   .row.active .name {
     color: var(--text);
     font-weight: 600;
-  }
-  /* Idle (read) sessions fade to secondary text so running/unread/waiting rows
-     stand out. The viewed session (.active) is exempt — :not(.active) excludes
-     it from this selector entirely. */
-  .row[data-status="read"]:not(.active) .name {
-    color: var(--text-muted);
   }
   /* Right-edge cluster: worktree glyph, optional tag, and the status/time slot. Shrinks
      to its content so the title takes the rest of the line. */

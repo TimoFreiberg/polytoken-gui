@@ -22,10 +22,11 @@ test("edit-tool card: collapsed +N/−M badge, expands to a @pierre/diffs render
   await expect(counts).toContainText("+1");
   await expect(counts).toContainText("1");
 
-  // The collapse/expand toggle carries a descriptive tooltip (title audit).
+  // The collapse/expand toggle is a disclosure control — no tooltip needed
+  // (chevron + tool name make the function obvious). It keeps aria-expanded.
   await expect(card.locator(".head")).toHaveAttribute(
-    "title",
-    "Expand tool details",
+    "aria-expanded",
+    "false",
   );
   await expect(card.locator(".head")).toHaveAccessibleName(
     /completed.*Edit file.*1 added.*1 removed.*took \d+ms/i,

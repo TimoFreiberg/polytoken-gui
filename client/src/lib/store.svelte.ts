@@ -423,6 +423,10 @@ class PantokenStore {
   // bumps so a repeated ⌘F re-focuses + selects the existing query, mirroring native find.
   searchOpen = $state(false);
   searchFocusN = $state(0);
+  // Sidebar session search (⌘K). Unlike the in-transcript find (⌘F), this works
+  // while drafting — you may want to switch sessions mid-composition. The Sidebar
+  // watches this counter and focuses its search input on each bump.
+  sidebarSearchFocusN = $state(0);
   // The PlanView overlay — a modal rendering of the active plan document's
   // markdown. Ephemeral (not persisted); toggled by the StatusHeader button or ⌘P.
   planViewOpen = $state(false);
@@ -2291,6 +2295,12 @@ class PantokenStore {
   }
   closeSearch(): void {
     this.searchOpen = false;
+  }
+  /** ⌘K — focus the sidebar session search. Works while drafting (unlike ⌘F),
+   *  since you may want to find a session mid-composition. The Sidebar opens
+   *  itself if collapsed, then focuses the input. */
+  focusSidebarSearch(): void {
+    this.sidebarSearchFocusN++;
   }
   togglePlanView(): void {
     this.planViewOpen = !this.planViewOpen;

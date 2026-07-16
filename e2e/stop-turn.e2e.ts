@@ -15,10 +15,9 @@ test("the Stop pill + working indicator show while a normal turn streams", async
     page.getByTestId("working-indicator").locator(".coin, .dot, .ring, .mark"),
   ).toHaveCount(0);
   await expect(page.getByTestId("stop-button")).toBeVisible();
-  // The toolbar hint signals that Enter queues a follow-up mid-turn (the driver
-  // routes mid-turn sends to /turn/input). Enter clears the box (the message is
-  // queued) — guards the composer-side behavior the removed toggle tests covered.
-  await expect(page.getByText("queues a follow-up")).toBeVisible();
+  // Enter while streaming queues a follow-up (the driver routes mid-turn sends to
+  // /turn/input). Enter clears the box (the message is queued) — guards the
+  // composer-side behavior the removed toggle tests covered.
   const box = page.getByPlaceholder("Queue a message…");
   await box.fill("a queued nudge");
   await box.press("Enter");

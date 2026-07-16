@@ -132,6 +132,37 @@ test("⌘B toggles the sidebar", async ({ page }) => {
   await expect(sidebar).toHaveAttribute("data-open", "true");
 });
 
+test("⌘K focuses the sidebar session search", async ({ page }) => {
+  // The sidebar is open by default on desktop. ⌘K should open the search
+  // overlay and focus the input.
+  await page.keyboard.press("Control+k");
+
+  const input = page.getByTestId("sidebar-search-input");
+  await expect(input).toBeVisible();
+  await expect(input).toBeFocused();
+});
+
+test("⌘K opens the sidebar first if collapsed, then focuses search", async ({
+  page,
+}) => {
+  // Collapse the sidebar.
+  await page.keyboard.press("Control+b");
+  await expect(page.getByTestId("sidebar")).toHaveAttribute(
+    "data-open",
+    "false",
+  );
+
+  // ⌘K should reopen the sidebar and focus the search.
+  await page.keyboard.press("Control+k");
+  await expect(page.getByTestId("sidebar")).toHaveAttribute(
+    "data-open",
+    "true",
+  );
+  const input = page.getByTestId("sidebar-search-input");
+  await expect(input).toBeVisible();
+  await expect(input).toBeFocused();
+});
+
 test("⌘⇧J toggles the context panel", async ({ page }) => {
   const panel = page.getByTestId("right-sidebar");
   await expect(panel).toHaveAttribute("data-open", "true"); // desktop default

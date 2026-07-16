@@ -4,9 +4,9 @@
 
   // Icon-only chrome button: a centered glyph or inline SVG, no text label. The icon
   // counterpart to <Button> — same surface vocabulary, different shape. Because there's
-  // no visible label to name the action, `title` is REQUIRED here (the repo's "every
-  // clickable carries a title/hotkey" rule, enforced by the type system instead of by
-  // reviewers — which is exactly where it matters, since an icon can't self-document).
+  // no visible label to name the action, `title` is the natural place to surface the
+  // action name and hotkey — but it's no longer type-required. See the `title` prop's
+  // JSDoc for when to include it.
   //
   // `active` drives a pressed/toggled look and sets `aria-pressed`, for the many single
   // on/off chrome toggles (expand, worktree, …). That's distinct from
@@ -17,7 +17,18 @@
   type Variant = "default" | "danger";
 
   interface Props extends Omit<HTMLButtonAttributes, "title"> {
-    title: string;
+    /**
+     * Tooltip text shown on hover. Omit when the element is self-documenting
+     * (visible text label, obvious icon) and no extra hover data exists — see
+     * docs/ui-conventions.md "Hotkeys & tooltips". Omission is deliberate, not
+     * a forgotten default.
+     *
+     * Icon-only buttons that omit `title` MUST provide an `aria-label` (or
+     * visible text) so the button keeps an accessible name — an icon button
+     * with neither `title` nor `aria-label` is invisible to assistive
+     * technology.
+     */
+    title?: string;
     size?: Size;
     variant?: Variant;
     active?: boolean;

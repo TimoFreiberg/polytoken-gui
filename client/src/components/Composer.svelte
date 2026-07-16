@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onDestroy, onMount } from "svelte";
+  import { onMount } from "svelte";
   import type { CommandInfo } from "@pantoken/protocol";
   import { store } from "../lib/store.svelte.js";
   import {
@@ -146,13 +146,6 @@
     mobileControlsOpen = false;
     overlayHistory.closed("session-controls");
   }
-
-  // Draft/session navigation can replace the Composer while its phone controls
-  // are open. Consume that overlay's history entry before this instance and its
-  // close callback disappear, just as an explicit Back close would.
-  onDestroy(() => {
-    if (mobileControlsOpen) overlayHistory.closed("session-controls");
-  });
 
   $effect(() => {
     if (mobileControlsOpen && !store.phoneLayout) closeMobileControls();
@@ -1454,15 +1447,6 @@
         {/if}
         <span class="desktop-config-left"><PermissionBadge /><FacetBadge /></span>
       </div>
-      {#if streaming}
-        <!-- A hint that Enter while the agent works queues a follow-up (the driver
-             routes mid-turn sends to /turn/input). Lives inside the always-present
-             status row so finishing a turn doesn't add/remove a line and jump the
-             layout. Hidden on touch viewports, where there's no Enter to hint at. -->
-        <div class="toolbar-hint">
-          <kbd>Enter</kbd> queues a follow-up
-        </div>
-      {/if}
       <div class="composer-status-right desktop-config-right" data-testid="composer-status-right">
         <ModelPicker />
         {#if !drafting}
@@ -1755,27 +1739,6 @@
   .send:not(:disabled):hover {
     background: var(--highlight-hover);
   }
-  /* Steer/follow-up hint, centered in the status row between the permission and
-     model/context controls. Shrinks + ellipsizes before crowding them; hidden entirely
-     on touch (below). */
-  .toolbar-hint {
-    flex-shrink: 1;
-    min-width: 0;
-    overflow: hidden;
-    white-space: nowrap;
-    text-overflow: ellipsis;
-    font-size: 11.5px;
-    color: var(--text-faint);
-  }
-  .toolbar-hint kbd {
-    font-family: var(--font-mono);
-    font-size: 10.5px;
-    color: var(--text-muted);
-    background: var(--surface-sunken);
-    border: 1px solid var(--border);
-    border-radius: var(--radius-xs);
-    padding: 0 4px;
-  }
   .desktop-config-left {
     display: inline-flex;
     align-items: center;
@@ -1784,11 +1747,7 @@
   .mobile-config-summary {
     display: none;
   }
-  /* Touch has no Enter, and the row is tighter — drop the hint there. */
   @media (max-width: 859px) {
-    .toolbar-hint {
-      display: none;
-    }
     .composer-wrap {
       padding-inline: 16px;
     }

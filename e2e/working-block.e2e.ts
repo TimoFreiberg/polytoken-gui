@@ -77,25 +77,17 @@ test("the collapse affordance never appears while the final response is still st
   await expect(page.getByTestId("work-toggle")).toHaveCount(2);
 });
 
-test("the working block toggles open and closed, with a descriptive tooltip", async ({
+test("the working block toggles open and closed", async ({
   page,
 }) => {
   const toggle = page.getByTestId("work-toggle");
 
-  // Collapsed → tooltip invites expansion.
+  // Collapsed → disclosure toggle (no tooltip: chevron + label make it obvious).
   await expect(toggle).toHaveAttribute("aria-expanded", "false");
-  await expect(toggle).toHaveAttribute(
-    "title",
-    /Expand the agent's working steps/,
-  );
 
   // Expand: the work body mounts; the narration + one-tool summary appear.
   await toggle.click();
   await expect(toggle).toHaveAttribute("aria-expanded", "true");
-  await expect(toggle).toHaveAttribute(
-    "title",
-    /Collapse the agent's working steps/,
-  );
   await expect(page.getByTestId("work-body")).toBeVisible();
   await expect(
     page.getByText("I'll add a lightweight health endpoint"),

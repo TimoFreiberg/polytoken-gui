@@ -46,7 +46,6 @@
     class="pill"
     class:open
     aria-expanded={open}
-    title={`${label} open — hover or click to view`}
     onclick={() => (pinned = !pinned)}
     onkeydown={(e) => {
       if (e.key === "Escape" && pinned) {

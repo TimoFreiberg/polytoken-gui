@@ -998,9 +998,6 @@
               data-testid="work-toggle"
               onclick={() => toggleWork(lane.id, turn)}
               aria-expanded={workShown(lane.id, turn)}
-              title={workShown(lane.id, turn)
-                ? "Collapse the agent's working steps for this turn"
-                : "Expand the agent's working steps for this turn"}
             >
               <Chevron open={workShown(lane.id, turn)} size={10} />
               <span class="work-label">{turnDone(turn) ? workedLabel(lane) : "Working…"}</span>

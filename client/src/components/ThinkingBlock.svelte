@@ -8,7 +8,7 @@
 </script>
 
 <div class="think" class:open>
-  <button class="head" title={open ? "Collapse thinking" : "Expand thinking"} onclick={() => (open = !open)}>
+  <button class="head" onclick={() => (open = !open)}>
     <Chevron {open} size={10} />
     <span class="label">{streaming ? "Thinking…" : "Thought process"}</span>
   </button>

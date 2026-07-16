@@ -303,6 +303,20 @@
         e.preventDefault();
         store.openSearch();
         break;
+      case "k":
+      case "K":
+        // ⌘K — focus the sidebar session search. Works while drafting (you may want
+        // to find a session mid-composition). No-op when a user-driven modal owns
+        // the keyboard (settings, plan view, image viewer).
+        if (
+          store.settingsOpen ||
+          store.planViewOpen ||
+          imageViewer.index !== null
+        )
+          break;
+        e.preventDefault();
+        store.focusSidebarSearch();
+        break;
       case "p":
       case "P":
         // ⌘P — toggle the plan view overlay (only when a plan exists). Inert
@@ -401,9 +415,7 @@
       {#if !store.draft}
         <AttentionShelf />
       {/if}
-      {#if !store.draft}
-        <Composer />
-      {/if}
+      <Composer />
       {#if !store.draft}
         <ApprovalLayer />
       {/if}

@@ -516,7 +516,6 @@
 <div class="tool {item.status}" class:flat class:open>
   <button
     class="head"
-    title={open ? "Collapse tool details" : "Expand tool details"}
     onclick={() => (open = !open)}
     aria-expanded={open}
   >
@@ -544,7 +543,7 @@
       >
     {/if}
     {#if durationLabel}
-      <span class="duration" title={`Took ${durationLabel}`} aria-label={`took ${durationLabel}`}>{durationLabel}</span>
+      <span class="duration" aria-label={`took ${durationLabel}`}>{durationLabel}</span>
     {/if}
     <Chevron {open} size={10} />
   </button>

@@ -208,7 +208,7 @@
       </IconButton>
     {/if}
     {#if conn !== "connected"}
-    <span class="conn {conn}" title={conn} role="status">
+    <span class="conn {conn}" role="status">
       <span class="led"></span><span class="conn-label">{connLabel[conn]}</span>
     </span>
     {/if}

@@ -49,13 +49,22 @@ Two primitives, shared everywhere — don't hand-roll alternatives.
 
 ### Hotkeys & tooltips
 
-Every clickable element — buttons, toggles, menu items, approval actions,
-settings controls — must have:
+Not every clickable element needs a `title` tooltip. Only add one when at
+least one of these applies:
 
-- A `title` attribute naming the action and its keyboard shortcut (if one
-  exists).
-- Reviewers flag missing tooltips/hotkeys the same way they flag missing
-  error handling.
+- A hotkey exists and the element is icon-only or compact (no room for an
+  inline hint).
+- The function isn't completely obvious from the visible label or icon.
+- Hovering reveals more data than is visible (e.g. full path, exact status,
+  full timestamp).
+
+Self-documenting elements with visible text labels (buttons, chevron toggles)
+don't need tooltips even if they have a hotkey — show the hotkey inline
+instead where space allows. Remove tooltips that merely duplicate visible
+text.
+
+Reviewers flag unnecessary tooltips the same way they flag missing ones when
+an element qualifies under the criteria above.
 
 ### Touch (phone, ≤859px)
 

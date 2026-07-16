@@ -17,9 +17,9 @@ test("a background approval stays obvious and opens the right session", async ({
   const row = sidebar.locator(".row", { hasText: BG });
   const status = row.getByTestId("session-status");
   await expect(status).toHaveAttribute("data-state", "waiting");
-  // The single-line redesign moved the activity detail off a second row and into the
-  // row's hover tooltip; the visible attention signal is the waiting badge above.
-  await expect(row).toHaveAttribute("title", /Review background change/);
+  // The row's hover tooltip was removed (it duplicated visible text). The
+  // status span at the row's right edge carries the attention detail instead.
+  await expect(status).toHaveAttribute("title", /Review background change/);
 
   const project = sidebar.locator(".group", { hasText: "pantoken" });
   await project.locator(".group-toggle").click();

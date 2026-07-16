@@ -150,7 +150,6 @@
             <li class="job-item {j.status}">
               <button
                 class="job-btn"
-                title={`${j.kind === "subagent" ? "Subagent" : "Shell"} — ${j.status} — click for details`}
                 onclick={() => (store.selectedJobHandle = j.handle)}
               >
                 <span class="job-kind-icon">{JOB_KIND_ICON[j.kind] ?? "?"}</span>
@@ -186,7 +185,6 @@
             <li class="todo-item {t.status}">
               <button
                 class="todo-btn"
-                title={`${STATUS_LABEL[t.status] ?? t.status}${t.dependencies.length > 0 ? ` (depends on ${t.dependencies.length})` : ""} — click for details`}
                 onclick={() => (store.selectedTodoId = t.id)}
               >
                 <span class="todo-icon">{STATUS_ICON[t.status] ?? "?"}</span>
