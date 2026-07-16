@@ -1451,7 +1451,7 @@
     max-width: 300px;
   }
   .assistant {
-    gap: 8px;
+    gap: 5px;
   }
   /* The complete turn footer (actions + time) follows one visibility rule. Desktop
      reveals it on hover/focus; touch pins the whole group visible below. */
@@ -1788,63 +1788,6 @@
     max-width: 86%;
   }
 
-  /* prose — readability pass (OP8). Only typography/spacing; palette untouched.
-     The markdown renderer only emits p / strong / em / a / code / pre. */
-  .prose {
-    line-height: 1.66;
-    overflow-wrap: anywhere;
-    /* opt into proportional/contextual numerals + ligatures where available */
-    font-variant-numeric: proportional-nums;
-  }
-  .prose :global(p) {
-    margin: 0 0 0.7em;
-  }
-  .prose :global(p:last-child) {
-    margin-bottom: 0;
-  }
-  .prose :global(strong) {
-    font-weight: 600;
-  }
-  .prose :global(a) {
-    color: var(--accent);
-    text-decoration: underline;
-    text-decoration-thickness: 1px;
-    text-underline-offset: 0.15em;
-    overflow-wrap: anywhere;
-  }
-  .prose :global(a:hover) {
-    color: var(--accent-hover);
-  }
-  .prose :global(code) {
-    font-family: var(--font-mono);
-    font-size: 0.86em;
-    background: var(--surface-sunken);
-    border: 1px solid var(--border);
-    padding: 0.1em 0.36em;
-    border-radius: var(--radius-xs);
-    /* keep inline code from inflating line box height */
-    line-height: 1.4;
-    overflow-wrap: anywhere;
-  }
-  .prose :global(pre) {
-    background: var(--surface-sunken);
-    border: 1px solid var(--border);
-    border-radius: var(--radius-sm);
-    padding: 12px 14px;
-    overflow-x: auto;
-    margin: 0.85em 0;
-    -webkit-overflow-scrolling: touch;
-  }
-  .prose :global(pre code) {
-    background: none;
-    border: none;
-    padding: 0;
-    font-size: 0.85em;
-    line-height: 1.6;
-    /* code blocks scroll horizontally rather than wrap */
-    overflow-wrap: normal;
-    tab-size: 2;
-  }
   /* ── Per-turn "Worked for Ns" block (Codex-style collapsed working section) ── */
   .work-head {
     display: inline-flex;

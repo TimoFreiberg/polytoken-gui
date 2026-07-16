@@ -84,7 +84,7 @@
    so spacing matches an un-wrapped `<pre>`. */
 .markstream-svelte.markdown-renderer .code-block {
   position: relative;
-  margin: 1em 0;
+  margin: 0.5em 0;
 }
 .markstream-svelte.markdown-renderer .code-block > pre {
   margin: 0;
@@ -162,7 +162,7 @@
 
 .markstream-svelte.markdown-renderer :where(table) {
   border-collapse: collapse;
-  margin: 0.85em 0;
+  margin: 0.4em 0;
   /* A wide table (many columns) would otherwise overflow the viewport on a phone
      with no way to reach the right-hand columns. Mirror the `pre` treatment above
      and let it scroll horizontally: `display: block` + `width: max-content` keeps
@@ -221,7 +221,7 @@
 }
 
 .markstream-svelte.markdown-renderer :where(blockquote) {
-  margin: 0.85em 0;
+  margin: 0.4em 0;
   padding-left: 0.9em;
   border-left: 3px solid var(--border-strong);
   color: var(--text-muted);
@@ -230,7 +230,7 @@
 .markstream-svelte.markdown-renderer :where(h1, h2, h3, h4, h5, h6) {
   font-weight: 650;
   line-height: var(--leading-heading);
-  margin: 1.1em 0 0.5em;
+  margin: 0.6em 0 0.3em;
 }
 .markstream-svelte.markdown-renderer :where(h1) {
   font-size: 1.5em;
@@ -241,8 +241,84 @@
 .markstream-svelte.markdown-renderer :where(h3) {
   font-size: 1.12em;
 }
-.markstream-svelte.markdown-renderer > :where(:first-child) {
+/* Tighten block-element vertical rhythm. The library defaults give every block
+   1rem top+bottom; pantoken wants a denser transcript. */
+.markstream-svelte.markdown-renderer :where(p) {
+  margin: 0 0 0.5em;
+}
+.markstream-svelte.markdown-renderer :where(ul, ol) {
+  margin: 0.4em 0;
+  padding-left: 1.3em;
+}
+.markstream-svelte.markdown-renderer :where(li + li) {
+  margin-top: 0.15em;
+}
+.markstream-svelte.markdown-renderer :where(li > p) {
+  margin: 0.15em 0;
+}
+.markstream-svelte.markdown-renderer :where(dl, details) {
+  margin: 0.5em 0;
+}
+.markstream-svelte.markdown-renderer :where(hr) {
+  margin: 0.5em 0;
+}
+
+/* Zero the top margin of the first block and the bottom margin of the last block,
+   so the markdown body sits flush at the top of its container and flush against
+   any following tool cards. Target the wrapper boundary, not the inner element:
+   each block has its own .node-slot/.node-content wrapper, so :last-child on the
+   inner element matches every block.
+
+   Must come AFTER the block-margin rules above: the p { margin: 0 0 0.5em }
+   rule has the same specificity (0,2,0) and would override this by source
+   order if placed first. Placing it after means the zeroing wins for the
+   first/last block while normal blocks keep their tightened margins.
+
+   Scope to the block element itself (p, ul, ol, pre, etc.), not :where(*):
+   a bare :where(*) would also zero margin-top on <li> items inside a leading
+   list, clobbering the li+li spacing rule. By listing block-level elements we
+   reach the actual margin-bearing element without touching its children. */
+.markstream-svelte.markdown-renderer
+  > :where(:first-child)
+  :where(
+    p,
+    ul,
+    ol,
+    pre,
+    blockquote,
+    table,
+    h1,
+    h2,
+    h3,
+    h4,
+    h5,
+    h6,
+    dl,
+    details,
+    hr
+  ) {
   margin-top: 0;
+}
+.markstream-svelte.markdown-renderer
+  > :where(:last-child)
+  :where(
+    p,
+    ul,
+    ol,
+    pre,
+    blockquote,
+    table,
+    h1,
+    h2,
+    h3,
+    h4,
+    h5,
+    h6,
+    dl,
+    details,
+    hr
+  ) {
+  margin-bottom: 0;
 }
 
 /* ── Streaming reveal animation ──────────────────────────────────────────────
