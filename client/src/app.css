@@ -92,8 +92,10 @@
 
   /* Facet state tints — soft hues on warm paper. Execute = amber (the "running"
      mode), plan = dusty blue, plan+adventurous = muted lavender (blue+red blend).
-     Used on the facet badge + dropdown rows. Execute borrows --warning so the
-     active mode reads as warm/alert-adjacent; plan and auto get distinct hues. */
+     Only the facet badge text uses the main tints; --facet-auto-soft backs the
+     adventurous handoff toggle (the -execute/-plan -soft vars are kept for
+     symmetry). Execute borrows --warning so the active mode reads as
+     warm/alert-adjacent; plan and auto get distinct hues. */
   --facet-execute: var(--warning);
   --facet-execute-soft: var(--warning-soft);
   --facet-plan: #4a6a8a;

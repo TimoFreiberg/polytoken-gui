@@ -175,36 +175,30 @@
 <style>
   /* Facet badge colors — applied via :global because the .badge element is
      rendered in MenuBadge's template, not here. Scoped to .facet-badge so
-     PermissionBadge (which also uses MenuBadge) is unaffected. */
+     PermissionBadge (which also uses MenuBadge) is unaffected. Only the text
+     color is tinted; the background is transparent (matching the other
+     composer badges), per issue #47. */
   :global(.facet-badge.facet-execute) {
     color: var(--facet-execute);
-    background: var(--facet-execute-soft);
   }
   :global(.facet-badge.facet-plan) {
     color: var(--facet-plan);
-    background: var(--facet-plan-soft);
   }
   :global(.facet-badge.facet-auto) {
     color: var(--facet-auto);
-    background: var(--facet-auto-soft);
   }
-  /* Preserve the facet tint on hover — MenuBadge's .badge:hover sets
-     color/background to neutral, so each facet hover rule must re-declare
-     both. brightness(0.9) signals interactivity without losing the tint. */
+  /* Preserve the facet text tint on hover — MenuBadge's .badge:hover sets
+     color to neutral, so each facet hover rule re-declares only color. The
+     background falls through to MenuBadge's neutral .badge:hover
+     (--surface-sunken), same as the other composer badges. */
   :global(.facet-badge.facet-execute:hover) {
     color: var(--facet-execute);
-    background: var(--facet-execute-soft);
-    filter: brightness(0.9);
   }
   :global(.facet-badge.facet-plan:hover) {
     color: var(--facet-plan);
-    background: var(--facet-plan-soft);
-    filter: brightness(0.9);
   }
   :global(.facet-badge.facet-auto:hover) {
     color: var(--facet-auto);
-    background: var(--facet-auto-soft);
-    filter: brightness(0.9);
   }
   .item {
     display: flex;

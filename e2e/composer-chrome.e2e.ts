@@ -201,10 +201,11 @@ test("new-session controls use calm chrome and pair permission with facet", asyn
     page.locator("[data-testid='composer-status-row'] .status-left"),
   ).not.toContainText("new session");
 
-  // Every selector uses the same neutral typography. The facet badge now carries
-  // a facet-state tint (execute = amber), so its color/background differ — we
-  // compare typography across all controls, and color/bg/border across the
-  // non-facet controls only.
+  // Every selector uses the same neutral typography. The facet badge carries a
+  // facet-state text tint (execute = amber), so its color differs — but its
+  // background is now neutral (matching the other composer badges), per issue
+  // #47. We compare typography across all controls, and color/bg/border across
+  // the non-facet controls only.
   const styles = await Promise.all(
     controls.map((control) =>
       control.evaluate((el) => {
@@ -241,6 +242,27 @@ test("new-session controls use calm chrome and pair permission with facet", asyn
     (el) => getComputedStyle(el).color,
   );
   expect(facetStyle.color).not.toEqual(neutralColor);
+
+  // AC.1: the facet badge background is now neutral (transparent), matching the
+  // other composer badges — no colored tint.
+  expect(facetStyle.backgroundColor).toEqual(neutralBase.backgroundColor);
+
+  // AC.3: on hover, the facet badge background is the neutral --surface-sunken
+  // (same as the other badges), not a colored tint.
+  const hoveredSurface = await resolvedToken(
+    page,
+    "background-color",
+    "--surface-sunken",
+  );
+  await facet.hover();
+  await expect
+    .poll(async () => {
+      const css = await facet.evaluate(
+        (el) => getComputedStyle(el).backgroundColor,
+      );
+      return css;
+    })
+    .toBe(hoveredSurface);
 
   // The worktree toggle's state marker appears after its label, preserving symmetry
   // with the project control's trailing menu chevron.
