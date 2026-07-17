@@ -1772,6 +1772,10 @@ pub struct MockDriver {
     /// One-shot list_branches() error injector (armed via
     /// `run_script("failbranchlist")`). The next `list_branches` returns an error.
     fail_next_branch_list: Arc<AtomicBool>,
+    /// One-shot list_branches() long-name injector (armed via
+    /// `run_script("longbranchlist")`). The next `list_branches` includes a
+    /// very-long-named branch so e2e can assert truncation + title tooltip.
+    long_next_branch_list: Arc<AtomicBool>,
     /// One-shot openSession() 409 lease-conflict injector (armed via
     /// `run_script("failsession")`). Mirrors TS `failNextSession`. The next
     /// `open_session` throws the lease-conflict message (matching the real
@@ -1900,6 +1904,7 @@ impl MockDriver {
             last_created: Mutex::new(None),
             fail_next_new_session: Arc::new(AtomicBool::new(false)),
             fail_next_branch_list: Arc::new(AtomicBool::new(false)),
+            long_next_branch_list: Arc::new(AtomicBool::new(false)),
             fail_next_session: Arc::new(AtomicBool::new(false)),
             abort_delay_ms: AtomicU64::new(0),
             abort_settle_delay_ms: AtomicU64::new(0),
@@ -2793,15 +2798,26 @@ impl PantokenDriver for MockDriver {
                 error: Some(true),
             };
         }
+        // One-shot long-name injection (armed via run_script("longbranchlist")).
+        // Adds a very-long-named branch so e2e can assert panel truncation +
+        // title tooltip. Cleared after one call (one-shot, like failbranchlist).
+        let long = self.long_next_branch_list.swap(false, Ordering::SeqCst);
         // Synthetic branch list for any non-empty path (the mock's repos are
         // fixture paths, not real repos). Gives e2e tests branches to select.
+        let mut branches = vec![
+            "develop".to_string(),
+            "feature-test".to_string(),
+            "main".to_string(),
+        ];
+        if long {
+            branches.push(
+                "feature/very-long-branch-name-that-exceeds-the-panel-max-width-and-requires-truncation"
+                    .to_string(),
+            );
+        }
         BranchList {
             path,
-            branches: vec![
-                "develop".to_string(),
-                "feature-test".to_string(),
-                "main".to_string(),
-            ],
+            branches,
             error: None,
         }
     }
@@ -4124,6 +4140,10 @@ impl PantokenDriver for MockDriver {
                 self.fail_next_branch_list.store(true, Ordering::SeqCst);
                 return;
             }
+            "longbranchlist" => {
+                self.long_next_branch_list.store(true, Ordering::SeqCst);
+                return;
+            }
             "failsession" => {
                 // Arm a one-shot openSession() 409 lease-conflict (consumed by the
                 // next switch). Faithful port of TS `runScript("failsession")`
@@ -4182,6 +4202,7 @@ impl PantokenDriver for MockDriver {
         *self.last_created.lock() = None;
         self.fail_next_new_session.store(false, Ordering::SeqCst);
         self.fail_next_branch_list.store(false, Ordering::SeqCst);
+        self.long_next_branch_list.store(false, Ordering::SeqCst);
         self.fail_next_session.store(false, Ordering::SeqCst);
         self.abort_delay_ms.store(0, Ordering::SeqCst);
         self.abort_settle_delay_ms.store(0, Ordering::SeqCst);

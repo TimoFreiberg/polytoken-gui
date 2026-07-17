@@ -2,16 +2,24 @@
   import type { Snippet } from "svelte";
   import Chevron from "./Chevron.svelte";
   import { reveal } from "../../lib/transitions.js";
+  import { overlayHistory } from "../../lib/overlay-history.js";
+  import { onDestroy } from "svelte";
 
   // Shared dropdown primitive for the badge-style pickers in the composer chrome
-  // (FacetBadge, PermissionBadge). Owns the open/close state, keyboard navigation
-  // (Esc/↑↓/↵/⇧Tab), the click-away backdrop, and the panel/badge/group-title chrome.
-  // The caller passes the panel body (option buttons + any extras like FacetBadge's
-  // handoff toggle / reload) as a snippet, receiving the current keyboard-highlight
-  // index `sel` and a `close()` callback. An optional key callback receives only keys
-  // not consumed by the primitive, allowing a picker-specific modifier (e.g. FacetBadge's
-  // ArrowRight/ArrowLeft adventurous-handoff toggle) without duplicating listbox
-  // navigation.
+  // (FacetBadge, PermissionBadge, BranchPicker). Owns the open/close state,
+  // keyboard navigation (Esc/↑↓/↵/⇧Tab), the click-away backdrop, and the
+  // panel/badge/group-title chrome. The caller passes the panel body (option
+  // buttons + any extras like FacetBadge's handoff toggle / reload) as a snippet,
+  // receiving the current keyboard-highlight index `sel` and a `close()` callback.
+  // An optional key callback receives only keys not consumed by the primitive,
+  // allowing a picker-specific modifier (e.g. FacetBadge's ArrowRight/ArrowLeft
+  // adventurous-handoff toggle) without duplicating listbox navigation.
+  //
+  // `count` may arrive async (e.g. the branch list loads after the panel opens):
+  // an $effect clamps `sel` back into range when the list grows/shrinks so a
+  // stale highlight never points past the end. `maxWidth` constrains wide panels
+  // (long branch names); `overlayId` wires phone back-gesture close via
+  // overlayHistory (mirrors the standalone overlays — sessions drawer etc.).
   //
   // Conventions (AGENTS.md): <Chevron variant="menu"> for the glyph,
   // transition:reveal for the open/close animation. Every clickable element carries
@@ -27,8 +35,10 @@
     initialSel = 0,
     badgeClass = "",
     minWidth = "200px",
+    maxWidth = "",
     closeLabel = "Close menu",
     openExternal = 0,
+    overlayId,
     onSelect,
     onKeydown: onUnhandledKeydown,
     body,
@@ -42,8 +52,10 @@
     initialSel?: number;
     badgeClass?: string;
     minWidth?: string;
+    maxWidth?: string;
     closeLabel?: string;
     openExternal?: number;
+    overlayId?: string;
     onSelect?: (index: number) => void;
     onKeydown?: (event: KeyboardEvent, sel: number) => void;
     body: Snippet<[{ sel: number; close: () => void }]>;
@@ -52,6 +64,26 @@
   let open = $state(false);
   let sel = $state(0);
   let panelEl = $state<HTMLElement>();
+
+  // Clamp sel into [0, count-1] when the option list changes (async arrival).
+  // FacetBadge/PermissionBadge pass a static count, so this is a no-op for them.
+  $effect(() => {
+    if (count > 0 && sel > count - 1) sel = count - 1;
+    else if (count <= 0) sel = 0;
+  });
+
+  // Keep the highlighted option scrolled into view during keyboard navigation
+  // (long lists overflow the panel's max-height). Mirrors BranchPicker's
+  // scrollHighlight(). Runs after sel updates + the DOM reflects it.
+  $effect(() => {
+    if (!open || !panelEl) return;
+    void sel;
+    queueMicrotask(() =>
+      panelEl
+        ?.querySelector<HTMLElement>(`[data-i="${sel}"]`)
+        ?.scrollIntoView({ block: "nearest" }),
+    );
+  });
 
   // External open trigger (e.g. Shift+Tab open-menu). A counter so each
   // request re-fires even if the menu was already open — re-opening resets sel
@@ -75,7 +107,7 @@
     if (openExternal > lastOpenN) {
       lastOpenN = openExternal;
       sel = initialSel;
-      open = true;
+      openMenu();
     }
   });
 
@@ -87,17 +119,42 @@
     }
   });
 
+  // Phone back-gesture integration: when overlayId is set, opening pushes a
+  // history entry so the OS back gesture closes the panel (mirrors standalone
+  // overlays). No-op on desktop (overlayHistory.opened is phone-only) and when
+  // overlayId is unset (PermissionBadge/FacetBadge — tiny desktop pickers).
+  let overlayCloseHandled = false;
+  function openMenu() {
+    open = true;
+    if (overlayId) {
+      overlayCloseHandled = false;
+      overlayHistory.opened(overlayId, () => {
+        overlayCloseHandled = true;
+        close();
+      });
+    }
+  }
+  function closeOverlayHistory() {
+    if (overlayId && !overlayCloseHandled) {
+      overlayCloseHandled = true;
+      overlayHistory.closed(overlayId);
+    }
+  }
   function toggle() {
     if (open) {
       close();
     } else {
       sel = initialSel;
-      open = true;
+      openMenu();
     }
   }
   function close() {
+    closeOverlayHistory();
     open = false;
   }
+  onDestroy(() => {
+    closeOverlayHistory();
+  });
   function onKeydown(e: KeyboardEvent) {
     if (e.key === "Escape") {
       e.preventDefault();
@@ -164,6 +221,7 @@
       bind:this={panelEl}
       transition:reveal
       style:min-width={minWidth}
+      style:max-width={maxWidth || null}
       onkeydown={onKeydown}
     >
       <div class="group-title">{groupTitle}</div>
@@ -233,6 +291,10 @@
     border-radius: var(--radius);
     box-shadow: var(--shadow-card);
     padding: 4px;
+    /* Cap height so long option lists (up to 100 branches) scroll instead of
+       overflowing the viewport. Short pickers (facet/permission) never hit it. */
+    max-height: 240px;
+    overflow-y: auto;
   }
   .group-title {
     font-size: 10px;

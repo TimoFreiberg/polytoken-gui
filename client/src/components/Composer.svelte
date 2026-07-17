@@ -37,7 +37,7 @@
   import McpArgMenu from "./McpArgMenu.svelte";
   import AtMenu from "./AtMenu.svelte";
   import DirPicker from "./DirPicker.svelte";
-  import BranchPicker from "./BranchPicker.svelte";
+  import MenuBadge from "./ui/MenuBadge.svelte";
   import ImageLightbox from "./ImageLightbox.svelte";
   import ModelPicker from "./ModelPicker.svelte";
   import FacetBadge from "./FacetBadge.svelte";
@@ -120,20 +120,21 @@
   // server's filesystem because the agent runs server-side; a native picker would see the client.
   let pickingCwd = $state(false);
   let projectControlRef = $state<HTMLButtonElement>();
-  let pickingBranch = $state(false);
-  let branchControlRef = $state<HTMLButtonElement>();
   let mobileControlsOpen = $state(false);
   // Never carry an open picker across drafts (it would auto-pop on the next new session).
   $effect(() => {
     if (!drafting) {
       pickingCwd = false;
-      pickingBranch = false;
     }
   });
-  // Fetch branches when worktree is toggled on and we haven't loaded them yet.
+  // Fetch branches when worktree is toggled on and we haven't loaded them for this
+  // exact cwd yet. startDraft pre-fetches on draft load, so this is the fallback for
+  // the cwd-changed case (setDraftCwd clears branchList). Skip when the list is
+  // already fresh for this cwd to avoid a redundant re-fetch on off→on toggles.
   $effect(() => {
     if (
       store.draft?.worktree &&
+      store.branchList?.path !== store.draft.cwd &&
       !store.branchList &&
       !store.branchLoading &&
       store.draft.cwd
@@ -171,7 +172,6 @@
 
   function openMobileControls(): void {
     pickingCwd = false;
-    pickingBranch = false;
     mobileControlsOpen = true;
     overlayHistory.opened("session-controls", () => {
       mobileControlsOpen = false;
@@ -749,7 +749,6 @@
     }
     if (!queued) return;
     pickingCwd = false;
-    pickingBranch = false;
     attachmentStatus = null;
     // Restart history navigation so the next ArrowUp recalls the just-sent prompt.
     histIndex = null;
@@ -1474,7 +1473,7 @@
           aria-expanded={pickingCwd}
           aria-label={`${cwdBase} — browse to change project directory`}
           title={`Project: ${store.draft.cwd || "home"} — click to browse for a directory (⌥P)`}
-          onclick={() => { pickingBranch = false; pickingCwd = !pickingCwd; }}
+          onclick={() => { pickingCwd = !pickingCwd; }}
         >
           {cwdBase}
           <Chevron open={pickingCwd} variant="menu" size={10} />
@@ -1494,19 +1493,79 @@
           {#if store.draft.worktree}<span class="chip-check" aria-hidden="true">✓</span>{/if}
         </button>
         {#if store.draft.worktree}
-          <button
-            bind:this={branchControlRef}
-            class="chip"
-            data-testid="draft-branch-control"
-            aria-haspopup="listbox"
-            aria-expanded={pickingBranch}
-            aria-label={`Base branch: ${store.draft.baseBranch || "default"}`}
-            title={`Base branch: ${store.draft.baseBranch || "default (auto-detected)"} — click to change`}
-            onclick={() => { pickingCwd = false; pickingBranch = !pickingBranch; }}
+          {@const branches = store.branchList?.branches ?? []}
+          {@const loading = store.branchLoading}
+          {@const error = store.branchList?.error === true}
+          {@const truncated = branches.length === 100}
+          {@const baseBranch = store.draft.baseBranch}
+          <MenuBadge
+            label={baseBranch || "default"}
+            title={`Base branch: ${baseBranch || "default (auto-detected)"} — click to change`}
+            testid="draft-branch-control"
+            ariaLabel="Select base branch"
+            groupTitle="Base branch"
+            count={branches.length + 1}
+            initialSel={0}
+            badgeClass="chip"
+            minWidth="140px"
+            maxWidth="min(120ch, 50vw)"
+            closeLabel="Close branch menu"
+            overlayId="branch-picker"
+            onSelect={(i) =>
+              i === 0
+                ? store.setDraftBaseBranch(undefined)
+                : store.setDraftBaseBranch(branches[i - 1]!)}
           >
-            {store.draft.baseBranch || "default"}
-            <Chevron open={pickingBranch} variant="menu" size={10} />
-          </button>
+            {#snippet body({ sel, close })}
+              {#if loading}
+                <div class="branch-status">Loading branches…</div>
+              {:else if error}
+                <div class="branch-status branch-error">
+                  Couldn't list branches — not a repo or the command failed.
+                </div>
+              {:else if branches.length === 0}
+                <div class="branch-status">No branches found.</div>
+              {:else}
+                <button
+                  type="button"
+                  class="branch-option"
+                  class:selected={!baseBranch}
+                  class:hl={sel === 0}
+                  data-i={0}
+                  role="option"
+                  aria-selected={!baseBranch}
+                  title="Use the auto-detected default branch"
+                  onclick={() => {
+                    store.setDraftBaseBranch(undefined);
+                    close();
+                  }}
+                >
+                  <span class="branch-name">default (auto)</span>
+                </button>
+                {#each branches as branch, i (branch)}
+                  <button
+                    type="button"
+                    class="branch-option"
+                    class:selected={branch === baseBranch}
+                    class:hl={sel === i + 1}
+                    data-i={i + 1}
+                    role="option"
+                    aria-selected={branch === baseBranch}
+                    title={branch}
+                    onclick={() => {
+                      store.setDraftBaseBranch(branch);
+                      close();
+                    }}
+                  >
+                    <span class="branch-name">{branch}</span>
+                  </button>
+                {/each}
+                {#if truncated}
+                  <div class="branch-truncated">List capped at 100 branches.</div>
+                {/if}
+              {/if}
+            {/snippet}
+          </MenuBadge>
         {/if}
       </div>
     {/if}
@@ -1525,20 +1584,6 @@
           onclose={() => {
             pickingCwd = false;
             requestAnimationFrame(() => projectControlRef?.focus());
-          }}
-        />
-      {/if}
-      {#if pickingBranch && drafting && store.draft}
-        <BranchPicker
-          selected={store.draft.baseBranch}
-          onpick={(branch: string | undefined) => {
-            store.setDraftBaseBranch(branch);
-            pickingBranch = false;
-            requestAnimationFrame(() => branchControlRef?.focus());
-          }}
-          onclose={() => {
-            pickingBranch = false;
-            requestAnimationFrame(() => branchControlRef?.focus());
           }}
         />
       {/if}
@@ -1872,6 +1917,48 @@
     width: 12px;
     font-size: 11px;
     line-height: 1;
+  }
+  /* Branch picker options (rendered inside MenuBadge's panel body snippet).
+     Mirror PermissionBadge's .item chrome so the branch picker shares the same
+     look as the other composer pop-ups: 12.5px font, --surface-sunken hover. */
+  .branch-option {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    width: 100%;
+    text-align: left;
+    background: transparent;
+    border: none;
+    border-radius: var(--radius-sm);
+    padding: 6px 8px;
+    cursor: pointer;
+    color: var(--text);
+    font-size: 12.5px;
+  }
+  .branch-option.hl {
+    background: var(--surface-sunken);
+  }
+  .branch-option.selected {
+    font-weight: 600;
+  }
+  .branch-name {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .branch-status {
+    padding: 6px 8px;
+    color: var(--text-muted);
+    font-size: 12.5px;
+  }
+  .branch-error {
+    color: var(--text-danger, var(--text-muted));
+  }
+  .branch-truncated {
+    padding: 4px 8px;
+    color: var(--text-faint);
+    font-size: 11px;
+    font-style: italic;
   }
   .box-wrap {
     /* Anchor for the slash menu, which pops upward from just above the box. */

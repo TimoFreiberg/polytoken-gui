@@ -376,6 +376,109 @@ test("branch selector shows error state on failbranchlist script", async ({
   });
 });
 
+test("branch menu closes on click-away", async ({ page }) => {
+  await openSidebar(page);
+  await page.getByTestId("sidebar-new-session").locator(".new-btn").click();
+  await page.getByTestId("draft-worktree-control").click();
+
+  const branchChip = page.getByTestId("draft-branch-control");
+  await expect(branchChip).toBeVisible({ timeout: 5000 });
+
+  // Open the picker.
+  await branchChip.click();
+  const listbox = page.getByRole("listbox", { name: "Select base branch" });
+  await expect(listbox).toBeVisible();
+
+  // Click the invisible backdrop (the click-away surface MenuBadge renders).
+  // Clicking the textarea directly doesn't work because the backdrop sits
+  // above it and intercepts the pointer event — which is exactly the mechanism
+  // that closes the menu. Target via the accessible close label, not the CSS
+  // class, so the test survives a class rename.
+  await page.getByRole("button", { name: "Close branch menu" }).click();
+  await expect(listbox).toBeHidden();
+});
+
+test("long branch name is truncated with a title tooltip", async ({
+  page,
+}) => {
+  // Arm the one-shot long-branch-list injector BEFORE opening the new-session
+  // draft, so startDraft's pre-fetch picks up the long-named branch.
+  await page.evaluate(() => {
+    const w = window as unknown as { __pantokenMock?: (s: string) => void };
+    w.__pantokenMock?.("longbranchlist");
+  });
+  await openSidebar(page);
+  await page.getByTestId("sidebar-new-session").locator(".new-btn").click();
+  await page.getByTestId("draft-worktree-control").click();
+
+  const branchChip = page.getByTestId("draft-branch-control");
+  await expect(branchChip).toBeVisible({ timeout: 5000 });
+
+  // Open the picker.
+  await branchChip.click();
+  const listbox = page.getByRole("listbox", { name: "Select base branch" });
+  await expect(listbox).toBeVisible();
+
+  const longName =
+    "feature/very-long-branch-name-that-exceeds-the-panel-max-width-and-requires-truncation";
+  const longOption = page.getByRole("option", { name: longName });
+  await expect(longOption).toBeVisible();
+
+  // The option button carries the full branch name as a title tooltip.
+  await expect(longOption).toHaveAttribute("title", longName);
+
+  // Assert the CSS truncation chain is in effect: the branch-name span uses
+  // text-overflow: ellipsis + white-space: nowrap + overflow: hidden, so long
+  // names truncate at the panel's max-width boundary.
+  const ellipsis = await longOption
+    .locator(".branch-name")
+    .evaluate((el) => {
+      const cs = getComputedStyle(el);
+      return {
+        textOverflow: cs.textOverflow,
+        whiteSpace: cs.whiteSpace,
+        overflow: cs.overflow,
+      };
+    });
+  expect(ellipsis.textOverflow).toBe("ellipsis");
+  expect(ellipsis.whiteSpace).toBe("nowrap");
+  expect(ellipsis.overflow).toBe("hidden");
+
+  // The panel itself has a max-width constraint (≤ ~120ch equivalent).
+  const panelMaxWidth = await listbox.evaluate(
+    (el) => getComputedStyle(el).maxWidth,
+  );
+  expect(panelMaxWidth).not.toBe("none");
+  expect(panelMaxWidth.length).toBeGreaterThan(0);
+});
+
+test("branch panel is left-aligned with the chip and opens upward", async ({
+  page,
+}) => {
+  await openSidebar(page);
+  await page.getByTestId("sidebar-new-session").locator(".new-btn").click();
+  await page.getByTestId("draft-worktree-control").click();
+
+  const branchChip = page.getByTestId("draft-branch-control");
+  await expect(branchChip).toBeVisible({ timeout: 5000 });
+
+  // Open the picker.
+  await branchChip.click();
+  const listbox = page.getByRole("listbox", { name: "Select base branch" });
+  await expect(listbox).toBeVisible();
+
+  const chipBox = await branchChip.boundingBox();
+  const panelBox = await listbox.boundingBox();
+  expect(chipBox).not.toBeNull();
+  expect(panelBox).not.toBeNull();
+
+  // Left-aligned: the panel's left edge matches the chip's left edge.
+  expect(Math.round(panelBox!.x)).toBe(Math.round(chipBox!.x));
+
+  // Opens upward: the panel's bottom is above the chip's top.
+  expect(panelBox!.y + panelBox!.height).toBeLessThanOrEqual(chipBox!.y);
+});
+
 // --- Empty prompt as a "continue" signal (issue #21) ---
 // When the session is idle, an empty prompt (Enter or Send button with an empty
 // composer) acts as a "continue" signal, mirroring the polytoken TUI. An empty

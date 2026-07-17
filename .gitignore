@@ -25,3 +25,4 @@ grindbot-config.toml
 .autopilot-config-dir
 .autopilot-stop-redirects
 .playwright-mcp/
+.polytoken/

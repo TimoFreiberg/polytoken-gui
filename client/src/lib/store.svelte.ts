@@ -2166,6 +2166,18 @@ class PantokenStore {
     // Record the draft view for ⌘[ / ⌘] history and remember its project for ⌘N.
     this.pushNav({ kind: "draft", cwd });
     if (cwd) this.setLastProjectCwd(cwd);
+    // Pre-fetch branches for this cwd so the worktree chip shows the auto-detected
+    // default (e.g. "main") the instant the toggle is enabled — no "default" → "main"
+    // flicker. The branchList reply handler auto-selects baseBranch when none is set.
+    // Skip when already fresh for this cwd or a fetch is in flight (avoids a
+    // redundant request on re-entering a draft whose list already arrived).
+    if (
+      cwd &&
+      this.branchList?.path !== cwd &&
+      !this.branchLoading
+    ) {
+      this.queryBranches(cwd);
+    }
   }
   cancelDraft(): void {
     // Keep the new-session draft for next time, then drop back to the active session's draft.
@@ -2212,16 +2224,45 @@ class PantokenStore {
   toggleDraftWorktree(): void {
     if (this.draft) {
       const worktree = !this.draft.worktree;
+      // Capture whether baseBranch was an explicit user pick before the toggle.
+      // An auto-detected default (set by the branchList reply handler or re-derived
+      // below) must NOT be persisted — otherwise the draft pins a stale default
+      // instead of tracking the repo's current default on reopen (persistDraftConfig
+      // writes baseBranch whenever it's truthy). Only an explicit setDraftBaseBranch
+      // pick persists.
+      const hadExplicitBranch = !!this.draft.baseBranch;
       this.draft = { ...this.draft, worktree };
       if (worktree) {
-        // Turning ON: reset baseBranch so auto-detection runs when branches load.
-        this.draft.baseBranch = undefined;
+        // Turning ON. With pre-fetch in startDraft, branches are usually already
+        // loaded for this cwd. Re-derive the auto-detected default from the cached
+        // list instead of blanking baseBranch — blanking would leave it stuck at
+        // undefined (the branchList reply handler only fires on a NEW reply, and no
+        // new fetch happens when the list is already fresh). When the list isn't
+        // fresh yet (e.g. cwd changed via the dir picker), fall back to undefined so
+        // the on-toggle reactive fetch + reply handler re-select.
+        const fresh =
+          this.branchList?.path === this.draft.cwd && !this.branchList?.error;
+        if (fresh && this.branchList!.branches.length) {
+          this.draft.baseBranch = pickDefaultBranch(this.branchList!.branches);
+        } else {
+          this.draft.baseBranch = undefined;
+        }
       } else {
         // Turning OFF: clear branch selection + cached list.
         this.draft.baseBranch = undefined;
         this.branchList = null;
       }
-      this.persistDraftConfig();
+      // Persist the worktree toggle. If baseBranch was auto-derived (not an explicit
+      // user pick), temporarily clear it so persistDraftConfig doesn't pin a stale
+      // default — the draft keeps tracking the repo's current default on reopen.
+      if (!hadExplicitBranch) {
+        const derived = this.draft.baseBranch;
+        this.draft.baseBranch = undefined;
+        this.persistDraftConfig();
+        this.draft.baseBranch = derived;
+      } else {
+        this.persistDraftConfig();
+      }
     }
   }
   /** Set the worktree base branch (undefined = auto-detect). Persists immediately. */
