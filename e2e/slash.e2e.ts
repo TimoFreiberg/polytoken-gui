@@ -186,6 +186,10 @@ test("/facet <name> is intercepted and switches facet", async ({ page }) => {
 test("/facet with no args shows usage error", async ({ page }) => {
   const box = ta(page);
   await box.fill("/facet ");
+  // The facet arg menu is open — dismiss it so Enter submits the draft
+  // (instead of accepting a facet). This exercises the submit-path guard.
+  await box.press("Escape");
+  await expect(page.getByTestId("arg-menu")).toHaveCount(0);
   await box.press("Enter");
 
   await expect(page.getByTestId("attachment-status")).toContainText(
@@ -353,6 +357,10 @@ test("/title with no args clears the title override", async ({ page }) => {
 test("/goal with no args shows usage info", async ({ page }) => {
   const box = ta(page);
   await box.fill("/goal ");
+  // The goal subcommand menu is open — dismiss it so Enter submits the draft
+  // (instead of accepting a subcommand). This exercises the submit-path guard.
+  await box.press("Escape");
+  await expect(page.getByTestId("arg-menu")).toHaveCount(0);
   await box.press("Enter");
 
   await expect(page.getByTestId("attachment-status")).toContainText(
@@ -542,4 +550,197 @@ test("/mcp with an unknown server shows an error and does not send", async ({
     "Unknown MCP server: nosuchserver",
   );
   await expect(box).toHaveValue("/mcp nosuchserver enable");
+});
+
+// --- /facet arg-menu (facet name typeahead) ---
+
+const argMenu = (page: Page) => page.getByTestId("arg-menu");
+const argRow = (page: Page, name: string) =>
+  argMenu(page).locator(`[data-name="${name}"]`);
+
+test("typing /facet<space> opens the facet arg menu with all mock facets", async ({
+  page,
+}) => {
+  const box = ta(page);
+  await box.fill("/facet ");
+  await expect(argMenu(page)).toBeVisible();
+  // The mock fixture provides execute, plan, research.
+  await expect(argRow(page, "execute")).toBeVisible();
+  await expect(argRow(page, "plan")).toBeVisible();
+  await expect(argRow(page, "research")).toBeVisible();
+});
+
+test("the facet arg menu filters by substring", async ({ page }) => {
+  const box = ta(page);
+  await box.fill("/facet pl");
+  await expect(argMenu(page)).toBeVisible();
+  await expect(argRow(page, "plan")).toBeVisible();
+  await expect(argRow(page, "execute")).toHaveCount(0);
+  await expect(argRow(page, "research")).toHaveCount(0);
+});
+
+test("selecting a facet from the menu dispatches and clears the composer", async ({
+  page,
+}) => {
+  const box = ta(page);
+  await box.fill("/facet pl");
+  await expect(argRow(page, "plan")).toBeVisible();
+  await box.press("Enter");
+
+  // Composer is cleared (immediate dispatch, no two-Enter).
+  await expect(box).toHaveValue("");
+  // Facet badge updates to "Plan".
+  await expect(page.getByTestId("facet-badge")).toContainText("Plan");
+});
+
+test("arrow keys navigate the facet arg menu and Enter selects the highlighted item", async ({
+  page,
+}) => {
+  const box = ta(page);
+  await box.fill("/facet ");
+  await expect(argMenu(page)).toBeVisible();
+  // Default highlight is on the first item (execute). ArrowDown moves to plan.
+  await box.press("ArrowDown");
+  await box.press("Enter");
+
+  // Composer is cleared.
+  await expect(box).toHaveValue("");
+  // Facet badge reads "Plan" (not "Execute" — the first/default item).
+  await expect(page.getByTestId("facet-badge")).toContainText("Plan");
+});
+
+test("Tab selects the highlighted item in the facet arg menu", async ({
+  page,
+}) => {
+  const box = ta(page);
+  await box.fill("/facet ");
+  await expect(argMenu(page)).toBeVisible();
+  // ArrowDown to the second item (plan), then Tab to accept.
+  await box.press("ArrowDown");
+  await box.press("Tab");
+
+  await expect(box).toHaveValue("");
+  await expect(page.getByTestId("facet-badge")).toContainText("Plan");
+});
+
+test("Escape dismisses the facet arg menu without dispatching", async ({
+  page,
+}) => {
+  const box = ta(page);
+  await box.fill("/facet ");
+  await expect(argMenu(page)).toBeVisible();
+  await box.press("Escape");
+
+  // Menu closed, composer still holds the text, no facet change.
+  await expect(argMenu(page)).toHaveCount(0);
+  await expect(box).toHaveValue("/facet ");
+});
+
+// --- /goal arg-menu (subcommand typeahead) ---
+
+test("typing /goal<space> opens the subcommand menu with set/clear/pause/resume", async ({
+  page,
+}) => {
+  const box = ta(page);
+  await box.fill("/goal ");
+  await expect(argMenu(page)).toBeVisible();
+  await expect(argRow(page, "set")).toBeVisible();
+  await expect(argRow(page, "clear")).toBeVisible();
+  await expect(argRow(page, "pause")).toBeVisible();
+  await expect(argRow(page, "resume")).toBeVisible();
+});
+
+test("the goal subcommand menu filters by substring", async ({ page }) => {
+  const box = ta(page);
+  await box.fill("/goal cl");
+  await expect(argMenu(page)).toBeVisible();
+  await expect(argRow(page, "clear")).toBeVisible();
+  await expect(argRow(page, "set")).toHaveCount(0);
+  await expect(argRow(page, "pause")).toHaveCount(0);
+  await expect(argRow(page, "resume")).toHaveCount(0);
+});
+
+test("selecting set from the menu inserts /goal set and shows the hint", async ({
+  page,
+}) => {
+  const box = ta(page);
+  await box.fill("/goal se");
+  await expect(argRow(page, "set")).toBeVisible();
+  await box.press("Enter");
+
+  // Composer holds "/goal set " (no dispatch), hint is visible, menu closed.
+  await expect(box).toHaveValue("/goal set ");
+  await expect(page.getByTestId("goal-set-hint")).toBeVisible();
+  await expect(argMenu(page)).toHaveCount(0);
+});
+
+test("selecting clear from the menu dispatches immediately", async ({
+  page,
+}) => {
+  // Set a goal first so clearing has an observable effect.
+  await ta(page).fill("/goal set ship the feature");
+  await ta(page).press("Enter");
+  await expect(page.getByTestId("goal-badge")).toBeVisible();
+
+  const box = ta(page);
+  await box.fill("/goal cl");
+  await expect(argRow(page, "clear")).toBeVisible();
+  await box.press("Enter");
+
+  // Composer is cleared, goal badge is gone.
+  await expect(box).toHaveValue("");
+  await expect(page.getByTestId("goal-badge")).toHaveCount(0);
+});
+
+test("arrow keys navigate the goal subcommand menu and Enter selects the highlighted item", async ({
+  page,
+}) => {
+  // Set a goal first so clearing has an observable effect.
+  await ta(page).fill("/goal set ship the feature");
+  await ta(page).press("Enter");
+  await expect(page.getByTestId("goal-badge")).toBeVisible();
+
+  const box = ta(page);
+  await box.fill("/goal ");
+  await expect(argMenu(page)).toBeVisible();
+  // Default highlight is on the first item (clear, alphabetical). ArrowDown
+  // moves to pause.
+  await box.press("ArrowDown");
+  await box.press("Enter");
+
+  // Composer is cleared, goal badge shows paused state.
+  await expect(box).toHaveValue("");
+  await expect(page.getByTestId("goal-badge")).toHaveClass(/paused/);
+});
+
+test("Tab selects the highlighted item in the goal subcommand menu", async ({
+  page,
+}) => {
+  // Set a goal first so clearing has an observable effect.
+  await ta(page).fill("/goal set ship the feature");
+  await ta(page).press("Enter");
+  await expect(page.getByTestId("goal-badge")).toBeVisible();
+
+  const box = ta(page);
+  await box.fill("/goal ");
+  await expect(argMenu(page)).toBeVisible();
+  // ArrowDown to the second item (pause), then Tab to accept.
+  await box.press("ArrowDown");
+  await box.press("Tab");
+
+  await expect(box).toHaveValue("");
+  await expect(page.getByTestId("goal-badge")).toHaveClass(/paused/);
+});
+
+test("Escape dismisses the goal subcommand menu without dispatching", async ({
+  page,
+}) => {
+  const box = ta(page);
+  await box.fill("/goal ");
+  await expect(argMenu(page)).toBeVisible();
+  await box.press("Escape");
+
+  // Menu closed, composer still holds the text, no goal change.
+  await expect(argMenu(page)).toHaveCount(0);
+  await expect(box).toHaveValue("/goal ");
 });

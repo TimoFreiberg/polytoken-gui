@@ -145,6 +145,134 @@ export function filterMcpServers<T extends { serverName: string }>(
   return filterNames(servers, partial, (s) => s.serverName);
 }
 
+/** Filter facet names by a partial substring (empty → all). Facets are plain
+ *  strings, so `nameOf` is the identity. Same ranking as the other menus. */
+export function filterFacets(facets: readonly string[], partial: string): string[] {
+  return filterNames(facets, partial, (f) => f);
+}
+
+/** The four `/goal` subcommands (mirrors `dispatchBuiltin`'s goal case). */
+export interface GoalSubcommand {
+  readonly name: "set" | "clear" | "pause" | "resume";
+  readonly description: string;
+}
+const GOAL_SUBCOMMANDS: readonly GoalSubcommand[] = [
+  { name: "set", description: "Set or replace the active goal" },
+  { name: "clear", description: "Clear the active goal" },
+  { name: "pause", description: "Pause the active goal" },
+  { name: "resume", description: "Resume a paused goal" },
+];
+
+/** Filter `/goal` subcommands by a partial (empty → all four). */
+export function filterGoalSubcommands(partial: string): GoalSubcommand[] {
+  return filterNames(GOAL_SUBCOMMANDS, partial, (s) => s.name);
+}
+
+/**
+ * The active `/facet` argument stage, or null when the draft isn't in `/facet`'s
+ * argument position. Single-stage (just the facet name), mirroring the first
+ * stage of `mcpArgStage`:
+ *   - `/facet `         → { partial: "" }
+ *   - `/facet pl`       → { partial: "pl" }
+ *   - `/facet` (no space) → null (name still being typed — the slash menu owns it)
+ *   - `/facet plan extra` → null (past the single arg stage)
+ *   - anything else     → null
+ *
+ * Cursor-aware (mirrors `mcpArgStage`): the active token is the one containing
+ * the cursor. The command name is matched case-insensitively; the partial
+ * preserves case (facet names are identifiers).
+ */
+export function facetArgStage(
+  draft: string,
+  cursorPos = draft.length,
+): { partial: string } | null {
+  // Must start with "/facet" (case-insensitive); "/facetx" does not match.
+  if (draft.length < 6 || draft.slice(0, 6).toLowerCase() !== "/facet") return null;
+  // A separating whitespace must follow the command name — without it the name
+  // is still being typed and the slash menu owns completion.
+  if (draft.length < 7 || !/\s/.test(draft[6]!)) return null;
+
+  const pos = Math.min(cursorPos, draft.length);
+  // Cursor still within the command-name token (before the separator) → slash menu.
+  if (pos <= 6) return null;
+
+  // Everything after "/facet" up to the cursor (begins with the separator whitespace).
+  const afterCmd = draft.slice(6, pos);
+  const endsWithWs = /\s/.test(afterCmd[afterCmd.length - 1] ?? "");
+  const tokens = afterCmd.trim().length === 0 ? [] : afterCmd.trim().split(/\s+/);
+
+  if (endsWithWs) {
+    // Cursor sits in a fresh (possibly empty) token after `tokens.length` settled
+    // tokens. 0 settled → facet stage (empty partial); 1+ settled → past the
+    // single arg stage, no further completion.
+    if (tokens.length === 0) return { partial: "" };
+    return null;
+  }
+  // Cursor mid-token: the last token is the partial being typed.
+  if (tokens.length === 1) return { partial: tokens[0]! };
+  // 2+ tokens → past the single arg stage.
+  return null;
+}
+
+/**
+ * The active `/goal` argument stage, or null when the draft isn't in `/goal`'s
+ * argument position. Single-stage (the subcommand), but also returns the settled
+ * subcommand so the Composer can show a "type the goal text" hint after `/goal set`:
+ *   - `/goal `           → { partial: "", subcommand: null } (show subcommand menu)
+ *   - `/goal se`         → { partial: "se", subcommand: null } (show subcommand menu, filtered)
+ *   - `/goal set `       → { partial: "", subcommand: "set" } (show hint, no menu)
+ *   - `/goal set hello`  → { partial: "hello", subcommand: "set" } (show hint, no menu)
+ *   - `/goal pause `     → { partial: "", subcommand: "pause" } (no menu, no hint — Enter dispatches)
+ *   - `/goal pause extra` → { partial: "extra", subcommand: "pause" } (still in text mode — parser is structural)
+ *   - `/goal` (no space) → null (name still being typed — the slash menu owns it)
+ *   - anything else      → null
+ *
+ * `subcommand` is the raw first token (any string, or null when still in the
+ * subcommand-typing stage). It is NOT narrowed to the four valid subcommand
+ * names — e.g. `/goal bogus ` returns `{ partial: "", subcommand: "bogus" }`.
+ * The Composer's `goalSetHint` derived only activates when `subcommand === "set"`
+ * exactly; all other values produce no menu and no hint, and Enter falls through
+ * to `dispatchBuiltin` which handles valid/invalid subcommands. The parser is
+ * purely structural.
+ *
+ * Cursor-aware (mirrors `mcpArgStage`).
+ */
+export function goalArgStage(
+  draft: string,
+  cursorPos = draft.length,
+): { partial: string; subcommand: string | null } | null {
+  // Must start with "/goal" (case-insensitive); "/goalx" does not match.
+  if (draft.length < 5 || draft.slice(0, 5).toLowerCase() !== "/goal") return null;
+  // A separating whitespace must follow the command name — without it the name
+  // is still being typed and the slash menu owns completion.
+  if (draft.length < 6 || !/\s/.test(draft[5]!)) return null;
+
+  const pos = Math.min(cursorPos, draft.length);
+  // Cursor still within the command-name token (before the separator) → slash menu.
+  if (pos <= 5) return null;
+
+  // Everything after "/goal" up to the cursor (begins with the separator whitespace).
+  const afterCmd = draft.slice(5, pos);
+  const endsWithWs = /\s/.test(afterCmd[afterCmd.length - 1] ?? "");
+  const tokens = afterCmd.trim().length === 0 ? [] : afterCmd.trim().split(/\s+/);
+
+  if (endsWithWs) {
+    // Cursor sits in a fresh (possibly empty) token after `tokens.length` settled
+    // tokens. 0 settled → subcommand stage (empty partial, no subcommand yet);
+    // 1+ settled → subcommand is settled. We never return null for 2+ tokens
+    // because `set` takes multi-word free-form text — the parser is purely
+    // structural and can't distinguish `set` (takes args) from `pause` (no args).
+    // The Composer's deriveds gate the menu on `subcommand === null` and the
+    // hint on `subcommand === "set"`; other settled subcommands produce no menu
+    // and no hint, and Enter falls through to dispatchBuiltin.
+    if (tokens.length === 0) return { partial: "", subcommand: null };
+    return { partial: "", subcommand: tokens[0]! };
+  }
+  // Cursor mid-token: the last token is the partial being typed.
+  if (tokens.length === 1) return { partial: tokens[0]!, subcommand: null };
+  return { partial: tokens[tokens.length - 1]!, subcommand: tokens[0]! };
+}
+
 /**
  * Filter + rank commands for a query (the text after the leading slash, no slash).
  * Case-insensitive substring match on the command name; prefix matches rank above

@@ -21,9 +21,14 @@
     filterCommands,
     filterMcpActions,
     filterMcpServers,
+    filterFacets,
+    filterGoalSubcommands,
+    facetArgStage,
+    goalArgStage,
     mcpArgStage,
     parseSlashCommand,
     slashQuery,
+    type GoalSubcommand,
   } from "../lib/slash.js";
   import type { McpActionItem } from "../lib/slash.js";
   import type { McpServerInfo } from "@pantoken/protocol";
@@ -35,6 +40,7 @@
   import { contextTone } from "../lib/context-tone.js";
   import SlashMenu from "./SlashMenu.svelte";
   import McpArgMenu from "./McpArgMenu.svelte";
+  import ArgMenu from "./ArgMenu.svelte";
   import AtMenu from "./AtMenu.svelte";
   import DirPicker from "./DirPicker.svelte";
   import MenuBadge from "./ui/MenuBadge.svelte";
@@ -258,6 +264,49 @@
   // Keep the highlighted index in range as the filtered list shrinks.
   $effect(() => {
     if (mcpArgSel >= mcpArgItems.length) mcpArgSel = 0;
+  });
+
+  // --- `/facet` argument typeahead (single stage: facet name). Mirrors the
+  //   `/mcp` arg-menu shape (selection + dismissal + open-when-non-empty).
+  //   Triggered when the draft starts with `/facet ` — either typed manually
+  //   or inserted by `acceptSlash` via the BUILTINS_REQUIRING_ARGS path.
+  let facetArgSel = $state(0);
+  let facetArgDismissed = $state(false);
+  const facetArg = $derived(facetArgStage(store.composerDraft, cursorPos));
+  const facetArgItems = $derived(
+    facetArg === null ? [] : filterFacets(store.facets, facetArg.partial),
+  );
+  const facetArgOpen = $derived(
+    facetArg !== null && !facetArgDismissed && facetArgItems.length > 0,
+  );
+  $effect(() => {
+    if (facetArgSel >= facetArgItems.length) facetArgSel = 0;
+  });
+
+  // --- `/goal` argument typeahead (subcommand stage, then a text hint).
+  //   The subcommand menu shows while the user is typing the first token after
+  //   `/goal `. Once a subcommand settles (trailing space), the menu closes; if
+  //   the settled subcommand is "set", a hint appears guiding the user to type
+  //   the goal text. `pause`/`resume`/`clear` take no args, so Enter dispatches.
+  let goalArgSel = $state(0);
+  let goalArgDismissed = $state(false);
+  const goalArg = $derived(goalArgStage(store.composerDraft, cursorPos));
+  const goalArgItems = $derived(
+    goalArg === null || goalArg.subcommand !== null
+      ? []
+      : filterGoalSubcommands(goalArg.partial),
+  );
+  const goalArgOpen = $derived(
+    goalArg !== null && goalArg.subcommand === null && !goalArgDismissed && goalArgItems.length > 0,
+  );
+  // The "now type the goal text" hint — shown when `/goal set` is settled.
+  // Suppressed when an error is showing (e.g. empty-text submit) to avoid
+  // the hint and error saying the same thing simultaneously.
+  const goalSetHint = $derived(
+    goalArg !== null && goalArg.subcommand === "set" && attachmentStatus === null,
+  );
+  $effect(() => {
+    if (goalArgSel >= goalArgItems.length) goalArgSel = 0;
   });
 
   // --- Readline-style prompt history (ArrowUp/ArrowDown). `histIndex` is the navigation
@@ -894,6 +943,10 @@
     if (extractAtQuery(store.composerDraft, cursorPos) === null) atDismissed = false;
     mcpArgSel = 0;
     if (mcpArgStage(store.composerDraft, cursorPos) === null) mcpArgDismissed = false;
+    facetArgSel = 0;
+    if (facetArgStage(store.composerDraft, cursorPos) === null) facetArgDismissed = false;
+    goalArgSel = 0;
+    if (goalArgStage(store.composerDraft, cursorPos) === null) goalArgDismissed = false;
   }
 
   // Replace the bare slash token with `/name ` and keep focus so the user types args
@@ -946,6 +999,55 @@
         autosize();
       });
     }
+  }
+
+  /** Accept a `/facet` arg-menu item: dispatch immediately (no two-Enter). */
+  function acceptFacetArg(facet: string) {
+    store.setFacet(facet);
+    store.composerDraft = "";
+    facetArgDismissed = false;
+    facetArgSel = 0;
+    attachmentStatus = null;
+    histIndex = null;
+    histWip = "";
+    queueMicrotask(() => {
+      ta?.focus();
+      autosize();
+    });
+  }
+
+  /** Accept a `/goal` subcommand from the menu.
+   *  - set: insert `/goal set ` so the user can type the goal text (no dispatch).
+   *  - clear/pause/resume: dispatch immediately (no two-Enter). */
+  function acceptGoalArg(sub: GoalSubcommand) {
+    if (sub.name === "set") {
+      store.composerDraft = "/goal set ";
+      goalArgDismissed = false;
+      goalArgSel = 0;
+      attachmentStatus = null;
+      queueMicrotask(() => {
+        ta?.focus();
+        autosize();
+        if (ta) {
+          const end = store.composerDraft.length;
+          ta.selectionStart = ta.selectionEnd = end;
+          cursorPos = end;
+        }
+      });
+      return;
+    }
+    // clear/pause/resume dispatch immediately.
+    dispatchBuiltin("goal", sub.name);
+    store.composerDraft = "";
+    goalArgDismissed = false;
+    goalArgSel = 0;
+    attachmentStatus = null;
+    histIndex = null;
+    histWip = "";
+    queueMicrotask(() => {
+      ta?.focus();
+      autosize();
+    });
   }
 
   /** Replace the @-mention span (`@<query>`) with the canonical text for the picked
@@ -1020,7 +1122,7 @@
     // abandons the draft. ⌥P / ⌥W are handled by the window keydown listener so they
     // also work before the textarea is focused (⌘N leaves it blurred).
     if (drafting) {
-      if (e.key === "Escape" && !slashOpen && !mcpArgOpen && !atOpen && !store.composerDraft.trim()) {
+      if (e.key === "Escape" && !slashOpen && !mcpArgOpen && !facetArgOpen && !goalArgOpen && !atOpen && !store.composerDraft.trim()) {
         e.preventDefault();
         store.cancelDraft();
         return;
@@ -1113,6 +1215,57 @@
       if (e.key === "Escape") {
         e.preventDefault();
         slashDismissed = true;
+        return;
+      }
+    }
+    // `/facet` arg-menu keyboard handling (after slash, before @-mention). The
+    // menus are mutually exclusive — each requires its own `/cmd ` prefix.
+    if (facetArgOpen) {
+      const n = facetArgItems.length;
+      if (e.key === "ArrowDown" || (e.ctrlKey && e.key === "n")) {
+        e.preventDefault();
+        facetArgSel = (facetArgSel + 1) % n;
+        return;
+      }
+      if (e.key === "ArrowUp" || (e.ctrlKey && e.key === "p")) {
+        e.preventDefault();
+        facetArgSel = (facetArgSel - 1 + n) % n;
+        return;
+      }
+      if (e.key === "Enter" || (e.key === "Tab" && !e.shiftKey)) {
+        e.preventDefault();
+        const item = facetArgItems[facetArgSel];
+        if (item) acceptFacetArg(item);
+        return;
+      }
+      if (e.key === "Escape") {
+        e.preventDefault();
+        facetArgDismissed = true;
+        return;
+      }
+    }
+    // `/goal` subcommand-menu keyboard handling.
+    if (goalArgOpen) {
+      const n = goalArgItems.length;
+      if (e.key === "ArrowDown" || (e.ctrlKey && e.key === "n")) {
+        e.preventDefault();
+        goalArgSel = (goalArgSel + 1) % n;
+        return;
+      }
+      if (e.key === "ArrowUp" || (e.ctrlKey && e.key === "p")) {
+        e.preventDefault();
+        goalArgSel = (goalArgSel - 1 + n) % n;
+        return;
+      }
+      if (e.key === "Enter" || (e.key === "Tab" && !e.shiftKey)) {
+        e.preventDefault();
+        const item = goalArgItems[goalArgSel];
+        if (item) acceptGoalArg(item);
+        return;
+      }
+      if (e.key === "Escape") {
+        e.preventDefault();
+        goalArgDismissed = true;
         return;
       }
     }
@@ -1461,6 +1614,12 @@
       </div>
     {/if}
 
+    {#if goalSetHint}
+      <div class="attachment-status info" role="status" data-testid="goal-set-hint">
+        Type the goal summary, then Enter
+      </div>
+    {/if}
+
     <QueueTray />
 
     {#if drafting && store.draft}
@@ -1604,6 +1763,26 @@
           onhover={(i) => (mcpArgSel = i)}
         />
       {/if}
+      {#if facetArgOpen}
+        <ArgMenu
+          id="facet-arg-menu"
+          label="Facets"
+          items={facetArgItems.map((f) => ({ name: f }))}
+          selected={facetArgSel}
+          onpick={(item) => acceptFacetArg(item.name)}
+          onhover={(i) => (facetArgSel = i)}
+        />
+      {/if}
+      {#if goalArgOpen}
+        <ArgMenu
+          id="goal-arg-menu"
+          label="Goal subcommands"
+          items={goalArgItems}
+          selected={goalArgSel}
+          onpick={(item) => acceptGoalArg(item)}
+          onhover={(i) => (goalArgSel = i)}
+        />
+      {/if}
       {#if historyOpen}
         <PromptHistoryMenu
           items={historyItems}
@@ -1704,8 +1883,14 @@
               : "Message pantoken…"}
           rows="1"
           role="combobox"
-          aria-expanded={slashOpen || mcpArgOpen || atOpen}
-          aria-controls={atOpen ? "at-menu" : mcpArgOpen ? "mcp-arg-menu" : "slash-menu"}
+          aria-expanded={slashOpen || mcpArgOpen || facetArgOpen || goalArgOpen || atOpen}
+          aria-controls={
+            atOpen ? "at-menu"
+            : mcpArgOpen ? "mcp-arg-menu"
+            : facetArgOpen ? "facet-arg-menu"
+            : goalArgOpen ? "goal-arg-menu"
+            : "slash-menu"
+          }
           aria-autocomplete="list"
         ></textarea>
         <div class="actions">
