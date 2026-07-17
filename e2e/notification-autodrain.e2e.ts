@@ -17,9 +17,17 @@ test("notification autodrain toggle flips in Settings", async ({ page }) => {
   await toggle.click();
   await expect(toggle).toHaveAttribute("aria-checked", "true");
   await expect(toggle).toContainText("On");
+  // Info notice appears in the transcript (last notice = most recent action).
+  await expect(page.locator(".row.notice .ntext").last()).toContainText(
+    "Notification auto-drain enabled",
+  );
 
   // Toggle back off.
   await toggle.click();
   await expect(toggle).toHaveAttribute("aria-checked", "false");
   await expect(toggle).toContainText("Off");
+  // Info notice appears in the transcript (last notice = most recent action).
+  await expect(page.locator(".row.notice .ntext").last()).toContainText(
+    "Notification auto-drain disabled",
+  );
 });

@@ -2424,6 +2424,11 @@ async fn goal_no_body_actions_accept_204_without_warning() {
         // `Notify { message: "{what} failed: {err}", level: Warning }`, where
         // `what` is e.g. "Goal clear" — so a spurious warning's message
         // lowercases to contain `warning_label`.
+        //
+        // Note: a successful goal action DOES emit an info-level notice
+        // (`report_action_success` → `Notify { level: Info }`). This check
+        // filters on `level == Warning`, so the info notice is intentionally
+        // excluded — it's expected behavior, not a regression.
         let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(2);
         let mut saw_warning = false;
         while let Ok(Some(ev)) = tokio::time::timeout_at(deadline, rx.recv()).await {
@@ -2444,6 +2449,104 @@ async fn goal_no_body_actions_accept_204_without_warning() {
             !saw_warning,
             "a 204 from {} must not produce a warning notice",
             path
+        );
+    }
+}
+
+/// Successful goal actions must emit an info-level `Notify` notice with a
+/// descriptive message, so the state change is visible in the transcript
+/// (matching how `/compact` and `/clear` already behave). Parameterized over
+/// GoalClear, GoalPause, GoalResume, and GoalSet.
+#[tokio::test]
+async fn goal_actions_emit_info_notice_on_success() {
+    let _guard = OVERRIDE_MUTEX.lock().await;
+
+    // (action, path, expected_notice_substring, request_body)
+    // GoalSet POSTs to /goal with a JSON body and expects 200; the no-body
+    // actions POST to their respective endpoints and accept 200 or 204.
+    let goal_summary = "ship the feature";
+    let cases: &[(pantoken_protocol::wire::SessionAction, &str, &str)] = &[
+        (
+            pantoken_protocol::wire::SessionAction::GoalClear,
+            "/goal/clear",
+            "Goal cleared",
+        ),
+        (
+            pantoken_protocol::wire::SessionAction::GoalPause,
+            "/goal/pause",
+            "Goal paused",
+        ),
+        (
+            pantoken_protocol::wire::SessionAction::GoalResume,
+            "/goal/resume",
+            "Goal resumed",
+        ),
+        (
+            pantoken_protocol::wire::SessionAction::GoalSet {
+                summary: goal_summary.into(),
+            },
+            "/goal",
+            "Goal set: ship the feature",
+        ),
+    ];
+
+    for (action, path, expected_notice) in cases {
+        let mut scenario = corpus_loader::load_named(VERSION, "streaming-turn");
+        // GoalSet expects 200 with a body; the no-body actions accept 204.
+        let (status, response_body) = if *path == "/goal" {
+            (
+                200i64,
+                Some(serde_json::json!({
+                    "summary": "ship the feature",
+                    "lifecycle": "active"
+                })),
+            )
+        } else {
+            (204, None)
+        };
+        scenario.http.push(support::corpus::HttpEntry {
+            method: "POST".into(),
+            path: (*path).into(),
+            request_body: None,
+            status,
+            response_body,
+        });
+        let fake = Arc::new(fake_daemon::spawn(scenario, "goal-notice".into(), 0).await);
+        let _ovr = OverrideGuard::install(fake.clone());
+
+        let (driver, _dir) = make_driver().await;
+        let (_sub_id, mut rx) = collect_events(&driver, 256);
+
+        let _seed = driver
+            .new_session(NewSessionOptsData::default())
+            .await
+            .expect("new_session");
+
+        driver
+            .session_action(action.clone(), Some(fake.session_id.clone()))
+            .await;
+
+        // Drain events and look for an info-level Notify with the expected message.
+        let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(2);
+        let mut found_notice = false;
+        while let Ok(Some(ev)) = tokio::time::timeout_at(deadline, rx.recv()).await {
+            if let SessionDriverEvent::HostUiRequest {
+                request:
+                    pantoken_protocol::session_driver::HostUiRequest::Notify { message, level, .. },
+                ..
+            } = &ev
+            {
+                if *level == Some(pantoken_protocol::session_driver::NotifyLevel::Info)
+                    && message == *expected_notice
+                {
+                    found_notice = true;
+                }
+            }
+        }
+        assert!(
+            found_notice,
+            "{:?} should emit an info notice {:?}; events drained without a match",
+            action, expected_notice
         );
     }
 }

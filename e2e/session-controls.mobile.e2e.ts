@@ -60,6 +60,11 @@ test("model search, model selection, and thinking update the mobile summary", as
   await dialog.getByRole("button", { name: "Back" }).click();
   await expect(trigger).toContainText("Claude Sonnet 4.6");
   await expect(trigger).toContainText("high");
+  // The thinking-level radio sends a standalone setThinking action,
+  // which emits an info notice in the transcript (last notice = most recent).
+  await expect(page.locator(".row.notice .ntext").last()).toContainText(
+    "Thinking level set to high",
+  );
 });
 
 test("context actions require two taps in the mobile controls", async ({ page }) => {

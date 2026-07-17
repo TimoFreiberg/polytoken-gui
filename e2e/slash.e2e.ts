@@ -177,6 +177,10 @@ test("/facet <name> is intercepted and switches facet", async ({ page }) => {
   );
   // Facet badge updates to "Plan".
   await expect(page.getByTestId("facet-badge")).toContainText("Plan");
+  // Info notice appears in the transcript.
+  await expect(page.locator(".row.notice .ntext")).toContainText(
+    "Facet switched to plan",
+  );
 });
 
 test("/facet with no args shows usage error", async ({ page }) => {
@@ -237,6 +241,10 @@ test("/goal set <text> is intercepted and shows the goal badge", async ({
   // Goal badge appears with the summary.
   await expect(page.getByTestId("goal-badge")).toBeVisible();
   await expect(page.getByTestId("goal-badge")).toContainText("ship the feature");
+  // Info notice appears in the transcript.
+  await expect(page.locator(".row.notice .ntext")).toContainText(
+    "Goal set: ship the feature",
+  );
 });
 
 test("/goal pause is intercepted and shows paused state", async ({ page }) => {
@@ -252,6 +260,10 @@ test("/goal pause is intercepted and shows paused state", async ({ page }) => {
   await expect(box).toHaveValue("");
   // Goal badge shows paused class.
   await expect(page.getByTestId("goal-badge")).toHaveClass(/paused/);
+  // Info notice appears in the transcript (last notice = most recent action).
+  await expect(page.locator(".row.notice .ntext").last()).toContainText(
+    "Goal paused",
+  );
 });
 
 test("/goal resume is intercepted and returns to active state", async ({
@@ -271,6 +283,10 @@ test("/goal resume is intercepted and returns to active state", async ({
   await expect(box).toHaveValue("");
   // Goal badge no longer has paused class.
   await expect(page.getByTestId("goal-badge")).not.toHaveClass(/paused/);
+  // Info notice appears in the transcript (last notice = most recent action).
+  await expect(page.locator(".row.notice .ntext").last()).toContainText(
+    "Goal resumed",
+  );
 });
 
 test("/goal clear is intercepted and removes the goal badge", async ({
@@ -288,6 +304,10 @@ test("/goal clear is intercepted and removes the goal badge", async ({
   await expect(box).toHaveValue("");
   // Goal badge disappears.
   await expect(page.getByTestId("goal-badge")).toHaveCount(0);
+  // Info notice appears in the transcript (last notice = most recent action).
+  await expect(page.locator(".row.notice .ntext").last()).toContainText(
+    "Goal cleared",
+  );
 });
 
 test("/title <text> is intercepted and updates the session title", async ({
@@ -305,6 +325,9 @@ test("/title <text> is intercepted and updates the session title", async ({
   await expect(page.locator(".title-row .title")).toContainText(
     "my custom title",
   );
+  // /title does NOT produce a transcript notice (it doesn't affect
+  // session contents).
+  await expect(page.locator(".row.notice")).toHaveCount(0);
 });
 
 test("/title with no args clears the title override", async ({ page }) => {

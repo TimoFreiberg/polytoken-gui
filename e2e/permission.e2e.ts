@@ -30,6 +30,10 @@ test("permission badge shows Standard by default and switches mode", async ({
   await expect(badge).toContainText("Bypass");
   await expect(badge).not.toContainText("Bypass+");
   await expect(badge).toHaveClass(/nonstandard/);
+  // Info notice appears in the transcript.
+  await expect(page.locator(".row.notice .ntext")).toContainText(
+    "Permission monitor set to Bypass",
+  );
 });
 
 test("permission badge sits on the status row left", async ({ page }) => {

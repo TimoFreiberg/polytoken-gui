@@ -25,11 +25,19 @@ test("adventurous handoff toggles from the facet menu and persists in the sessio
   await toggle.click();
   await expect(toggle).toHaveAttribute("aria-checked", "true");
   await expect(toggle).toHaveClass(/on/);
+  // Info notice appears in the transcript (last notice = most recent action).
+  await expect(page.locator(".row.notice .ntext").last()).toContainText(
+    "Adventurous handoff enabled",
+  );
 
   // Toggle back off.
   await toggle.click();
   await expect(toggle).toHaveAttribute("aria-checked", "false");
   await expect(toggle).not.toHaveClass(/on/);
+  // Info notice appears in the transcript (last notice = most recent action).
+  await expect(page.locator(".row.notice .ntext").last()).toContainText(
+    "Adventurous handoff disabled",
+  );
 
   // The modifier is Plan-only, not merely a generic live-session control.
   await page.getByRole("option", { name: "Execute" }).click();

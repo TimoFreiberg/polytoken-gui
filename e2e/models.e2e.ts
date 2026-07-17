@@ -43,6 +43,10 @@ test("the picker lists models and switches the active one", async ({
   await expect(
     page.getByTestId("model-badge"),
   ).toContainText("DeepSeek V4 Flash");
+  // Info notice appears in the transcript.
+  await expect(page.locator(".row.notice .ntext")).toContainText(
+    "Model switched to deepseek/deepseek-v4-flash",
+  );
 
   // Click-open deliberately does NOT refocus the composer (unlike hotkey-open).
   await expect(composer).not.toBeFocused();
@@ -159,6 +163,10 @@ test("Enter applies the combined model + effort", async ({ page }) => {
   // The badge reflects the new model + effort.
   await expect(page.getByTestId("model-badge")).toContainText("Claude Sonnet 4.6");
   await expect(page.getByTestId("model-badge")).toContainText("high");
+  // Info notice appears in the transcript with both model and thinking level.
+  await expect(page.locator(".row.notice .ntext")).toContainText(
+    "Model switched to anthropic/claude-sonnet-4-6 (thinking: high)",
+  );
 });
 
 test("first Esc clears the filter; second Esc closes and refocuses", async ({

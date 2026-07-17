@@ -2873,10 +2873,10 @@ impl PantokenDriver for MockDriver {
                 thinking_level,
             } => {
                 let mut config = self.config.lock();
-                config.provider = Some(provider);
-                config.model_id = Some(model_id);
-                if let Some(level) = thinking_level {
-                    config.thinking_level = Some(level);
+                config.provider = Some(provider.clone());
+                config.model_id = Some(model_id.clone());
+                if let Some(level) = &thinking_level {
+                    config.thinking_level = Some(level.clone());
                 }
                 let mut snapshot = snap(SessionStatus::Idle, None, None, None, None, None);
                 snapshot.config = Some(config.clone());
@@ -2885,10 +2885,22 @@ impl PantokenDriver for MockDriver {
                     base: base(),
                     snapshot,
                 });
+                let mut message = format!("Model switched to {provider}/{model_id}");
+                if let Some(level) = &thinking_level {
+                    message.push_str(&format!(" (thinking: {level})"));
+                }
+                self.emit(SessionDriverEvent::HostUiRequest {
+                    base: base(),
+                    request: HostUiRequest::Notify {
+                        request_id: format!("model-switch-{}", ts()),
+                        message,
+                        level: Some(NotifyLevel::Info),
+                    },
+                });
             }
             SessionAction::SetThinking { level } => {
                 let mut config = self.config.lock();
-                config.thinking_level = Some(level);
+                config.thinking_level = Some(level.clone());
                 let mut snapshot = snap(SessionStatus::Idle, None, None, None, None, None);
                 snapshot.config = Some(config.clone());
                 drop(config);
@@ -2896,11 +2908,34 @@ impl PantokenDriver for MockDriver {
                     base: base(),
                     snapshot,
                 });
+                self.emit(SessionDriverEvent::HostUiRequest {
+                    base: base(),
+                    request: HostUiRequest::Notify {
+                        request_id: format!("thinking-switch-{}", ts()),
+                        message: format!("Thinking level set to {level}"),
+                        level: Some(NotifyLevel::Info),
+                    },
+                });
             }
             SessionAction::SetFacet { facet } => {
                 self.emit(SessionDriverEvent::SessionUpdated {
                     base: base(),
-                    snapshot: snap(SessionStatus::Idle, Some(facet), None, None, None, None),
+                    snapshot: snap(
+                        SessionStatus::Idle,
+                        Some(facet.clone()),
+                        None,
+                        None,
+                        None,
+                        None,
+                    ),
+                });
+                self.emit(SessionDriverEvent::HostUiRequest {
+                    base: base(),
+                    request: HostUiRequest::Notify {
+                        request_id: format!("facet-switch-{}", ts()),
+                        message: format!("Facet switched to {facet}"),
+                        level: Some(NotifyLevel::Info),
+                    },
                 });
             }
             SessionAction::SetPermissionMonitor { mode } => {
@@ -2909,6 +2944,14 @@ impl PantokenDriver for MockDriver {
                 self.emit(SessionDriverEvent::SessionUpdated {
                     base: base(),
                     snapshot: s,
+                });
+                self.emit(SessionDriverEvent::HostUiRequest {
+                    base: base(),
+                    request: HostUiRequest::Notify {
+                        request_id: format!("permission-monitor-switch-{}", ts()),
+                        message: format!("Permission monitor set to {:?}", mode),
+                        level: Some(NotifyLevel::Info),
+                    },
                 });
             }
             SessionAction::ToggleAdventurousHandoff => {
@@ -2925,6 +2968,17 @@ impl PantokenDriver for MockDriver {
                     base: base(),
                     snapshot: s,
                 });
+                self.emit(SessionDriverEvent::HostUiRequest {
+                    base: base(),
+                    request: HostUiRequest::Notify {
+                        request_id: format!("adventurous-handoff-{}", ts()),
+                        message: format!(
+                            "Adventurous handoff {}",
+                            if flipped { "enabled" } else { "disabled" }
+                        ),
+                        level: Some(NotifyLevel::Info),
+                    },
+                });
             }
             SessionAction::SetNotificationAutodrain { enabled } => {
                 // Emit a sessionUpdated whose snapshot carries the new flag.
@@ -2933,6 +2987,17 @@ impl PantokenDriver for MockDriver {
                 self.emit(SessionDriverEvent::SessionUpdated {
                     base: base(),
                     snapshot,
+                });
+                self.emit(SessionDriverEvent::HostUiRequest {
+                    base: base(),
+                    request: HostUiRequest::Notify {
+                        request_id: format!("notification-autodrain-{}", ts()),
+                        message: format!(
+                            "Notification auto-drain {}",
+                            if enabled { "enabled" } else { "disabled" }
+                        ),
+                        level: Some(NotifyLevel::Info),
+                    },
                 });
             }
             SessionAction::Compact => {
@@ -3011,6 +3076,14 @@ impl PantokenDriver for MockDriver {
                         None,
                     ),
                 });
+                self.emit(SessionDriverEvent::HostUiRequest {
+                    base: base(),
+                    request: HostUiRequest::Notify {
+                        request_id: format!("goal-set-{}", ts()),
+                        message: format!("Goal set: {summary}"),
+                        level: Some(NotifyLevel::Info),
+                    },
+                });
             }
             SessionAction::GoalPause => {
                 let goal = {
@@ -3027,6 +3100,14 @@ impl PantokenDriver for MockDriver {
                         base: base(),
                         snapshot: snap(SessionStatus::Idle, None, Some(goal), None, None, None),
                     });
+                    self.emit(SessionDriverEvent::HostUiRequest {
+                        base: base(),
+                        request: HostUiRequest::Notify {
+                            request_id: format!("goal-pause-{}", ts()),
+                            message: "Goal paused".into(),
+                            level: Some(NotifyLevel::Info),
+                        },
+                    });
                 }
             }
             SessionAction::GoalResume => {
@@ -3042,6 +3123,14 @@ impl PantokenDriver for MockDriver {
                         base: base(),
                         snapshot: snap(SessionStatus::Idle, None, Some(goal), None, None, None),
                     });
+                    self.emit(SessionDriverEvent::HostUiRequest {
+                        base: base(),
+                        request: HostUiRequest::Notify {
+                            request_id: format!("goal-resume-{}", ts()),
+                            message: "Goal resumed".into(),
+                            level: Some(NotifyLevel::Info),
+                        },
+                    });
                 }
             }
             SessionAction::GoalClear => {
@@ -3049,6 +3138,14 @@ impl PantokenDriver for MockDriver {
                 self.emit(SessionDriverEvent::SessionUpdated {
                     base: base(),
                     snapshot: snap(SessionStatus::Idle, None, Some(None), None, None, None),
+                });
+                self.emit(SessionDriverEvent::HostUiRequest {
+                    base: base(),
+                    request: HostUiRequest::Notify {
+                        request_id: format!("goal-clear-{}", ts()),
+                        message: "Goal cleared".into(),
+                        level: Some(NotifyLevel::Info),
+                    },
                 });
             }
             SessionAction::SetTitle { title } => {

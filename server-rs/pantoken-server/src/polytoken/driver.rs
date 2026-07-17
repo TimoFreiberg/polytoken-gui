@@ -468,6 +468,24 @@ impl PolytokenInner {
         }
     }
 
+    /// Build an info-notice event for a successful daemon action (e.g. `/facet`,
+    /// `/goal set`). The shared fold renders a `notify` HostUiRequest as a
+    /// persistent transcript notice, matching how `/compact` and `/clear` work.
+    fn action_success_notice(session_ref: &SessionRef, message: &str) -> SessionDriverEvent {
+        SessionDriverEvent::HostUiRequest {
+            base: SessionEventBase {
+                session_ref: session_ref.clone(),
+                timestamp: DriverMapCtx::now_ts(),
+                run_id: None,
+            },
+            request: HostUiRequest::Notify {
+                request_id: format!("action-success-{}", chrono::Utc::now().timestamp_millis()),
+                message: message.to_string(),
+                level: Some(NotifyLevel::Info),
+            },
+        }
+    }
+
     /// Surface a failed fire-and-forget daemon action as a visible warning
     /// notice (+ a `warn!`). These calls back Settings toggles and slash
     /// actions — an error dropped on the floor looks like a broken button.
@@ -479,6 +497,14 @@ impl PolytokenInner {
     fn report_action_error(&self, session_ref: &SessionRef, what: &str, err: &str) {
         warn!("{what} failed: {err}");
         self.emit(Self::action_error_notice(session_ref, what, err));
+    }
+
+    /// Surface a successful daemon action as a visible info notice in the
+    /// transcript. Mirrors `report_action_error` but for the success path —
+    /// so state changes like `/facet plan` or `/goal set` leave a trace in the
+    /// scrollback, matching how `/compact` and `/clear` already behave.
+    fn report_action_success(&self, session_ref: &SessionRef, message: &str) {
+        self.emit(Self::action_success_notice(session_ref, message));
     }
 
     fn get_warm(&self, session_id: &SessionId) -> Option<Arc<WarmSession>> {
@@ -2948,17 +2974,24 @@ impl PantokenDriver for PolytokenDriver {
         let Some(ws) = self.inner.get_warm(sid) else {
             return;
         };
-        let (what, result) = match action {
+        let (what, result, notice) = match action {
             SessionAction::SetModel {
+                provider,
                 model_id,
                 thinking_level,
-                ..
-            } => (
-                "Model switch".to_string(),
-                ws.client
-                    .set_model(&model_post_key(&model_id), thinking_level.as_deref())
-                    .await,
-            ),
+            } => {
+                let mut msg = format!("Model switched to {provider}/{model_id}");
+                if let Some(level) = &thinking_level {
+                    msg.push_str(&format!(" (thinking: {level})"));
+                }
+                (
+                    "Model switch".to_string(),
+                    ws.client
+                        .set_model(&model_post_key(&model_id), thinking_level.as_deref())
+                        .await,
+                    Some(msg),
+                )
+            }
             SessionAction::SetThinking { level } => {
                 // POST /model needs the model key alongside the level; without a
                 // cached state there is nothing valid to send.
@@ -2967,6 +3000,7 @@ impl PantokenDriver for PolytokenDriver {
                     Some(model) => (
                         "Thinking-level switch".to_string(),
                         ws.client.set_model(&model, Some(&level)).await,
+                        Some(format!("Thinking level set to {level}")),
                     ),
                     None => (
                         "Thinking-level switch".to_string(),
@@ -2974,12 +3008,14 @@ impl PantokenDriver for PolytokenDriver {
                             "the session's active model isn't known yet — try again in a moment"
                                 .to_string(),
                         ),
+                        None,
                     ),
                 }
             }
             SessionAction::SetFacet { facet } => (
                 "Facet switch".to_string(),
                 ws.client.set_facet(&facet).await,
+                Some(format!("Facet switched to {facet}")),
             ),
             SessionAction::SetPermissionMonitor { mode } => {
                 let daemon_mode = match mode {
@@ -2999,35 +3035,72 @@ impl PantokenDriver for PolytokenDriver {
                 (
                     "Permission-mode switch".to_string(),
                     ws.client.set_permission_mode(daemon_mode).await,
+                    Some(format!("Permission monitor set to {:?}", mode)),
                 )
             }
-            SessionAction::ToggleAdventurousHandoff => (
-                "Adventurous-handoff toggle".to_string(),
-                ws.client.toggle_adventurous_handoff().await.map(|_| ()),
-            ),
+            SessionAction::ToggleAdventurousHandoff => {
+                let what = "Adventurous-handoff toggle".to_string();
+                match ws.client.toggle_adventurous_handoff().await {
+                    Ok(enabled) => (
+                        what,
+                        Ok(()),
+                        Some(format!(
+                            "Adventurous handoff {}",
+                            if enabled { "enabled" } else { "disabled" }
+                        )),
+                    ),
+                    Err(e) => (what, Err(e), None),
+                }
+            }
             SessionAction::SetNotificationAutodrain { enabled } => (
                 "Notification-autodrain switch".to_string(),
                 ws.client.set_notification_autodrain(enabled).await,
+                Some(format!(
+                    "Notification auto-drain {}",
+                    if enabled { "enabled" } else { "disabled" }
+                )),
             ),
-            SessionAction::Compact => ("Compact".to_string(), ws.client.compact(None).await),
-            SessionAction::ClearContext => ("Clear context".to_string(), ws.client.clear().await),
-            SessionAction::ResetShell => ("Reset shell".to_string(), ws.client.reset_shell().await),
+            SessionAction::Compact => ("Compact".to_string(), ws.client.compact(None).await, None),
+            SessionAction::ClearContext => {
+                ("Clear context".to_string(), ws.client.clear().await, None)
+            }
+            SessionAction::ResetShell => (
+                "Reset shell".to_string(),
+                ws.client.reset_shell().await,
+                None,
+            ),
             SessionAction::DaemonReload => {
                 let result = ws.client.reload().await;
                 if result.is_ok() {
                     self.inner.invalidate_all_config_caches();
                 }
-                ("Daemon reload".to_string(), result)
+                ("Daemon reload".to_string(), result, None)
             }
-            SessionAction::GoalSet { summary } => {
-                ("Goal set".to_string(), ws.client.goal_set(&summary).await)
-            }
-            SessionAction::GoalPause => ("Goal pause".to_string(), ws.client.goal_pause().await),
-            SessionAction::GoalResume => ("Goal resume".to_string(), ws.client.goal_resume().await),
-            SessionAction::GoalClear => ("Goal clear".to_string(), ws.client.goal_clear().await),
-            SessionAction::SetTitle { title } => {
-                ("Set title".to_string(), ws.client.set_title(&title).await)
-            }
+            SessionAction::GoalSet { summary } => (
+                "Goal set".to_string(),
+                ws.client.goal_set(&summary).await,
+                Some(format!("Goal set: {summary}")),
+            ),
+            SessionAction::GoalPause => (
+                "Goal pause".to_string(),
+                ws.client.goal_pause().await,
+                Some("Goal paused".to_string()),
+            ),
+            SessionAction::GoalResume => (
+                "Goal resume".to_string(),
+                ws.client.goal_resume().await,
+                Some("Goal resumed".to_string()),
+            ),
+            SessionAction::GoalClear => (
+                "Goal clear".to_string(),
+                ws.client.goal_clear().await,
+                Some("Goal cleared".to_string()),
+            ),
+            SessionAction::SetTitle { title } => (
+                "Set title".to_string(),
+                ws.client.set_title(&title).await,
+                None,
+            ),
             SessionAction::SetMcpServer {
                 server_name,
                 action,
@@ -3043,11 +3116,17 @@ impl PantokenDriver for PolytokenDriver {
                     ws.client
                         .mcp_server_action(&server_name, daemon_action)
                         .await,
+                    None,
                 )
             }
         };
-        if let Err(e) = result {
-            self.inner.report_action_error(&ws.session_ref, &what, &e);
+        match result {
+            Err(e) => self.inner.report_action_error(&ws.session_ref, &what, &e),
+            Ok(()) => {
+                if let Some(msg) = notice {
+                    self.inner.report_action_success(&ws.session_ref, &msg);
+                }
+            }
         }
     }
 
