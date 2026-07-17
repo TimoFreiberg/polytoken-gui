@@ -24,3 +24,4 @@ grindbot-config.toml
 .autopilot-issue-number
 .autopilot-config-dir
 .autopilot-stop-redirects
+.playwright-mcp/
