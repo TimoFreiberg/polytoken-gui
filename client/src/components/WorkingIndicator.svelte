@@ -56,60 +56,64 @@
      the stop button's own text/tooltip carrying the stop-action states. -->
 {#if store.turnActive || creating}
   <div class="wrap" data-testid="working-indicator" role="status" aria-live="polite">
-    {#if store.turnActive}
-      <!-- The stop button: same text/tooltip/disabled logic as the former Composer stop
-           button. The button's own text carries the stop-action states (■ Stop / ■
-           Stopping… / ↻ Retry stop) — no separate label is needed. -->
-      <button
-        class="stop"
-        data-testid="stop-button"
-        onclick={() => store.abort()}
-        disabled={store.connection !== "connected" || stopState === "stopping"}
-        title={store.connection === "connected"
-          ? stopState === "stopping"
-            ? "Stop requested — waiting for Pantoken"
+    <div class="inner">
+      {#if store.turnActive}
+        <!-- The stop button: same text/tooltip/disabled logic as the former Composer stop
+             button. The button's own text carries the stop-action states (■ Stop / ■
+             Stopping… / ↻ Retry stop) — no separate label is needed. -->
+        <button
+          class="stop"
+          data-testid="stop-button"
+          onclick={() => store.abort()}
+          disabled={store.connection !== "connected" || stopState === "stopping"}
+          title={store.connection === "connected"
+            ? stopState === "stopping"
+              ? "Stop requested — waiting for Pantoken"
+              : stopState === "unconfirmed"
+                ? "Retry stopping the agent (Esc)"
+                : "Stop the agent (Esc)"
+            : "Can't stop while offline — the agent keeps running"}
+        >
+          {stopState === "stopping"
+            ? "■ Stopping…"
             : stopState === "unconfirmed"
-              ? "Retry stopping the agent (Esc)"
-              : "Stop the agent (Esc)"
-          : "Can't stop while offline — the agent keeps running"}
-      >
-        {stopState === "stopping"
-          ? "■ Stopping…"
-          : stopState === "unconfirmed"
-            ? "↻ Retry stop"
-            : "■ Stop"}
-      </button>
-    {/if}
-    <!-- aria-hidden: both this elapsed timer and the token counter below live inside the
-         role=status live region and tick frequently; announcing every tick would spam a
-         screen reader. They're visual liveness affordances — the stop button's visible
-         text/title carries the announced state. -->
-    {#if elapsed}
-      <span
-        class="elapsed"
-        data-testid="working-elapsed"
-        aria-hidden="true">{elapsed}</span
-      >
-    {/if}
-    {#if store.turnActive}
-      <span
-        class="tokens"
-        data-testid="working-tokens"
-        aria-hidden="true"
-        title="Estimated tokens received from the model this turn (~4 chars/token). Climbing = the API is streaming; frozen = it has stalled."
-        >~{tokens.toLocaleString("en-US")} tok</span
-      >
-    {/if}
+              ? "↻ Retry stop"
+              : "■ Stop"}
+        </button>
+      {/if}
+      <!-- aria-hidden: both this elapsed timer and the token counter below live inside the
+           role=status live region and tick frequently; announcing every tick would spam a
+           screen reader. They're visual liveness affordances — the stop button's visible
+           text/title carries the announced state. -->
+      {#if elapsed}
+        <span
+          class="elapsed"
+          data-testid="working-elapsed"
+          aria-hidden="true">{elapsed}</span
+        >
+      {/if}
+      {#if store.turnActive}
+        <span
+          class="tokens"
+          data-testid="working-tokens"
+          aria-hidden="true"
+          title="Estimated tokens received from the model this turn (~4 chars/token). Climbing = the API is streaming; frozen = it has stalled."
+          >~{tokens.toLocaleString("en-US")} tok</span
+        >
+      {/if}
+    </div>
   </div>
 {/if}
 
 <style>
   .wrap {
-    max-width: var(--maxw);
-    width: 100%;
-    margin: 0 auto;
+    /* Padding only; max-width + centering live on .inner. */
     padding: 4px 44px 10px;
     animation: fade 0.2s ease;
+  }
+  .inner {
+    max-width: var(--maxw);
+    margin: 0 auto;
     display: flex;
     align-items: center;
     gap: 10px;

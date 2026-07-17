@@ -1107,10 +1107,7 @@
 
 <style>
   .transcript-wrap {
-    /* A prose line stays in the comfortable 65–80 character range at the default
-       transcript scale. Code and tables retain a wider breakout lane. */
-    --maxw: 760px;
-    --maxw-wide: 1100px;
+    /* --maxw / --maxw-wide are inherited from .chat (App.svelte). */
     position: relative;
     isolation: isolate;
     flex: 1;

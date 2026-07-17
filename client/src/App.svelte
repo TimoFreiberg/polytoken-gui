@@ -535,6 +535,10 @@
     }
   }
   .chat {
+    /* Reading measure for the chat column — shared by Transcript, WorkingIndicator,
+       and Composer so their left edges align. */
+    --maxw: 760px;
+    --maxw-wide: 1100px;
     position: relative;
     flex: 1;
     min-height: 0;
