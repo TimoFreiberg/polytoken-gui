@@ -465,17 +465,12 @@ class PantokenStore {
   // menu closes from a keyboard-driven flow. A counter so each request re-fires.
   focusComposerN = $state(0);
   // Bump to ask the facet MenuBadge to open its dropdown — driven by the
-  // Shift+Tab rotate-and-open path. A counter so each keystroke re-fires
+  // composer's Shift+Tab open-menu path. A counter so each keystroke re-fires
   // (even if the menu was already open).
   facetMenuOpenN = $state(0);
-  // Optimistic facet — set immediately by cycleFacet so the badge reflects the
-  // Shift+Tab rotation before the server snapshot arrives. Cleared when a snapshot
-  // event that actually carries a facet folds in (sessionOpened/sessionUpdated/
-  // runCompleted with snapshot.facet !== undefined), or on seed/setFacet-draft.
-  optimisticFacet = $state<string | null>(null);
-  // The composer textarea's selection range — tracked so the facet menu's
-  // forward-key path (typing a letter dismisses the menu and inserts at the
-  // cursor, not at the end) knows where to insert. Updated by the Composer's
+  // The composer textarea's selection range — tracked so the @-mention
+  // focus-restore path (inserting an accepted mention back at the caret, not
+  // at the end) knows where to insert. Updated by the Composer's
   // oninput/onclick/onkeyup handlers.
   composerSelectionStart = $state(0);
   composerSelectionEnd = $state(0);
@@ -1075,9 +1070,6 @@ class PantokenStore {
         this.seedSeq = msg.seq;
         this.seedRequested = false;
         this.session = built;
-        // A seed always carries authoritative facet state — clear the optimistic
-        // override so the badge reflects the server's value.
-        this.optimisticFacet = null;
         this.settleStopOperation();
         this.ready = true;
         // A seed for the session we're creating may already carry its first prompt
@@ -1142,18 +1134,6 @@ class PantokenStore {
           this.locallyResolved.delete(ev.requestId);
         }
         foldEvent(this.session, ev);
-        // Clear the optimistic facet only when a snapshot event actually carries
-        // a facet — NOT on every fold. Most events (assistantDelta, toolStarted,
-        // etc.) don't touch state.facet, so a blanket clear would flicker the
-        // badge back to the stale server value mid-stream.
-        if (
-          (ev.type === "sessionOpened" ||
-            ev.type === "sessionUpdated" ||
-            ev.type === "runCompleted") &&
-          (ev.snapshot as any)?.facet !== undefined
-        ) {
-          this.optimisticFacet = null;
-        }
         this.settleStopOperation();
         // The creating session's first userMessage may have just folded in — retire the
         // optimistic placeholder so the real row takes over without a flicker.
@@ -1920,9 +1900,6 @@ class PantokenStore {
     // Save the draft we're leaving (the new-session draft, or the prior session's text)
     // before the composer re-points; navigating to a session exits any new-session draft.
     this.stashDraft();
-    // Clear any optimistic facet from the draft's Shift+Tab rotation — the
-    // session we're opening has its own authoritative facet.
-    this.optimisticFacet = null;
     this.draft = null;
     // Navigating away abandons any in-flight "creating session" placeholder — its
     // optimistic prompt row must not bleed onto the session we're switching to.
@@ -2148,9 +2125,6 @@ class PantokenStore {
   startDraft(cwd = ""): void {
     // Save whatever session/draft we're leaving before flipping into the new draft.
     this.stashDraft();
-    // Entering a draft clears any optimistic facet from a prior session's
-    // Shift+Tab rotation — the draft's own facet is local/synchronous.
-    this.optimisticFacet = null;
     // A fresh draft replaces any in-flight "creating session" placeholder.
     this.creatingSession = null;
     // Entering a draft also clears an in-flight existing-session open.
@@ -2196,9 +2170,6 @@ class PantokenStore {
   cancelDraft(): void {
     // Keep the new-session draft for next time, then drop back to the active session's draft.
     this.stashDraft();
-    // Clear any optimistic facet from the draft's Shift+Tab rotation — the
-    // active session's facet is authoritative now.
-    this.optimisticFacet = null;
     this.draft = null;
     this.creatingSession = null;
     this.loadDraft(this.composerDraftKey);
@@ -2515,9 +2486,6 @@ class PantokenStore {
    *  else the active session's. Mirrors composerConfig's draft-awareness for the
    *  FacetBadge and the Shift+Tab hotkey. */
   get composerFacet(): string {
-    // Optimistic first: Shift+Tab rotation sets this immediately so the badge
-    // reflects the new facet before the server snapshot arrives.
-    if (this.optimisticFacet) return this.optimisticFacet;
     return this.draft
       ? (this.draft.facet ?? "execute")
       : (this.session.facet ?? "execute");
@@ -2558,33 +2526,9 @@ class PantokenStore {
     if (this.draft) {
       this.draft = { ...this.draft, facet };
       this.persistDraftConfig();
-      // A draft write is local/synchronous — no optimistic gap to bridge.
-      this.optimisticFacet = null;
       return;
     }
     send({ type: "sessionAction", action: { kind: "setFacet", facet } });
-  }
-
-  /** Shift+Tab — rotate to the next (`dir:1`) or previous (`dir:-1`) facet in
-   *  `store.facets` order, wrapping. Draft-aware: writes the draft's pick while
-   *  a draft is open (applied at creation), else sends setFacet over the wire
-   *  for the active session. No-op when there are fewer than 2 facets.
-   *
-   *  When `opts.openMenu` is true (the Shift+Tab path), also opens the facet
-   *  menu and sets the optimistic facet so the badge reflects the rotation
-   *  before the server snapshot arrives. */
-  cycleFacet(dir: 1 | -1, opts?: { openMenu?: boolean }): void {
-    const facets = this.facets;
-    if (facets.length < 2) return;
-    const cur = this.composerFacet;
-    const idx = facets.indexOf(cur);
-    const next =
-      facets[(idx + dir + facets.length) % facets.length] ?? "execute";
-    this.setFacet(next);
-    if (opts?.openMenu) {
-      this.optimisticFacet = next;
-      this.openFacetMenu();
-    }
   }
 
   /** Ask the server to re-read the available facets (reload affordance for when

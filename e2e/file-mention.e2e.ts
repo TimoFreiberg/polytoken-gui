@@ -381,13 +381,14 @@ test("plain Tab still accepts the highlighted row after Shift+Tab has toggled ig
   await expect(box).toHaveValue("@~/.secrets ");
 });
 
-test("Shift+Tab in a skill takeover rotates facets (no toggle, no accept)", async ({
+test("Shift+Tab in a skill takeover opens the facet menu (no toggle, no accept, no rotation)", async ({
   page,
 }) => {
   // Skill/subagent/model takeovers have no notion of "ignored files", so the footer
-  // omits the ⇧Tab hint and the ignore-toggle doesn't apply. Shift+Tab now rotates
-  // facets instead of falling through to browser focus-nav (issue #19). The draft
-  // text is unchanged — no accept happened.
+  // omits the ⇧Tab hint and the ignore-toggle doesn't apply. Shift+Tab now opens
+  // the facet menu on the current facet (no rotation, no commit) instead of
+  // falling through to browser focus-nav (issue #50). The draft text is
+  // unchanged — no accept happened.
   const badge = page.getByTestId("facet-badge");
   await expect(badge).toHaveText("Execute");
 
@@ -400,8 +401,15 @@ test("Shift+Tab in a skill takeover rotates facets (no toggle, no accept)", asyn
   await box.press("Shift+Tab");
   // Not accepted (the draft would read "@skill:debug"), not modified at all…
   await expect(box).toHaveValue("@skill:");
-  // …and the facet rotated instead of browser backward focus-nav.
-  await expect(badge).toHaveText("Plan");
+  // …and the facet menu opened (no rotation — badge still "Execute").
+  await expect(badge).toHaveText("Execute");
+  const panel = page.getByRole("listbox", { name: "Facet" });
+  await expect(panel).toBeVisible();
+
+  // Close the facet menu — Escape aborts without changing the facet.
+  await page.keyboard.press("Escape");
+  await expect(panel).not.toBeVisible();
+  await expect(badge).toHaveText("Execute");
 });
 
 test("Escape still dismisses the menu after the ignore toggle has been used", async ({

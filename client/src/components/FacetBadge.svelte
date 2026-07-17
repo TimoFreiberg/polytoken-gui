@@ -5,10 +5,12 @@
   // Facet picker in the composer chrome. Shows the ACTUAL current facet — the
   // draft's pick while drafting a new session, else the active session's live
   // facet (composerFacet unifies the two, mirroring composerConfig); clicking
-  // opens a dropdown listing all available facets. Shift+Tab rotates AND opens
-  // the menu with focus in it — repeated Shift+Tab cycles through facets while
-  // keeping the menu open; arrow keys navigate; Enter selects; Escape closes;
-  // any other typed character dismisses the menu and types into the composer.
+  // opens a dropdown listing all available facets. Shift+Tab opens the menu on
+  // the current facet (no rotation, no commit) with focus in it; repeated
+  // Shift+Tab moves the highlight through entries (like ArrowDown); arrow keys
+  // navigate; Enter commits the highlighted facet; Escape closes without
+  // changing; any other typed letter is a noop (menu stays open, letter not
+  // inserted into the composer).
   //
   // Adventurous handoff is a slide-toggle on the right side of the Plan row.
   // Right/Left act on the highlighted Plan row without selecting it; the folded
@@ -16,9 +18,9 @@
   // no-ops once the snapshot matches.
   //
   // The dropdown chrome (badge, open/close, keyboard nav, backdrop, panel CSS)
-  // lives in MenuBadge; this component supplies the facet items + modifier as
-  // the panel body snippet, plus the forward-key handler that dismisses the
-  // menu on a typed letter and inserts it into the composer.
+  // lives in MenuBadge; this component supplies the facet items as the panel
+  // body snippet and an ArrowRight/ArrowLeft handler for the adventurous-handoff
+  // toggle.
   const facet = $derived(store.composerFacet);
   const isPlan = $derived(facet?.toLowerCase() === "plan");
   const label = $derived(isPlan ? "Plan" : facet.charAt(0).toUpperCase() + facet.slice(1));
@@ -41,21 +43,6 @@
   );
 
   function onUnhandledKeydown(e: KeyboardEvent, sel: number): void {
-    // Shift+Tab while the menu is open: rotate to the next facet and keep the
-    // menu open (re-opens via facetMenuOpenN bump). This mirrors the composer's
-    // Shift+Tab handler so repeated rotation works from within the panel.
-    if (
-      e.key === "Tab" &&
-      e.shiftKey &&
-      !e.ctrlKey &&
-      !e.metaKey &&
-      !e.altKey
-    ) {
-      e.preventDefault();
-      e.stopPropagation();
-      store.cycleFacet(1, { openMenu: true });
-      return;
-    }
     if (
       (e.key !== "ArrowRight" && e.key !== "ArrowLeft") ||
       store.draft ||
@@ -72,19 +59,6 @@
     // arrives remains subject to the existing toggle round trip.
     if (handoff !== desired) store.toggleAdventurousHandoff();
   }
-
-  // A typed letter from the open facet menu: dismiss the menu, restore focus to
-  // the composer textarea, and insert the character at the cursor position (not
-  // at the end — honors QUALITY.md Q3 re: no silent data loss for selections).
-  function onForwardKey(e: KeyboardEvent): void {
-    const ch = e.key;
-    const draft = store.composerDraft;
-    const start = store.composerSelectionStart;
-    const end = store.composerSelectionEnd;
-    store.composerDraft = draft.slice(0, start) + ch + draft.slice(end);
-    store.composerSelectionStart = store.composerSelectionEnd = start + ch.length;
-    store.focusComposer();
-  }
 </script>
 
 <MenuBadge
@@ -99,8 +73,6 @@
   minWidth="160px"
   closeLabel="Close facet menu"
   openExternal={store.facetMenuOpenN}
-  forwardUnknownKeys={true}
-  onForwardKey={onForwardKey}
   onSelect={(i) => store.setFacet(facets[i] ?? "execute")}
   onKeydown={onUnhandledKeydown}
 >

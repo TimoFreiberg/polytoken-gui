@@ -5,8 +5,10 @@ import { gotoFresh, openSidebar } from "./helpers.js";
 // it sends a setFacet wire message → the mock emits a sessionUpdated snapshot
 // with the new facet → foldEvent propagates → the badge updates. The badge shows
 // the ACTUAL current facet ("Execute"/"Plan"), not the old affordance label.
-// Shift+Tab rotates AND opens the dropdown (focus moves into it). Number keys
-// (1-9) quick-select inside the open dropdown.
+// Shift+Tab opens the dropdown on the current facet (no rotation); repeated
+// Shift+Tab moves the highlight through entries; Enter commits; Escape aborts;
+// other typed letters are a noop. Number keys (1-9) quick-select inside the
+// open dropdown.
 
 test.beforeEach(async ({ page }) => {
   await gotoFresh(page);
@@ -119,32 +121,50 @@ test("Right and Left set Plan handoff from the authoritative snapshot", async ({
   await expect(badge).toHaveText("Plan");
 });
 
-test("Shift+Tab rotates through facets and opens the menu with focus in it", async ({
+test("Shift+Tab opens the menu without rotating; repeated Shift+Tab moves the highlight", async ({
   page,
 }) => {
   const badge = page.getByTestId("facet-badge");
   await expect(badge).toHaveText("Execute");
 
-  // Focus the composer textarea — Shift+Tab must rotate facets AND open the
-  // facet menu, moving focus into the panel (not browser reverse-focus).
+  // Focus the composer textarea — Shift+Tab opens the facet menu on the CURRENT
+  // facet (no rotation, no commit), moving focus into the panel.
   await page.getByPlaceholder("Message pantoken…").focus();
 
   await page.keyboard.press("Shift+Tab");
-  await expect(badge).toHaveText("Plan");
-  // The facet panel is visible and focused — keyboard nav lives there now.
+  // Badge unchanged on first press — no rotation.
+  await expect(badge).toHaveText("Execute");
   const panel = page.getByRole("listbox", { name: "Facet" });
   await expect(panel).toBeVisible();
   await expect(panel).toBeFocused();
 
-  // Shift+Tab again while the panel is focused — rotates to Research, menu stays open.
+  // The facets in order: Execute(0), Plan(1), Research(2). The menu opens with
+  // sel at the current facet (Execute, index 0). Shift+Tab moves the highlight
+  // to the next entry (Plan, index 1) — badge still "Execute" (no commit).
+  const planOption = panel.getByRole("option", { name: "Plan" });
   await page.keyboard.press("Shift+Tab");
-  await expect(badge).toHaveText("Research");
-  await expect(panel).toBeVisible();
-
-  // Wraps around to Execute.
-  await page.keyboard.press("Shift+Tab");
+  await expect(planOption).toHaveClass(/hl/);
   await expect(badge).toHaveText("Execute");
   await expect(panel).toBeVisible();
+  await expect(panel).toBeFocused();
+
+  // Shift+Tab again — highlight moves to Research (index 2). Badge unchanged.
+  const researchOption = panel.getByRole("option", { name: "Research" });
+  await page.keyboard.press("Shift+Tab");
+  await expect(researchOption).toHaveClass(/hl/);
+  await expect(badge).toHaveText("Execute");
+  await expect(panel).toBeVisible();
+
+  // Shift+Tab wraps back to Execute (index 0).
+  const executeOption = panel.getByRole("option", { name: "Execute" });
+  await page.keyboard.press("Shift+Tab");
+  await expect(executeOption).toHaveClass(/hl/);
+  await expect(badge).toHaveText("Execute");
+
+  // Enter commits the highlighted facet (Execute) and closes the menu.
+  await page.keyboard.press("Enter");
+  await expect(panel).not.toBeVisible();
+  await expect(badge).toHaveText("Execute");
 });
 
 test("the facet panel stays anchored (left edge stable) when cycling with Shift+Tab", async ({
@@ -153,11 +173,12 @@ test("the facet panel stays anchored (left edge stable) when cycling with Shift+
   const badge = page.getByTestId("facet-badge");
   await expect(badge).toHaveText("Execute");
 
-  // Focus the composer textarea, then Shift+Tab to open the facet menu (rotates
-  // to Plan). The panel opens upward and is left-anchored to the badge.
+  // Focus the composer textarea, then Shift+Tab to open the facet menu (no
+  // rotation — badge stays "Execute"). The panel opens upward and is
+  // left-anchored to the badge.
   await page.getByPlaceholder("Message pantoken…").focus();
   await page.keyboard.press("Shift+Tab");
-  await expect(badge).toHaveText("Plan");
+  await expect(badge).toHaveText("Execute");
   const panel = page.getByRole("listbox", { name: "Facet" });
   // Wait for the panel to settle: visible, then focused (focus moves in after
   // open — this also lets the reveal transition finish before measuring).
@@ -171,15 +192,16 @@ test("the facet panel stays anchored (left edge stable) when cycling with Shift+
   expect(badgeBox1).not.toBeNull();
   expect(Math.abs(panelBox1!.x - badgeBox1!.x)).toBeLessThanOrEqual(1);
 
-  // Shift+Tab again (rotates to Research) — the panel's left edge must not move.
+  // Shift+Tab again (highlight moves to Plan, no commit) — the panel's left
+  // edge must not move. Badge unchanged.
   await page.keyboard.press("Shift+Tab");
-  await expect(badge).toHaveText("Research");
+  await expect(badge).toHaveText("Execute");
   await expect(panel).toBeVisible();
   const panelBox2 = await panel.boundingBox();
   expect(panelBox2).not.toBeNull();
   expect(panelBox2!.x).toBe(panelBox1!.x);
 
-  // Shift+Tab again (wraps to Execute) — still stable.
+  // Shift+Tab again (highlight moves to Research) — still stable.
   await page.keyboard.press("Shift+Tab");
   await expect(badge).toHaveText("Execute");
   await expect(panel).toBeVisible();
@@ -216,38 +238,44 @@ test("Escape closes the facet menu without changing the facet", async ({
   const badge = page.getByTestId("facet-badge");
   await expect(badge).toHaveText("Execute");
 
-  // Shift+Tab opens the menu and rotates to Plan.
+  // Shift+Tab opens the menu WITHOUT rotating — badge still "Execute".
   await page.getByPlaceholder("Message pantoken…").focus();
   await page.keyboard.press("Shift+Tab");
-  await expect(badge).toHaveText("Plan");
+  await expect(badge).toHaveText("Execute");
   const panel = page.getByRole("listbox", { name: "Facet" });
   await expect(panel).toBeVisible();
 
-  // Escape closes the menu but does NOT revert the rotation.
+  // Move the highlight to Plan (no commit).
+  await page.keyboard.press("Shift+Tab");
+  await expect(panel.getByRole("option", { name: "Plan" })).toHaveClass(/hl/);
+  await expect(badge).toHaveText("Execute");
+
+  // Escape closes the menu without committing the highlight — badge stays
+  // "Execute" (Escape aborts; the highlight was never committed).
   await page.keyboard.press("Escape");
   await expect(panel).not.toBeVisible();
-  await expect(badge).toHaveText("Plan");
+  await expect(badge).toHaveText("Execute");
 });
 
-test("typing a letter from the open facet menu dismisses it and types in the composer", async ({
-  page,
-}) => {
+test("typing a letter from the open facet menu is a noop", async ({ page }) => {
   const badge = page.getByTestId("facet-badge");
   await expect(badge).toHaveText("Execute");
 
   const textarea = page.getByPlaceholder("Message pantoken…");
   await textarea.focus();
 
-  // Shift+Tab opens the menu (and rotates to Plan).
+  // Shift+Tab opens the menu (no rotation — badge stays "Execute").
   await page.keyboard.press("Shift+Tab");
   const panel = page.getByRole("listbox", { name: "Facet" });
   await expect(panel).toBeVisible();
+  await expect(panel).toBeFocused();
 
-  // Type "h" — the menu dismisses, focus returns to the composer, and "h" is typed.
+  // Type "h" — the menu must stay open, focus stays in the panel, and "h" is
+  // NOT inserted into the composer textarea (a noop, not a forward-and-dismiss).
   await page.keyboard.press("h");
-  await expect(panel).not.toBeVisible();
-  await expect(textarea).toBeFocused();
-  await expect(textarea).toHaveValue("h");
+  await expect(panel).toBeVisible();
+  await expect(panel).toBeFocused();
+  await expect(textarea).toHaveValue("");
 });
 
 test("the handoff slide-toggle is inline on the Plan row, not a separate line", async ({
@@ -321,7 +349,8 @@ test("the facet menu does not auto-open after a draft remount", async ({
   await expect(badge).toHaveText("Execute");
   await page.getByPlaceholder("Message pantoken…").focus();
   await page.keyboard.press("Shift+Tab");
-  await expect(badge).toHaveText("Plan");
+  // No rotation — badge stays "Execute".
+  await expect(badge).toHaveText("Execute");
   const panel = page.getByRole("listbox", { name: "Facet" });
   await expect(panel).toBeVisible();
   await page.keyboard.press("Escape");
@@ -330,13 +359,14 @@ test("the facet menu does not auto-open after a draft remount", async ({
   // Open a new-session draft, then abandon it by switching to an existing
   // session in the sidebar. This unmounts Composer (store.draft set) and
   // remounts it against the existing session (store.draft cleared) — resetting
-  // MenuBadge's local state. Switch to a DIFFERENT session than the greeting
-  // (whose facet the Shift+Tab above rotated to Plan): "Explore the fold
-  // reducer" still has the default Execute facet, so the post-remount rotation
-  // trace is clean.
+  // MenuBadge's local state. The greeting session's facet is unchanged
+  // ("Execute") since Shift+Tab no longer rotates, so the post-remount trace is
+  // clean regardless of which session we land on.
   await openSidebar(page);
   await page.getByTestId("sidebar").getByTestId("sidebar-new-session").getByText("New session").click();
-  await expect(page.getByPlaceholder("Describe a task or ask a question…")).toBeVisible();
+  await expect(
+    page.getByPlaceholder("Describe a task or ask a question…"),
+  ).toBeVisible();
   await openSidebar(page);
   await page
     .getByTestId("sidebar")
@@ -349,11 +379,11 @@ test("the facet menu does not auto-open after a draft remount", async ({
   // The facet menu must NOT have auto-popped on the remount.
   await expect(page.getByRole("listbox", { name: "Facet" })).toHaveCount(0);
 
-  // AC.4 (post-remount variant) — a fresh Shift+Tab still rotates + opens the
-  // menu, proving the hotkey path works after a remount. Execute → Plan.
+  // AC.4 (post-remount variant) — a fresh Shift+Tab still opens the menu
+  // (without rotating). Badge stays "Execute".
   await page.getByPlaceholder("Message pantoken…").focus();
   await page.keyboard.press("Shift+Tab");
-  await expect(badge).toHaveText("Plan");
+  await expect(badge).toHaveText("Execute");
   await expect(page.getByRole("listbox", { name: "Facet" })).toBeVisible();
 });
 
@@ -391,7 +421,7 @@ test("clicking the facet badge in the draft opens the dropdown for the DRAFT's f
   await expect(page.getByTestId("facet-badge")).toHaveText("Execute");
 });
 
-test("Shift+Tab in the new-session draft rotates the DRAFT's facet, not the old session's", async ({
+test("Shift+Tab in the new-session draft opens the menu without rotating; Enter commits the draft pick", async ({
   page,
 }) => {
   await openSidebar(page);
@@ -405,21 +435,33 @@ test("Shift+Tab in the new-session draft rotates the DRAFT's facet, not the old 
   const draftBadge = page.getByTestId("facet-badge");
   await expect(draftBadge).toHaveText("Execute");
 
-  // Focus the composer textarea and Shift+Tab to rotate the draft's facet.
-  // Shift+Tab also opens the facet menu and moves focus into it.
+  // Focus the composer textarea and Shift+Tab to open the facet menu — no
+  // rotation, badge stays "Execute".
   await page.getByPlaceholder("Describe a task or ask a question…").focus();
   await page.keyboard.press("Shift+Tab");
-  await expect(draftBadge).toHaveText("Plan");
-  // The facet menu is now open — close it before continuing.
+  await expect(draftBadge).toHaveText("Execute");
   const panel = page.getByRole("listbox", { name: "Facet" });
   await expect(panel).toBeVisible();
-  await page.keyboard.press("Escape");
+
+  // Shift+Tab moves the highlight to Plan (no commit). Enter commits the
+  // highlighted facet (Plan) to the draft and closes the menu.
+  await page.keyboard.press("Shift+Tab");
+  await expect(panel.getByRole("option", { name: "Plan" })).toHaveClass(/hl/);
+  await expect(draftBadge).toHaveText("Execute");
+  await page.keyboard.press("Enter");
   await expect(panel).not.toBeVisible();
+  await expect(draftBadge).toHaveText("Plan");
 
   // Navigate back to the old session — its facet must be unchanged ("Execute").
   await openSidebar(page);
   await row(page, "Wire up the WebSocket bridge").click();
   await expect(page.getByTestId("facet-badge")).toHaveText("Execute");
+
+  // Navigate back to the draft — the draft's committed pick (Plan) is preserved.
+  await openSidebar(page);
+  await page.getByTestId("sidebar").getByTestId("sidebar-new-session").getByText("New session").click();
+  await expect(page.getByTestId("new-session")).toBeVisible();
+  await expect(page.getByTestId("facet-badge")).toHaveText("Plan");
 });
 
 test("clicking the facet badge in the draft view toggles the draft, not the old session", async ({

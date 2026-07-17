@@ -511,7 +511,7 @@
       lastFocusN = n;
       queueMicrotask(() => {
         ta?.focus();
-        // After a focus-restore from the facet menu's forward-key path, place
+        // After a focus-restore from the @-mention insertion path, place
         // the caret at the insertion point (not the end of the text).
         const ss = store.composerSelectionStart;
         const se = store.composerSelectionEnd;
@@ -881,8 +881,8 @@
     autosize();
     // Track cursor so @-mentions work inline.
     cursorPos = ta?.selectionStart ?? 0;
-    // Sync selection range to the store so the facet menu's forward-key path
-    // can insert a typed letter at the cursor (not at the end).
+    // Sync selection range to the store so the @-mention insertion path
+    // can place the caret at the cursor (not at the end).
     store.composerSelectionStart = ta?.selectionStart ?? 0;
     store.composerSelectionEnd = ta?.selectionEnd ?? 0;
     // A user keystroke ends history navigation: the edited text is the new live draft.
@@ -1172,13 +1172,14 @@
       ignoreOff = !ignoreOff;
       return;
     }
-    // Shift+Tab — rotate through facets (issue #19). Fires only when no contextual
+    // Shift+Tab — open the facet menu (issue #50). Fires only when no contextual
     // menu owns Shift+Tab: the @-file ignore-toggle block above already returned for
     // project/external @-mentions, and the slash menu (checked earlier) returns on its
     // own keys. Skill/subagent/model @-takeovers have no ignore-toggle
-    // (ignoreToggleApplies is false), so Shift+Tab reaches here and rotates facets
-    // AND opens the facet menu — focus moves into the panel so the user can
-    // continue navigating by arrow keys / Enter / Escape / repeated Shift+Tab.
+    // (ignoreToggleApplies is false), so Shift+Tab reaches here and opens the facet
+    // menu on the CURRENT facet (no rotation, no commit) — focus moves into the panel
+    // so the user can navigate by Shift+Tab/arrow keys (highlight only), Enter to
+    // commit, Escape to abort. Other typed keys are ignored by the panel.
     if (
       e.key === "Tab" &&
       e.shiftKey &&
@@ -1187,7 +1188,7 @@
       !e.altKey
     ) {
       e.preventDefault();
-      store.cycleFacet(1, { openMenu: true });
+      store.openFacetMenu();
       return;
     }
     // @-reference keyboard handling (after slash, so slash takes priority if both
@@ -1387,6 +1388,10 @@
         ) {
           return;
         }
+        // An open MenuBadge panel (role=listbox, e.g. the facet menu) owns the
+        // keyboard — a typed letter is a noop inside it, not a cue to steal
+        // focus back to the textarea.
+        if (el.getAttribute("role") === "listbox") return;
       }
       ta.focus();
     }

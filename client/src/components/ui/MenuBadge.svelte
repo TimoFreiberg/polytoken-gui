@@ -5,12 +5,13 @@
 
   // Shared dropdown primitive for the badge-style pickers in the composer chrome
   // (FacetBadge, PermissionBadge). Owns the open/close state, keyboard navigation
-  // (Esc/↑↓/↵), the click-away backdrop, and the panel/badge/group-title chrome.
+  // (Esc/↑↓/↵/⇧Tab), the click-away backdrop, and the panel/badge/group-title chrome.
   // The caller passes the panel body (option buttons + any extras like FacetBadge's
   // handoff toggle / reload) as a snippet, receiving the current keyboard-highlight
   // index `sel` and a `close()` callback. An optional key callback receives only keys
-  // not consumed by the primitive, allowing a picker-specific modifier without
-  // duplicating listbox navigation.
+  // not consumed by the primitive, allowing a picker-specific modifier (e.g. FacetBadge's
+  // ArrowRight/ArrowLeft adventurous-handoff toggle) without duplicating listbox
+  // navigation.
   //
   // Conventions (AGENTS.md): <Chevron variant="menu"> for the glyph,
   // transition:reveal for the open/close animation. Every clickable element carries
@@ -28,10 +29,8 @@
     minWidth = "200px",
     closeLabel = "Close menu",
     openExternal = 0,
-    forwardUnknownKeys = false,
     onSelect,
     onKeydown: onUnhandledKeydown,
-    onForwardKey,
     body,
   }: {
     label: string;
@@ -45,15 +44,8 @@
     minWidth?: string;
     closeLabel?: string;
     openExternal?: number;
-    /** When true, a single printable character (no modifiers except Shift)
-     *  dismisses the panel and is forwarded via onForwardKey — e.g. the facet
-     *  menu returns the keystroke to the composer. Default false preserves
-     *  PermissionBadge's existing behavior. */
-    forwardUnknownKeys?: boolean;
     onSelect?: (index: number) => void;
     onKeydown?: (event: KeyboardEvent, sel: number) => void;
-    /** Called with the forwarded KeyboardEvent when forwardUnknownKeys fires. */
-    onForwardKey?: (event: KeyboardEvent) => void;
     body: Snippet<[{ sel: number; close: () => void }]>;
   } = $props();
 
@@ -61,7 +53,7 @@
   let sel = $state(0);
   let panelEl = $state<HTMLElement>();
 
-  // External open trigger (e.g. Shift+Tab rotate-and-open). A counter so each
+  // External open trigger (e.g. Shift+Tab open-menu). A counter so each
   // request re-fires even if the menu was already open — re-opening resets sel
   // + focuses the panel.
   //
@@ -127,10 +119,10 @@
       !e.metaKey &&
       !e.altKey
     ) {
-      // Shift+Tab: forward to the picker-specific handler (FacetBadge cycles
-      // facets while keeping the menu open + focused). Do NOT close here.
+      // Shift+Tab: move the highlight to the next entry (wrapping), mirroring
+      // ArrowDown's direction. Do NOT commit — Enter commits, Escape aborts.
       e.preventDefault();
-      onUnhandledKeydown?.(e, sel);
+      sel = count > 0 ? (sel + 1) % count : 0;
     } else {
       // Number keys 1–9: quick-select the Nth option.
       const num = parseInt(e.key, 10);
@@ -138,23 +130,12 @@
         e.preventDefault();
         onSelect?.(num - 1);
         close();
-      } else if (
-        forwardUnknownKeys &&
-        e.key.length === 1 &&
-        !e.ctrlKey &&
-        !e.metaKey &&
-        !e.altKey
-      ) {
-        // Single printable char (no modifiers except Shift): dismiss the panel
-        // and forward the keystroke to the caller — e.g. FacetBadge replays it
-        // into the composer textarea.
-        e.preventDefault();
-        close();
-        onForwardKey?.(e);
       } else {
         onUnhandledKeydown?.(e, sel);
         // If the picker-specific handler didn't consume it (no preventDefault),
         // prevent browser focus traversal (e.g. plain Tab moves focus away).
+        // Single printable letters fall through here and are effectively
+        // ignored (prevented, not inserted) — a noop, as required.
         if (!e.defaultPrevented) e.preventDefault();
       }
     }
