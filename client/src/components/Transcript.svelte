@@ -30,6 +30,25 @@
     planRestore,
   } from "../lib/scroll-position.js";
   import { nextPinned } from "../lib/scroll-follow.js";
+  import {
+    DRIFT_THRESHOLD,
+    isPinnedDrift,
+    nextDriftState,
+    pushSample,
+    formatTrace,
+    type DriftSample,
+  } from "../lib/scroll-watch.js";
+
+  // Whether the ?dev URL flag is set — gates the VISIBLE debug notice (the self-heal is
+  // active always). The same gate logRenderTiming uses (store.svelte.ts). Evaluated once at
+  // component init: ?dev is a boot-time URL flag, not a runtime toggle, and the ?dev-absent
+  // e2e case does a full page reload (re-initializing the component). A future SPA routing
+  // transition that strips ?dev without a reload would leave this stale — acceptable since
+  // ?dev is only ever added at boot, never removed mid-session in practice.
+  const devMode =
+    typeof window !== "undefined"
+      ? new URLSearchParams(window.location.search).has("dev")
+      : false;
 
   const items = $derived(store.transcriptItems);
 
@@ -303,6 +322,116 @@
     progScrollUntil = Date.now() + ms;
   }
 
+  // ── Pinned-scroll drift watcher: self-heal + debug observability ──────────────
+  //
+  // A watcher that continuously checks the pinned invariant: a pinned scroller SHOULD sit
+  // at the bottom (gap ≈ 0). When the viewport has drifted far from it (gap > DRIFT_THRESHOLD),
+  // the watcher (a) self-heals by re-asserting scrollTo(bottom) and (b) — only with ?dev —
+  // raises a sticky in-app notice offering a "Copy trace" of the recent scroll geometry.
+  //
+  // WHY THIS EXISTS (the gap in the follow logic this closes):
+  //  - The streaming-pin $effect (below) only re-asserts the bottom when `contentSize`
+  //    changes, and `contentSize` tracks only item count + the LAST item's streaming length.
+  //    It does NOT tick on: a "Worked for Ns" block collapsing (animated reveal slide), an
+  //    image decode, a markstream block reflow when final/fade flips, or growth in a non-last
+  //    item.
+  //  - The only other re-assert path is the ResizeObserver → applySettle(), but it is gated
+  //    on `Date.now() < settleUntil` — a ~500ms window opened only by settleScroll() on
+  //    send/switch/restore.
+  //  - So OUTSIDE that window, a height change while `pinned` silently strands the viewport
+  //    past/short of the content end, showing empty space — the intermittent "transcript goes
+  //    blank while streaming, any scroll fixes it" bug (any scroll retriggers onScroll →
+  //    nextPinned → the streaming-pin effect → settleScroll, which is the manual "fix").
+  //
+  // The watcher closes the gap directly: it checks the invariant on a sampling interval AND
+  // on each onScroll, regardless of which height-churn event caused the stranding. The
+  // self-heal is a no-regret fix (a pinned scroller should be at the bottom); the notice is
+  // ?dev-gated observability for the later root-cause fix. The pure decisions live in
+  // scroll-watch.ts (unit-tested). See scroll-follow.ts for the related pin decision.
+  let traceBuffer: DriftSample[] = [];
+  let driftReported = false;
+  // The detection instant of the current/last drift episode — captured for the trace header
+  // so the root-cause analysis knows when the drift was first observed.
+  let driftDetectedAt = 0;
+
+  /** Capture a scroll-geometry sample, push it to the ring buffer, evaluate drift, and (if
+   *  drifting) self-heal + raise the debug notice. Called on the 250ms sampling interval and
+   *  on each onScroll (so user scrolls land in the trace too). Pure decisions are delegated
+   *  to scroll-watch.ts. */
+  function sampleGeometry(): void {
+    if (!scroller) return;
+    const scrollTop = scroller.scrollTop;
+    const scrollHeight = scroller.scrollHeight;
+    const clientHeight = scroller.clientHeight;
+    const gap = scrollHeight - scrollTop - clientHeight;
+    const s: DriftSample = {
+      t: Date.now(),
+      scrollTop,
+      scrollHeight,
+      clientHeight,
+      gap,
+      pinned,
+      turnActive: store.turnActive,
+    };
+    traceBuffer = pushSample(traceBuffer, s, 40);
+
+    // Episode latch: fire the notice once per episode (no storm while it sits drifted),
+    // re-arm when the gap returns under threshold OR the viewport is no longer pinned. The
+    // latch gates only the NOTICE; the self-heal runs every tick it's needed.
+    //
+    // The latch must be evaluated ONLY for genuine pinned drift — not for a large gap while
+    // scrolled up (pinned=false). nextDriftState keys on `gap > threshold` alone (it doesn't
+    // know `pinned`), so feeding it a non-pinned large gap would arm `driftReported=true` and
+    // suppress the notice for the NEXT real pinned drift — the exact evidence-capture scenario
+    // this feature exists for. So: if not drifting, reset the latch and bail; only when
+    // drifting do we ask the latch whether to notify.
+    if (!isPinnedDrift({ pinned, gap })) {
+      driftReported = false; // re-arm: not drifting (or not pinned)
+      return;
+    }
+    const latch = nextDriftState(driftReported, gap, DRIFT_THRESHOLD);
+    driftReported = latch.reported;
+
+    // SELF-HEAL (always on, not dev-gated): re-assert the bottom. Mark it as ours via
+    // markProgScroll(300) — the window must span the 250ms sample interval plus scroll-event-
+    // dispatch slack, since markProgScroll's default 120ms would lapse before the next tick
+    // and let the heal's own scroll event run onScroll ungated (persisting the corrected
+    // position and dropping any in-flight nav cursor). 300ms covers the next tick's potential
+    // re-heal. Leave `pinned` true — we're correcting a pinned scroller back to where it
+    // should be, not un-pinning it.
+    markProgScroll(300);
+    scroller.scrollTo({ top: scrollHeight });
+
+    // DEBUG NOTICE (?dev-gated): sticky, with a "Copy trace" action. The notice fires only
+    // on the first detection of an episode (the latch above); sustained drift holds.
+    if (devMode && latch.shouldNotify) {
+      driftDetectedAt = s.t;
+      store.chatNotice(
+        `Scroll drift self-corrected (gap was ${Math.round(gap)}px)`,
+        {
+          durationMs: 0, // sticky — don't miss it
+          action: { label: "Copy trace", run: copyTrace },
+        },
+      );
+    }
+  }
+
+  /** Format the ring buffer as a paste-able JSON trace and copy it to the clipboard via the
+   *  store helper (which surfaces clipboard errors). Called by the notice's "Copy trace"
+   *  action button (NoticeItem runs action.run() then onDismiss, so each episode yields
+   *  exactly one trace copy). */
+  async function copyTrace(): Promise<void> {
+    const trace = formatTrace(traceBuffer, {
+      detectedAt: driftDetectedAt,
+      ua: typeof navigator !== "undefined" ? navigator.userAgent : "",
+      viewport:
+        typeof window !== "undefined"
+          ? { w: window.innerWidth, h: window.innerHeight }
+          : { w: 0, h: 0 },
+    });
+    await store.copyToClipboard(trace);
+  }
+
   // Per-session reading position, persisted so switching back to a warmed session
   // restores where you were instead of always jumping to the bottom. Saved on scroll
   // (debounced), on session-switch-away, and on pagehide (mirrors the draft stash).
@@ -380,6 +509,10 @@
     // scrolls (prompt-stepping / settleScroll) — those set progScrollUntil, and saving a
     // transient mid-scroll position would restore to a spot the user never chose.
     if (Date.now() >= progScrollUntil) scheduleSavePosition();
+    // Capture a scroll-geometry sample for the drift watcher (self-heal + trace). Called
+    // AFTER the pin decision so the sample reflects the updated `pinned` state. User scrolls
+    // land in the trace too, so the evidence shows the geometry leading up to a drift.
+    sampleGeometry();
   }
 
   // Re-assert a scroll position as late layout changes the content height — images decode,
@@ -634,10 +767,17 @@
       });
       settleObserver.observe(content);
     }
+    // Drift watcher sampling interval: checks the pinned invariant on a steady cadence so a
+    // drift is caught within a beat even without a scroll event (the gap in the follow logic
+    // strands the viewport silently — see the watcher comment above). ~250ms is frequent
+    // enough to catch a drift promptly, cheap (4 property reads). onScroll also samples, so
+    // user scrolls land in the trace; this interval covers the no-input case.
+    const driftTimer = setInterval(sampleGeometry, 250);
     return () => {
       window.removeEventListener("keydown", onKey);
       window.removeEventListener("pagehide", onPageHide);
       settleObserver?.disconnect();
+      clearInterval(driftTimer);
     };
   });
 </script>

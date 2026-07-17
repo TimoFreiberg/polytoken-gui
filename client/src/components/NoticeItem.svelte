@@ -12,8 +12,11 @@
     <button
       class="action"
       title={toast.action.label}
-      onclick={() => {
-        toast.action?.run();
+      onclick={async () => {
+        // Await the action before dismissing so an async copy/write completes before the
+        // toast disappears — otherwise a `copyTrace` that writes to the clipboard
+        // race-loses against the immediate onDismiss.
+        await toast.action?.run();
         onDismiss(toast.id);
       }}>{toast.action.label}</button
     >

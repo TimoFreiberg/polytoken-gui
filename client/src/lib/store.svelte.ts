@@ -102,7 +102,7 @@ export interface Toast {
   id: number;
   message: string;
   scope: NoticeScope;
-  action?: { label: string; run: () => void };
+  action?: { label: string; run: () => void | Promise<void> };
 }
 
 /** Client-visible lifecycle of one request to stop the focused turn. This is
