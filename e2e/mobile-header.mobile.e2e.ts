@@ -32,16 +32,21 @@ test("healthy status is silent and the session title owns the mobile header", as
   await expectTouchSafe(header.getByTestId("sidebar-open"));
 });
 
-test("Settings and quiet Context navigation live in the Sessions footer", async ({
+test("Settings is an icon-only sidebar button and Context lives in the header", async ({
   page,
 }) => {
   await openSidebar(page);
   const settings = page.getByTestId("settings-toggle");
-  const context = page.getByTestId("sidebar-context");
-  await expect(settings).toHaveText(/Settings/);
-  await expect(context).toHaveText(/Context/);
+  await expect(settings).toBeVisible();
+  // Settings is now icon-only — no "Settings" text label.
+  await expect(settings).not.toContainText("Settings");
   await expectTouchSafe(settings);
-  await expectTouchSafe(context);
+
+  // Context is no longer in the sidebar footer; the header entry is always visible.
+  await expect(page.getByTestId("sidebar-context")).toHaveCount(0);
+  const contextOpen = page.getByTestId("context-open");
+  await expect(contextOpen).toBeVisible();
+  await expectTouchSafe(contextOpen);
 
   await settings.click();
   await expect(page.getByTestId("settings-panel")).toBeVisible();
@@ -53,6 +58,7 @@ test("a new-session draft does not expose inactive-session Context", async ({
   await openSidebar(page);
   await page.getByTestId("sidebar-new-session").getByRole("button").click();
   await openSidebar(page);
+  // The sidebar Context button is gone entirely; the header entry hides while drafting.
   await expect(page.getByTestId("sidebar-context")).toHaveCount(0);
   await expect(page.getByTestId("context-open")).toHaveCount(0);
   await expect(page.getByTestId("settings-toggle")).toBeVisible();

@@ -103,7 +103,7 @@ Research across Claude iOS, ChatGPT, GitHub Mobile, Linear converged clearly:
   indicator. *Not* a bottom tab bar (these are session-scoped panels, not app
   sections; the bottom belongs to the composer/keyboard). *Not* an overflow
   menu (hides the badge). *Not* three separate header icons (no room at 375px
-  next to bell + settings + status dot; fallback option if one-tap-per-panel
+  next to bell + status dot; fallback option if one-tap-per-panel
   proves necessary).
 - **View type:** tapping it opens a **full-screen Context screen** (GitHub
   Mobile "Files changed" pattern), not a bottom sheet — sheets are for
@@ -137,8 +137,9 @@ session + scroll-to-approval, and verify the tap→approve flow is two taps max.
 - **Bug (seen in preview at 375px):** the picker row overflows — the model chip
   clips off-screen. Compact the chips on phone (icon + short label, or a
   single "session setup" chip opening a sheet with the three pickers).
-- Header at 375px: drawer toggle · title (truncates, exists) · bell · settings
-  · status dot · context entry. Audit spacing/hit areas.
+- Header at 375px: drawer toggle · title (truncates, exists) · bell · status dot
+  · context entry. Settings is an icon-only button in the sidebar footer (not a
+  header element). Audit spacing/hit areas.
 - Keyboard: `keyboard-inset.ts` exists; verify composer stays above the
   keyboard with the new views open, and that Context screen scroll position
   survives keyboard show/hide.

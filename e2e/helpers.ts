@@ -90,18 +90,15 @@ export async function openSidebar(page: Page): Promise<void> {
 }
 
 /** Ensure the right context panel (flagged files, background jobs, todos) is open.
- *  Uses the visible desktop/badged-header entry when available; an empty phone header
- *  stays quiet, so that path opens Context through the labeled Sessions destination. */
+ *  The header `context-open` entry is always visible when the panel is closed and
+ *  not drafting, so this clicks it directly.
+ *
+ *  Must not be called during a draft — `context-open` is hidden while drafting
+ *  (use the `⌘⇧J` hotkey via keyboard instead). */
 export async function openRightSidebar(page: Page): Promise<void> {
   const panel = page.getByTestId("right-sidebar");
   if ((await panel.getAttribute("data-open")) !== "true") {
-    const headerEntry = page.getByTestId("context-open");
-    if (await headerEntry.isVisible()) {
-      await headerEntry.click();
-    } else {
-      await openSidebar(page);
-      await page.getByTestId("sidebar-context").click();
-    }
+    await page.getByTestId("context-open").click();
   }
   await expect(panel).toHaveAttribute("data-open", "true");
 }

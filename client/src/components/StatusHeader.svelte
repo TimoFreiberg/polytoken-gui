@@ -215,7 +215,7 @@
          panel-right icon faces the panel it summons. -->
     {#if !store.rightSidebarOpen && !drafting}
       <IconButton
-        class={contextCount === 0 ? "context-entry context-empty" : "context-entry"}
+        class="context-entry"
         data-testid="context-open"
         data-context-count={contextCount}
         title="Show context panel (⌘⇧J)"
@@ -392,9 +392,6 @@
       min-width: 44px;
       min-height: 44px;
       justify-content: center;
-    }
-    :global(.context-entry.context-empty) {
-      display: none;
     }
     .chevron-desktop {
       display: none;

@@ -16,6 +16,8 @@ test("settings panel opens from the sidebar and lists its sections", async ({
   await expect(
     page.locator("header").getByTestId("settings-toggle"),
   ).toHaveCount(0);
+  // AC.1 (desktop): the sidebar Settings button is icon-only — no "Settings" text label.
+  await expect(page.getByTestId("settings-toggle")).not.toContainText("Settings");
   await page.getByTestId("settings-toggle").click();
 
   const panel = page.getByTestId("settings-panel");

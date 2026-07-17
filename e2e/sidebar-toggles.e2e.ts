@@ -82,6 +82,8 @@ test("collapsing the context panel reveals a header panel icon that reopens it, 
 
   await expect(open).toBeVisible();
   await expect(open).toHaveAttribute("data-tip-title", /^Show context panel/);
+  // AC.5 (desktop): the entry shows even at context count 0 (no badge).
+  await expect(open.getByTestId("context-badge")).toHaveCount(0);
   // AC.4 (desktop): the context-open reopen button shows a panel-right icon (x=15).
   await expect(open.locator(".chevron-desktop line")).toHaveAttribute("x1", "15");
   // AC.6: the desktop icon wrapper is not mirrored (no scaleX(-1) transform).

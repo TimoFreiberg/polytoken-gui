@@ -51,9 +51,6 @@
       store.rightSidebarOpen && !store.rightSidebarOverlay,
     ),
   );
-  const contextCount = $derived(
-    store.session.flags.length + store.jobs.length + store.session.todos.length,
-  );
   const desktopWidthStyle = $derived(
     sidebarTransform
       ? `--desktop-sidebar-width: ${widths.left}px; transform: ${sidebarTransform}`
@@ -1194,37 +1191,10 @@
     </div>
   {/if}
 
-  <!-- Sidebar footer: Context + Settings buttons, then the build stamp below. -->
-  <div class="sidebar-footer" data-testid="sidebar-footer">
-    {#if !store.draft}
-    <button
-      class="footer-action context-action"
-      data-testid="sidebar-context"
-      title="Show context panel (⌘⇧J)"
-      onclick={() => store.openRightSidebar()}
-    >
-      <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-        <rect x="3" y="3" width="18" height="18" rx="2" />
-        <line x1="15" y1="3" x2="15" y2="21" />
-      </svg>
-      <span>Context</span>
-      {#if contextCount > 0}<span class="footer-count">{contextCount}</span>{/if}
-    </button>
-    {/if}
-    <button
-      class="footer-action"
-      data-testid="settings-toggle"
-      title="Settings (⌘,)"
-      onclick={openSettings}
-    >
-      <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-        <circle cx="12" cy="12" r="3" />
-        <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09A1.65 1.65 0 0 0 19.4 15z" />
-      </svg>
-      <span>Settings</span>
-      <kbd aria-hidden="true">⌘,</kbd>
-    </button>
-  </div>
+  <!-- Sidebar footer: the version string (left) and an icon-only Settings button
+       (right) share one row. The Context entry has moved to the header
+       (context-open), which is always reachable on every breakpoint. -->
+  <div class="sidebar-version-row" data-testid="sidebar-footer">
   <!-- Build stamp: version label with a hover pop-up showing the commit hash + date.
        Mirrors the ContextMeter/TaskList hover+pin pattern. The hash line is click-to-copy. -->
   <!-- svelte-ignore a11y_no_static_element_interactions -->
@@ -1281,6 +1251,18 @@
         </div>
       </div>
     {/if}
+  </div>
+    <IconButton
+      data-testid="settings-toggle"
+      title="Settings (⌘,)"
+      aria-label="Settings"
+      onclick={openSettings}
+    >
+      <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <circle cx="12" cy="12" r="3" />
+        <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09A1.65 1.65 0 0 0 19.4 15z" />
+      </svg>
+    </IconButton>
   </div>
 </aside>
 
@@ -1506,9 +1488,9 @@
     white-space: nowrap;
   }
   .version-wrap {
-    flex-shrink: 0;
+    flex: 1;
+    min-width: 0;
     position: relative;
-    padding: 8px 16px calc(8px + env(safe-area-inset-bottom));
     cursor: default;
     outline: none;
   }
@@ -1611,51 +1593,13 @@
     color: var(--text-muted);
     font-size: 11px;
   }
-  .sidebar-footer {
+  .sidebar-version-row {
     flex-shrink: 0;
-    padding: 4px 10px 0;
-  }
-  .footer-action {
-    width: 100%;
-    min-height: 38px;
     display: flex;
     align-items: center;
-    gap: 10px;
-    padding: 7px 9px;
-    color: var(--text-muted);
-    font-size: 13px;
-    text-align: left;
-    background: transparent;
-    border: 0;
-    border-radius: var(--radius-sm);
-  }
-  .footer-action:hover,
-  .footer-action:focus-visible {
-    color: var(--text);
-    background: var(--surface);
-  }
-  .footer-action:focus-visible {
-    outline: 2px solid var(--accent);
-    outline-offset: -2px;
-  }
-  .footer-action kbd,
-  .footer-count {
-    margin-left: auto;
-    color: var(--text-faint);
-    font: inherit;
-    font-size: 11px;
-  }
-  .footer-count {
-    min-width: 20px;
-    padding: 2px 6px;
-    color: var(--accent-text);
-    font-weight: 650;
-    text-align: center;
-    background: var(--accent);
-    border-radius: 999px;
-  }
-  .context-action {
-    display: none;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 8px 12px calc(8px + env(safe-area-inset-bottom));
   }
   .empty {
     padding: 16px;
@@ -2153,8 +2097,7 @@
     .new-btn {
       min-height: 48px;
     }
-    .group-toggle,
-    .footer-action {
+    .group-toggle {
       min-height: 44px;
     }
     .version-label {
@@ -2179,9 +2122,6 @@
     }
     .rename :global(button) {
       min-height: 44px;
-    }
-    .context-action {
-      display: flex;
     }
     .scrim { display: none; }
     /* No hover on touch — keep the ⋯ trigger in the flow (a reserved column rather than

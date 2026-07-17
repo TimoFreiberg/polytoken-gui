@@ -38,17 +38,16 @@ test("the sessions drawer is closed by default on a phone, with a header panel i
   await expect(sidebar).toHaveAttribute("data-open", "true");
 });
 
-test("the context panel is closed by default and reachable from Sessions", async ({
+test("the context panel is closed by default and reachable from the header", async ({
   page,
 }) => {
   const panel = page.getByTestId("right-sidebar");
   await expect(panel).toHaveAttribute("data-open", "false");
 
-  await expect(page.getByTestId("context-open")).toBeHidden();
-  await openSidebar(page);
-  const sidebarEntry = page.getByTestId("sidebar-context");
-  await expect(sidebarEntry).toBeVisible();
-  await sidebarEntry.click();
+  // The header context entry is always visible (no badge at count 0).
+  const open = page.getByTestId("context-open");
+  await expect(open).toBeVisible();
+  await open.click();
   await expect(panel).toHaveAttribute("data-open", "true");
   // AC.3 (mobile): the right-sidebar collapse button shows a panel-right icon (x=15).
   const collapse = panel.getByRole("button", { name: "Collapse context panel" });
@@ -63,8 +62,7 @@ test("the context panel is closed by default and reachable from Sessions", async
   // scoping keeps the control lookup local to the drawer.
   await collapse.click();
   await expect(panel).toHaveAttribute("data-open", "false");
-  await openSidebar(page);
-  await page.getByTestId("sidebar-context").click();
+  await page.getByTestId("context-open").click();
   await expect(panel).toHaveAttribute("data-open", "true");
 });
 

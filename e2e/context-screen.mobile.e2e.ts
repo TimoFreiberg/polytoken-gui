@@ -16,11 +16,14 @@ test.beforeEach(async ({ page }) => {
 });
 
 test("the header context entry shows a plain-total badge", async ({ page }) => {
-  // Default fixture: no flags/jobs/todos → the quiet header entry stays hidden,
-  // while Context remains available as a labeled destination in Sessions.
-  await expect(page.getByTestId("context-open")).toBeHidden();
+  // Default fixture: no flags/jobs/todos → the header entry is still visible
+  // (always reachable) but carries no badge.
+  const entry = page.getByTestId("context-open");
+  await expect(entry).toBeVisible();
+  await expect(entry.getByTestId("context-badge")).toHaveCount(0);
+  // The sidebar Context button no longer exists — the entry moved to the header.
   await openSidebar(page);
-  await expect(page.getByTestId("sidebar-context")).toBeVisible();
+  await expect(page.getByTestId("sidebar-context")).toHaveCount(0);
   await page.getByRole("button", { name: "Close sessions" }).click();
 
   // The context fixture: 3 flagged files + 3 jobs + 3 todos = 9, plain totals

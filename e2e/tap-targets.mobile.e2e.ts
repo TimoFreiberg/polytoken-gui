@@ -47,11 +47,11 @@ test("settings navigation meets the 44px touch target", async ({
 test("the mobile header and sidebar destinations meet the 44px touch target", async ({
   page,
 }) => {
-  // Sessions is always the compact header entry. Context stays quiet while empty and
-  // remains a labeled, touch-safe destination inside Sessions.
+  // Sessions is always the compact header entry. Context is a header entry,
+  // always visible (the sidebar footer no longer carries a Context button).
   await expectTall(page.getByTestId("sidebar-open"));
+  await expectTall(page.getByTestId("context-open"));
   await openSidebar(page);
-  await expectTall(page.getByTestId("sidebar-context"));
   await expectTall(page.getByTestId("settings-toggle"));
 });
 
