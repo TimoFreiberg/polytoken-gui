@@ -115,3 +115,21 @@ invariant (PROGRESS.md #3).
 Both the sidebar listing the sessions and the currently open session transcript have in-progress indicators.
 The sidebar has a spinner on the right of the session title and the session transcript has an elapsed timer, a running token display, and a stop button at the bottom that allows stopping the running agent turn.
 These should always agree with each other. If one is visible, all of them must be visible.
+
+## Submenu close always restores composer focus
+
+Whenever a composer-chrome submenu closes — facet/permission/branch pickers
+(`MenuBadge`), the model picker, or the draft directory picker — focus returns
+to the composer textarea, regardless of how the menu was opened or closed
+(Enter, Esc, click-select, click-outside, phone back-gesture). This supersedes
+the earlier `openedViaKeyboard`-gated design in the model picker, which only
+refocused on hotkey-opened flows. That gate was an over-strict interpretation
+of a loose requirement; issue #54 settles the intended behavior. The badge
+pickers (facet/permission/model/branch) are `display:none` under 859px
+(replaced by `MobileSessionControls`), so the soft-keyboard concern that
+motivated the gate does not apply to them. The draft directory picker is the
+one exception: its trigger (the project chip) is touch-tappable and visible on
+mobile, so on a phone its close focuses the project chip rather than the
+textarea to avoid popping the soft keyboard. Contextual inline menus (slash,
+@-mention, arg menus, prompt history) keep focus in the textarea throughout
+and need no change.

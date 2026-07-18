@@ -133,6 +133,22 @@
       pickingCwd = false;
     }
   });
+  // Issue #54: after the DirPicker closes, restore focus. On desktop, return
+  // focus to the composer textarea (typing a prompt is the common next step).
+  // On a phone, focus the project chip instead — the textarea focus would pop
+  // the soft keyboard, and the DirPicker trigger is a touch-tappable chip that
+  // is NOT display:none under 859px (unlike the badge pickers), so this surface
+  // is genuinely reachable on mobile.
+  function refocusAfterDirPicker(): void {
+    const isPhone =
+      typeof window !== "undefined" &&
+      window.matchMedia("(max-width: 859px)").matches;
+    if (isPhone) {
+      projectControlRef?.focus();
+    } else {
+      store.focusComposer();
+    }
+  }
   // Fetch branches when worktree is toggled on and we haven't loaded them for this
   // exact cwd yet. startDraft pre-fetches on draft load, so this is the fallback for
   // the cwd-changed case (setDraftCwd clears branchList). Skip when the list is
@@ -1745,11 +1761,16 @@
           onpick={(p) => {
             store.setDraftCwd(p);
             pickingCwd = false;
-            requestAnimationFrame(() => projectControlRef?.focus());
+            // Issue #54: return focus to the composer textarea on desktop
+            // (typing a prompt is the common next step). On a phone, focus
+            // the project chip instead — focusing the textarea would pop the
+            // soft keyboard, which the DirPicker trigger (a touch-tappable
+            // chip, not display:none under 859px) is reachable on mobile.
+            refocusAfterDirPicker();
           }}
           onclose={() => {
             pickingCwd = false;
-            requestAnimationFrame(() => projectControlRef?.focus());
+            refocusAfterDirPicker();
           }}
         />
       {/if}

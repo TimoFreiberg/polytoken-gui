@@ -23,10 +23,8 @@ test("the combined badge shows model and effort", async ({ page }) => {
 test("the picker lists models and switches the active one", async ({
   page,
 }) => {
-  // AC.4 — focus the composer first, then click-open the picker. After
-  // selecting a model, the composer must NOT be refocused: click-open keeps
-  // openedViaKeyboard=false, so closePicker never calls store.focusComposer().
-  // (The hotkey-open path does refocus; this proves the click path is separate.)
+  // Issue #54 — closing the model picker by any path (here: click-open →
+  // click-select) returns focus to the composer textarea.
   const composer = page.getByPlaceholder("Message pantoken…");
   await composer.click();
   await expect(composer).toBeFocused();
@@ -40,16 +38,16 @@ test("the picker lists models and switches the active one", async ({
   await panel.getByText("DeepSeek V4 Flash").click();
 
   // The badge reflects the switched-to model (server round-trip → folded config).
-  await expect(
-    page.getByTestId("model-badge"),
-  ).toContainText("DeepSeek V4 Flash");
+  await expect(page.getByTestId("model-badge")).toContainText(
+    "DeepSeek V4 Flash",
+  );
   // Info notice appears in the transcript.
   await expect(page.locator(".row.notice .ntext")).toContainText(
     "Model switched to deepseek/deepseek-v4-flash",
   );
 
-  // Click-open deliberately does NOT refocus the composer (unlike hotkey-open).
-  await expect(composer).not.toBeFocused();
+  // Issue #54: every close path returns focus to the composer.
+  await expect(composer).toBeFocused();
 });
 
 test("clicking the badge focuses the filter on desktop", async ({ page }) => {
@@ -109,7 +107,9 @@ test("selecting a model stages its default effort", async ({ page }) => {
   // Arrow down to Claude Sonnet 4.6 (second model in the list).
   await panel.getByPlaceholder("Type to filter…").press("ArrowDown");
   // The effort control should show "medium" (Sonnet's defaultThinkingLevel).
-  const sonnetRow = panel.locator(".item").filter({ hasText: "Claude Sonnet 4.6" });
+  const sonnetRow = panel
+    .locator(".item")
+    .filter({ hasText: "Claude Sonnet 4.6" });
   await expect(sonnetRow.locator(".eff-val")).toContainText("medium");
 });
 
@@ -161,7 +161,9 @@ test("Enter applies the combined model + effort", async ({ page }) => {
   await filter.press("Enter");
 
   // The badge reflects the new model + effort.
-  await expect(page.getByTestId("model-badge")).toContainText("Claude Sonnet 4.6");
+  await expect(page.getByTestId("model-badge")).toContainText(
+    "Claude Sonnet 4.6",
+  );
   await expect(page.getByTestId("model-badge")).toContainText("high");
   // Info notice appears in the transcript with both model and thinking level.
   await expect(page.locator(".row.notice .ntext")).toContainText(
@@ -202,12 +204,16 @@ test("no-effort models show a select button instead of the effort control", asyn
   const panel = page.locator(".mp .panel");
 
   // DeepSeek Flash row should have a "select" button (single level → no cycle control).
-  const flashRow = panel.locator(".item").filter({ hasText: "DeepSeek V4 Flash" });
+  const flashRow = panel
+    .locator(".item")
+    .filter({ hasText: "DeepSeek V4 Flash" });
   await expect(flashRow.locator(".select-btn")).toBeVisible();
 
   // Clicking it applies the model directly.
   await flashRow.locator(".select-btn").click();
-  await expect(page.getByTestId("model-badge")).toContainText("DeepSeek V4 Flash");
+  await expect(page.getByTestId("model-badge")).toContainText(
+    "DeepSeek V4 Flash",
+  );
 });
 
 // Regression: opening the model picker via ⌘⇧M and closing it, then opening and
@@ -235,8 +241,14 @@ test("the model picker does not auto-open after a draft remount", async ({
   // remounts it against the existing session (store.draft cleared) — resetting
   // ModelPicker's local state.
   await openSidebar(page);
-  await page.getByTestId("sidebar").getByTestId("sidebar-new-session").getByText("New session").click();
-  await expect(page.getByPlaceholder("Describe a task or ask a question…")).toBeVisible();
+  await page
+    .getByTestId("sidebar")
+    .getByTestId("sidebar-new-session")
+    .getByText("New session")
+    .click();
+  await expect(
+    page.getByPlaceholder("Describe a task or ask a question…"),
+  ).toBeVisible();
   await openSidebar(page);
   await page
     .getByTestId("sidebar")

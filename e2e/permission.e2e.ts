@@ -39,7 +39,9 @@ test("permission badge shows Standard by default and switches mode", async ({
 test("permission badge sits on the status row left", async ({ page }) => {
   const left = page.locator("[data-testid='composer-status-row'] .status-left");
   await expect(left.getByTestId("permission-badge")).toBeVisible();
-  await expect(page.getByTestId("composer-status-right").getByTestId("permission-badge")).toHaveCount(0);
+  await expect(
+    page.getByTestId("composer-status-right").getByTestId("permission-badge"),
+  ).toHaveCount(0);
 });
 
 test("permission panel is keyboard-navigable (Esc closes, arrows move, Enter picks)", async ({
@@ -55,6 +57,9 @@ test("permission panel is keyboard-navigable (Esc closes, arrows move, Enter pic
   await panel.press("Enter");
   await expect(badge).toContainText("Bypass");
   await expect(badge).not.toContainText("Bypass+");
+  // Issue #54: closing the permission menu (Enter pick) returns focus to the
+  // composer textarea.
+  await expect(page.getByPlaceholder("Message pantoken…")).toBeFocused();
 
   // Reopen, Esc closes without changing.
   await badge.click();
@@ -62,6 +67,8 @@ test("permission panel is keyboard-navigable (Esc closes, arrows move, Enter pic
   await panel.press("Escape");
   await expect(panel).toBeHidden();
   await expect(badge).toContainText("Bypass");
+  // Issue #54: closing the permission menu (Esc) returns focus to the composer.
+  await expect(page.getByPlaceholder("Message pantoken…")).toBeFocused();
 });
 
 test("⌘⇧P cycles permission mode", async ({ page }) => {
@@ -126,7 +133,9 @@ test("permission badge width is stable when cycling through all modes", async ({
   expect(box4!.width).toBe(initialWidth);
 });
 
-test("permission badge round-trips all 4 modes via picker", async ({ page }) => {
+test("permission badge round-trips all 4 modes via picker", async ({
+  page,
+}) => {
   const badge = page.getByTestId("permission-badge");
   await expect(badge).toContainText("Standard");
 
@@ -135,9 +144,13 @@ test("permission badge round-trips all 4 modes via picker", async ({ page }) => 
   const panel = page.getByRole("listbox", { name: "Permission mode" });
   await expect(panel).toBeVisible();
   await expect(panel.getByRole("option", { name: /^Standard/ })).toBeVisible();
-  await expect(panel.getByRole("option", { name: /^Bypass[^+]/ })).toBeVisible();
+  await expect(
+    panel.getByRole("option", { name: /^Bypass[^+]/ }),
+  ).toBeVisible();
   await expect(panel.getByRole("option", { name: /^Bypass\+/ })).toBeVisible();
-  await expect(panel.getByRole("option", { name: /^Autonomous/ })).toBeVisible();
+  await expect(
+    panel.getByRole("option", { name: /^Autonomous/ }),
+  ).toBeVisible();
 
   // Pick Bypass+ and verify the badge updates.
   await panel.getByRole("option", { name: /^Bypass\+/ }).click();
@@ -168,7 +181,11 @@ test("clicking the permission badge in the draft view sets the draft's permissio
   await expect(liveBadge).toContainText("Standard");
 
   // Open a new-session draft.
-  await page.getByTestId("sidebar").getByTestId("sidebar-new-session").getByText("New session").click();
+  await page
+    .getByTestId("sidebar")
+    .getByTestId("sidebar-new-session")
+    .getByText("New session")
+    .click();
   await expect(page.getByTestId("new-session")).toBeVisible();
 
   // Open the panel + pick Bypass — this should write to the draft.
@@ -200,7 +217,11 @@ test("draft permission badge reflects modelDefaults defaultPermissionMonitor", a
 }) => {
   await openSidebar(page);
   // Open a new-session draft.
-  await page.getByTestId("sidebar").getByTestId("sidebar-new-session").getByText("New session").click();
+  await page
+    .getByTestId("sidebar")
+    .getByTestId("sidebar-new-session")
+    .getByText("New session")
+    .click();
   await expect(page.getByTestId("new-session")).toBeVisible();
   // The draft badge should show the daemon's default permission mode.
   const badge = page.getByTestId("permission-badge");

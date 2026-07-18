@@ -111,6 +111,11 @@ test("the worktree base branch selection survives leaving and reopening", async 
   await branchChip.click();
   await page.getByRole("option", { name: "develop" }).click();
   await expect(branchChip).toContainText("develop");
+  // Issue #54: closing the branch picker (click-select) returns focus to the
+  // composer textarea.
+  await expect(
+    page.getByPlaceholder("Describe a task or ask a question…"),
+  ).toBeFocused();
 
   // Navigate to an existing session — exits the draft.
   await row(page, "Explore the fold reducer").click();
@@ -122,7 +127,9 @@ test("the worktree base branch selection survives leaving and reopening", async 
     "aria-pressed",
     "true",
   );
-  await expect(page.getByTestId("draft-branch-control")).toContainText("develop");
+  await expect(page.getByTestId("draft-branch-control")).toContainText(
+    "develop",
+  );
 });
 
 // Pick a non-default model (Sonnet) and a non-default thinking level (high)
@@ -140,12 +147,16 @@ async function pickNonDefaultModelAndThinking(page: Page): Promise<void> {
 
   // Enter applies the combined model + effort.
   await filter.press("Enter");
-  await expect(page.getByTestId("model-badge")).toContainText("Claude Sonnet 4.6");
+  await expect(page.getByTestId("model-badge")).toContainText(
+    "Claude Sonnet 4.6",
+  );
   await expect(page.getByTestId("model-badge")).toContainText("high");
 }
 
 async function expectNonDefaultModelAndThinking(page: Page): Promise<void> {
-  await expect(page.getByTestId("model-badge")).toContainText("Claude Sonnet 4.6");
+  await expect(page.getByTestId("model-badge")).toContainText(
+    "Claude Sonnet 4.6",
+  );
   await expect(page.getByTestId("model-badge")).toContainText("high");
 }
 

@@ -4,6 +4,7 @@
   import { reveal } from "../../lib/transitions.js";
   import { overlayHistory } from "../../lib/overlay-history.js";
   import { onDestroy } from "svelte";
+  import { store } from "../../lib/store.svelte.js";
 
   // Shared dropdown primitive for the badge-style pickers in the composer chrome
   // (FacetBadge, PermissionBadge, BranchPicker). Owns the open/close state,
@@ -151,8 +152,19 @@
   function close() {
     closeOverlayHistory();
     open = false;
+    // Issue #54: every close path returns focus to the composer textarea, so
+    // the next Shift+Tab re-opens the menu (facet/permission/branch flow). This
+    // is the single exit point — Esc, Enter, click-select, click-outside,
+    // number-key quick-select, and the phone overlay-history close all funnel
+    // through here. Mobile is unaffected: these badges are display:none under
+    // 859px (replaced by MobileSessionControls), so the soft-keyboard concern
+    // does not apply.
+    store.focusComposer();
   }
   onDestroy(() => {
+    // Intentionally NOT close(): unmount should not refocus the composer. The
+    // textarea may be tearing down (e.g. a new-session draft opens via
+    // App.svelte's `{#if !store.draft}`, unmounting Composer and its badges).
     closeOverlayHistory();
   });
   function onKeydown(e: KeyboardEvent) {

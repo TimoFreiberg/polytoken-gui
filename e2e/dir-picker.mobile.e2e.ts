@@ -3,7 +3,8 @@ import { gotoFresh, openSidebar } from "./helpers.js";
 
 const picker = (page: Page) => page.getByTestId("dir-picker");
 const input = (page: Page) => page.getByLabel("Project directory path");
-const draftBox = (page: Page) => page.getByPlaceholder("Describe a task or ask a question…");
+const draftBox = (page: Page) =>
+  page.getByPlaceholder("Describe a task or ask a question…");
 
 async function openPicker(page: Page, draft?: string): Promise<void> {
   await gotoFresh(page);
@@ -16,7 +17,9 @@ async function openPicker(page: Page, draft?: string): Promise<void> {
   await expect(input(page)).toBeFocused();
 }
 
-test("project picker is a full-screen, touch-safe version of the desktop path picker", async ({ page }) => {
+test("project picker is a full-screen, touch-safe version of the desktop path picker", async ({
+  page,
+}) => {
   await openPicker(page);
   const box = await picker(page).boundingBox();
   const viewport = page.viewportSize()!;
@@ -30,16 +33,26 @@ test("project picker is a full-screen, touch-safe version of the desktop path pi
   await expect(picker(page).locator("footer")).toBeHidden();
 });
 
-test("browser Back closes the picker and returns to the intact draft", async ({ page }) => {
+test("browser Back closes the picker and returns to the intact draft", async ({
+  page,
+}) => {
   await openPicker(page, "mobile draft");
   await page.goBack();
   await expect(picker(page)).toBeHidden();
   await expect(draftBox(page)).toHaveValue("mobile draft");
+  // Issue #54: on a phone, closing the DirPicker focuses the project chip
+  // (not the textarea) so the soft keyboard does not pop.
+  await expect(page.getByTestId("draft-project-control")).toBeFocused();
 });
 
-test("visible Back closes the picker and consumes its nested history entry", async ({ page }) => {
+test("visible Back closes the picker and consumes its nested history entry", async ({
+  page,
+}) => {
   await openPicker(page);
-  await picker(page).getByRole("button", { name: "Close project picker" }).first().click();
+  await picker(page)
+    .getByRole("button", { name: "Close project picker" })
+    .first()
+    .click();
   await expect(picker(page)).toBeHidden();
   // Reopening after a UI close must receive a fresh entry once the owned pop settles.
   await page.getByTestId("draft-project-control").click();

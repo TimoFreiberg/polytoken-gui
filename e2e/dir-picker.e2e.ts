@@ -164,7 +164,8 @@ test("Backspace and Option+Backspace remain ordinary text editing", async ({
   // Word-delete is platform-specific: Option+Backspace on macOS, Ctrl+Backspace on
   // Linux/Windows. CI runs Chromium on Linux (see hotkeys.e2e.ts), so pick the
   // modifier that actually deletes a word on the host.
-  const wordDelete = process.platform === "darwin" ? "Alt+Backspace" : "Control+Backspace";
+  const wordDelete =
+    process.platform === "darwin" ? "Alt+Backspace" : "Control+Backspace";
   await input.press(wordDelete);
   await expect(input).not.toHaveValue("/Users/timo/src/pantoke");
   await expect(picker(page)).toBeVisible();
@@ -200,7 +201,7 @@ test("unreadable paths show a bounded error and rapid typing keeps the latest re
   ).toHaveCount(0);
 });
 
-test("Escape closes without abandoning the draft and restores trigger focus", async ({
+test("Escape closes without abandoning the draft and restores composer focus", async ({
   page,
 }) => {
   await openDraft(page);
@@ -209,7 +210,9 @@ test("Escape closes without abandoning the draft and restores trigger focus", as
   await pathInput(page).press("Escape");
   await expect(picker(page)).toBeHidden();
   await expect(draftBox(page)).toHaveValue("keep me");
-  await expect(projectChip(page)).toBeFocused();
+  // Issue #54: closing the DirPicker returns focus to the composer textarea
+  // (typing a prompt is the common next step), not the project chip.
+  await expect(draftBox(page)).toBeFocused();
 });
 
 test("⌥P opens the picker without changing the draft", async ({ page }) => {

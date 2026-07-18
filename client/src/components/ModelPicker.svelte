@@ -52,9 +52,6 @@
   // Element handles for focus management + scroll-into-view.
   let searchEl = $state<HTMLInputElement>();
   let panelEl = $state<HTMLDivElement>();
-  // Whether the picker was opened via its hotkey. Gates returning focus to the
-  // composer on close, so a plain mouse/tap interaction never pops up the keyboard.
-  let openedViaKeyboard = false;
 
   function effortKey(m: ModelOption): string {
     return `${m.provider}:${m.modelId}`;
@@ -99,7 +96,6 @@
 
   function openPicker(viaKeyboard: boolean): void {
     open = true;
-    openedViaKeyboard = viaKeyboard;
     sel = 0;
     // Seed the active model's staged effort with its current effort so the
     // active row shows the live value, not the model default.
@@ -118,14 +114,16 @@
     if (viaKeyboard || !isPhone) tick().then(() => searchEl?.focus());
   }
 
-  function closePicker(refocus: boolean): void {
+  function closePicker(): void {
     open = false;
-    openedViaKeyboard = false;
-    if (refocus) store.focusComposer();
+    // Issue #54: always return focus to the composer on close, regardless of
+    // how the picker was opened (hotkey or click). The badge is display:none
+    // under 859px, so the soft-keyboard concern does not apply.
+    store.focusComposer();
   }
 
   function toggle(viaKeyboard = false): void {
-    if (open) closePicker(viaKeyboard);
+    if (open) closePicker();
     else openPicker(viaKeyboard);
   }
 
@@ -164,12 +162,12 @@
     if (next) stageEffort(m, next);
   }
 
-  function applyModel(m: ModelOption, refocus: boolean): void {
+  function applyModel(m: ModelOption): void {
     const effort = effortFor(m);
     if (!(m.provider === cfg.provider && m.modelId === cfg.modelId) || effort !== cfg.thinkingLevel) {
       store.setModel(m.provider, m.modelId, effort);
     }
-    closePicker(refocus);
+    closePicker();
   }
 
   function onKeydown(e: KeyboardEvent): void {
@@ -191,7 +189,7 @@
     } else if (e.key === "Enter") {
       e.preventDefault();
       const it = ranked[sel];
-      if (it) applyModel(it.model, true);
+      if (it) applyModel(it.model);
     } else if (e.key === "Escape") {
       e.preventDefault();
       if (query) {
@@ -200,7 +198,7 @@
         sel = 0;
       } else {
         // Second Esc closes the popup.
-        closePicker(true);
+        closePicker();
       }
     }
   }
@@ -240,7 +238,7 @@
             >
               <button
                 class="item-label-btn"
-                onclick={() => applyModel(model, openedViaKeyboard)}
+                onclick={() => applyModel(model)}
               >
                 <span class="item-label">{model.label}</span>
               </button>
@@ -265,7 +263,7 @@
               {:else}
                 <button
                   class="select-btn"
-                  onclick={() => applyModel(model, openedViaKeyboard)}
+                  onclick={() => applyModel(model)}
                 >select</button>
               {/if}
             </div>
@@ -299,7 +297,7 @@
   <button
     class="backdrop"
     aria-label="Close model picker"
-    onclick={() => closePicker(openedViaKeyboard)}
+    onclick={() => closePicker()}
   ></button>
 {/if}
 
