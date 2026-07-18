@@ -166,3 +166,93 @@ test("the Stop pill survives a stray mid-turn idle snapshot (turn still in fligh
   await expect(stop).toHaveCount(0);
   await expect(page.getByTestId("working-indicator")).toHaveCount(0);
 });
+
+test("Escape while offline is a no-op — no duplicate error surfaces", async ({
+  page,
+}) => {
+  await drive(page, "pendinghold"); // turn running, no output yet
+  const stop = page.getByTestId("stop-button");
+  await expect(stop).toBeVisible();
+
+  // Drop the socket.
+  await page.evaluate(() =>
+    window.dispatchEvent(new Event("pantoken:test-disconnect")),
+  );
+  await expect(stop).toBeDisabled();
+
+  // The offline banner is the single contextual representation.
+  await expect(
+    page.getByText("Offline — the agent keeps running"),
+  ).toBeVisible();
+
+  const ta = page.locator(".composer-wrap textarea");
+  await expect(ta).toHaveValue("");
+  await ta.focus();
+  await page.keyboard.press("Escape");
+
+  // No sidebar error appears.
+  await expect(page.getByTestId("sidebar").getByTestId("toast")).toHaveCount(0);
+  // No chat toast appears.
+  await expect(
+    page.getByTestId("chat-notice").getByTestId("toast"),
+  ).toHaveCount(0);
+  // The composer stays empty (no premature prompt restore).
+  await expect(ta).toHaveValue("");
+  // The stop button stays disabled (no "Retry stop" state).
+  await expect(stop).toBeDisabled();
+  await expect(stop).not.toHaveText("↻ Retry stop");
+});
+
+test("Stop button click does not restore the prompt (only Esc does)", async ({
+  page,
+}) => {
+  await drive(page, "pendinghold");
+  const stop = page.getByTestId("stop-button");
+  await expect(stop).toBeVisible();
+
+  const ta = page.locator(".composer-wrap textarea");
+  await expect(ta).toHaveValue("");
+
+  await stop.click();
+
+  // The turn aborts (Stop pill clears)…
+  await expect(stop).toHaveCount(0);
+  // …but the prompt is NOT restored into the composer (only Esc-from-composer
+  // restores, via the restoreOnAccepted option).
+  await expect(ta).toHaveValue("");
+});
+
+test("a retried Esc-after-timeout restores the prompt, not the superseded result", async ({
+  page,
+}) => {
+  // slowabort delays the entire abort() by 1000ms, so the 500ms confirmation
+  // timer fires first → markStopUnconfirmed → the stop is retryable.
+  // pendinghold keeps the turn running (no RunCompleted) with only thinking
+  // deltas, so abortRestoreText returns "Refactor the auth middleware".
+  await drive(page, "pendinghold");
+  await drive(page, "slowabort");
+  const stop = page.getByTestId("stop-button");
+  await expect(stop).toBeVisible();
+
+  const ta = page.locator(".composer-wrap textarea");
+  await expect(ta).toHaveValue("");
+  await ta.focus();
+  await page.keyboard.press("Escape"); // arms pendingAbortRestore (requestId: stop-1)
+
+  // Wait for the unconfirmed state (the 500ms timer fires before the 1000ms
+  // slowabort completes).
+  await expect(stop).toHaveText("↻ Retry stop", { timeout: 1_500 });
+
+  // Retry via Esc — arms a fresh pendingAbortRestore (requestId: stop-2).
+  // The Stop button is "unconfirmed" (enabled), but Esc also works.
+  await page.keyboard.press("Escape");
+
+  // The delayed abort completes: AbortResult{requestId:stop-1, accepted:true}
+  // arrives first (ignored by the requestId guard), then the second abort's
+  // AbortResult{requestId:stop-2, accepted:true} fires the restore.
+  await expect(ta).toHaveValue("Refactor the auth middleware", {
+    timeout: 2_000,
+  });
+  // No duplicate restore, no sidebar error.
+  await expect(page.getByTestId("sidebar").getByTestId("toast")).toHaveCount(0);
+});

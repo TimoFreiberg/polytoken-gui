@@ -32,8 +32,10 @@ test("Escape aborts a pending turn and restores the sent prompt to the composer"
   // The turn aborts: the Stop pill clears…
   await expect(stop).toHaveCount(0);
   // …and the prompt is back in the composer (history is left alone — the orphaned
-  // user message stays in the transcript).
-  await expect(ta).toHaveValue("Refactor the auth middleware");
+  // user message stays in the transcript). The restore is deferred until the daemon
+  // accepts the stop (AbortResult { accepted: true }), so it arrives a WS tick after
+  // Escape — the timeout covers that async window.
+  await expect(ta).toHaveValue("Refactor the auth middleware", { timeout: 2_000 });
   await expect(page.getByText("Refactor the auth middleware")).toBeVisible();
 });
 

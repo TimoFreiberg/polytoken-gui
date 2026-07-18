@@ -428,6 +428,16 @@ class PantokenStore {
   /** The outstanding stop action, if any. This never changes daemon state itself: it
    * makes the action's result visible instead of leaving the ordinary running UI stuck. */
   private stopOperation = $state<StopOperation | null>(null);
+  /** Stashed prompt to restore into the composer once the daemon accepts a stop
+   *  (AbortResult { accepted: true }). Captured at abort time so the restore is
+   *  deferred until acceptance — not fired synchronously before the daemon responds.
+   *  The requestId guard prevents a late result from a superseded (timed-out) stop
+   *  from firing or wiping a newer request's restore (Q3 data-loss prevention). */
+  private pendingAbortRestore: {
+    text: string;
+    sessionId: string;
+    requestId: string;
+  } | null = null;
   private stopConfirmationTimer: ReturnType<typeof setTimeout> | null = null;
   /** Monotonic marker for meaningful transcript/turn progress. Passive snapshots do
    * not advance it, so an unconfirmed stop is not cleared by status churn. */
@@ -873,6 +883,16 @@ class PantokenStore {
    * decision itself stays pure so it can be tested without instantiating this
    * Svelte rune-based store. */
   private settleStopOperation(): void {
+    // If the session changed, a pending restore from the old session is stale —
+    // clear it so a late AbortResult can't restore the old session's prompt into
+    // the new session's composer (the session guard in the abortResult handler
+    // already prevents the restore, but this avoids lingering state).
+    if (
+      this.pendingAbortRestore !== null &&
+      this.session.ref?.sessionId !== this.pendingAbortRestore.sessionId
+    ) {
+      this.pendingAbortRestore = null;
+    }
     const result = settleStopOperation(
       this.stopOperation,
       this.session.ref?.sessionId,
@@ -899,6 +919,15 @@ class PantokenStore {
     const operation = this.stopOperation;
     if (!operation || operation.requestId !== requestId) return;
     this.clearStopConfirmationTimer();
+    // NOTE: pendingAbortRestore is intentionally NOT cleared here. The requestId
+    // guard in the abortResult handler already prevents a late result from a
+    // superseded request from firing the wrong restore. If the daemon accepts
+    // just after this timeout fires (e.g. at 550ms vs the 500ms timer), the
+    // accepted AbortResult still arrives and the restore fires correctly —
+    // clearing here would silently drop the restore (Q3 data loss). A retry
+    // overwrites pendingAbortRestore with a fresh requestId; an un-retried
+    // timeout whose result never arrives is cleaned up by settleStopOperation's
+    // session check.
     this.stopOperation = {
       ...operation,
       state: "unconfirmed",
@@ -1296,6 +1325,33 @@ class PantokenStore {
         void this.settlePrompt(msg);
         break;
       case "abortResult": {
+        // Deferred prompt restore — decoupled from the stopOperation match below
+        // because a terminal RunCompleted event may arrive before AbortResult,
+        // clearing stopOperation via settleStopOperation. The restore fires when
+        // the daemon accepts the stop (accepted: true) and the requestId matches
+        // the pending restore's requestId (guards against a late result from a
+        // superseded stop firing the restore for a newer request, or wiping a
+        // newer request's pending restore). The session guard prevents restoring
+        // the old session's prompt into a new session's composer after a session
+        // switch. pendingAbortRestore is cleared only when the requestId matches —
+        // a result for a different requestId is ignored (it belongs to a superseded
+        // request whose restore was already handled or will be handled by its own
+        // result).
+        if (this.pendingAbortRestore !== null) {
+          const pending = this.pendingAbortRestore;
+          if (msg.requestId === pending.requestId) {
+            this.pendingAbortRestore = null;
+            if (
+              msg.accepted &&
+              this.session.ref?.sessionId === pending.sessionId &&
+              !this.composerDraft.trim()
+            ) {
+              this.composerDraft = pending.text;
+              this.focusComposer();
+            }
+          }
+        }
+
         const operation = this.stopOperation;
         const matches =
           operation !== null &&
@@ -1318,6 +1374,11 @@ class PantokenStore {
             operation.requestId,
             msg.error ?? "Pantoken couldn't send the stop request.",
           );
+          // Defensive clear: the restore block above already cleared
+          // pendingAbortRestore if the requestId matched. This guards against any
+          // edge where the restore block didn't fire but a restore was pending
+          // for this same requestId.
+          this.pendingAbortRestore = null;
         } else {
           // The daemon accepted the cancel request. Clear the confirmation
           // timer and the stop operation — the terminal SSE event
@@ -1361,7 +1422,6 @@ class PantokenStore {
           disconnect(); // stop the reconnect loop until a new token is entered
         } else if (msg.kind === "abort") {
           console.error("[server error]", msg.message);
-          this.lastError = msg.message;
           this.chatNotice(msg.message, { durationMs: 8000 });
         } else if (msg.kind === "session-switch") {
           // A known, common session-open failure (daemon didn't start, lease
@@ -1713,11 +1773,13 @@ class PantokenStore {
     this.composerImages = [];
     return true;
   }
-  abort(): void {
+  abort(opts?: { restoreOnAccepted?: boolean }): void {
     const sessionId = this.session.ref?.sessionId;
     if (!sessionId) {
-      this.lastError = "Can't stop — there is no active session.";
-      this.chatNotice(this.lastError, { durationMs: 8000 });
+      this.pendingAbortRestore = null;
+      this.chatNotice("Can't stop — there is no active session.", {
+        durationMs: 8000,
+      });
       return;
     }
     const prior = this.stopOperation;
@@ -1732,16 +1794,23 @@ class PantokenStore {
     // late answer from the earlier request cannot overwrite the newer action.
     this.clearStopConfirmationTimer();
     const requestId = `stop-${Date.now()}-${++this.stopRequestSeq}`;
+    // Capture the restore text at abort time (before any further transcript
+    // mutation) so the accepted-result handler can restore it. Scoped to the
+    // Esc-from-composer path via restoreOnAccepted — the Stop button and
+    // QueueTray steer paths pass no option and get no restore. If there's no
+    // restore text (the turn already produced output), skip arming entirely.
+    const restoreText = opts?.restoreOnAccepted ? this.abortRestoreText : null;
+    this.pendingAbortRestore =
+      restoreText != null
+        ? { text: restoreText, sessionId, requestId }
+        : null;
     if (!send({ type: "abort", requestId, sessionId })) {
-      this.lastError = "Can't stop the agent while offline — it keeps running.";
-      this.stopOperation = {
-        requestId,
-        sessionId,
-        state: "unconfirmed",
-        activityVersion: this.activityVersion,
-        error: this.lastError ?? undefined,
-      };
-      this.chatNotice(this.lastError, { durationMs: 8000 });
+      // Offline: the request can't leave. The Stop button is already disabled
+      // with an explanatory tooltip — that's the single contextual
+      // representation. No sidebar error, no chat toast, no retry state.
+      // (Setting stopOperation to "unconfirmed" would re-enable the button,
+      // since the disabled check only blocks "stopping", not "unconfirmed".)
+      this.pendingAbortRestore = null;
       return;
     }
     this.stopOperation = {

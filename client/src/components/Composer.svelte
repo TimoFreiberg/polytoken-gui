@@ -829,16 +829,13 @@
   // stays. Composer-scoped (textarea-focused) on purpose: a window-level Esc would race
   // the other Esc handlers (ModelPicker, Settings, Sidebar menu, QnaForm, Tooltip). After
   // send the textarea keeps focus, so this covers the dominant flow; Stop covers the rest.
+  //
+  // The prompt restore is deferred to the store: it fires when the daemon accepts the
+  // stop (AbortResult { accepted: true }), not synchronously here. The restoreOnAccepted
+  // option scopes the restore to this Esc-from-composer path only — the Stop button and
+  // QueueTray steer paths call store.abort() with no option.
   function abortFromComposer() {
-    const restore = store.abortRestoreText;
-    store.abort();
-    if (restore != null && !store.composerDraft.trim()) {
-      store.composerDraft = restore;
-      queueMicrotask(() => {
-        ta?.focus();
-        autosize();
-      });
-    }
+    store.abort({ restoreOnAccepted: true });
   }
 
   function openFilePicker() {
@@ -1486,7 +1483,9 @@
     }
     // Esc aborts a running turn (parity with the agent TUI / Claude). Placed after the
     // slash/file/draft Esc handlers so an open menu or draft-cancel wins first.
-    if (e.key === "Escape" && streaming) {
+    // Gated on connectivity: a dead Esc must be a no-op, matching the disabled Stop
+    // button — the offline banner is the single contextual representation.
+    if (e.key === "Escape" && streaming && store.connection === "connected") {
       e.preventDefault();
       abortFromComposer();
       return;
