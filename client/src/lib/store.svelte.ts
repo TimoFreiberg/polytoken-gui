@@ -2451,8 +2451,43 @@ class PantokenStore {
     if (this.rightSidebarOpen) this.closeRightSidebar();
     else this.openRightSidebar();
   }
+  /** Select a background job for detail inspection. On phone, pushes a nested
+   *  history entry so Back closes the detail before the context view. */
+  selectJob(handle: string): void {
+    this.selectedJobHandle = handle;
+    overlayHistory.openedNested("job-detail", () => {
+      // Back gesture — entry is already being popped; just clear selection.
+      this.selectedJobHandle = null;
+    });
+  }
+  /** Close the job detail. Consumes the nested history entry on phone. */
+  closeJobDetail(): void {
+    if (this.selectedJobHandle !== null) {
+      overlayHistory.closed("job-detail");
+      this.selectedJobHandle = null;
+    }
+  }
+  /** Select a todo for detail inspection. On phone, pushes a nested history
+   *  entry so Back closes the detail before the context view. */
+  selectTodo(id: number): void {
+    this.selectedTodoId = id;
+    overlayHistory.openedNested("todo-detail", () => {
+      this.selectedTodoId = null;
+    });
+  }
+  /** Close the todo detail. Consumes the nested history entry on phone. */
+  closeTodoDetail(): void {
+    if (this.selectedTodoId !== null) {
+      overlayHistory.closed("todo-detail");
+      this.selectedTodoId = null;
+    }
+  }
   closeRightSidebar(): void {
     if (this.phoneLayout) {
+      // Close any open detail sheet first — its nested history entry must be
+      // consumed before the context view's own entry (Issue #55).
+      this.closeJobDetail();
+      this.closeTodoDetail();
       if (this.mobileView === "context") this.mobileView = "transcript";
       overlayHistory.closed("context");
     } else if (this.rightSidebarOverlay) {

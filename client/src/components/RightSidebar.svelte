@@ -151,7 +151,7 @@
             <li class="job-item {j.status}">
               <button
                 class="job-btn"
-                onclick={() => (store.selectedJobHandle = j.handle)}
+                onclick={() => store.selectJob(j.handle)}
               >
                 <span class="job-kind-icon">{JOB_KIND_ICON[j.kind] ?? "?"}</span>
                 <div class="job-body">
@@ -186,7 +186,7 @@
             <li class="todo-item {t.status}">
               <button
                 class="todo-btn"
-                onclick={() => (store.selectedTodoId = t.id)}
+                onclick={() => store.selectTodo(t.id)}
               >
                 <span class="todo-icon">{STATUS_ICON[t.status] ?? "?"}</span>
                 <div class="todo-body">
@@ -251,7 +251,7 @@
   .right-sidebar[data-overlay="true"] {
     position: fixed;
     inset: 0 0 0 auto;
-    z-index: 80;
+    z-index: var(--z-context-overlay);
     box-shadow: var(--shadow-pop);
     border-left: 1px solid var(--border);
   }
@@ -596,7 +596,7 @@
       inset: 0;
       /* Above the app header (z 70) — unlike the left drawer, this is a full-screen
          view with its own nav bar, so nothing behind it may stay on top. */
-      z-index: 80;
+      z-index: var(--z-context-overlay);
       width: auto;
       border-left: none;
       transform: translateX(100%);

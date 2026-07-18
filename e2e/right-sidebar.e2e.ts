@@ -209,6 +209,30 @@ test("clicking a job opens a detail view with output tail", async ({
   await expect(detail).toContainText("Reviewing src/store.svelte.ts");
 });
 
+// Q5 guard: an open detail sheet (now z=100/101, above agent-driven overlays
+// like PlanView z=60/61) is user-initiated and must be trivially dismissible so
+// it never durably blocks an agent-driven overlay. Esc closes it, restoring the
+// underlying view.
+test("an open detail sheet is dismissible via Esc and does not durably block", async ({
+  page,
+}) => {
+  await openPanel(page);
+  await drive(page, "context");
+  const jobs = page.getByTestId("background-jobs");
+  await expect(jobs).toContainText("general-purpose");
+  await jobs.getByText("general-purpose").first().click();
+
+  const detail = page.getByTestId("job-detail");
+  await expect(detail).toBeVisible();
+
+  // Esc closes the detail — no lingering modal blocking the app.
+  await page.keyboard.press("Escape");
+  await expect(detail).toHaveCount(0);
+
+  // The panel and its jobs are still interactive underneath.
+  await expect(jobs).toContainText("general-purpose");
+});
+
 // Copy-path button on a flagged file copies to clipboard.
 test("copy-path button copies flagged file path to clipboard", async ({
   page,

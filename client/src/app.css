@@ -90,6 +90,14 @@
     0 1px 2px rgba(31, 30, 29, 0.04), 0 4px 14px rgba(31, 30, 29, 0.05);
   --shadow-pop: 0 8px 30px rgba(31, 30, 29, 0.14);
 
+  /* Overlay z-index hierarchy. Named tokens so the cross-component stacking
+     order lives in one place — detail sheets must render above the mobile
+     full-screen context view (Issue #55). Desktop docked panels use static
+     positioning (no z-index), so these only apply to overlay modes. */
+  --z-context-overlay: 80;
+  --z-detail-scrim: 100;
+  --z-detail: 101;
+
   /* Facet state tints — soft hues on warm paper. Execute = amber (the "running"
      mode), plan = dusty blue, plan+adventurous = muted lavender (blue+red blend).
      Only the facet badge text uses the main tints; --facet-auto-soft backs the

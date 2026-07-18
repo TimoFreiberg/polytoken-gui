@@ -27,7 +27,7 @@
   };
 
   function close(): void {
-    store.selectedJobHandle = null;
+    store.closeJobDetail();
   }
 
   function onKeydown(e: KeyboardEvent): void {
@@ -125,7 +125,7 @@
     position: fixed;
     inset: 0;
     background: rgba(20, 19, 18, 0.32);
-    z-index: 60;
+    z-index: var(--z-detail-scrim);
     animation: fade 0.15s ease;
   }
   @keyframes fade {
@@ -134,7 +134,7 @@
   }
   .panel {
     position: fixed;
-    z-index: 61;
+    z-index: var(--z-detail);
     left: 50%;
     bottom: 0;
     transform: translateX(-50%);
