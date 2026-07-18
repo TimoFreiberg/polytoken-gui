@@ -27,7 +27,7 @@ test("edit-tool card: collapsed +N/−M badge, expands to a @pierre/diffs render
   // (chevron + tool name make the function obvious). It keeps aria-expanded.
   await expect(card.locator(".head")).toHaveAttribute("aria-expanded", "false");
   await expect(card.locator(".head")).toHaveAccessibleName(
-    /completed.*Edit file.*1 added.*1 removed.*took \d+ms/i,
+    /completed.*Edit file.*took \d+ms.*1 added.*1 removed/i,
   );
 
   // Expanding mounts the pierre diff into a shadow root (self-contained HTML).

@@ -47,11 +47,21 @@ const PREVIEW_CASES: [string, string][] = [
   ["Web search", "Weather in Munich, …"],
 ];
 
+// The duration badge is nested inside .arg, so text assertions must exclude it
+// to check only the arg-preview content.
+function argPreviewText(loc: Locator) {
+  return loc.evaluate((el) => {
+    const clone = el.cloneNode(true) as HTMLElement;
+    clone.querySelectorAll(".duration").forEach((d) => d.remove());
+    return clone.textContent ?? "";
+  });
+}
+
 test("empty-preview tools render an empty .arg spacer", async ({ page }) => {
   await expandWork(page);
   for (const label of EMPTY_PREVIEW_LABELS) {
     const arg = card(page, label).locator(".arg");
-    await expect(arg).toHaveText("");
+    expect(await argPreviewText(arg)).toBe("");
   }
 });
 
@@ -60,7 +70,8 @@ test("each tool's .arg span shows its concise field selection", async ({
 }) => {
   await expandWork(page);
   for (const [label, expected] of PREVIEW_CASES) {
-    await expect(card(page, label).locator(".arg")).toHaveText(expected);
+    const arg = card(page, label).locator(".arg");
+    expect(await argPreviewText(arg)).toBe(expected);
   }
 });
 

@@ -534,7 +534,10 @@
       {/if}
     </span>
     <span class="name" title={item.description || undefined}>{item.label ?? item.name}</span>
-    <span class="arg" class:arg-warning={item.name === "block_goal"}>{argPreview}</span>
+    <span class="arg" class:arg-warning={item.name === "block_goal"}
+      >{argPreview}{#if durationLabel}<span class="duration" aria-label={`took ${durationLabel}`}>{durationLabel}</span
+      >{/if}</span
+    >
     <span class="trailing">
       {#if item.status === "interrupted"}
         <span class="status-text" aria-hidden="true">interrupted</span>
@@ -552,9 +555,6 @@
         >
       {/if}
     </span>
-    {#if durationLabel}
-      <span class="duration" aria-label={`took ${durationLabel}`}>{durationLabel}</span>
-    {/if}
     <Chevron {open} size={10} />
   </button>
   {#if outImages.length}
@@ -800,6 +800,7 @@
     font-size: 13.5px;
   }
   .arg {
+    position: relative;
     font-family: var(--font-mono);
     font-size: 12px;
     color: var(--text-muted);
@@ -837,26 +838,32 @@
     font-family: var(--font-mono);
     font-size: 11.5px;
   }
-  /* Elapsed-duration badge — a hover/focus-only tooltip. Visually hidden at rest
-     (opacity 0) but kept in the DOM + a11y tree so its aria-label still
-     contributes to the button's accessible name. Do NOT use visibility:hidden —
-     that removes it from the a11y tree. */
+  /* Elapsed-duration badge — a hover/focus-only overlay pinned to the right
+     edge of the .arg cell. Visually hidden at rest (opacity 0) but kept in
+     the DOM + a11y tree so its aria-label still contributes to the button's
+     accessible name. Do NOT use visibility:hidden — that removes it from the
+     a11y tree. Anchored inside .arg (position: relative) so it overlays the
+     arg tail and never reaches the body (#56). */
   .duration {
     position: absolute;
-    right: calc(var(--tool-chevron-width) + var(--tool-column-gap) + 12px);
-    top: 100%;
-    margin-top: 2px;
-    background: var(--surface);
-    border: 1px solid var(--border);
+    right: 0;
+    top: 50%;
+    transform: translateY(-50%);
+    /* Mask the arg tail underneath so the label reads cleanly over it.
+       --surface-sunken matches the head's hover/focus bg (.head:hover and
+       .head:focus-visible both set background: var(--surface-sunken)), so
+       the badge blends seamlessly where it actually shows. The card's resting
+       bg is transparent, so a solid bg here avoids the arg text bleeding
+       through. */
+    background: var(--surface-sunken);
     border-radius: var(--radius-xs);
-    padding: 2px 6px;
+    padding: 1px 5px;
     font-family: var(--font-mono);
     font-size: 11px;
     color: var(--text-muted);
     font-variant-numeric: tabular-nums;
     letter-spacing: -0.01em;
     white-space: nowrap;
-    z-index: 20;
     pointer-events: none;
     opacity: 0;
     transition: opacity 0.12s ease;
@@ -988,8 +995,14 @@
     .head {
       min-height: 44px;
     }
-    .duration {
+    /* Collapsed mobile cards hide the duration (hover-only; touch can't hover).
+       Expanded mobile cards show it — the user explicitly asked for all detail. */
+    .tool:not(.open) .duration {
       display: none;
+    }
+    /* When shown on mobile (card open), it's always-on, not hover-gated. */
+    .tool.open .duration {
+      opacity: 1;
     }
     .out-action {
       min-height: 44px;

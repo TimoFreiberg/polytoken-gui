@@ -34,10 +34,19 @@ test("header and detailed arguments stop at every configured boundary", async ({
 }) => {
   const exactHeader = card(page, "Header exact").locator(".arg");
   const overHeader = card(page, "Header over").locator(".arg");
-  expect((await exactHeader.textContent())?.length).toBe(320);
-  expect((await exactHeader.textContent())?.endsWith("…")).toBe(false);
-  expect((await overHeader.textContent())?.length).toBe(321);
-  expect((await overHeader.textContent())?.endsWith("…")).toBe(true);
+  // The duration badge ("1ms") is nested inside .arg, so exclude it when
+  // measuring the arg preview length.
+  const argPreview = (loc: Locator) =>
+    loc.evaluate((el) =>
+      Array.from(el.childNodes)
+        .filter((n) => n.nodeType === Node.TEXT_NODE)
+        .map((n) => n.textContent ?? "")
+        .join(""),
+    );
+  expect(await argPreview(exactHeader)).toHaveLength(320);
+  expect((await argPreview(exactHeader)).endsWith("…")).toBe(false);
+  expect(await argPreview(overHeader)).toHaveLength(321);
+  expect((await argPreview(overHeader)).endsWith("…")).toBe(true);
 
   const exactArgs = card(page, "Args exact 40");
   await open(exactArgs);
@@ -254,11 +263,52 @@ test("duration contributes 'took' to the header accessible name", async ({
   );
 });
 
-test("mobile: duration hidden, header hit target ≥44px", async ({ page }) => {
+test("mobile: duration hidden when collapsed, shown when expanded; header ≥44px", async ({
+  page,
+}) => {
   await page.setViewportSize({ width: 390, height: 844 });
   const completed = card(page, "Header exact");
   const duration = completed.locator(".duration");
+  // Collapsed → hidden
   await expect(duration).toHaveCSS("display", "none");
   const headBox = await completed.locator(":scope > .head").boundingBox();
   expect(headBox!.height).toBeGreaterThanOrEqual(44);
+  // Expanded → shown (always-on, not hover-gated on mobile)
+  await completed.locator(":scope > .head").click();
+  await expect(completed.locator(":scope > .body")).toBeVisible();
+  await expect(duration).toHaveCSS("opacity", "1");
+});
+
+test("duration sits within the header row, not below it (#56)", async ({
+  page,
+}) => {
+  const completed = card(page, "Header exact");
+  const head = completed.locator(":scope > .head");
+  const duration = completed.locator(".duration");
+
+  // Collapsed + hover: duration is within the head's vertical bounds.
+  await head.hover();
+  await expect(duration).toHaveCSS("opacity", "1");
+  let headBox = (await head.boundingBox())!;
+  let durBox = (await duration.boundingBox())!;
+  expect(durBox.y + durBox.height).toBeLessThanOrEqual(
+    headBox.y + headBox.height + 1,
+  );
+  expect(durBox.y).toBeGreaterThanOrEqual(headBox.y - 1);
+
+  // Expanded + hover: duration still sits within the head, never reaching the body.
+  await head.click();
+  const body = completed.locator(":scope > .body");
+  await expect(body).toBeVisible();
+  await head.hover();
+  await expect(duration).toHaveCSS("opacity", "1");
+  headBox = (await head.boundingBox())!;
+  durBox = (await duration.boundingBox())!;
+  const bodyBox = (await body.boundingBox())!;
+  expect(durBox.y + durBox.height).toBeLessThanOrEqual(
+    headBox.y + headBox.height + 1,
+  );
+  expect(durBox.y).toBeGreaterThanOrEqual(headBox.y - 1);
+  // Direct AC.2 guard: the duration's bottom must not reach the body's top.
+  expect(durBox.y + durBox.height).toBeLessThanOrEqual(bodyBox.y + 1);
 });
