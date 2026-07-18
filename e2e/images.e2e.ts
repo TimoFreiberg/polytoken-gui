@@ -1,6 +1,67 @@
 import { expect, type Page, test } from "@playwright/test";
 import { drive, gotoFresh, waitForSettledWorkBlocks } from "./helpers.js";
 
+/** Read the current bottom gap (scrollHeight - scrollTop - clientHeight). */
+function gapFn(scroller: import("@playwright/test").Locator) {
+  return scroller.evaluate(
+    (el) =>
+      (el as HTMLElement).scrollHeight -
+      (el as HTMLElement).scrollTop -
+      (el as HTMLElement).clientHeight,
+  );
+}
+
+/** Assert the scroller is pinned at the live bottom (gap ≈ 0) and the final
+ *  assistant row is entirely above the composer (no clipping). */
+async function assertPinnedToBottom(
+  page: import("@playwright/test").Page,
+): Promise<void> {
+  const scroller = page.locator(".scroller");
+  // Near-zero bottom gap — the ResizeObserver keeps us at the exact bottom.
+  await expect.poll(() => gapFn(scroller), { timeout: 5000 }).toBeLessThan(4);
+  // The final assistant row's bottom edge is above the composer's top edge.
+  const clearance = await page.evaluate(() => {
+    const rows = document.querySelectorAll(".row.assistant");
+    const lastRow = rows[rows.length - 1];
+    const composer = document.querySelector(".composer-wrap");
+    if (!lastRow || !composer) return -1;
+    return (
+      composer.getBoundingClientRect().top -
+      lastRow.getBoundingClientRect().bottom
+    );
+  });
+  expect(clearance).toBeGreaterThan(0);
+}
+
+/** Disable overflow-anchor (simulating iOS Safari), wait for the settle window
+ *  to lapse, then insert a small spacer BEFORE the final assistant row —
+ *  mimicking a late image decode in a row above the final text that grows the
+ *  content height and pushes the final row down. Appending at the END would grow
+ *  scrollHeight (opening a gap) but wouldn't move the final row, so the
+ *  clearance check wouldn't be discriminative. Inserting before the final row
+ *  pushes it down, matching the real bug: images decode in rows ABOVE the final
+ *  assistant text, pushing it below the viewport. */
+async function forceLateHeightChange(
+  page: import("@playwright/test").Page,
+  px: number,
+): Promise<void> {
+  const scroller = page.locator(".scroller");
+  await scroller.evaluate((el) => {
+    (el as HTMLElement).style.overflowAnchor = "none";
+  });
+  // Wait for the 500ms settle window to lapse (plus margin).
+  await page.waitForTimeout(1500);
+  await scroller.locator(".col").evaluate((el, height) => {
+    const rows = el.querySelectorAll(".row.assistant");
+    const lastRow = rows[rows.length - 1];
+    if (!lastRow) return;
+    const spacer = document.createElement("div");
+    spacer.id = "test-late-decode";
+    spacer.style.height = `${height}px`;
+    lastRow.parentNode!.insertBefore(spacer, lastRow);
+  }, px);
+}
+
 const PNG =
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl2nWQAAAAASUVORK5CYII=";
 
@@ -304,4 +365,63 @@ test("both images survive a reload (typed images in the state snapshot)", async 
   await expect
     .poll(() => out.evaluate((i: HTMLImageElement) => i.naturalWidth))
     .toBeGreaterThan(0);
+});
+
+test("a pinned transcript stays at the live bottom as images decode and after reload", async ({
+  page,
+}) => {
+  await drive(page, "images");
+  await waitForSettledWorkBlocks(page, 1);
+
+  // Wait for both images to actually decode (not just <img> with a src).
+  const att = page.locator("img.att-img");
+  const out = page.locator("img.out-img");
+  await expect
+    .poll(() => att.evaluate((i: HTMLImageElement) => i.naturalWidth))
+    .toBeGreaterThan(0);
+  await expect
+    .poll(() => out.evaluate((i: HTMLImageElement) => i.naturalWidth))
+    .toBeGreaterThan(0);
+
+  // ── AC.1, AC.2: gap is near-zero and the final row is above the composer.
+  await assertPinnedToBottom(page);
+
+  // Precondition: the content must overflow the viewport for the gap check to be
+  // discriminative. If the fixture doesn't produce enough content, the gap is
+  // always ~0 regardless of the fix (nothing to scroll).
+  const scroller = page.locator(".scroller");
+  const scrollable = await scroller.evaluate(
+    (el) =>
+      (el as HTMLElement).scrollHeight > (el as HTMLElement).clientHeight,
+  );
+  expect(scrollable).toBe(true);
+
+  // Simulate a LATE image decode (the real failure surface): disable
+  // overflow-anchor (Chrome's auto-anchoring masks the bug — see
+  // e2e/scroll-drift.e2e.ts for the same technique), let the settle window
+  // lapse, then force a small height change that mimics a slow image decode.
+  // Without the fix, the ResizeObserver is settle-window-gated and the drift
+  // watcher's 200px threshold misses this gap; the final message is clipped.
+  await forceLateHeightChange(page, 68);
+  await assertPinnedToBottom(page);
+  // AC.3: the "New messages ↓" pill never appeared. This is a non-discriminative
+  // sanity check — with overflow-anchor off and a DOM-appended spacer, no scroll
+  // event fires so `pinned` stays true regardless of the fix. The spurious-unread
+  // symptom (which requires live streaming + a scroll event un-pinning) is
+  // implicitly covered by AC.1: if the gap stays < 4px, `pinned` never flips and
+  // `markActiveUnread` is never called. The pill assertion here guards against a
+  // regression where the fix itself accidentally un-pins.
+  await expect(page.getByTestId("new-messages-pill")).toHaveCount(0);
+
+  // ── AC.2 (reload): after reload, the same invariant holds.
+  await page.goto("/?dev");
+  await waitForSettledWorkBlocks(page, 1);
+  await expect
+    .poll(() => page.locator("img.att-img").evaluate((i: HTMLImageElement) => i.naturalWidth))
+    .toBeGreaterThan(0);
+  await expect
+    .poll(() => page.locator("img.out-img").evaluate((i: HTMLImageElement) => i.naturalWidth))
+    .toBeGreaterThan(0);
+  await forceLateHeightChange(page, 68);
+  await assertPinnedToBottom(page);
 });

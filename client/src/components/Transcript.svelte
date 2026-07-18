@@ -335,13 +335,16 @@
   //    It does NOT tick on: a "Worked for Ns" block collapsing (animated reveal slide), an
   //    image decode, a markstream block reflow when final/fade flips, or growth in a non-last
   //    item.
-  //  - The only other re-assert path is the ResizeObserver → applySettle(), but it is gated
-  //    on `Date.now() < settleUntil` — a ~500ms window opened only by settleScroll() on
-  //    send/switch/restore.
-  //  - So OUTSIDE that window, a height change while `pinned` silently strands the viewport
-  //    past/short of the content end, showing empty space — the intermittent "transcript goes
-  //    blank while streaming, any scroll fixes it" bug (any scroll retriggers onScroll →
-  //    nextPinned → the streaming-pin effect → settleScroll, which is the manual "fix").
+  //  - The only other re-assert path is the ResizeObserver → applySettle(). For the
+  //    ratio-based restore (a saved reading spot) it is gated on
+  //    `Date.now() < settleUntil` — a ~500ms window opened only by settleScroll() on
+  //    send/switch/restore. The live-bottom follow (settleRatio === undefined) now
+  //    re-asserts on EVERY content height change while pinned (#57), closing the gap
+  //    that previously stranded a pinned viewport past/short of the content end.
+  //  - So OUTSIDE that window, a height change while `pinned` only strands the viewport
+  //    in the ratio-restore (scrolled-up reading) case; the pinned live-bottom case is
+  //    now handled by the ResizeObserver. The watcher remains as a safety net for
+  //    large/catastrophic drift and any future regression.
   //
   // The watcher closes the gap directly: it checks the invariant on a sampling interval AND
   // on each onScroll, regardless of which height-churn event caused the stranding. The
@@ -523,7 +526,10 @@
   // content end).
   //
   // Keep a target (a `ratio`, or `undefined` = the live bottom) and re-apply it against the
-  // CURRENT height whenever the content actually resizes, for a short window. A ResizeObserver
+  // CURRENT height whenever the content actually resizes. For the live-bottom follow
+  // (settleRatio === undefined + pinned), the ResizeObserver re-asserts on EVERY height
+  // change (#57); the "short window" applies only to the ratio-based restore (a transient
+  // target for switch/restore, not an invariant to hold indefinitely). A ResizeObserver
   // fires only on real height changes, so static content is left alone.
   let settleRatio: number | undefined;
   let settleUntil = 0;
@@ -759,11 +765,31 @@
     const onPageHide = () => savePositionNow();
     window.addEventListener("pagehide", onPageHide);
     // Re-apply the active settle target whenever the content's height actually changes (late
-    // markstream block enhancement, image decode, work-block collapse) — but only inside the
-    // brief window a switch/restore/send opened (settleUntil). See settleScroll.
+    // markstream block enhancement, image decode, work-block collapse). The settle window
+    // (settleUntil) now gates ONLY the ratio-based restore (a saved reading spot); the
+    // live-bottom follow (settleRatio === undefined) re-asserts on EVERY height change while
+    // pinned — image decode can happen seconds after send/switch/restore, long after the
+    // 500ms window lapses. See settleScroll and the ResizeObserver callback below (#57).
     if (content && typeof ResizeObserver !== "undefined") {
       settleObserver = new ResizeObserver(() => {
-        if (Date.now() < settleUntil) applySettle();
+        if (settleRatio === undefined) {
+          // Live-bottom follow: re-assert the bottom on ANY content height change
+          // while pinned — NOT just within the 500ms settle window. Image decode,
+          // markstream reflow, and work-block collapse can happen seconds after
+          // send/switch/restore, long after the settle window lapses. Without this,
+          // a pinned viewport drifts short of the bottom as late layout shifts the
+          // content height, leaving the final message behind the composer (#57).
+          // markProgScroll covers the scroll-event dispatch so onScroll treats the
+          // re-assert as ours (no transient position persistence, no nav-cursor drop).
+          if (!pinned) return;
+          markProgScroll(300);
+          applySettle();
+        } else if (Date.now() < settleUntil) {
+          // Ratio-based restore (scrolled-up reading spot): only within the settle
+          // window — the saved ratio is a transient target for switch/restore, not
+          // an invariant to hold indefinitely.
+          applySettle();
+        }
       });
       settleObserver.observe(content);
     }

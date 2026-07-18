@@ -7,13 +7,13 @@
 // `contentSize` tracks only item count + the LAST item's streaming length. It does NOT tick
 // on a "Worked for Ns" block collapsing (animated reveal slide), an image decode, a
 // markstream block reflow when final/fade flips, or growth in a non-last item. The only
-// other re-assert path is the ResizeObserver → applySettle(), but that is gated on
-// `Date.now() < settleUntil` — a ~500ms window opened only by settleScroll() on
-// send/switch/restore. So OUTSIDE that window, a height change while `pinned` silently
-// strands the viewport past/short of the content end, showing empty space. Any scroll input
-// retriggers onScroll → nextPinned → the streaming-pin effect → settleScroll(), which is
-// why a manual scroll "fixes" the blank. This is the intermittent "transcript goes blank
-// while streaming, any scroll fixes it" bug.
+// other re-assert path is the ResizeObserver → applySettle(). For the ratio-based restore
+// (a saved reading spot) it is gated on `Date.now() < settleUntil` — a ~500ms window
+// opened only by settleScroll() on send/switch/restore. The live-bottom follow
+// (settleRatio === undefined) now re-asserts on EVERY content height change while pinned
+// (#57), closing the gap that previously stranded a pinned viewport past/short of the
+// content end after the settle window lapsed. The watcher remains as a safety net for
+// large/catastrophic drift (gap > 200px) and any future regression.
 //
 // THE WATCHER. A sampling watcher closes this gap: it continuously checks the pinned
 // invariant — a pinned scroller SHOULD sit at the bottom (gap ≈ 0) — and both corrects it

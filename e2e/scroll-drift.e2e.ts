@@ -3,9 +3,9 @@ import { drive, gotoFresh, waitForSettledWorkBlocks } from "./helpers.js";
 
 // The pinned-scroll drift watcher: when the viewport is pinned to the bottom but has drifted
 // far from it (gap > 200px) after a height-churn event the follow logic missed (work-block
-// collapse, markstream reflow, image decode — none tick `contentSize`, and the ResizeObserver
-// re-assert is settle-window-gated), the watcher self-heals by re-asserting scrollTo(bottom)
-// and — only with ?dev — raises a sticky "Copy trace" notice.
+// collapse, markstream reflow, image decode — none tick `contentSize`, and the ratio-restore
+// ResizeObserver re-assert is settle-window-gated), the watcher self-heals by re-asserting
+// scrollTo(bottom) and — only with ?dev — raises a sticky "Copy trace" notice.
 //
 // FORCING THE DRIFT: growing content under a pinned viewport is non-reproducible in headless
 // Chromium — Chrome's `overflow-anchor` keeps the gap near 0 on growth (documented at
@@ -13,12 +13,14 @@ import { drive, gotoFresh, waitForSettledWorkBlocks } from "./helpers.js";
 // scrollTop down to the new max and fires a scroll event that re-pins before the watcher
 // sees the drift. The reliable forcing method is to DISABLE `overflow-anchor` on the scroller
 // (simulating iOS Safari, where overflow-anchor is unreliable — the real-world failure
-// surface) and then grow the DOM directly: append a tall spacer to the content container.
-// This grows scrollHeight without ticking `contentSize` (which tracks Svelte items, not raw
-// DOM), so the streaming-pin effect doesn't re-run; the ResizeObserver fires but the settle
-// window has lapsed, so applySettle is a no-op; and with overflow-anchor off, Chrome does
-// NOT adjust scrollTop on growth, so no scroll event fires and `pinned` stays true —
-// producing `pinned && gap > threshold`, the exact state the watcher targets.
+// surface) and then grow the DOM directly: append a tall spacer as a SIBLING of `.col`
+// (directly under `.scroller`), NOT as a child of `.col`. This grows scrollHeight without
+// changing `.col`'s height, so the ResizeObserver on `.col` doesn't fire — Phase 1's fix
+// (#57) re-asserts the bottom on every `.col` height change while pinned, which would close
+// the gap before the drift watcher sees it. `contentSize` (Svelte items) doesn't tick either,
+// so the streaming-pin effect doesn't re-run; and with overflow-anchor off, Chrome does NOT
+// adjust scrollTop on growth, so no scroll event fires and `pinned` stays true — producing
+// `pinned && gap > threshold`, the exact state the watcher targets.
 
 /** Read the current gap (scrollHeight - scrollTop - clientHeight) of the scroller. */
 function gapFn(scroller: import("@playwright/test").Locator) {
@@ -30,20 +32,29 @@ function gapFn(scroller: import("@playwright/test").Locator) {
   );
 }
 
-/** Append a tall spacer to the content container, growing scrollHeight without ticking
- *  `contentSize` (Svelte items unchanged). With overflow-anchor disabled, scrollTop stays
- *  put and the gap opens — forcing `pinned && gap > threshold`. */
+/** Append a tall spacer as a sibling of `.col` (under `.scroller`), growing scrollHeight
+ *  without changing `.col`'s height — so the ResizeObserver on `.col` doesn't fire and
+ *  Phase 1's live-bottom re-assert (#57) doesn't close the gap before the watcher sees it.
+ *  `contentSize` (Svelte items) is unchanged too. With overflow-anchor disabled,
+ *  scrollTop stays put and the gap opens — forcing `pinned && gap > threshold`. */
 async function forceDrift(page: import("@playwright/test").Page): Promise<void> {
   const scroller = page.locator(".scroller");
-  const content = scroller.locator(".col");
   // Disable overflow-anchor so Chrome doesn't mask the drift on growth.
   await scroller.evaluate((el) => {
     (el as HTMLElement).style.overflowAnchor = "none";
   });
-  // Wait for the settle window (500ms) to lapse so the ResizeObserver won't re-assert.
+  // Wait for the settle window (500ms) to lapse so the ratio-restore ResizeObserver
+  // branch won't re-assert. (The live-bottom branch doesn't fire because the spacer
+  // is appended to the scroller, not .col — see below.)
   await page.waitForTimeout(1500);
   // Grow the DOM: append a tall spacer. scrollTop stays put → gap opens.
-  await content.evaluate((el) => {
+  // Append the spacer to the SCROLLER (not .col) so it grows scrollHeight
+  // WITHOUT changing .col's height — Phase 1's ResizeObserver fix re-asserts
+  // the bottom on every .col height change while pinned, which would close the
+  // gap before the drift watcher sees it. A scroller-level sibling grows
+  // scrollHeight (the gap the watcher samples) without triggering the
+  // ResizeObserver on .col.
+  await scroller.evaluate((el) => {
     const spacer = document.createElement("div");
     spacer.id = "test-drift-spacer";
     spacer.style.height = "2000px";
