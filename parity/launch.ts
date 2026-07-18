@@ -87,7 +87,7 @@ export async function launch(p: Paths = paths()): Promise<void> {
     PORT: undefined,
   };
 
-  const server = Bun.spawn(["cargo", "run"], {
+  const server = Bun.spawn(["cargo", "run", "--bin", "pantoken-server"], {
     cwd: join(REPO_ROOT, "server-rs"),
     env: backendEnv,
     stdout: "inherit",
