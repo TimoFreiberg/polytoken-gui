@@ -124,7 +124,89 @@ against traversal.
 
 ### Not yet implemented (future phases)
 
-- Stdio adapter runtime (Phase 1)
+- ~~Stdio adapter runtime (Phase 1)~~ → see "Remote deployment — Phase 1" below
 - Remote server process / proxy (Phase 2)
 - Provisioning / SSH transport (Phase 3+)
 - UI for remote sessions (later)
+
+## Remote deployment — Phase 1 (transport + runtime)
+
+Phase 1 builds the transport layer and persistent runtime on top of the Phase 0
+contracts. It ships no desktop/mobile connection UX, no provisioning, no
+polytoken install — those are later phases.
+
+### Reusable ConnectionSession + adapter trait
+
+`pantoken-server::connection::ConnectionSession` owns the per-connection logic
+(hello auth/registration, hub input dispatch, outbound message pumping, orderly
+close, hub removal) that used to live inline in `main.rs::handle_ws_connection`.
+It drives a small `Transport` + `TransportSplit` trait pair: `recv` for
+inbound logical messages, `send` for outbound. The session is generic over
+`T: Transport + TransportSplit`, monomorphizing for each adapter.
+
+The Axum WebSocket handler (`connection::ws::WsAdapter`) becomes a thin
+adapter over this session. A new stdio adapter (`connection::stdio::StdioAdapter`)
+reuses the same session over length-prefixed frames.
+
+### Envelope-vs-raw decision (Option A)
+
+The `WireEnvelope`/frame codec is a **stdio-only** wire concern. The WebSocket
+path (server + `ws.svelte.ts`) speaks raw `ClientMessage`/`ServerMessage` JSON
+and does NOT adopt the envelope. The bridge wraps/unwraps at the WS↔stdio
+boundary. Rationale: no breaking change to the working local protocol; Phase 0
+set up the envelope for stdio's use.
+
+This asymmetry is intentional and must not be "fixed" by adopting the envelope
+on WS — that would break the local protocol.
+
+### Stdio adapter + remote-proxy command mode
+
+`connection::stdio::StdioAdapter` implements `Transport`/`TransportSplit` over
+`tokio::io::{stdin, stdout}` using the Phase 0 `FrameDecoder`. It wraps outbound
+`ServerMessage`s in `ServerEnvelope` + frame, unwraps inbound `ClientEnvelope` +
+frame → `ClientMessage`. `FrameDecoder::finish()` finally wires up the
+`Truncated`-at-EOF variant Phase 0 reserved.
+
+The stdio adapter doubles as the remote proxy: `PANTOKEN_SERVE_MODE=stdio-proxy`
+connects to the persistent runtime's Unix socket and relays framed bytes
+bidirectionally via `FramedRelay`.
+
+### Persistent remote runtime mode
+
+`PANTOKEN_SERVE_MODE=remote-runtime` listens only on a user-owned Unix socket
+under the remote root (`layout::private_socket(root)`), enforces single-instance
+locking via `pidlock`, and serves framed connections via `ConnectionSession`.
+No public TCP listener is bound (AC.3).
+
+An identity probe (separate framed `{"type":"probe"}` → `Identity` JSON
+exchange) lets the proxy distinguish not-installed/starting/incompatible/running
+before the hello gate — NOT a `ServerMessage::Hello` (the real Hello is a
+post-registration response).
+
+### Lifecycle manager (idle reaping)
+
+`remote::lifecycle::LifecycleManager` finally wires `idle_reap_ms` (previously
+read into `Config` but never consumed). It runs a periodic timer that disposes
+idle warm session attachments (via `PantokenDriver::dispose_idle_warm`) while
+retaining durable session state, and signals the hub to exit after a longer
+`hub_idle_ms` (`PANTOKEN_HUB_IDLE_MS`, default 2× `idle_reap_ms`).
+
+The `PantokenDriver` trait was extended with lifecycle-query methods
+(`any_turn_in_flight`, `warm_session_count`, `dispose_idle_warm`) with no-op
+defaults for mock/stub drivers. `PolytokenDriver` implements them using its
+existing `WarmSession`/`turn_in_flight`/`dispose_warm` machinery.
+
+### Reconnect/resume
+
+Reconnect is driven by the bridge: a dropped SSH proxy spawns a fresh process,
+reconnects to the persistent runtime, and hellos with the existing resume token.
+The hub's `add_client` handles tail-replay (epoch matches, journal covers seq)
+or full-seed fallback — no new logic, but now verified over the stdio+socket
+relay path.
+
+### Local bridge + SshTransport trait
+
+`desktop/src/bridge.rs` accepts browser connections on a loopback port and
+forwards to the SSH stdio transport. The `SshTransport` trait abstracts
+spawning an SSH proxy; Phase 1 ships `SystemSshTransport` (spawns `ssh -T`).
+Phase 2 adds the mobile native impl and the connection-state UX.

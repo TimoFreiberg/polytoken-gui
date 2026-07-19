@@ -161,3 +161,33 @@ and polytoken's installers fetch latest-unstable (not pinned), so a
 regenerate-in-CI gate is fragile against version skew. Freshness is a
 documented local discipline: after bumping polytoken, run
 `bun run scripts/codegen-polytoken-rs.ts` and commit the regenerated `lib.rs`.
+
+## Remote deployment: envelope-vs-raw wire format (Option A)
+
+**Decision:** the `WireEnvelope`/frame codec is a **stdio-only** wire concern.
+The WebSocket path (server + `ws.svelte.ts`) speaks raw `ClientMessage`/
+`ServerMessage` JSON directly (`{"type":"hello",...}`), with no
+`{"message":{...}}` wrapping. The stdio adapter wraps in `WireEnvelope` +
+length-prefixed frame; the bridge wraps/unwraps at the WS↔stdio boundary.
+
+**Rationale:** the existing WebSocket path is a working, tested local
+protocol. Adopting the envelope on WS would be a breaking change to the
+browser client for no functional benefit — the envelope exists to give
+future per-transport metadata (correlation ids, tracing) a home, and that
+metadata is only needed on the stdio transport (SSH relay), not on the
+loopback WS path.
+
+**Invariant:** neither the bridge nor the proxy ever emits a
+`ClientMessage::Hello` — the browser is the sole originator. The proxy's
+identity probe is a separate framed message type, not a Hello.
+
+## Remote deployment: serve-mode selection via env-var (not clap)
+
+**Decision:** `PANTOKEN_SERVE_MODE` env-var selects the server's mode
+(`remote-runtime`, `stdio-proxy`, default unset = local server). No clap
+dependency was added.
+
+**Rationale:** the server is already pure env-var driven (`config.rs` is all
+env). Adding clap for two modes would introduce a new dependency and a
+different config style for no gain. The env-var approach matches the existing
+config style and keeps the binary small.
