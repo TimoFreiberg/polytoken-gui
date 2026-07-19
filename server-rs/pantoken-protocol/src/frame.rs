@@ -224,6 +224,26 @@ impl FrameDecoder {
 
         results
     }
+
+    /// Signal stream end and report any truncated frame.
+    ///
+    /// Call this when the underlying stream has closed (EOF). If the decoder
+    /// has buffered bytes that don't form a complete frame (a partial length
+    /// prefix or a partial body), this returns `Some(FrameError::Truncated)`
+    /// so the caller can map it to a clean session close rather than hanging.
+    /// If the buffer is empty (all frames were complete), returns `None`.
+    ///
+    /// This finally wires up the `Truncated` variant that Phase 0 reserved
+    /// for "a future stream-end operation" (the stdio adapter, Phase 1.2).
+    /// `push()` never yields `Truncated` — it just leaves partial bytes
+    /// buffered and waits for more. `finish()` is the stream-end counterpart.
+    pub fn finish(&mut self) -> Option<FrameError> {
+        if self.buf.is_empty() {
+            None
+        } else {
+            Some(FrameError::Truncated)
+        }
+    }
 }
 
 #[cfg(test)]
@@ -442,5 +462,49 @@ mod tests {
         let oversized: Vec<u8> = vec![b'x'; MAX_FRAME_BYTES + 1];
         let err = encode_json(&oversized).unwrap_err();
         assert!(matches!(err, FrameError::JsonTooLarge), "got {:?}", err);
+    }
+
+    // ── finish() / Truncated-at-EOF (Phase 1 extension) ───────────────
+
+    #[test]
+    fn finish_returns_none_when_buffer_empty() {
+        let mut decoder = FrameDecoder::new();
+        assert!(decoder.finish().is_none(), "empty buffer → no error");
+    }
+
+    #[test]
+    fn finish_returns_none_after_complete_frame() {
+        let env = sample_server_envelope();
+        let frame = encode(&env).unwrap();
+        let mut decoder = FrameDecoder::new();
+        let results = decoder.push(&frame);
+        assert_eq!(results.len(), 1);
+        assert!(results[0].is_ok());
+        // After decoding the complete frame, buffer should be empty.
+        assert!(decoder.finish().is_none(), "complete frame → no truncation");
+    }
+
+    #[test]
+    fn finish_returns_truncated_for_partial_length_prefix() {
+        let mut decoder = FrameDecoder::new();
+        // Feed only 2 bytes of a length prefix.
+        let results = decoder.push(&[0x00, 0x00]);
+        assert!(results.is_empty(), "partial prefix → no frames yet");
+        // At EOF, the partial prefix is a truncated frame.
+        let err = decoder.finish().expect("partial prefix → Truncated");
+        assert!(matches!(err, FrameError::Truncated), "got {:?}", err);
+    }
+
+    #[test]
+    fn finish_returns_truncated_for_partial_body() {
+        let mut decoder = FrameDecoder::new();
+        // Declare a 10-byte body but only feed 5 bytes.
+        let mut frame = Vec::new();
+        frame.extend_from_slice(&10u32.to_be_bytes());
+        frame.extend_from_slice(b"only5");
+        let results = decoder.push(&frame);
+        assert!(results.is_empty(), "partial body → no frames yet");
+        let err = decoder.finish().expect("partial body → Truncated");
+        assert!(matches!(err, FrameError::Truncated), "got {:?}", err);
     }
 }

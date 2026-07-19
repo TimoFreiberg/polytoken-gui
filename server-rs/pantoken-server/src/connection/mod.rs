@@ -26,6 +26,7 @@
 //! stdio adapter wraps in `WireEnvelope` + length-prefixed frame at the
 //! transport boundary. The logical envelope is never exposed to the browser.
 
+pub mod stdio;
 pub mod ws;
 
 use std::sync::Arc;
