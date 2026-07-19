@@ -6,7 +6,7 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
 
-use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
+use axum::extract::ws::{WebSocket, WebSocketUpgrade};
 use axum::extract::{Query, State};
 use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::{IntoResponse, Response};
@@ -304,119 +304,14 @@ async fn ws_handler(ws: WebSocketUpgrade, State(state): State<AppState>) -> Resp
 }
 
 async fn handle_ws_connection(ws: WebSocket, state: AppState) {
-    use futures_util::{SinkExt, StreamExt};
+    use pantoken_server::connection::{ConnectionSession, SessionEnv, ws::WsAdapter};
 
-    let (ws_sink, mut ws_stream) = ws.split();
-
-    // Wait for the hello message before registering the client.
-    let (client_key, rx) = loop {
-        match ws_stream.next().await {
-            Some(Ok(Message::Text(text))) => {
-                let parsed: serde_json::Value = match serde_json::from_str(&text) {
-                    Ok(v) => v,
-                    Err(_) => {
-                        // Can't send errors yet — no sink access in this loop.
-                        return;
-                    }
-                };
-                if parsed.get("type").and_then(|t| t.as_str()) != Some("hello") {
-                    return;
-                }
-
-                // Check auth token
-                let auth = parsed.get("auth").and_then(|a| a.as_str());
-                if !config::token_ok(auth, &state.config) {
-                    return;
-                }
-
-                // Parse resume token if present
-                let resume = parsed.get("resume").and_then(|r| {
-                    serde_json::from_value::<pantoken_protocol::wire::ResumeToken>(r.clone()).ok()
-                });
-
-                // Register the client with the hub.
-                // add_client returns (client_key, tx, rx) — tx is a clone of what's
-                // stored in the ClientConn; we drop it. rx goes to the pump task.
-                let (client_key, _tx, rx) = {
-                    let mut hub = state.hub.lock();
-                    let result = hub.add_client(resume);
-                    // Spawn the async follow-up lists (sessionList, modelList,
-                    // commandList, facetList, fileIndex) — mirrors TS addClient.
-                    hub.spawn_connect_lists(result.0);
-                    result
-                };
-
-                break (client_key, rx);
-            }
-            Some(Ok(_)) => continue,
-            Some(Err(e)) => {
-                warn!("ws error before hello: {e}");
-                return;
-            }
-            None => return,
-        }
+    let env = SessionEnv {
+        hub: state.hub.clone(),
+        config: state.config.clone(),
     };
-
-    // Pump task: owns the sink, reads from the hub channel, writes to WS.
-    // Clear ownership: this task is the sole writer to the WebSocket.
-    let mut ws_sink = ws_sink;
-    let pump = tokio::spawn(async move {
-        let mut rx = rx;
-        while let Some(msg) = rx.recv().await {
-            let json = serde_json::to_string(&msg).unwrap_or_default();
-            if ws_sink.send(Message::Text(json.into())).await.is_err() {
-                break;
-            }
-        }
-        // Channel closed (client removed from hub) — close the WebSocket.
-        let _ = ws_sink.send(Message::Close(None)).await;
-    });
-
-    // Main loop: owns the stream, reads from WS, dispatches to hub.
-    while let Some(msg) = ws_stream.next().await {
-        match msg {
-            Ok(Message::Text(text)) => {
-                let parsed: serde_json::Value = match serde_json::from_str(&text) {
-                    Ok(v) => v,
-                    Err(_) => continue,
-                };
-
-                // Skip hello (already authed)
-                if parsed.get("type").and_then(|t| t.as_str()) == Some("hello") {
-                    continue;
-                }
-
-                // Parse as ClientMessage and dispatch to hub
-                let client_msg = match serde_json::from_value::<
-                    pantoken_protocol::wire::ClientMessage,
-                >(parsed)
-                {
-                    Ok(m) => m,
-                    Err(e) => {
-                        warn!("failed to parse client message: {e}");
-                        continue;
-                    }
-                };
-
-                // Dispatch to the hub (lock briefly — handle_client is sync,
-                // driver calls are spawned as separate tasks)
-                {
-                    let mut hub = state.hub.lock();
-                    hub.handle_client(client_key, client_msg);
-                }
-            }
-            Ok(Message::Close(_)) | Err(_) => break,
-            _ => {}
-        }
-    }
-
-    // Clean up: remove the client from the hub (drops the tx, closing the pump).
-    {
-        let mut hub = state.hub.lock();
-        hub.remove_client(client_key);
-    }
-    // pump task will exit when rx returns None (tx dropped).
-    let _ = pump.await;
+    let adapter = WsAdapter::new(ws);
+    ConnectionSession::new(adapter, env).run().await;
 }
 
 // ── /push/* ─────────────────────────────────────────────────────────────

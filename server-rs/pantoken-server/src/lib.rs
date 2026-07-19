@@ -13,6 +13,7 @@
 pub mod archive_store;
 pub mod background_model;
 pub mod config;
+pub mod connection;
 pub mod driver;
 pub mod hub;
 pub mod journal;

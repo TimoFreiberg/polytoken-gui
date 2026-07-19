@@ -43,3 +43,6 @@ notify = { workspace = true }
 http = "0.2"
 # Pinning distinct mtimes in `list_session_ids` sort tests (mirrors Node's `utimesSync`).
 filetime = "0.2"
+# WS client for the adapter contract tests (AC.1).
+tokio-tungstenite = "0.29"
+futures-util = { version = "0.3", features = ["sink", "std"] }
