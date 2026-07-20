@@ -31,9 +31,17 @@
     gap: 4px;
     background: none;
     border: none;
-    padding: 3px 0;
+    margin-left: -5px;
+    padding: 3px 5px;
+    border-radius: 6px;
     color: var(--text-muted);
     font-size: 13px;
+  }
+  .think.open .head {
+    position: sticky;
+    top: 8px;
+    z-index: 1;
+    background: var(--bg);
   }
   .head:hover,
   .head:focus-visible {
