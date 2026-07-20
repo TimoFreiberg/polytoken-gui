@@ -77,7 +77,7 @@ pub struct InstallProvenance {
     pub sha256: String,
     /// The install channel (stable/unstable).
     pub channel: String,
-    /// ISO 8601 timestamp of the install.
+    /// Unix timestamp (seconds since epoch) of the install.
     pub installed_at: String,
     /// Trust level: "checksum-only" (no signature verification).
     pub trust_level: String,
@@ -197,12 +197,18 @@ pub fn compute_sha256(data: &[u8]) -> String {
 
 /// Parse a SHA256SUMS file and find the hash for the given filename.
 ///
-/// The file format is: `<hash>  <filename>` per line.
+/// The file format is: `<hash>  <filename>` per line. Matches on the
+/// basename (last path component) of the entry for robustness against
+/// path-prefixed entries.
 pub fn find_checksum_in_sums(sums_content: &str, filename: &str) -> Option<String> {
     for line in sums_content.lines() {
         let parts: Vec<&str> = line.split_whitespace().collect();
-        if parts.len() >= 2 && parts[1].ends_with(filename) {
-            return Some(parts[0].to_lowercase());
+        if parts.len() >= 2 {
+            // Match on the basename of the entry (handles path-prefixed entries).
+            let entry_basename = parts[1].rsplit('/').next().unwrap_or(parts[1]);
+            if entry_basename == filename {
+                return Some(parts[0].to_lowercase());
+            }
         }
     }
     None
@@ -230,6 +236,12 @@ pub fn verify_checksum(data: &[u8], expected_sha256: &str) -> Result<(), Install
     }
 }
 
+/// Single-quote a shell word for safe interpolation into SSH commands.
+/// Wraps in `'...'` and escapes embedded single quotes as `'\''`.
+fn shell_quote(word: &str) -> String {
+    format!("'{}'", word.replace('\'', "'\\''"))
+}
+
 /// Build the remote extraction + atomic-install command.
 ///
 /// Extracts the archive into a staging directory, verifies the binary, then
@@ -246,16 +258,21 @@ pub fn build_install_command(
     let final_dir = layout::polytoken_binary(root, version, target)
         .map_err(|e| InstallError::UnsupportedTarget(e.to_string()))?
         .parent()
-        .unwrap()
+        .ok_or_else(|| InstallError::UnsupportedTarget("empty parent path".into()))?
         .to_string_lossy()
         .to_string();
 
     let staging_dir = format!("{final_dir}/.staging-$$");
+    let staging_q = shell_quote(&staging_dir);
+    let final_q = shell_quote(&final_dir);
+    let archive_q = shell_quote(archive_path);
 
     let extract_cmd = match format {
-        ArchiveFormat::TarGz => format!("tar xzf '{archive_path}' -C '{staging_dir}'"),
-        ArchiveFormat::Zip => format!("unzip -o '{archive_path}' -d '{staging_dir}'"),
+        ArchiveFormat::TarGz => format!("tar xzf {archive_q} -C {staging_q}"),
+        ArchiveFormat::Zip => format!("unzip -o {archive_q} -d {staging_q}"),
     };
+
+    let binary_in_staging = shell_quote(&format!("{staging_dir}/polytoken"));
 
     // The install command:
     // 1. Create staging dir
@@ -265,14 +282,14 @@ pub fn build_install_command(
     // 5. Clean up archive
     Ok(format!(
         "set -e; \
-         mkdir -p '{staging_dir}'; \
+         mkdir -p {staging_q}; \
          {extract_cmd}; \
-         chmod +x '{staging_dir}/polytoken'; \
-         test -x '{staging_dir}/polytoken'; \
-         mkdir -p '{final_dir}'; \
-         rm -rf '{final_dir}'; \
-         mv '{staging_dir}' '{final_dir}'; \
-         rm -f '{archive_path}'; \
+         chmod +x {binary_in_staging}; \
+         test -x {binary_in_staging}; \
+         mkdir -p {final_q}; \
+         rm -rf {final_q}; \
+         mv {staging_q} {final_q}; \
+         rm -f {archive_q}; \
          echo ok"
     ))
 }
@@ -281,14 +298,21 @@ pub fn build_install_command(
 pub fn build_cleanup_staging_command(remote_root: &str, version: &str, target: &str) -> String {
     let root = Path::new(remote_root);
     let final_dir = layout::polytoken_binary(root, version, target)
-        .map(|p| p.parent().unwrap().to_string_lossy().to_string())
+        .map(|p| {
+            p.parent()
+                .map(|parent| parent.to_string_lossy().to_string())
+        })
+        .unwrap_or(None)
         .unwrap_or_default();
-    format!("rm -rf '{final_dir}'/.staging-* 2>/dev/null; true")
+    let final_q = shell_quote(&final_dir);
+    // The glob .staging-* must be outside the quotes for shell expansion.
+    format!("rm -rf {final_q}/.staging-* 2>/dev/null; true")
 }
 
 /// Build the command to check if a polytoken binary exists at a given path.
 pub fn build_binary_check_command(binary_path: &str) -> String {
-    format!("test -x '{binary_path}' && echo exists || echo missing")
+    let path_q = shell_quote(binary_path);
+    format!("test -x {path_q} && echo exists || echo missing")
 }
 
 /// Build the command to write install.json on the remote.
@@ -299,21 +323,18 @@ pub fn build_write_install_json_command(
     let json_path = layout::install_metadata(Path::new(remote_root));
     let json = serde_json::to_string_pretty(provenance)
         .map_err(|e| InstallError::Download(format!("serialize install.json: {e}")))?;
+    let json_path_q = shell_quote(&json_path.to_string_lossy());
     // Write via heredoc to handle JSON safely.
     Ok(format!(
-        "cat > '{}' << 'PANTOKEN_INSTALL_JSON_EOF'\n{}\nPANTOKEN_INSTALL_JSON_EOF",
-        json_path.to_string_lossy(),
-        json
+        "cat > {json_path_q} << 'PANTOKEN_INSTALL_JSON_EOF'\n{json}\nPANTOKEN_INSTALL_JSON_EOF"
     ))
 }
 
 /// Build the command to read install.json from the remote.
 pub fn build_read_install_json_command(remote_root: &str) -> String {
     let json_path = layout::install_metadata(Path::new(remote_root));
-    format!(
-        "cat '{}' 2>/dev/null || echo ''",
-        json_path.to_string_lossy()
-    )
+    let json_path_q = shell_quote(&json_path.to_string_lossy());
+    format!("cat {json_path_q} 2>/dev/null || echo ''")
 }
 
 /// The full install flow: download, verify, upload, extract, install.
@@ -356,7 +377,8 @@ pub async fn install_polytoken(
     // 3. Upload archive to remote.
     let archive_remote_path = format!("{remote_root}/.cache/{filename}");
     // Ensure the cache dir exists.
-    let mkdir_cmd = format!("mkdir -p '{remote_root}/.cache'");
+    let cache_dir = format!("{remote_root}/.cache");
+    let mkdir_cmd = format!("mkdir -p {}", shell_quote(&cache_dir));
     let mkdir_output = transport.run_command(command.clone(), &mkdir_cmd).await?;
     if !mkdir_output.is_success() {
         return Err(InstallError::RemoteCommand {
@@ -395,7 +417,7 @@ pub async fn install_polytoken(
             Channel::Stable => "stable".into(),
             Channel::Unstable => "unstable".into(),
         },
-        installed_at: chrono_now_iso(),
+        installed_at: now_timestamp(),
         trust_level: "checksum-only".into(),
     };
 
@@ -411,11 +433,12 @@ pub async fn install_polytoken(
     Ok(provenance)
 }
 
-/// Get the current time as an ISO 8601 string (no external dep — uses std).
-fn chrono_now_iso() -> String {
-    // Use std::time for a Unix timestamp. A full ISO 8601 would need chrono,
-    // but we keep the crate zero-dep for this. The timestamp is sufficient
-    // for provenance.
+/// Get the current time as a Unix timestamp string.
+///
+/// Used for provenance metadata. A full ISO 8601 timestamp would require
+/// chrono, but we keep the crate zero-dep for this. The Unix timestamp is
+/// sufficient for provenance ordering.
+fn now_timestamp() -> String {
     let secs = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs())
@@ -428,10 +451,13 @@ fn chrono_now_iso() -> String {
 /// Downloads the full response body into a `Vec<u8>`. Used by the real
 /// provisioning flow (tests inject a mock).
 pub fn default_http_fetch() -> HttpFetch {
-    Arc::new(|url: &str| {
+    // Create the client once and reuse it across requests (connection pool,
+    // TLS context, DNS resolver are shared).
+    let client = Arc::new(reqwest::Client::new());
+    Arc::new(move |url: &str| {
         let url = url.to_string();
+        let client = client.clone();
         Box::pin(async move {
-            let client = reqwest::Client::new();
             let resp = client
                 .get(&url)
                 .send()
