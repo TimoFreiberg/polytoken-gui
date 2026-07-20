@@ -8,7 +8,17 @@ import { cpSync, existsSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { ensureEnv, paths, type Paths } from "./lib.ts";
 
-const FIXTURE = join(import.meta.dir, "fixtures", "project");
+/** The fixture source directory copied into the test project. Defaults to
+ *  `parity/fixtures/project`; override with $PANTOKEN_PARITY_FIXTURE (relative to
+ *  the pantoken checkout root or absolute) to point at an alternative fixture
+ *  (e.g. the at-mention edge-case fixture for @-autocomplete comparison). */
+const FIXTURE = (() => {
+  const override = process.env.PANTOKEN_PARITY_FIXTURE?.trim();
+  if (!override) return join(import.meta.dir, "fixtures", "project");
+  return override.startsWith("/")
+    ? override
+    : join(import.meta.dir, "fixtures", override);
+})();
 
 /** Recreate $PARITY_ROOT/project from the fixture and git-init + commit once. Destructive:
  *  wipes any existing project dir first (it's a throwaway). */

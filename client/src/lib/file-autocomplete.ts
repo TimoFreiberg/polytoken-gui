@@ -87,20 +87,168 @@ export function extractAtQuery(
   return null;
 }
 
+/** Characters that delimit "word boundaries" within a path segment — a fuzzy
+ *  match starting right after one of these (or at a `/` segment boundary, or at
+ *  the start of the path) earns a boundary bonus, mirroring polytoken's TUI
+ *  ranking where segment-prefix and word-prefix matches outrank interior ones. */
+const WORD_BOUNDARIES = new Set(["-", "_", ".", " "]);
+
+/** The result of scoring a single path against a query via fuzzy subsequence
+ *  matching. `null` means no match (the query chars don't appear in order). */
+interface FuzzyScore {
+  /** Best match tier: 0 = path-prefix, 1 = basename/segment-prefix, 2 = fuzzy. */
+  tier: number;
+  /** Fuzzy score: higher is better. Bonuses for consecutive matches, boundary
+   *  starts, and early match positions. Used for tie-breaking within a tier. */
+  score: number;
+  /** Path length (shorter = better, for tie-breaking). */
+  len: number;
+}
+
+/**
+ * Score a path against a query using fuzzy subsequence matching (case-insensitive).
+ * Each query character must appear in the path in order; the scorer finds the
+ * best-scoring alignment and returns its tier + score, or null if no subsequence
+ * match exists.
+ *
+ * Scoring (mirrors polytoken's TUI behavior as observed via the parity harness):
+ * - **Tier 0 (path-prefix):** the query matches the start of the full path.
+ * - **Tier 1 (basename/segment-prefix):** the query matches the start of a path
+ *   segment (the basename or any interior segment's first chars).
+ * - **Tier 2 (fuzzy):** the query is a subsequence but doesn't start at any
+ *   segment boundary.
+ *
+ * Within a tier, the fuzzy score rewards:
+ * - Consecutive matches (each run of adjacent chars gets a compounding bonus)
+ * - Boundary starts (match at path start, after `/`, or after `-_.` separators)
+ * - Early match positions (earlier = better)
+ *
+ * This replaces pantoken's former substring `indexOf` matcher with a fzf-style
+ * subsequence scorer, aligning with polytoken's TUI which does fuzzy matching
+ * (verified via the at-mention fixture comparison — e.g. `@srselrs` matches
+ * `src/selection.rs`, `@servre` matches `docs/server-selection-rest-api.md`).
+ */
+function fuzzyScore(path: string, q: string): FuzzyScore | null {
+  if (q.length === 0) return { tier: 0, score: 0, len: path.length };
+  if (q.length > path.length) return null;
+
+  const n = path.length;
+  const m = q.length;
+
+  // Find the leftmost subsequence match (greedy: earliest possible position
+  // for each query char). This is O(n*m) but n,m are small (paths < 200, queries < 50).
+  const matchPositions: number[] = [];
+  let pi = 0; // path index
+  for (let qi = 0; qi < m; qi++) {
+    const qc = q[qi]!;
+    while (pi < n && path[pi] !== qc) pi++;
+    if (pi >= n) return null; // no match for this char
+    matchPositions.push(pi);
+    pi++; // advance past this match for the next char
+  }
+
+  // Determine the tier based on where the match starts:
+  //   0 = path-prefix (the query is a contiguous substring at position 0)
+  //   1 = basename-prefix (the query is a contiguous substring at the start of the basename)
+  //   2 = segment-prefix (the query is a contiguous substring at the start of an interior segment)
+  //   3 = word-boundary (the query is a contiguous substring after a '-_. ' separator)
+  //   4 = fuzzy (subsequence match only, no contiguous boundary alignment)
+  //
+  // For tiers 0-3 we check whether the query appears as a contiguous substring
+  // at a boundary position — a fuzzy subsequence that happens to start at a
+  // boundary but isn't contiguous (e.g. "server" matching "s" at pos 0 of
+  // "src/server") does NOT qualify as a prefix match.
+  const lastSlash = path.lastIndexOf("/");
+  const basenameStart = lastSlash + 1; // 0 when no slash
+  const basename = path.slice(basenameStart);
+
+  let tier: number;
+  if (path.startsWith(q)) {
+    tier = 0; // path-prefix (contiguous)
+  } else if (basename.startsWith(q)) {
+    tier = 1; // basename-prefix (contiguous)
+  } else {
+    // Check if the query is a contiguous substring at any segment boundary.
+    let segmentPrefix = false;
+    for (let i = 0; i < basenameStart; i++) {
+      if (path[i] === "/" && path.startsWith(q, i + 1)) {
+        segmentPrefix = true;
+        break;
+      }
+    }
+    if (segmentPrefix) {
+      tier = 2; // segment-prefix (contiguous at an interior segment start)
+    } else {
+      // Check word-boundary: query is a contiguous substring after a separator.
+      const wbIdx = path.indexOf(q);
+      if (wbIdx > 0 && WORD_BOUNDARIES.has(path[wbIdx - 1]!)) {
+        tier = 3; // word-boundary
+      } else {
+        tier = 4; // fuzzy (subsequence only)
+      }
+    }
+  }
+
+  // Compute the fuzzy score for tie-breaking within a tier.
+  // Rewards consecutive matches, boundary positions, and early alignment.
+  let score = 0;
+  let consecutive = 0;
+  for (let i = 0; i < matchPositions.length; i++) {
+    const pos = matchPositions[i]!;
+    const prevPos = i > 0 ? matchPositions[i - 1]! : -2;
+
+    // Consecutive match bonus (compounding for runs of adjacent chars).
+    if (pos === prevPos + 1) {
+      consecutive++;
+      score += 10 + consecutive * 5;
+    } else {
+      consecutive = 0;
+      score += 1;
+    }
+
+    // Boundary bonus: match at path start, after '/', or after a word separator.
+    if (pos === 0 || path[pos - 1] === "/") {
+      score += 20; // segment boundary
+    } else if (pos > 0 && WORD_BOUNDARIES.has(path[pos - 1]!)) {
+      score += 10; // word boundary within segment
+    }
+
+    // Earlier matches score higher (penalize late positions).
+    score -= pos * 0.1;
+  }
+
+  return { tier, score, len: path.length };
+}
+
 /**
  * Rank the prefetched file index against an @-mention query, for instant client-side
- * matching. Case-insensitive substring match on the path (consistent with the slash-command
- * filter and the agent's TUI autocomplete); a query is dropped if it isn't a substring of the path.
+ * matching. Uses fuzzy subsequence matching (case-insensitive) — each query character
+ * must appear in the path in order, but not necessarily contiguously. This mirrors
+ * polytoken's TUI autocomplete, which does fzf-style fuzzy matching (verified via the
+ * at-mention fixture comparison: `@srselrs` → `src/selection.rs`, `@servre` →
+ * `docs/server-selection-rest-api.md`).
  *
  * Ranking, best first:
- *   1. query matches the start of the basename (the file/dir name itself) — `hub` → `…/hub.ts`
- *   2. query matches the start of the full path — `server` → `server/src/…`
- *   3. query matches anywhere else in the path
- * Ties break by directory-before-file (so a dir the user can keep narrowing surfaces first,
- * per the driver's documented ordering), then shorter path, then alphabetical.
+ *   1. **Path-prefix** — the query matches the start of the full path (`server` → `server.rs`)
+ *   2. **Basename-prefix** — the query matches the start of the last path segment
+ *      (`server` → `caps/Server.rs`, `docs/server-selection-rest-api.md`)
+ *   3. **Segment-prefix** — the query matches the start of an interior path segment
+ *      (`server` → `src/server/`)
+ *   4. **Word-boundary** — the query matches after a `-_.` separator within a segment
+ *   5. **Fuzzy** — the query is a subsequence match but doesn't start at any boundary
+ *      (`srselrs` → `src/selection.rs`)
+ *
+ * Within a tier, ties break by fuzzy score for fuzzy matches (tier 4: consecutive
+ * matches, boundary starts, early positions), then alphabetically by path for
+ * prefix matches (tiers 0-3). No directory-before-file preference — polytoken
+ * ranks same-tier matches purely alphabetically (verified via the at-mention
+ * fixture: `@server` puts the file `server.rs` before the dir `src/server/`).
  *
  * An empty query returns the head of the index (it's already in fd's order) — the bare-`@`
  * list. Results are capped at `limit`.
+ *
+ * A trailing slash in the query (`index/`) is treated as a directory drill-down:
+ * the matching directory and its immediate children are shown.
  */
 export function filterFiles(
   files: readonly FileInfo[],
@@ -108,23 +256,48 @@ export function filterFiles(
   limit = 50,
 ): FileInfo[] {
   if (!query) return files.slice(0, limit);
+
+  // Trailing-slash drill-down: show the matching directory + its children.
+  if (query.endsWith("/")) {
+    const dirQuery = query.slice(0, -1).toLowerCase();
+    const matched: FileInfo[] = [];
+    for (const f of files) {
+      const path = f.path.toLowerCase();
+      // The directory itself.
+      if (path === dirQuery && f.isDirectory) {
+        matched.push(f);
+        continue;
+      }
+      // Immediate children: path starts with "dirQuery/" and has no further '/'.
+      if (path.startsWith(dirQuery + "/")) {
+        const rest = path.slice(dirQuery.length + 1);
+        if (!rest.includes("/")) {
+          matched.push(f);
+        }
+      }
+    }
+    return matched.slice(0, limit);
+  }
+
   const q = query.toLowerCase();
 
-  const scored: { f: FileInfo; rank: number; len: number }[] = [];
+  const scored: { f: FileInfo; tier: number; score: number; len: number }[] = [];
   for (const f of files) {
     const path = f.path.toLowerCase();
-    const at = path.indexOf(q);
-    if (at === -1) continue;
-    const slash = path.lastIndexOf("/");
-    const basenameStart = slash + 1; // 0 when no slash
-    const rank = at === basenameStart ? 0 : at === 0 ? 1 : 2;
-    scored.push({ f, rank, len: path.length });
+    const result = fuzzyScore(path, q);
+    if (!result) continue;
+    scored.push({ f, tier: result.tier, score: result.score, len: result.len });
   }
 
   scored.sort((a, b) => {
-    if (a.rank !== b.rank) return a.rank - b.rank;
-    if (a.f.isDirectory !== b.f.isDirectory) return a.f.isDirectory ? -1 : 1;
-    if (a.len !== b.len) return a.len - b.len;
+    if (a.tier !== b.tier) return a.tier - b.tier;
+    // For fuzzy matches (tier 4), score determines the order (higher = better
+    // alignment: consecutive chars, boundary starts, early positions). For
+    // prefix matches (tiers 0-3), polytoken ranks same-tier matches purely
+    // alphabetically by path — no length or directory preference (verified
+    // via the at-mention fixture: @s puts server.rs before src/ despite src/
+    // being shorter; @server puts caps/Server.rs before src/server/).
+    if (a.tier === 4 && a.score !== b.score) return b.score - a.score;
     return a.f.path.localeCompare(b.f.path);
   });
 

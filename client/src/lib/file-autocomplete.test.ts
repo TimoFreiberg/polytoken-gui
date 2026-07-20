@@ -139,6 +139,7 @@ describe("filterFiles", () => {
   });
 
   test("substring match drops non-matches", () => {
+    // "hub" is a subsequence of "server/src/hub.ts" only.
     expect(paths(filterFiles(FILES, "hub"))).toEqual(["server/src/hub.ts"]);
   });
 
@@ -146,18 +147,20 @@ describe("filterFiles", () => {
     expect(paths(filterFiles(FILES, "HUB"))).toEqual(["server/src/hub.ts"]);
   });
 
-  test("ranks basename-prefix > path-prefix > interior, dir before file on ties", () => {
-    // "store": dir + file both basename-prefix (dir first), then the interior match.
+  test("ranks path-prefix > basename-prefix > interior (fuzzy)", () => {
+    // "store": path-prefix (store, store.ts) before interior (lib/mystore.ts).
+    // store and store.ts are both tier 0 (path starts with "store"); alphabetical
+    // puts the shorter "store" first. lib/mystore.ts is tier 4 (fuzzy interior).
     expect(paths(filterFiles(FILES, "store"))).toEqual([
-      "store", // basename-prefix, directory → first
-      "store.ts", // basename-prefix, file
-      "lib/mystore.ts", // interior match → last
+      "store", // path-prefix, alphabetical first
+      "store.ts", // path-prefix, alphabetical second
+      "lib/mystore.ts", // fuzzy interior match → last
     ]);
   });
 
   test("path-prefix outranks an interior match", () => {
     const files = [f("lib/observer.ts"), f("server/src/hub.ts")];
-    // "server": path-prefix on the second; interior (inside "observer") on the first.
+    // "server": path-prefix on the second; fuzzy interior (inside "observer") on the first.
     expect(paths(filterFiles(files, "server"))).toEqual([
       "server/src/hub.ts",
       "lib/observer.ts",
@@ -172,6 +175,175 @@ describe("filterFiles", () => {
 
   test("no match returns empty", () => {
     expect(filterFiles(FILES, "zzz")).toEqual([]);
+  });
+
+  // ── Edge-case tests from the at-mention fixture comparison (issue #63) ──
+  // These encode the agreed behavior (mimic polytoken's TUI) as a regression
+  // guard. Each test mirrors a file structure from parity/fixtures/at-mention-fixture/
+  // and asserts the exact ranked order observed in the polytoken TUI.
+
+  test("test_case_sensitivity — lowercase, mixed, and ALL CAPS all match case-insensitively", () => {
+    const files: readonly FileInfo[] = [
+      f("server.rs"),
+      f("caps/Server.rs"),
+      f("docs/server-selection-rest-api.md"),
+      f("src/server/", true),
+      f("src/server/lookup.rs"),
+    ];
+    // All three case variants produce the same ordering — polytoken is
+    // case-insensitive for file matching.
+    const expected = [
+      "server.rs",
+      "caps/Server.rs",
+      "docs/server-selection-rest-api.md",
+      "src/server/",
+      "src/server/lookup.rs",
+    ];
+    expect(paths(filterFiles(files, "server"))).toEqual(expected);
+    expect(paths(filterFiles(files, "Server"))).toEqual(expected);
+    expect(paths(filterFiles(files, "SERVER"))).toEqual(expected);
+  });
+
+  test("test_cross_dir_deranking — basename-prefix outranks segment-prefix", () => {
+    // "server": server.rs is path-prefix (tier 0); caps/Server.rs and
+    // docs/server-selection-rest-api.md are basename-prefix (tier 1);
+    // src/server/ is basename-prefix (tier 1); src/server/lookup.rs is
+    // segment-prefix (tier 2, "server" is an interior segment, basename
+    // "lookup.rs" does not start with "server"). Tier order determines ranking.
+    const files: readonly FileInfo[] = [
+      f("src/server/lookup.rs"),
+      f("src/server/", true),
+      f("docs/server-selection-rest-api.md"),
+      f("caps/Server.rs"),
+      f("server.rs"),
+    ];
+    expect(paths(filterFiles(files, "server"))).toEqual([
+      "server.rs", // tier 0: path-prefix
+      "caps/Server.rs", // tier 1: basename-prefix (alphabetical)
+      "docs/server-selection-rest-api.md", // tier 1: basename-prefix
+      "src/server/", // tier 1: basename-prefix
+      "src/server/lookup.rs", // tier 2: segment-prefix (interior segment)
+    ]);
+  });
+
+  test("test_suffix_matching — suffix matches via fuzzy subsequence", () => {
+    // "test": test-utils.ts and utils-test.ts both match. test-utils.ts is
+    // path-prefix (tier 0); utils-test.ts is segment-prefix (tier 2, "test"
+    // at the start of the basename after "utils-"). Wait — "utils-test.ts"
+    // basename starts with "utils", not "test". "test" appears after the "-"
+    // separator → tier 3 (word-boundary). docs/server-selection-rest-api.md
+    // matches "test" as a fuzzy subsequence (t-e-s-t in "rest-api"? no —
+    // in "selection-rest-api": t in "selection", e in "rest", s in "rest",
+    // t in "rest" → fuzzy tier 4).
+    const files: readonly FileInfo[] = [
+      f("docs/server-selection-rest-api.md"),
+      f("utils-test.ts"),
+      f("test-utils.ts"),
+    ];
+    expect(paths(filterFiles(files, "test"))).toEqual([
+      "test-utils.ts", // tier 0: path-prefix
+      "utils-test.ts", // tier 3: word-boundary (after "-")
+      "docs/server-selection-rest-api.md", // tier 4: fuzzy
+    ]);
+  });
+
+  test("test_typo_leniency — fuzzy matching catches transposition typos", () => {
+    // "srselrs" (scrambled "src/selection.rs") matches via fuzzy subsequence.
+    // "servre" (transposition of "server") matches "server-selection-rest-api".
+    // "conifg" (transposition of "config") matches nothing — no path has the
+    // right subsequence.
+    const files: readonly FileInfo[] = [
+      f("src/selection.rs"),
+      f("src/server/lookup.rs"),
+      f("docs/server-selection-rest-api.md"),
+      f("config.ts"),
+    ];
+    // srselrs → s-r-s-e-l-r-s: matches src/selection.rs (s,r,c,/,s,e,l,...,r,s)
+    expect(paths(filterFiles(files, "srselrs"))).toEqual([
+      "src/selection.rs",
+      "src/server/lookup.rs",
+      "docs/server-selection-rest-api.md",
+    ]);
+    // servre → s-e-r-v-r-e: matches docs/server-selection-rest-api.md
+    expect(paths(filterFiles(files, "servre"))).toEqual([
+      "docs/server-selection-rest-api.md",
+    ]);
+    // conifg → c-o-n-i-f-g: no path contains this subsequence
+    // (config.ts = c-o-n-f-i-g; "conifg" needs 'i' before 'f', but "config"
+    // has 'f' before 'i' → no subsequence match)
+    expect(paths(filterFiles(files, "conifg"))).toEqual([]);
+  });
+
+  test("test_dir_before_file_tiebreaker — alphabetical within same tier (no dir preference)", () => {
+    // Polytoken does NOT rank directories before files within the same tier.
+    // Same-tier matches break purely alphabetically by path.
+    // "index": index/ (dir, tier 0) and index/deep.ts (file, tier 0) both
+    // start with "index". Alphabetical: "index/" < "index/deep.ts" (shorter
+    // prefix sorts first). Then client/index.ts and src/index.ts (both tier 1,
+    // basename-prefix) sort alphabetically by directory: "client" < "src".
+    const files: readonly FileInfo[] = [
+      f("src/index.ts"),
+      f("client/index.ts"),
+      f("index/deep.ts"),
+      f("index/", true),
+    ];
+    expect(paths(filterFiles(files, "index"))).toEqual([
+      "index/", // tier 0, alphabetical first (shorter string)
+      "index/deep.ts", // tier 0, alphabetical second
+      "client/index.ts", // tier 1 (basename-prefix), "client" < "src"
+      "src/index.ts", // tier 1 (basename-prefix)
+    ]);
+  });
+
+  test("test_trailing_slash — directory drill-down shows dir + children", () => {
+    // A trailing slash in the query triggers directory drill-down: the matching
+    // directory and its immediate children are shown.
+    const files: readonly FileInfo[] = [
+      f("index/", true),
+      f("index/deep.ts"),
+      f("index/deep/nested.ts"), // not an immediate child (2 levels deep)
+      f("client/index.ts"), // not a child of index/
+    ];
+    expect(paths(filterFiles(files, "index/"))).toEqual([
+      "index/",
+      "index/deep.ts",
+    ]);
+  });
+
+  test("test_dotfile_handling — dotfiles hidden in default mode, visible with include_ignored", () => {
+    // Dotfiles are excluded from the file index by default (the server's
+    // GET /files hides them). When present in the index (include_ignored),
+    // they match normally. The .env file is gitignored, .eslintrc.json is
+    // a visible dotfile. Both only appear when the toggle is on.
+    const files: readonly FileInfo[] = [
+      f(".env"),
+      f(".eslintrc.json"),
+      f("config.ts"),
+    ];
+    // ".env" matches .env (path-prefix) only — .eslintrc.json has no 'v'.
+    expect(paths(filterFiles(files, ".env"))).toEqual([".env"]);
+    // ".esl" matches .eslintrc.json (path-prefix) only.
+    expect(paths(filterFiles(files, ".esl"))).toEqual([".eslintrc.json"]);
+  });
+
+  test("test_gitignored_files — gitignored files only match when in the index", () => {
+    // The filterFiles function only sees what's in the index. Gitignored files
+    // (dist/bundle.js, server.log) are excluded by the server's GET /files in
+    // default mode. When include_ignored is on, they appear in the index and
+    // match normally. This test verifies filterFiles handles them correctly
+    // when they ARE in the index.
+    const filesWithIgnored: readonly FileInfo[] = [
+      f("dist/bundle.js"),
+      f("server.log"),
+      f("server.rs"),
+    ];
+    expect(paths(filterFiles(filesWithIgnored, "bundle"))).toEqual([
+      "dist/bundle.js",
+    ]);
+    expect(paths(filterFiles(filesWithIgnored, "server"))).toEqual([
+      "server.log", // tier 0: path-prefix
+      "server.rs", // tier 0: path-prefix (alphabetical: "server.log" < "server.rs")
+    ]);
   });
 });
 
@@ -906,7 +1078,7 @@ describe("staleServerFiles", () => {
 
   test("AC.6 — cross-toggle: matching ignoreOff uses the cache", () => {
     // Cache has includeIgnored=true. Current ignoreOff=true → use cache, re-filter.
-    // Both ~/projects and ~/.secrets contain "s" as a substring, so both match.
+    // Both ~/projects and ~/.secrets contain "s" as a subsequence, so both match.
     const cached = cache(
       [f("~/projects", true), f("~/.secrets")],
       "~/",
@@ -920,8 +1092,10 @@ describe("staleServerFiles", () => {
       "external",
       true,
     );
-    // filterFiles ranks dirs before files → ~/projects first, then ~/.secrets.
-    expect(result.map((r) => r.path)).toEqual(["~/projects", "~/.secrets"]);
+    // With fuzzy matching, ~/.secrets scores higher: "s" matches right after the
+    // "." word boundary (position 3), while in ~/projects "s" is at the end (pos 9).
+    // Both match; ~/.secrets ranks first by score.
+    expect(result.map((r) => r.path)).toEqual(["~/.secrets", "~/projects"]);
   });
 
   test("no cache (null) returns []", () => {
