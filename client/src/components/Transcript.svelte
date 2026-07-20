@@ -793,6 +793,34 @@
       });
       settleObserver.observe(content);
     }
+    // Re-assert the pinned invariant when the SCROLLER's own height changes (not just
+    // when the content's height changes). The `.col` observer above fires on content
+    // growth (markstream reflow, image decode, work-block collapse); this observer fires
+    // on VIEWPORT (clientHeight) changes — the composer's textarea growing/shrinking via
+    // autosize() as the user types, which shrinks the scroller's flex:1 height and opens
+    // a gap at the bottom. Without this, a line-wrap keystroke opens a gap (the
+    // composer grows by one line height, shrinking clientHeight, and nothing
+    // closes the gap until the next content change or manual scroll) (#64).
+    // The callback mirrors the `.col` observer's branches exactly; only the trigger
+    // differs. ResizeObserver fires on border-box dimension changes, not on scrollTop
+    // changes, so there's no feedback loop with the scrollTo it triggers.
+    let viewportObserver: ResizeObserver | undefined;
+    if (scroller && typeof ResizeObserver !== "undefined") {
+      viewportObserver = new ResizeObserver(() => {
+        if (settleRatio === undefined) {
+          // Live-bottom follow: re-assert the bottom on viewport height changes
+          // while pinned — the composer growing shrinks clientHeight, opening a gap.
+          if (!pinned) return;
+          markProgScroll(300);
+          applySettle();
+        } else if (Date.now() < settleUntil) {
+          // Ratio-based restore (scrolled-up reading spot): only within the settle
+          // window — the saved ratio is a transient target for switch/restore.
+          applySettle();
+        }
+      });
+      viewportObserver.observe(scroller);
+    }
     // Drift watcher sampling interval: checks the pinned invariant on a steady cadence so a
     // drift is caught within a beat even without a scroll event (the gap in the follow logic
     // strands the viewport silently — see the watcher comment above). ~250ms is frequent
@@ -803,6 +831,7 @@
       window.removeEventListener("keydown", onKey);
       window.removeEventListener("pagehide", onPageHide);
       settleObserver?.disconnect();
+      viewportObserver?.disconnect();
       clearInterval(driftTimer);
     };
   });
