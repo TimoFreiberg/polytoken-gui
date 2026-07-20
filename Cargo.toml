@@ -3,6 +3,7 @@ members = [
     "desktop",
     "server-rs/pantoken-protocol",
     "server-rs/pantoken-daemon-types",
+    "server-rs/pantoken-remote-layout",
     "server-rs/pantoken-server",
     "server-rs/pantoken-tar-validate",
 ]
@@ -15,7 +16,9 @@ rust-version = "1.85"
 [workspace.dependencies]
 pantoken-protocol = { path = "server-rs/pantoken-protocol" }
 pantoken-daemon-types = { path = "server-rs/pantoken-daemon-types" }
+pantoken-remote-layout = { path = "server-rs/pantoken-remote-layout" }
 serde = { version = "1", features = ["derive"] }
+sha2 = "0.10"
 serde_json = "1"
 tokio = { version = "1", features = ["full"] }
 axum = { version = "0.8", features = ["ws"] }

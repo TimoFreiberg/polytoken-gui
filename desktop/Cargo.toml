@@ -26,12 +26,18 @@ tokio = { version = "1", features = ["rt-multi-thread", "net", "io-util", "proce
 # tokio-util for CancellationToken used by the bridge's graceful shutdown.
 tokio-util = { version = "0.7", default-features = false }
 pantoken-protocol = { path = "../server-rs/pantoken-protocol" }
+pantoken-daemon-types = { workspace = true }
+pantoken-remote-layout = { workspace = true }
 futures-util = { version = "0.3", default-features = false, features = ["sink"] }
 # tokio-tungstenite is the bridge's real WS transport (Phase 2 promoted from
 # dev-dep to dep). The browser connects via WebSocket; the bridge upgrades the
 # loopback TCP accept into a WS stream and forwards WS↔SSH stdio.
 tokio-tungstenite = "0.29"
 tracing = "0.1"
+# Phase 3: remote provisioning downloads polytoken archives locally, verifies
+# SHA256, then uploads over SSH.
+reqwest = { workspace = true }
+sha2 = { workspace = true }
 
 [dev-dependencies]
 tempfile = "3"

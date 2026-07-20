@@ -237,3 +237,45 @@ the provisioning actions and wire `Connecting → Provisioning → Starting` wit
 changing the state machine's shape or the overlay's rendering. The cost is two
 enum variants that are dead code until Phase 3 — a small price for a stable
 contract.
+
+## Remote deployment Phase 3: XDG isolation — isolated by default
+
+**Decision:** a Pantoken-managed polytoken on the remote host uses
+**isolated** XDG roots under the remote root
+(`~/.local/share/pantoken/tools/polytoken/xdg/{config,data,cache}`) by
+default. Sharing the user's existing polytoken XDG roots requires explicit
+user confirmation (`xdg_mode: Shared` on the profile).
+
+**Rationale:** never silently share production state. A Pantoken-managed
+polytoken could interfere with the user's existing polytoken sessions,
+configuration, or cache. Isolated roots under the remote root keep
+Pantoken's polytoken state fully self-contained and removable. The XDG
+override paths are derived from the remote root via the shared
+`pantoken-remote-layout` crate, ensuring both the desktop provisioning layer
+and the remote runtime agree on the layout.
+
+## Remote deployment Phase 3: channel derivation from version string
+
+**Decision:** the download channel (stable vs. unstable) is derived from
+`POLYTOKEN_DAEMON_TARGET_VERSION`: if the version has a prerelease tag
+(contains `-`), use the unstable channel URL prefix
+(`https://dl.polytoken.dev/unstable/<version>/`); otherwise use the stable
+prefix (`https://dl.polytoken.dev/<version>/`).
+
+**Rationale:** the target version is the exact version to install — not
+"latest in channel." Deriving the channel from the version string avoids a
+separate channel configuration and ensures the downloaded artifact matches
+the codegen'd compatibility floor. The prerelease tag is a reliable signal:
+stable releases never have one, unstable builds always do.
+
+## Remote deployment Phase 3: shared layout crate (`pantoken-remote-layout`)
+
+**Decision:** path-derivation functions and semver parsing/comparison live in
+a new zero-dependency shared crate `pantoken-remote-layout`, depended on by
+both `pantoken-server` (remote runtime) and `desktop` (provisioning).
+
+**Rationale:** `pantoken-server` is binary-heavy (axum, tower, web-push,
+jwt-simple…). The desktop crate cannot depend on it. Both sides must agree on
+path layout (where polytoken binaries, XDG roots, install metadata live).
+Extracting the pure functions into a tiny shared crate is the single source
+of truth — no risk of two copies drifting.

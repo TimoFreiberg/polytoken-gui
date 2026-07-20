@@ -344,3 +344,79 @@ contract; the mobile impl swaps the system `ssh` executable for a native
 library. The stub returns `io::ErrorKind::Unsupported`. It only compiles on
 mobile targets (no current build targets compile it); verified by code
 inspection.
+
+## Remote deployment — Phase 3: Provisioning
+
+Phase 3 adds the provisioning layer that sits between SSH connect and runtime
+start. The desktop orchestrates: probe the remote host → check polytoken
+compatibility → (optionally) install polytoken → configure XDG isolation →
+reconcile/recover from interrupted installs → drive the connection state
+machine through `Provisioning`.
+
+### Shared layout crate (`pantoken-remote-layout`)
+
+A new zero-dependency crate `pantoken-remote-layout` contains the pure
+path-derivation functions (moved from `pantoken-server/src/remote/layout.rs`)
+and a new semver parser + comparator. Both `pantoken-server` (remote runtime)
+and `desktop` (provisioning) depend on it, ensuring both sides agree on where
+releases, tools, sockets, XDG roots, and metadata live on the remote host.
+
+### Provisioning flow
+
+```
+connect_to_remote
+  → TestingSsh → Connecting
+  → [probe: OS, arch, tools, polytoken version]
+  → [compat check: compare against POLYTOKEN_DAEMON_TARGET_VERSION]
+  → if compatible: Starting → Ready
+  → if needs provisioning + policy allows: Provisioning → Starting → Ready
+  → if needs provisioning + policy requires existing: Failed(ProvisioningFailed)
+  → if provisioning fails: Failed(ProvisioningFailed)
+```
+
+**Probe** (`provisioning/probe.rs`): a single SSH command emitting one JSON
+record on the last line of stdout. Collects `uname -s`, `uname -m`,
+`getconf LONG_BIT`, libc detection, `$HOME`, `mktemp -d` write test,
+`command -v` for tools, and `polytoken --version`. Shell noise is handled by
+parsing only the last line; if it isn't valid JSON, returns
+`ProbeError::ParseError` with the raw tail.
+
+**Compatibility check** (`provisioning/polytoken_compat.rs`): runs
+`polytoken --version` (or uses the probe result), parses the version, and
+compares against `POLYTOKEN_DAEMON_TARGET_VERSION` using the shared
+`pantoken-remote-layout::semver::compare_semver` (prerelease-aware:
+`0.5.0-unstable.9` < `0.5.0`).
+
+**Installer** (`provisioning/polytoken_install.rs`): downloads polytoken
+archives locally on the Pantoken device (via `reqwest`), verifies SHA256
+against the platform's `SHA256SUMS` file, uploads over SSH, extracts on the
+remote into a staging directory, then atomic-renames into the final
+version-target directory. Never replaces a working version in place. Records
+provenance (version, target, source URL, SHA256, channel, timestamp) in
+`install.json`. Trust level: checksum-only (no signature).
+
+**XDG isolation** (`remote_profile.rs` + `bridge.rs`): a `XdgMode` field on
+`RemoteProfile` controls whether the polytoken daemon uses Pantoken-managed
+XDG roots (under the remote root) or shares the user's existing roots.
+Default is `Isolated` — never silently share production state. The XDG
+override paths are set as env vars on the SSH command via `SshCommand::extra_env`,
+inherited by the `pantoken-server` stdio-proxy, and re-threaded to the runtime
+child in `connect_with_bootstrap`.
+
+**Reconciliation** (`provisioning/reconcile.rs`): orchestrates the flow
+idempotently. Cleans stale staging directories before probing. If a compatible
+polytoken is already installed, skips install and proceeds to connect. If
+missing and the profile policy is `OfferInstall`, installs; if
+`RequireExisting`, fails with `PolytokenMissing`.
+
+### SSH transport extensions
+
+The `SshTransport` trait gained two methods:
+- `run_command`: runs a one-shot SSH command and captures stdout/stderr/exit
+  code (for probes, version checks, file operations).
+- `upload_file`: uploads file bytes to the remote via SSH stdin
+  (`ssh -T <dest> 'cat > <path>'`).
+
+Both are implemented for `SystemSshTransport` (real `ssh`), `FakeSshTransport`
+(in-memory test seam with canned responses + `FakeRemoteFs`), and
+`MobileSshTransport` (stub returning `Unsupported`).

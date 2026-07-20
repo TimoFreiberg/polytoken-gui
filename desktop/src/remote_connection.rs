@@ -321,7 +321,7 @@ mod tests {
     use crate::bridge::classify_exit;
     use crate::bridge::ExitClassification;
     use crate::bridge::ExitInfo;
-    use crate::remote_profile::PolytokenPolicy;
+    use crate::remote_profile::{PolytokenPolicy, XdgMode};
 
     fn sample_profile() -> RemoteProfile {
         RemoteProfile {
@@ -332,6 +332,7 @@ mod tests {
             polytoken_policy: PolytokenPolicy::RequireExisting,
             remote_root_override: None,
             server_path: None,
+            xdg_mode: XdgMode::default(),
         }
     }
 

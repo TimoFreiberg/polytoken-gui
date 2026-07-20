@@ -79,6 +79,9 @@ pub struct SshCommand {
     pub port: Option<u16>,
     pub remote_root: String,
     pub server_path: String,
+    /// Extra env vars to set on the remote command (e.g. XDG override paths
+    /// for isolated polytoken). Prepended as `KEY=VAL ` before the exec.
+    pub extra_env: Vec<(String, String)>,
 }
 
 impl SshCommand {
@@ -106,8 +109,15 @@ impl SshCommand {
 
     /// The remote shell command: env prefix + `exec <server_path>`.
     fn remote_command(&self) -> String {
+        let mut env_prefix = String::new();
+        for (key, val) in &self.extra_env {
+            env_prefix.push_str(key);
+            env_prefix.push('=');
+            env_prefix.push_str(&shell_quote(val));
+            env_prefix.push(' ');
+        }
         format!(
-            "PANTOKEN_SERVE_MODE=stdio-proxy PANTOKEN_REMOTE_ROOT={root} exec {server}",
+            "PANTOKEN_SERVE_MODE=stdio-proxy PANTOKEN_REMOTE_ROOT={root} {env_prefix}exec {server}",
             root = shell_quote(&self.remote_root),
             server = shell_quote(&self.server_path),
         )
@@ -164,11 +174,42 @@ fn shell_quote(word: &str) -> String {
 
 impl From<&RemoteProfile> for SshCommand {
     fn from(profile: &RemoteProfile) -> Self {
+        // Phase 5: populate extra_env with XDG override paths when the profile
+        // uses isolated XDG mode (the default). When shared, no overrides are
+        // set — polytoken uses its default roots.
+        let mut extra_env = Vec::new();
+        if profile.xdg_mode == crate::remote_profile::XdgMode::Isolated {
+            let root = profile.remote_root();
+            // The remote root may be a ~-prefixed path (default) or absolute.
+            // The XDG functions expect a Path; for ~ paths we pass them as-is
+            // (the remote shell expands ~).
+            let root_path = std::path::Path::new(root);
+            extra_env.push((
+                "XDG_CONFIG_HOME".into(),
+                pantoken_remote_layout::layout::polytoken_xdg_config(root_path)
+                    .to_string_lossy()
+                    .into_owned(),
+            ));
+            extra_env.push((
+                "XDG_DATA_HOME".into(),
+                pantoken_remote_layout::layout::polytoken_xdg_data(root_path)
+                    .to_string_lossy()
+                    .into_owned(),
+            ));
+            extra_env.push((
+                "XDG_CACHE_HOME".into(),
+                pantoken_remote_layout::layout::polytoken_xdg_cache(root_path)
+                    .to_string_lossy()
+                    .into_owned(),
+            ));
+        }
+
         SshCommand {
             destination: profile.ssh_destination.clone(),
             port: profile.port,
             remote_root: profile.remote_root().to_string(),
             server_path: profile.server_path().to_string(),
+            extra_env,
         }
     }
 }
@@ -199,6 +240,24 @@ pub struct SshProxy {
     pub exit: Pin<Box<dyn Future<Output = ExitInfo> + Send>>,
 }
 
+/// Captured output of a one-shot SSH command.
+///
+/// Distinct from [`SshProxy`] (streaming relay) — this is for provisioning
+/// probes, file operations, and version checks where we need the full
+/// stdout/stderr + exit code after the command completes.
+#[derive(Debug, Clone)]
+pub struct CommandOutput {
+    pub stdout: String,
+    pub stderr: String,
+    pub exit_code: Option<i32>,
+}
+
+impl CommandOutput {
+    pub fn is_success(&self) -> bool {
+        self.exit_code == Some(0)
+    }
+}
+
 /// The SSH transport trait: abstracts spawning an SSH process that speaks the
 /// framed stdio protocol on its stdin/stdout.
 ///
@@ -218,6 +277,24 @@ pub trait SshTransport: Send + Sync {
         &self,
         command: SshCommand,
     ) -> Pin<Box<dyn Future<Output = io::Result<SshProxy>> + Send>>;
+
+    /// Run a single SSH command and capture its stdout/stderr/exit code.
+    /// Distinct from `spawn_proxy` (streaming relay) — this is for provisioning
+    /// probes, file operations, and version checks.
+    fn run_command(
+        &self,
+        command: SshCommand,
+        remote_command: &str,
+    ) -> Pin<Box<dyn Future<Output = io::Result<CommandOutput>> + Send>>;
+
+    /// Upload file bytes to the remote host via SSH stdin.
+    /// Used by the installer to transfer verified archives before extraction.
+    fn upload_file(
+        &self,
+        command: SshCommand,
+        remote_path: &str,
+        data: Vec<u8>,
+    ) -> Pin<Box<dyn Future<Output = io::Result<()>> + Send>>;
 }
 
 // ─────────────────────────── SystemSshTransport ──────────────────────────
@@ -322,6 +399,117 @@ impl SshTransport for SystemSshTransport {
                 stdout,
                 exit,
             })
+        })
+    }
+
+    fn run_command(
+        &self,
+        command: SshCommand,
+        remote_command: &str,
+    ) -> Pin<Box<dyn Future<Output = io::Result<CommandOutput>> + Send>> {
+        let remote_command = remote_command.to_string();
+        Box::pin(async move {
+            let mut args = vec![
+                "-T".into(),
+                "-o".into(),
+                "BatchMode=yes".into(),
+                "-o".into(),
+                "ServerAliveInterval=30".into(),
+            ];
+            if let Some(port) = command.port {
+                args.push("-p".into());
+                args.push(port.to_string());
+            }
+            args.push(command.destination.clone());
+            args.push(remote_command);
+
+            let mut cmd = tokio::process::Command::new("ssh");
+            cmd.kill_on_drop(true);
+            cmd.args(&args);
+            cmd.stdin(std::process::Stdio::null());
+            cmd.stdout(std::process::Stdio::piped());
+            cmd.stderr(std::process::Stdio::piped());
+            crate::proc::prepare_clean_signals_async(&mut cmd);
+
+            let mut child = cmd.spawn()?;
+            let mut stdout = child
+                .stdout
+                .take()
+                .ok_or_else(|| io::Error::other("ssh stdout not piped"))?;
+            let mut stderr = child
+                .stderr
+                .take()
+                .ok_or_else(|| io::Error::other("ssh stderr not piped"))?;
+
+            let stdout_buf = {
+                let mut buf = Vec::with_capacity(8192);
+                stdout.read_to_end(&mut buf).await?;
+                String::from_utf8_lossy(&buf).into_owned()
+            };
+            let stderr_buf = {
+                let mut buf = Vec::with_capacity(4096);
+                stderr.read_to_end(&mut buf).await?;
+                String::from_utf8_lossy(&buf).into_owned()
+            };
+
+            let status = child.wait().await?;
+            Ok(CommandOutput {
+                stdout: stdout_buf,
+                stderr: stderr_buf,
+                exit_code: status.code(),
+            })
+        })
+    }
+
+    fn upload_file(
+        &self,
+        command: SshCommand,
+        remote_path: &str,
+        data: Vec<u8>,
+    ) -> Pin<Box<dyn Future<Output = io::Result<()>> + Send>> {
+        let remote_cmd = format!("cat > {}", shell_quote(remote_path));
+        Box::pin(async move {
+            let mut args = vec![
+                "-T".into(),
+                "-o".into(),
+                "BatchMode=yes".into(),
+                "-o".into(),
+                "ServerAliveInterval=30".into(),
+            ];
+            if let Some(port) = command.port {
+                args.push("-p".into());
+                args.push(port.to_string());
+            }
+            args.push(command.destination.clone());
+            args.push(remote_cmd);
+
+            let mut cmd = tokio::process::Command::new("ssh");
+            cmd.kill_on_drop(true);
+            cmd.args(&args);
+            cmd.stdin(std::process::Stdio::piped());
+            cmd.stdout(std::process::Stdio::null());
+            cmd.stderr(std::process::Stdio::piped());
+            crate::proc::prepare_clean_signals_async(&mut cmd);
+
+            let mut child = cmd.spawn()?;
+            {
+                let mut stdin = child
+                    .stdin
+                    .take()
+                    .ok_or_else(|| io::Error::other("ssh stdin not piped"))?;
+                use tokio::io::AsyncWriteExt;
+                stdin.write_all(&data).await?;
+                stdin.flush().await?;
+                // Drop stdin to signal EOF.
+            }
+            let status = child.wait().await?;
+            if !status.success() {
+                return Err(io::Error::other(format!(
+                    "ssh upload failed: exit {:?}",
+                    status.code()
+                )));
+            }
+            Ok(())
         })
     }
 }
@@ -974,6 +1162,33 @@ pub mod mobile {
                 ))
             })
         }
+
+        fn run_command(
+            &self,
+            _command: SshCommand,
+            _remote_command: &str,
+        ) -> Pin<Box<dyn Future<Output = io::Result<CommandOutput>> + Send>> {
+            Box::pin(async {
+                Err(io::Error::new(
+                    io::ErrorKind::Unsupported,
+                    "mobile SSH transport not yet implemented",
+                ))
+            })
+        }
+
+        fn upload_file(
+            &self,
+            _command: SshCommand,
+            _remote_path: &str,
+            _data: Vec<u8>,
+        ) -> Pin<Box<dyn Future<Output = io::Result<()>> + Send>> {
+            Box::pin(async {
+                Err(io::Error::new(
+                    io::ErrorKind::Unsupported,
+                    "mobile SSH transport not yet implemented",
+                ))
+            })
+        }
     }
 }
 
@@ -1030,6 +1245,7 @@ mod tests {
             port: None,
             remote_root: "/tmp/fake".into(),
             server_path: "pantoken-server".into(),
+            extra_env: Vec::new(),
         }
     }
 
@@ -1172,6 +1388,7 @@ mod tests {
             port: Some(2222),
             remote_root: "/srv/pantoken".into(),
             server_path: "pantoken-server".into(),
+            extra_env: Vec::new(),
         };
         let argv = cmd.argv();
 
@@ -1215,6 +1432,7 @@ mod tests {
             port: None,
             remote_root: "/r".into(),
             server_path: "pantoken-server".into(),
+            extra_env: Vec::new(),
         };
         let argv = cmd.argv();
         assert!(!argv.iter().any(|a| a == "-p"), "no -p when port is None");
@@ -1228,6 +1446,7 @@ mod tests {
             port: Some(2222),
             remote_root: "/srv/p".into(),
             server_path: "pantoken-server".into(),
+            extra_env: Vec::new(),
         };
         let debug = format!("{:?}", cmd);
         assert!(
@@ -1245,6 +1464,7 @@ mod tests {
             port: None,
             remote_root: "/r".into(),
             server_path: "pantoken-server".into(),
+            extra_env: Vec::new(),
         };
         let debug = format!("{:?}", cmd);
         assert!(

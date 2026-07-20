@@ -46,6 +46,10 @@ pub struct RemoteProfile {
     /// `pantoken-server`, expected on the remote PATH).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub server_path: Option<String>,
+    /// XDG isolation mode for a Pantoken-managed polytoken. Defaults to
+    /// `Isolated` — Pantoken-managed XDG roots under the remote root.
+    #[serde(default)]
+    pub xdg_mode: XdgMode,
 }
 
 /// Policy for the remote polytoken runtime install.
@@ -58,6 +62,22 @@ pub enum PolytokenPolicy {
     /// The desktop may offer to install / upgrade the remote runtime.
     /// Defined for Phase 3 (auto-provisioning); not wired in Phase 2.
     OfferInstall,
+}
+
+/// XDG isolation mode for a Pantoken-managed polytoken on the remote host.
+///
+/// Controls whether the polytoken daemon uses Pantoken-managed XDG roots
+/// (under the remote root) or shares the user's existing polytoken XDG roots.
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum XdgMode {
+    /// Pantoken-managed XDG roots under the remote root. This is the safe
+    /// default — never silently share production state.
+    #[default]
+    Isolated,
+    /// User confirmed sharing existing polytoken XDG roots. No XDG override
+    /// env vars are set; polytoken uses its default roots.
+    Shared,
 }
 
 /// Field names that a plaintext secret carrier would plausibly use. The
@@ -244,6 +264,7 @@ mod tests {
             polytoken_policy: PolytokenPolicy::RequireExisting,
             remote_root_override: Some("/srv/pantoken".into()),
             server_path: Some("/usr/local/bin/pantoken-server".into()),
+            xdg_mode: XdgMode::default(),
         }
     }
 
@@ -319,6 +340,7 @@ mod tests {
             polytoken_policy: PolytokenPolicy::default(),
             remote_root_override: None,
             server_path: None,
+            xdg_mode: XdgMode::default(),
         }
         .validate()
         .is_ok());
@@ -333,6 +355,7 @@ mod tests {
                 polytoken_policy: PolytokenPolicy::default(),
                 remote_root_override: None,
                 server_path: None,
+                xdg_mode: XdgMode::default(),
             }
             .validate(),
             Err(RemoteProfileError::EmptyId)
@@ -348,6 +371,7 @@ mod tests {
                 polytoken_policy: PolytokenPolicy::default(),
                 remote_root_override: None,
                 server_path: None,
+                xdg_mode: XdgMode::default(),
             }
             .validate(),
             Err(RemoteProfileError::EmptyLabel)
@@ -363,6 +387,7 @@ mod tests {
                 polytoken_policy: PolytokenPolicy::default(),
                 remote_root_override: None,
                 server_path: None,
+                xdg_mode: XdgMode::default(),
             }
             .validate(),
             Err(RemoteProfileError::EmptyDestination)
@@ -378,6 +403,7 @@ mod tests {
                 polytoken_policy: PolytokenPolicy::default(),
                 remote_root_override: None,
                 server_path: None,
+                xdg_mode: XdgMode::default(),
             }
             .validate(),
             Err(RemoteProfileError::InvalidPort(0))
@@ -392,6 +418,7 @@ mod tests {
             polytoken_policy: PolytokenPolicy::default(),
             remote_root_override: None,
             server_path: None,
+            xdg_mode: XdgMode::default(),
         }
         .validate()
         .is_ok());
@@ -408,6 +435,7 @@ mod tests {
             polytoken_policy: PolytokenPolicy::default(),
             remote_root_override: None,
             server_path: None,
+            xdg_mode: XdgMode::default(),
         };
         assert_eq!(p.remote_root(), "~/.local/share/pantoken");
         assert_eq!(p.server_path(), "pantoken-server");
@@ -421,6 +449,7 @@ mod tests {
             polytoken_policy: PolytokenPolicy::default(),
             remote_root_override: Some("/srv/p".into()),
             server_path: Some("/x/pantoken-server".into()),
+            xdg_mode: XdgMode::default(),
         };
         assert_eq!(p.remote_root(), "/srv/p");
         assert_eq!(p.server_path(), "/x/pantoken-server");
@@ -434,6 +463,7 @@ mod tests {
             polytoken_policy: PolytokenPolicy::default(),
             remote_root_override: Some("".into()),
             server_path: Some("".into()),
+            xdg_mode: XdgMode::default(),
         };
         assert_eq!(p.remote_root(), "~/.local/share/pantoken");
         assert_eq!(p.server_path(), "pantoken-server");

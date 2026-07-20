@@ -125,16 +125,54 @@ pub fn connect_to_remote_impl(
 
     let command = SshCommand::from(&profile);
     let transport: Arc<dyn SshTransport> = Arc::new(SystemSshTransport::new());
-    let bridge = Bridge::new(bridge_port, transport, command)
-        .with_state_sink(connection.clone() as Arc<dyn ConnectionStateSink>);
 
-    // 5. Start the bridge on the dedicated runtime. Fire-and-forget — the
-    //    state machine drives the overlay; the command returns immediately.
+    // 5. Run provisioning reconciliation on the dedicated runtime, THEN start
+    //    the bridge. Provisioning probes the remote host, checks polytoken
+    //    compatibility, and optionally installs polytoken before the bridge
+    //    begins its SSH stdio relay. The state machine drives the overlay.
+    let bridge_port_for_task = bridge_port;
+    let connection_for_prov = connection.clone();
+    let transport_for_prov = transport.clone();
+    let command_for_prov = command.clone();
+    let profile_for_prov = profile.clone();
+
     let cancel = CancellationToken::new();
     let cancel_for_task = cancel.clone();
     let handle = state.remote_handle.spawn(async move {
-        if let Err(e) = bridge.run(cancel_for_task).await {
-            eprintln!("pantoken: bridge run error: {e}");
+        // Phase 3: run provisioning reconciliation before the bridge starts.
+        // This drives Connecting → Provisioning → Starting (or Failed).
+        connection_for_prov.on_state(ConnectionState::Connecting);
+
+        let outcome = crate::provisioning::reconcile::reconcile(
+            transport_for_prov.as_ref(),
+            command_for_prov.clone(),
+            &profile_for_prov,
+            Some(&(connection_for_prov.clone() as Arc<dyn ConnectionStateSink>)),
+            crate::provisioning::polytoken_install::default_http_fetch(),
+        )
+        .await;
+
+        match outcome {
+            crate::provisioning::reconcile::ReconcileOutcome::Ready { .. }
+            | crate::provisioning::reconcile::ReconcileOutcome::Installed { .. } => {
+                // Provisioning succeeded — start the bridge.
+                connection_for_prov.on_state(ConnectionState::Starting);
+                let bridge =
+                    Bridge::new(bridge_port_for_task, transport_for_prov, command_for_prov)
+                        .with_state_sink(
+                            connection_for_prov.clone() as Arc<dyn ConnectionStateSink>
+                        );
+                if let Err(e) = bridge.run(cancel_for_task).await {
+                    eprintln!("pantoken: bridge run error: {e}");
+                }
+            }
+            crate::provisioning::reconcile::ReconcileOutcome::Missing { .. }
+            | crate::provisioning::reconcile::ReconcileOutcome::UnsupportedTarget { .. }
+            | crate::provisioning::reconcile::ReconcileOutcome::Failed(_) => {
+                // Provisioning failed — the reconcile function already drove
+                // the state machine to Failed. The overlay poller will show
+                // the failure dialog.
+            }
         }
     });
 
@@ -326,6 +364,11 @@ mod tests {
     use super::*;
     use crate::bridge::fake::{FakeScenario, FakeSshTransport};
     use crate::remote_connection::ConnectionState;
+    use crate::remote_profile::PolytokenPolicy;
+
+    fn test_no_http_fetch() -> crate::provisioning::reconcile::HttpFetch {
+        std::sync::Arc::new(|_url: &str| Box::pin(async { Err("no http in test".into()) }))
+    }
 
     /// AC.3/AC.6: the bridge starts on a dedicated tokio runtime, forwards
     /// over WS, and tears down cleanly (no leaked child, runtime shuts down).
@@ -354,6 +397,7 @@ mod tests {
             port: None,
             remote_root: "/tmp".into(),
             server_path: "pantoken-server".into(),
+            extra_env: Vec::new(),
         };
         let connection = Arc::new(RemoteConnection::new());
         let bridge = Bridge::new(port, transport, command)
@@ -435,6 +479,7 @@ mod tests {
             port: None,
             remote_root: "/tmp".into(),
             server_path: "pantoken-server".into(),
+            extra_env: Vec::new(),
         };
         let conn1 = Arc::new(RemoteConnection::new());
         let bridge1 = Bridge::new(port1, transport, command)
@@ -473,6 +518,7 @@ mod tests {
             port: None,
             remote_root: "/tmp".into(),
             server_path: "pantoken-server".into(),
+            extra_env: Vec::new(),
         };
         let conn2 = Arc::new(RemoteConnection::new());
         let bridge2 = Bridge::new(port2, transport2, command2)
@@ -496,5 +542,147 @@ mod tests {
             s.stop(runtime.handle());
         }
         runtime.shutdown_background();
+    }
+
+    /// AC.7: provisioning drives the connection state machine through
+    /// `Connecting → Provisioning → Starting` when provisioning runs.
+    #[tokio::test]
+    async fn provisioning_drives_state_machine() {
+        use crate::provisioning::fake::{build_transport, Scenario};
+        use crate::provisioning::reconcile;
+
+        let transport = build_transport(Scenario::Healthy);
+        let command = SshCommand {
+            destination: "fake".into(),
+            port: None,
+            remote_root: "/tmp/pantoken-test".into(),
+            server_path: "pantoken-server".into(),
+            extra_env: Vec::new(),
+        };
+        let profile = RemoteProfile {
+            id: "test".into(),
+            label: "Test".into(),
+            ssh_destination: "fake".into(),
+            port: None,
+            polytoken_policy: PolytokenPolicy::RequireExisting,
+            remote_root_override: Some("/tmp/pantoken-test".into()),
+            server_path: None,
+            xdg_mode: crate::remote_profile::XdgMode::default(),
+        };
+        let connection = Arc::new(RemoteConnection::new());
+        connection.begin(profile.clone());
+        connection.on_state(ConnectionState::Connecting);
+
+        let sink: Arc<dyn ConnectionStateSink> = connection.clone() as Arc<dyn ConnectionStateSink>;
+        let outcome = reconcile::reconcile(
+            &transport,
+            command,
+            &profile,
+            Some(&sink),
+            test_no_http_fetch(),
+        )
+        .await;
+
+        assert!(matches!(outcome, reconcile::ReconcileOutcome::Ready { .. }));
+        // The state machine should have been driven through Provisioning.
+        let state = connection.state();
+        assert!(
+            matches!(
+                state,
+                ConnectionState::Provisioning | ConnectionState::Starting | ConnectionState::Ready
+            ),
+            "state should have advanced past Connecting: {state:?}"
+        );
+    }
+
+    /// AC.7: provisioning failure drives the Failed state.
+    #[tokio::test]
+    async fn provisioning_failure_drives_failed_state() {
+        use crate::provisioning::fake::{build_transport, Scenario};
+        use crate::provisioning::reconcile;
+
+        let transport = build_transport(Scenario::MissingPolytoken);
+        let command = SshCommand {
+            destination: "fake".into(),
+            port: None,
+            remote_root: "/tmp/pantoken-test".into(),
+            server_path: "pantoken-server".into(),
+            extra_env: Vec::new(),
+        };
+        let profile = RemoteProfile {
+            id: "test".into(),
+            label: "Test".into(),
+            ssh_destination: "fake".into(),
+            port: None,
+            polytoken_policy: PolytokenPolicy::RequireExisting,
+            remote_root_override: Some("/tmp/pantoken-test".into()),
+            server_path: None,
+            xdg_mode: crate::remote_profile::XdgMode::default(),
+        };
+        let connection = Arc::new(RemoteConnection::new());
+        connection.begin(profile.clone());
+        connection.on_state(ConnectionState::Connecting);
+
+        let sink: Arc<dyn ConnectionStateSink> = connection.clone() as Arc<dyn ConnectionStateSink>;
+        let outcome = reconcile::reconcile(
+            &transport,
+            command,
+            &profile,
+            Some(&sink),
+            test_no_http_fetch(),
+        )
+        .await;
+
+        assert!(matches!(
+            outcome,
+            reconcile::ReconcileOutcome::Missing { .. }
+        ));
+        let state = connection.state();
+        assert!(
+            matches!(state, ConnectionState::Failed { .. }),
+            "state should be Failed: {state:?}"
+        );
+    }
+
+    /// AC.7: provisioning is skipped when polytoken is already compatible —
+    /// no Provisioning state, straight to Ready.
+    #[tokio::test]
+    async fn provisioning_skipped_when_compatible() {
+        use crate::provisioning::fake::{build_transport, Scenario};
+        use crate::provisioning::reconcile;
+
+        let transport = build_transport(Scenario::Healthy);
+        let command = SshCommand {
+            destination: "fake".into(),
+            port: None,
+            remote_root: "/tmp/pantoken-test".into(),
+            server_path: "pantoken-server".into(),
+            extra_env: Vec::new(),
+        };
+        let profile = RemoteProfile {
+            id: "test".into(),
+            label: "Test".into(),
+            ssh_destination: "fake".into(),
+            port: None,
+            polytoken_policy: PolytokenPolicy::RequireExisting,
+            remote_root_override: Some("/tmp/pantoken-test".into()),
+            server_path: None,
+            xdg_mode: crate::remote_profile::XdgMode::default(),
+        };
+        let connection = Arc::new(RemoteConnection::new());
+        connection.begin(profile.clone());
+
+        let sink: Arc<dyn ConnectionStateSink> = connection.clone() as Arc<dyn ConnectionStateSink>;
+        let outcome = reconcile::reconcile(
+            &transport,
+            command,
+            &profile,
+            Some(&sink),
+            test_no_http_fetch(),
+        )
+        .await;
+
+        // Compatible polytoken → Ready (no install needed).
+        assert!(matches!(outcome, reconcile::ReconcileOutcome::Ready { .. }));
     }
 }

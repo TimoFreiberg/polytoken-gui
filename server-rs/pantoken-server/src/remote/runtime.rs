@@ -234,6 +234,14 @@ async fn connect_with_bootstrap(root: &Path, socket_path: &Path) -> std::io::Res
     if let Ok(bin) = std::env::var("PANTOKEN_POLYTOKEN_BIN") {
         cmd.env("PANTOKEN_POLYTOKEN_BIN", bin);
     }
+    // Phase 3: XDG isolation env vars (set by the desktop provisioning layer
+    // when the polytoken is Pantoken-managed). These are inherited from the
+    // stdio-proxy process's environment (set on the SSH command by the desktop).
+    for var in ["XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_CACHE_HOME"] {
+        if let Ok(val) = std::env::var(var) {
+            cmd.env(var, val);
+        }
+    }
     cmd.stdin(std::process::Stdio::null());
     cmd.stdout(std::process::Stdio::null());
     cmd.stderr(std::process::Stdio::null());

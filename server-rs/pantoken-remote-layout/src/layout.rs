@@ -1,9 +1,8 @@
 //! Remote on-disk layout spec.
 //!
 //! Pure functions over a root [`PathBuf`] — no filesystem writes, no process
-//! spawning. The remote runtime and provisioning logic (later phases) will
-//! call these functions to derive where releases, tools, sockets, and metadata
-//! live on the remote host.
+//! spawning. The remote runtime and provisioning logic call these functions to
+//! derive where releases, tools, sockets, and metadata live on the remote host.
 //!
 //! ## XDG distinction
 //!
@@ -152,6 +151,26 @@ pub fn install_metadata(root: &Path) -> PathBuf {
     root.join("install.json")
 }
 
+// ── XDG isolation paths (Phase 3) ──────────────────────────────────────
+
+/// `<root>/tools/polytoken/xdg/config` — isolated XDG_CONFIG_HOME for a
+/// Pantoken-managed polytoken.
+pub fn polytoken_xdg_config(root: &Path) -> PathBuf {
+    tools_dir(root).join("polytoken").join("xdg").join("config")
+}
+
+/// `<root>/tools/polytoken/xdg/data` — isolated XDG_DATA_HOME for a
+/// Pantoken-managed polytoken.
+pub fn polytoken_xdg_data(root: &Path) -> PathBuf {
+    tools_dir(root).join("polytoken").join("xdg").join("data")
+}
+
+/// `<root>/tools/polytoken/xdg/cache` — isolated XDG_CACHE_HOME for a
+/// Pantoken-managed polytoken.
+pub fn polytoken_xdg_cache(root: &Path) -> PathBuf {
+    tools_dir(root).join("polytoken").join("xdg").join("cache")
+}
+
 // ── Validation ────────────────────────────────────────────────────────
 
 /// Validate a root path.
@@ -198,6 +217,7 @@ mod tests {
     //! Named validations:
     //! - `remote_layout_default_and_override_tests`
     //! - `remote_layout_path_safety_tests`
+    //! - `xdg_paths_stay_under_remote_root`
 
     use super::*;
     use std::sync::Mutex;
@@ -323,6 +343,29 @@ mod tests {
         assert_eq!(
             install_metadata(root),
             PathBuf::from("/opt/pantoken/install.json")
+        );
+    }
+
+    // ── XDG path tests ─────────────────────────────────────────────────
+
+    #[test]
+    fn xdg_paths_stay_under_remote_root() {
+        let root = Path::new("/opt/pantoken");
+        assert!(polytoken_xdg_config(root).starts_with(root));
+        assert!(polytoken_xdg_data(root).starts_with(root));
+        assert!(polytoken_xdg_cache(root).starts_with(root));
+
+        assert_eq!(
+            polytoken_xdg_config(root),
+            PathBuf::from("/opt/pantoken/tools/polytoken/xdg/config")
+        );
+        assert_eq!(
+            polytoken_xdg_data(root),
+            PathBuf::from("/opt/pantoken/tools/polytoken/xdg/data")
+        );
+        assert_eq!(
+            polytoken_xdg_cache(root),
+            PathBuf::from("/opt/pantoken/tools/polytoken/xdg/cache")
         );
     }
 

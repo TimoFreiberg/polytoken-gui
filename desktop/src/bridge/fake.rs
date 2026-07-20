@@ -20,7 +20,7 @@
 
 use std::io;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use pantoken_protocol::frame::{self, FrameDecoder};
@@ -29,7 +29,7 @@ use pantoken_protocol::wire::{ClientMessage, ServerMessage, PROTOCOL_VERSION};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::sync::Notify;
 
-use crate::bridge::{ExitInfo, SshCommand, SshProxy, SshTransport};
+use crate::bridge::{CommandOutput, ExitInfo, SshCommand, SshProxy, SshTransport};
 
 /// A configurable scenario for the fake transport.
 #[derive(Clone, Debug)]
@@ -143,11 +143,61 @@ impl FakeScenario {
 /// Each `spawn_proxy` call clones the scenario and increments an internal
 /// spawn counter (so tests can assert how many proxies the bridge spawned
 /// across reconnects).
+///
+/// `run_command` and `upload_file` are backed by a shared command-response
+/// registry and an in-memory `FakeRemoteFs`, enabling provisioning tests
+/// without a real SSH process.
 pub struct FakeSshTransport {
     scenario: FakeScenario,
     spawn_count: Arc<AtomicUsize>,
     /// A notify that fires on each spawn (tests can await to synchronize).
     spawn_notify: Arc<Notify>,
+    /// Canned responses for `run_command`, keyed by a substring match against
+    /// the remote command. The first matching entry wins.
+    command_responses: Arc<Mutex<Vec<CommandResponseEntry>>>,
+    /// In-memory model of the remote filesystem for `upload_file`.
+    remote_fs: Arc<Mutex<FakeRemoteFs>>,
+}
+
+/// A canned response for a `run_command` call.
+#[derive(Clone)]
+pub struct CommandResponseEntry {
+    /// A substring to match against the remote command. If this substring
+    /// appears in the command, this response is used.
+    pub match_substring: String,
+    /// The canned output to return.
+    pub output: CommandOutput,
+}
+
+/// In-memory model of the remote filesystem for fake SSH uploads.
+#[derive(Default)]
+pub struct FakeRemoteFs {
+    /// Files written via `upload_file`, keyed by remote path.
+    pub files: std::collections::HashMap<String, Vec<u8>>,
+}
+
+impl FakeRemoteFs {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Get the bytes written to a remote path, if any.
+    pub fn get(&self, path: &str) -> Option<&[u8]> {
+        self.files.get(path).map(|v| v.as_slice())
+    }
+
+    /// Check if a file exists at the given path.
+    pub fn exists(&self, path: &str) -> bool {
+        self.files.contains_key(path)
+    }
+}
+
+impl std::fmt::Debug for FakeRemoteFs {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("FakeRemoteFs")
+            .field("file_count", &self.files.len())
+            .finish()
+    }
 }
 
 impl FakeSshTransport {
@@ -156,6 +206,8 @@ impl FakeSshTransport {
             scenario,
             spawn_count: Arc::new(AtomicUsize::new(0)),
             spawn_notify: Arc::new(Notify::new()),
+            command_responses: Arc::new(Mutex::new(Vec::new())),
+            remote_fs: Arc::new(Mutex::new(FakeRemoteFs::new())),
         }
     }
 
@@ -168,6 +220,24 @@ impl FakeSshTransport {
     pub async fn wait_for_spawn(&self) {
         self.spawn_notify.notified().await;
     }
+
+    /// Add a canned response for `run_command`. The first entry whose
+    /// `match_substring` appears in the remote command wins. Responses are
+    /// checked in insertion order.
+    pub fn add_command_response(&self, match_substring: impl Into<String>, output: CommandOutput) {
+        self.command_responses
+            .lock()
+            .unwrap()
+            .push(CommandResponseEntry {
+                match_substring: match_substring.into(),
+                output,
+            });
+    }
+
+    /// Get a clone of the shared `FakeRemoteFs` handle for inspection in tests.
+    pub fn remote_fs(&self) -> Arc<Mutex<FakeRemoteFs>> {
+        self.remote_fs.clone()
+    }
 }
 
 impl Clone for FakeSshTransport {
@@ -179,6 +249,8 @@ impl Clone for FakeSshTransport {
             scenario: self.scenario.clone(),
             spawn_count: self.spawn_count.clone(),
             spawn_notify: self.spawn_notify.clone(),
+            command_responses: self.command_responses.clone(),
+            remote_fs: self.remote_fs.clone(),
         }
     }
 }
@@ -291,6 +363,49 @@ impl SshTransport for FakeSshTransport {
                 stdout,
                 exit,
             })
+        })
+    }
+
+    fn run_command(
+        &self,
+        _command: SshCommand,
+        remote_command: &str,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = io::Result<CommandOutput>> + Send>>
+    {
+        let responses = self.command_responses.lock().unwrap();
+        // Find the first matching response.
+        let matched = responses
+            .iter()
+            .find(|entry| remote_command.contains(&entry.match_substring))
+            .map(|entry| entry.output.clone());
+        drop(responses);
+
+        Box::pin(async move {
+            match matched {
+                Some(output) => Ok(output),
+                None => {
+                    // Default: empty success (command ran, produced no output).
+                    Ok(CommandOutput {
+                        stdout: String::new(),
+                        stderr: String::new(),
+                        exit_code: Some(0),
+                    })
+                }
+            }
+        })
+    }
+
+    fn upload_file(
+        &self,
+        _command: SshCommand,
+        remote_path: &str,
+        data: Vec<u8>,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = io::Result<()>> + Send>> {
+        let remote_fs = self.remote_fs.clone();
+        let path = remote_path.to_string();
+        Box::pin(async move {
+            remote_fs.lock().unwrap().files.insert(path, data);
+            Ok(())
         })
     }
 }

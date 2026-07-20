@@ -11,6 +11,7 @@ mod bridge;
 mod config;
 mod mouse_nav;
 mod proc;
+mod provisioning;
 mod remote_commands;
 mod remote_connection;
 mod remote_profile;

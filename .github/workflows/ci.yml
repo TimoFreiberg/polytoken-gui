@@ -186,8 +186,8 @@ jobs:
           workspaces: .
       - uses: mozilla-actions/sccache-action@v0.0.10
       - run: cargo fmt --all -- --check
-      - run: cargo clippy --locked -p pantoken-protocol -p pantoken-daemon-types -p pantoken-server --all-targets -- -D warnings
-      - run: cargo test -p pantoken-protocol -p pantoken-daemon-types -p pantoken-server
+      - run: cargo clippy --locked -p pantoken-protocol -p pantoken-daemon-types -p pantoken-server -p pantoken-remote-layout --all-targets -- -D warnings
+      - run: cargo test -p pantoken-protocol -p pantoken-daemon-types -p pantoken-server -p pantoken-remote-layout
 
   # Tag pushes only (scripts/desktop/release.ts creates them): prepare the signed
   # desktop and headless release bundle in parallel with the gates, then publish only

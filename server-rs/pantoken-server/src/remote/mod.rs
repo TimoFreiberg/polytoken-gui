@@ -5,7 +5,8 @@
 //! consume these frozen contracts. Nothing in this module performs I/O or
 //! process spawning.
 
-pub mod layout;
+pub use pantoken_remote_layout::layout;
+pub use pantoken_remote_layout::semver;
 pub mod lifecycle;
 pub mod manifest;
 pub mod runtime;

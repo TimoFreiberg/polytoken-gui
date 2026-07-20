@@ -25,6 +25,7 @@
 //! daemon's version.
 
 use pantoken_protocol::wire::PROTOCOL_VERSION;
+use pantoken_remote_layout::semver;
 
 /// A Pantoken server release manifest.
 ///
@@ -154,7 +155,7 @@ pub fn validate(manifest: &PantokenReleaseManifest) -> Result<(), ManifestError>
     }
 
     // Release version parses as semver.
-    if !parse_semver(&manifest.release_version) {
+    if !semver::parse_semver(&manifest.release_version) {
         return Err(ManifestError::InvalidReleaseVersion {
             version: manifest.release_version.clone(),
         });
@@ -168,57 +169,6 @@ fn is_valid_sha256(s: &str) -> bool {
     s.len() == 64
         && s.chars()
             .all(|c: char| c.is_ascii_digit() || ('a'..='f').contains(&c))
-}
-
-/// Validate a version string is semver (with optional prerelease).
-///
-/// Same manual approach as the daemon-types test — no workspace `semver`
-/// dependency needed for parse-only validation. Comparison (with prerelease
-/// precedence) is a Phase 3 provisioning concern.
-fn parse_semver(version: &str) -> bool {
-    let (core, prerelease) = match version.split_once('-') {
-        Some((c, p)) => (c, Some(p)),
-        None => (version, None),
-    };
-
-    let parts: Vec<&str> = core.split('.').collect();
-    if parts.len() != 3 {
-        return false;
-    }
-
-    for part in &parts {
-        if part.is_empty() {
-            return false;
-        }
-        if *part == "0" {
-            continue;
-        }
-        if !part.chars().all(|c| c.is_ascii_digit()) {
-            return false;
-        }
-        if part.starts_with('0') {
-            return false;
-        }
-    }
-
-    if let Some(pre) = prerelease {
-        if pre.is_empty() {
-            return false;
-        }
-        for segment in pre.split('.') {
-            if segment.is_empty() {
-                return false;
-            }
-            if !segment
-                .chars()
-                .all(|c| c.is_ascii_alphanumeric() || c == '-')
-            {
-                return false;
-            }
-        }
-    }
-
-    true
 }
 
 #[cfg(test)]
