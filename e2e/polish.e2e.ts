@@ -867,10 +867,22 @@ test("a session with no saved position still lands at the live bottom", async ({
       return s.scrollHeight - s.scrollTop - s.clientHeight;
     });
 
+  // Wait for the viewport resize (above) to settle: the #64 viewportObserver
+  // (ResizeObserver on `.scroller`) re-asserts the bottom when the border-box height
+  // changes and the session is pinned. This guard lets that callback flush so it
+  // won't fire after our programmatic scrollTop=0 below and snap back to the bottom.
+  await expect.poll(gap).toBeLessThan(80);
+
   // Leave the greeting scrolled to the very top, then switch to a different session that
   // has no saved position — it should open at the live bottom, not the carried-over top.
-  await scroller.evaluate((el) => ((el as HTMLElement).scrollTop = 0));
-  await expect.poll(top).toBe(0);
+  // Set and read scrollTop in one synchronous evaluate so no async event (viewport
+  // observer callback, drift timer) can interleave and re-assert the bottom between
+  // the write and the assertion.
+  const t = await scroller.evaluate((el) => {
+    (el as HTMLElement).scrollTop = 0;
+    return (el as HTMLElement).scrollTop;
+  });
+  expect(t).toBe(0);
   await expect.poll(gap).toBeGreaterThan(80);
   await openSidebar(page);
   await page

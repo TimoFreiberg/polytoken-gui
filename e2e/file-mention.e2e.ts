@@ -322,11 +322,13 @@ test("project mode: a query matching only a hidden fixture shows nothing until S
 }) => {
   const box = ta(page);
   await box.click();
-  await page.keyboard.type("@env");
-  // Zero local matches — no visible fixture path contains "env" — but the menu stays
-  // open with "No matches" (issue #53: always-visible in @-context, so the footer/
-  // hotkeys — including ⇧Tab — are reachable without a "surprise" reveal). This is
-  // the case Shift+Tab must work from: the menu is already open.
+  await page.keyboard.type("@.env");
+  // Zero local matches: `.env` is a path-prefix match for the hidden `.env` fixture,
+  // but under the fuzzy subsequence matcher (#63) it matches no visible fixture — no
+  // visible path starts with `.` (so the `.`→`e`→`n`→`v` subsequence can't anchor).
+  // The menu stays open with "No matches" (issue #53: always-visible in @-context,
+  // so the footer/hotkeys — including ⇧Tab — are reachable without a "surprise"
+  // reveal). This is the case Shift+Tab must work from: the menu is already open.
   await expect(menu(page)).toBeVisible();
   await expect(menu(page)).toContainText("No matches");
 
