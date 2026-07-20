@@ -1736,3 +1736,170 @@ mod tests {
         assert!(final_spawns >= 1, "at least one spawn happened");
     }
 }
+
+/// AC.13 smoke tests for the native transport seam.
+///
+/// These tests prove the `SshTransport` trait is a clean injection seam that
+/// can be exercised directly (without the `Bridge`) and that a fresh
+/// `spawn_proxy` call restarts the relay after a transport exit. The
+/// capability map:
+///
+/// | AC.13 capability              | Validating test                              |
+/// |-------------------------------|----------------------------------------------|
+/// | Transport seam independence   | `transport_seam_independent_of_bridge`       |
+/// | Phase driving                 | `fake_ssh_transport_drives_connection_phases`|
+/// | Persistent-runtime restart   | `transport_restarts_after_exit`              |
+#[cfg(test)]
+mod native_transport_seam_smoke_tests {
+    use super::*;
+    use crate::bridge::fake::{FakeScenario, FakeSshTransport};
+    use pantoken_protocol::frame;
+    use pantoken_protocol::transport::ClientEnvelope;
+    use pantoken_protocol::wire::{ClientMessage, ServerMessage};
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    fn fake_command() -> SshCommand {
+        SshCommand {
+            destination: "fake-host".into(),
+            port: None,
+            remote_root: "/tmp/fake".into(),
+            server_path: "pantoken-server".into(),
+            extra_env: Vec::new(),
+        }
+    }
+
+    /// Transport seam independence: the `SshTransport` trait can be injected
+    /// and exercised directly without the `Bridge`. All three trait methods
+    /// (`spawn_proxy`, `run_command`, `upload_file`) work through the trait
+    /// object (`Arc<dyn SshTransport>`) with no `Bridge` involved.
+    #[tokio::test]
+    async fn transport_seam_independent_of_bridge() {
+        let transport = Arc::new(FakeSshTransport::new(FakeScenario::healthy()));
+
+        // 1. spawn_proxy: get a framed relay, write a Hello, read back a Hello.
+        let proxy = transport.spawn_proxy(fake_command()).await.expect("spawn");
+        let hello = ClientEnvelope::new(ClientMessage::Hello {
+            auth: None,
+            resume: None,
+        });
+        let frame_bytes = frame::encode_client(&hello).expect("encode");
+        let mut stdin = proxy.stdin;
+        let mut stdout = proxy.stdout;
+        stdin.write_all(&frame_bytes).await.expect("write hello");
+        stdin.flush().await.expect("flush");
+
+        // Read the framed response.
+        let mut len_buf = [0u8; 4];
+        stdout.read_exact(&mut len_buf).await.expect("read len");
+        let len = u32::from_be_bytes(len_buf) as usize;
+        let mut body = vec![0u8; len];
+        stdout.read_exact(&mut body).await.expect("read body");
+        let env = frame::decode(&body).expect("decode");
+        assert!(
+            matches!(env.message, ServerMessage::Hello { .. }),
+            "spawn_proxy must relay Hello through the trait without the Bridge"
+        );
+
+        // 2. run_command: exercise the trait's command method directly.
+        let output = transport
+            .run_command(fake_command(), "echo hello")
+            .await
+            .expect("run_command");
+        // The fake returns an empty success for unmatched commands.
+        assert!(output.is_success(), "run_command must succeed via trait");
+
+        // 3. upload_file: exercise the trait's upload method directly.
+        transport
+            .upload_file(fake_command(), "/tmp/test-file", b"data".to_vec())
+            .await
+            .expect("upload_file");
+
+        // Verify the upload landed in the shared FakeRemoteFs.
+        {
+            let fs = transport.remote_fs();
+            let fs = fs.lock().unwrap();
+            assert!(fs.exists("/tmp/test-file"));
+            assert_eq!(fs.get("/tmp/test-file"), Some(b"data".as_slice()));
+        }
+
+        // Let the exit future resolve.
+        let _ = tokio::time::timeout(Duration::from_millis(200), proxy.exit).await;
+    }
+
+    /// Persistent-runtime restart: after a transport exits (clean exit
+    /// scenario), a fresh `spawn_proxy` call restarts the relay. This mirrors
+    /// the bridge's reconnect behavior — each `spawn_proxy` creates a new
+    /// process/relay, so an exit does not permanently break the transport.
+    #[tokio::test]
+    async fn transport_restarts_after_exit() {
+        // Use a scenario that exits after 1 message (Hello) with a clean exit.
+        let transport = Arc::new(FakeSshTransport::new(FakeScenario::exit_after(
+            1,
+            0,
+            "remote closed",
+        )));
+        let transport_clone = transport.clone();
+
+        // First spawn: relay processes Hello, then exits cleanly.
+        let proxy1 = transport
+            .spawn_proxy(fake_command())
+            .await
+            .expect("spawn 1");
+        let hello = ClientEnvelope::new(ClientMessage::Hello {
+            auth: None,
+            resume: None,
+        });
+        let frame_bytes = frame::encode_client(&hello).expect("encode");
+        let mut stdin1 = proxy1.stdin;
+        let mut stdout1 = proxy1.stdout;
+        stdin1.write_all(&frame_bytes).await.expect("write hello 1");
+        stdin1.flush().await.expect("flush 1");
+
+        // Read the Hello response (1 message processed).
+        let mut len_buf = [0u8; 4];
+        stdout1.read_exact(&mut len_buf).await.expect("read len 1");
+        let len = u32::from_be_bytes(len_buf) as usize;
+        let mut body = vec![0u8; len];
+        stdout1.read_exact(&mut body).await.expect("read body 1");
+        let env = frame::decode(&body).expect("decode 1");
+        assert!(matches!(env.message, ServerMessage::Hello { .. }));
+
+        // The exit future resolves with the clean exit info.
+        let exit_info = tokio::time::timeout(Duration::from_millis(500), proxy1.exit)
+            .await
+            .expect("exit future must resolve");
+        assert_eq!(exit_info.code, Some(0), "first proxy exits cleanly");
+
+        // Second spawn: a fresh relay starts. The transport is not broken.
+        let proxy2 = transport_clone
+            .spawn_proxy(fake_command())
+            .await
+            .expect("spawn 2");
+        let mut stdin2 = proxy2.stdin;
+        let mut stdout2 = proxy2.stdout;
+
+        // Write a Hello to the restarted relay and verify it responds.
+        stdin2.write_all(&frame_bytes).await.expect("write hello 2");
+        stdin2.flush().await.expect("flush 2");
+
+        let mut len_buf2 = [0u8; 4];
+        stdout2.read_exact(&mut len_buf2).await.expect("read len 2");
+        let len2 = u32::from_be_bytes(len_buf2) as usize;
+        let mut body2 = vec![0u8; len2];
+        stdout2.read_exact(&mut body2).await.expect("read body 2");
+        let env2 = frame::decode(&body2).expect("decode 2");
+        assert!(
+            matches!(env2.message, ServerMessage::Hello { .. }),
+            "restarted relay must respond to Hello"
+        );
+
+        // Two spawns total.
+        assert_eq!(
+            transport.spawn_count(),
+            2,
+            "exit + restart → two spawn_proxy calls"
+        );
+
+        let _ = tokio::time::timeout(Duration::from_millis(200), proxy2.exit).await;
+    }
+}

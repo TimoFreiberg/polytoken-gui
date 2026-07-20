@@ -208,6 +208,7 @@ struct PolytokenInner {
 /// A thin wrapper around `Arc<PolytokenInner>`. The hub owns this as
 /// `Box<dyn PantokenDriver>`; each trait method delegates to the inner impl,
 /// cloning the `Arc` where a spawned task needs its own handle.
+#[derive(Clone)]
 pub struct PolytokenDriver {
     inner: Arc<PolytokenInner>,
 }
@@ -1219,6 +1220,16 @@ impl PolytokenInner {
     /// sender, abort + await the consumer task, close the client. Mirrors TS
     /// `disposeSession`. Extracted so `install_warm` (eviction) and
     /// `reload_session` share one teardown path.
+    ///
+    /// **AC.10 identity checks:**
+    /// - When a `Child` handle is present (spawned-daemon path), guard
+    ///   `child.kill()` with `try_wait()`: if the child already exited, skip
+    ///   the kill entirely (the PID may have been recycled). After killing via
+    ///   the Child handle, use `close_without_kill()` to avoid signaling the
+    ///   dead PID again.
+    /// - When no `Child` handle is present (resume/attach path), use
+    ///   `close()` which falls back to `kill()` — but `kill()` now verifies
+    ///   process identity via start-time before signaling.
     async fn dispose_warm(&self, ws: &Arc<WarmSession>) {
         let sub = ws.sse_subscription.lock().take();
         *ws.sse_tx.lock() = None;
@@ -1232,10 +1243,29 @@ impl PolytokenInner {
         }
         let child = { ws.owned_process.lock().take() };
         if let Some(mut child) = child {
-            let _ = child.kill().await;
+            // Layer A: guard child.kill() with try_wait(). If the child already
+            // exited, skip the kill — the PID may have been recycled by the OS
+            // and signaling it would hit an unrelated process (AC.10).
+            let already_exited = match child.try_wait() {
+                Ok(Some(_status)) => true,
+                Ok(None) => false,
+                Err(_) => true, // error → treat as exited (avoid signaling)
+            };
+            if !already_exited {
+                let _ = child.kill().await;
+            }
             let _ = child.wait().await;
+            // Layer C: the Child handle killed the process (or it was already
+            // dead). Use close_without_kill() to release the lease + do HTTP
+            // terminate without the SIGTERM fallback — signaling the dead PID
+            // again would risk hitting a recycled PID.
+            ws.client.close_without_kill().await;
+        } else {
+            // No Child handle (resume/attach path). close() → kill() is the
+            // only kill mechanism. kill() now verifies process identity via
+            // start-time before signaling (Layer B).
+            ws.client.close().await;
         }
-        ws.client.close().await;
     }
 
     /// Warm up a NEW session by spawning the daemon (`polytoken new --no-attach`),
@@ -2284,7 +2314,23 @@ impl PantokenDriver for PolytokenDriver {
                 handle.abort();
                 let _ = handle.await;
             }
-            ws.client.close().await;
+            // Dispose the owned process with the same AC.10 identity checks as
+            // dispose_warm: try_wait before kill, close_without_kill after.
+            let child = { ws.owned_process.lock().take() };
+            if let Some(mut child) = child {
+                let already_exited = match child.try_wait() {
+                    Ok(Some(_status)) => true,
+                    Ok(None) => false,
+                    Err(_) => true,
+                };
+                if !already_exited {
+                    let _ = child.kill().await;
+                }
+                let _ = child.wait().await;
+                ws.client.close_without_kill().await;
+            } else {
+                ws.client.close().await;
+            }
         }
         self.open_session(path).await
     }

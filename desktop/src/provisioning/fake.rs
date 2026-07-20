@@ -205,3 +205,168 @@ mod tests {
         );
     }
 }
+
+/// AC.13 smoke tests for the fake SSH / remote-filesystem harness.
+///
+/// These tests prove the harness can deterministically drive the full set of
+/// scenarios required by AC.13 without touching real SSH or user state. The
+/// capability map:
+///
+/// | AC.13 capability              | Validating test                              |
+/// |-------------------------------|----------------------------------------------|
+/// | Framing (length-prefixed)     | `fake_ssh_harness_drives_probe` (tests mod)  |
+/// | Probe injection               | `fake_ssh_harness_drives_probe` (tests mod)  |
+/// | Artifact failure injection    | `fake_ssh_harness_injects_checksum_failure`  |
+/// | Phase driving (install)       | `fake_ssh_harness_drives_install` (tests mod)|
+/// | Install-state persistence     | `fake_ssh_harness_persists_install_state`    |
+/// | Persistent runtime state     | `fake_ssh_harness_preserves_state_across_reconnect` |
+/// | Concurrent proxy startup      | `fake_ssh_harness_supports_concurrent_spawn` |
+///
+/// The first five capabilities are validated by the tests in the parent `tests`
+/// module. This module adds the two remaining: persistent runtime state across
+/// reconnect and concurrent proxy spawn.
+#[cfg(test)]
+mod fake_ssh_harness_smoke_tests {
+    use super::*;
+    use crate::bridge::SshTransport;
+    use std::time::Duration;
+
+    fn ssh_command() -> crate::bridge::SshCommand {
+        crate::bridge::SshCommand {
+            destination: "fake".into(),
+            port: None,
+            remote_root: "/tmp/pantoken-test".into(),
+            server_path: "pantoken-server".into(),
+            extra_env: Vec::new(),
+        }
+    }
+
+    /// Persistent fake runtime state: files uploaded via `upload_file` and
+    /// `install.json` written by the installer survive a "reconnect" because
+    /// `FakeRemoteFs` is shared via `Arc<Mutex<>>` across all clones of the
+    /// transport.
+    #[test]
+    fn fake_ssh_harness_preserves_state_across_reconnect() {
+        // Write files to a shared FakeRemoteFs, clone the transport, verify
+        // the clone sees the same files.
+        let transport = crate::bridge::fake::FakeSshTransport::new(
+            crate::bridge::fake::FakeScenario::healthy(),
+        );
+
+        let archive = b"archive bytes".to_vec();
+        let install_json = br#"{"version":"0.5.0-unstable.9"}"#.to_vec();
+
+        {
+            let fs = transport.remote_fs();
+            let mut fs = fs.lock().unwrap();
+            fs.files
+                .insert("/tmp/test/archive.tar.gz".into(), archive.clone());
+            fs.files
+                .insert("/tmp/test/install.json".into(), install_json.clone());
+        }
+
+        let reconnected = transport.clone();
+        let fs = reconnected.remote_fs();
+        let fs = fs.lock().unwrap();
+        assert!(
+            fs.exists("/tmp/test/archive.tar.gz"),
+            "archive must survive reconnect"
+        );
+        assert!(
+            fs.exists("/tmp/test/install.json"),
+            "install.json must survive reconnect"
+        );
+        assert_eq!(fs.get("/tmp/test/archive.tar.gz"), Some(archive.as_slice()));
+    }
+
+    /// Concurrent proxy spawn: two `spawn_proxy` calls against the same
+    /// `FakeSshTransport` each create a fresh relay (independent duplex pair).
+    /// The spawn counter reflects both spawns.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn fake_ssh_harness_supports_concurrent_spawn() {
+        let transport = build_transport(Scenario::Healthy);
+        let transport_clone = transport.clone();
+
+        // Spawn two proxies concurrently.
+        let (proxy1, proxy2) = tokio::join!(
+            transport.spawn_proxy(ssh_command()),
+            transport_clone.spawn_proxy(ssh_command()),
+        );
+
+        let mut proxy1 = proxy1.expect("first spawn_proxy");
+        let proxy2 = proxy2.expect("second spawn_proxy");
+
+        // Both spawns were counted.
+        assert_eq!(
+            transport.spawn_count(),
+            2,
+            "two concurrent spawn_proxy calls → two spawns"
+        );
+
+        // Each proxy has independent stdin/stdout (fresh duplex pair).
+        // Write a framed Hello to proxy1's stdin and read the response from
+        // its stdout — proxy2 must not interfere.
+        use pantoken_protocol::frame;
+        use pantoken_protocol::transport::ClientEnvelope;
+        use pantoken_protocol::wire::ClientMessage;
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        let hello = ClientEnvelope::new(ClientMessage::Hello {
+            auth: None,
+            resume: None,
+        });
+        let frame_bytes = frame::encode_client(&hello).expect("encode hello");
+
+        // Write to proxy1, read back from proxy1.
+        proxy1
+            .stdin
+            .write_all(&frame_bytes)
+            .await
+            .expect("write p1");
+        proxy1.stdin.flush().await.expect("flush p1");
+
+        // Read the 4-byte length prefix + body from proxy1's stdout.
+        let mut len_buf = [0u8; 4];
+        proxy1
+            .stdout
+            .read_exact(&mut len_buf)
+            .await
+            .expect("read len p1");
+        let len = u32::from_be_bytes(len_buf) as usize;
+        let mut body = vec![0u8; len];
+        proxy1
+            .stdout
+            .read_exact(&mut body)
+            .await
+            .expect("read body p1");
+
+        // Verify it's a valid ServerEnvelope with a Hello.
+        use pantoken_protocol::frame::decode;
+        let env = decode(&body).expect("decode server envelope");
+        assert!(
+            matches!(
+                env.message,
+                pantoken_protocol::wire::ServerMessage::Hello { .. }
+            ),
+            "proxy1 must respond with Hello"
+        );
+
+        // proxy2 is independent — its stdout has no data from proxy1's write.
+        // We verify independence by checking that proxy2's stdout does not
+        // immediately produce proxy1's response (it would only respond to
+        // frames written to proxy2's stdin).
+        let mut proxy2_stdout = proxy2.stdout;
+        let read_result =
+            tokio::time::timeout(Duration::from_millis(50), proxy2_stdout.read(&mut [0u8; 1]))
+                .await;
+        assert!(
+            read_result.is_err(),
+            "proxy2 stdout must be independent of proxy1's stdin"
+        );
+
+        // Let both exit futures resolve (they resolve after a brief delay for
+        // non-immediate-exit scenarios).
+        let _ = tokio::time::timeout(Duration::from_millis(200), proxy1.exit).await;
+        let _ = tokio::time::timeout(Duration::from_millis(200), proxy2.exit).await;
+    }
+}

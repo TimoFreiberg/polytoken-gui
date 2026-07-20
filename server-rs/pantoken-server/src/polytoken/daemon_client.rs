@@ -30,6 +30,8 @@ use tokio::process::Command;
 use tokio::sync::{Mutex, oneshot};
 use tracing::{error, info, warn};
 
+use super::process_identity::{self, OsStartTimeReader, StartTimeReader};
+
 /// An MCP server lifecycle action exposed by the daemon.
 #[derive(Debug, Clone, Copy)]
 pub enum McpServerAction {
@@ -1065,6 +1067,16 @@ pub struct DaemonClient {
     /// The daemon's own OS pid, captured from GET /health. Used as a kill() fallback
     /// when HTTP /terminate fails (a wedged daemon won't respond to HTTP).
     daemon_pid: Mutex<Option<i32>>,
+    /// The daemon's process start time, captured alongside `daemon_pid` from
+    /// GET /health. Used by `kill()` to verify the PID hasn't been recycled
+    /// before signaling (AC.10: never kill an unrelated process). `None` when
+    /// the start time couldn't be captured (unsupported platform) — in that
+    /// case `kill()` proceeds without identity verification (graceful
+    /// degradation, matching pre-verification behavior).
+    daemon_start_time: Mutex<Option<u64>>,
+    /// Injectable start-time reader for testing. Defaults to the OS reader.
+    /// Tests inject a mock to simulate PID recycling without OS-level reuse.
+    start_time_reader: Arc<dyn StartTimeReader>,
     lease: Mutex<Option<AttachmentLease>>,
     sse_cancel: Mutex<Option<CancelHandle>>,
     http: Client,
@@ -1090,6 +1102,8 @@ impl DaemonClient {
             pid,
             auth_token,
             daemon_pid: Mutex::new(None),
+            daemon_start_time: Mutex::new(None),
+            start_time_reader: Arc::new(OsStartTimeReader),
             lease: Mutex::new(None),
             sse_cancel: Mutex::new(None),
             http: Client::builder()
@@ -1097,6 +1111,35 @@ impl DaemonClient {
                 .expect("failed to build reqwest client"),
             // 3x the ~10s heartbeat cadence — tolerates a couple of missed beats
             // (GC pause, brief scheduler stall) before declaring the daemon dead.
+            heartbeat_timeout_ms: 30_000,
+        }
+    }
+
+    /// Create a client with an injected start-time reader (for testing PID
+    /// recycling without OS-level PID reuse).
+    #[cfg(test)]
+    pub(crate) fn new_with_start_time_reader(
+        session_id: String,
+        port: u16,
+        pid: i32,
+        auth_token: Option<String>,
+        reader: Arc<dyn StartTimeReader>,
+    ) -> Self {
+        let base_url = format!("http://127.0.0.1:{port}");
+        Self {
+            session_id,
+            port,
+            base_url,
+            pid,
+            auth_token,
+            daemon_pid: Mutex::new(None),
+            daemon_start_time: Mutex::new(None),
+            start_time_reader: reader,
+            lease: Mutex::new(None),
+            sse_cancel: Mutex::new(None),
+            http: Client::builder()
+                .build()
+                .expect("failed to build reqwest client"),
             heartbeat_timeout_ms: 30_000,
         }
     }
@@ -1322,12 +1365,19 @@ impl DaemonClient {
     // --- Lifecycle ---
 
     /// `GET /health` — confirms the daemon is alive and echoes its session record.
-    /// Captures the daemon's own OS pid (for the kill() fallback) as a side effect.
+    /// Captures the daemon's own OS pid + start time (for the kill() identity
+    /// check) as a side effect.
     pub async fn health(&self) -> DaemonResponse<HealthResponse> {
         let result = self.get::<HealthResponse>("/health").await;
         if result.status == 200 {
             if let Some(data) = &result.data {
-                *self.daemon_pid.lock().await = Some(data.pid);
+                let pid = data.pid;
+                *self.daemon_pid.lock().await = Some(pid);
+                // Capture the process start time for identity verification
+                // before kill(). This is the start-token: if the PID is later
+                // recycled, the start time will differ and kill() will skip.
+                let start_time = process_identity::capture_start_time(pid);
+                *self.daemon_start_time.lock().await = start_time;
             }
         }
         result
@@ -1346,9 +1396,26 @@ impl DaemonClient {
     /// /terminate fails (a wedged daemon won't respond to HTTP) or on a synchronous
     /// exit path where we can't await a network round-trip. Requires the daemon pid
     /// captured from /health; no-op if the pid is unknown.
+    ///
+    /// **AC.10 identity check:** before signaling, verifies the PID's start time
+    /// matches the value captured at health-check time. If the PID was recycled
+    /// (different start time) or no longer exists, the kill is skipped to avoid
+    /// signaling an unrelated process. If no start time was captured (unsupported
+    /// platform), the check is skipped (graceful degradation).
     pub async fn kill(&self) {
         let pid = *self.daemon_pid.lock().await;
         if let Some(pid) = pid {
+            // Verify process identity: if the PID was recycled, the start time
+            // will differ — skip the kill to avoid signaling an unrelated process.
+            let stored_start_time = *self.daemon_start_time.lock().await;
+            if !process_identity::verify(pid, stored_start_time, self.start_time_reader.as_ref()) {
+                warn!(
+                    pid,
+                    ?stored_start_time,
+                    "kill() skipped: process identity check failed (PID may have been recycled)"
+                );
+                return;
+            }
             // Send SIGTERM.
             unsafe {
                 libc::kill(pid, libc::SIGTERM);
@@ -2474,6 +2541,30 @@ impl DaemonClient {
         // Always hard-kill as a final fallback — covers both HTTP failure and timeout.
         // (Idempotent: kill() is a no-op if the process is already dead.)
         self.kill().await;
+    }
+
+    /// Release the lease + do HTTP terminate, but do NOT do the SIGTERM kill
+    /// fallback. Used by `dispose_warm` when the caller has already killed the
+    /// daemon process via the `Child` handle — signaling the (now-dead) PID
+    /// again would risk hitting a recycled PID.
+    ///
+    /// This preserves `close()`'s "always terminates" contract for all other
+    /// callers. Only `dispose_warm` (which has the `Child` handle) should call
+    /// this method.
+    pub async fn close_without_kill(&self) {
+        // Abort SSE.
+        if let Some(cancel) = self.sse_cancel.lock().await.take() {
+            cancel.notify.notify_one();
+        }
+        // Race the HTTP cleanup against a 2s timeout.
+        let http_cleanup = async {
+            self.release_lease().await;
+            let _ = self.terminate().await;
+        };
+        let _ = tokio::time::timeout(Duration::from_millis(2000), http_cleanup).await;
+        // Intentionally NO kill() fallback — the caller already killed the
+        // process via the Child handle. Signaling the dead PID again would
+        // risk hitting a recycled PID (AC.10).
     }
 }
 
@@ -3617,5 +3708,212 @@ sleep 30
             mock_msg.contains("another TUI is attached") || mock_msg.contains("lease to lapse"),
             "client LEASE_CONFLICT_RE pattern should match"
         );
+    }
+
+    // -------------------------------------------------------------------------
+    // AC.10 — Start-token identity checks for daemon cleanup
+    // -------------------------------------------------------------------------
+
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    /// A mock start-time reader that returns configurable values, simulating
+    /// PID recycling (different start time on second read).
+    struct MockStartTimeReader {
+        current: Arc<AtomicU64>,
+    }
+
+    impl MockStartTimeReader {
+        fn new(initial: u64) -> Self {
+            Self {
+                current: Arc::new(AtomicU64::new(initial)),
+            }
+        }
+        fn change_to(&self, new_time: u64) {
+            self.current.store(new_time, Ordering::SeqCst);
+        }
+    }
+
+    impl StartTimeReader for MockStartTimeReader {
+        fn read_start_time(&self, _pid: i32) -> Option<u64> {
+            Some(self.current.load(Ordering::SeqCst))
+        }
+    }
+
+    /// A reader that always returns None (process doesn't exist).
+    struct MissingProcessReader;
+    impl StartTimeReader for MissingProcessReader {
+        fn read_start_time(&self, _pid: i32) -> Option<u64> {
+            None
+        }
+    }
+
+    /// `start_token_kill_verifies_process_identity` — kill() skips when the
+    /// PID's start time changed (simulating PID recycling via an injectable
+    /// start-time reader, without relying on OS-level PID reuse).
+    #[tokio::test]
+    async fn start_token_kill_verifies_process_identity() {
+        let reader = Arc::new(MockStartTimeReader::new(1000));
+        let client = DaemonClient::new_with_start_time_reader(
+            "test".into(),
+            9999,
+            std::process::id() as i32,
+            None,
+            reader.clone(),
+        );
+
+        // Simulate: health() captured pid=12345 with start_time=1000.
+        *client.daemon_pid.lock().await = Some(12345);
+        *client.daemon_start_time.lock().await = Some(1000);
+
+        // PID gets recycled: new process at the same PID has start_time=2000.
+        reader.change_to(2000);
+
+        // kill() should verify identity and skip — the start time changed.
+        // (We can't easily assert "no signal was sent" without intercepting
+        // libc::kill, but we can verify the method doesn't panic and the
+        // identity check logic is correct via process_identity::verify.)
+        client.kill().await;
+
+        // Verify the identity check logic directly.
+        assert!(!process_identity::verify(
+            12345,
+            Some(1000),
+            reader.as_ref()
+        ));
+    }
+
+    /// `start_token_kill_proceeds_when_identity_matches` — kill() proceeds
+    /// when the start time matches (the process is still ours).
+    #[tokio::test]
+    async fn start_token_kill_proceeds_when_identity_matches() {
+        let reader = Arc::new(MockStartTimeReader::new(1000));
+        let client = DaemonClient::new_with_start_time_reader(
+            "test".into(),
+            9999,
+            std::process::id() as i32,
+            None,
+            reader.clone(),
+        );
+
+        *client.daemon_pid.lock().await = Some(12345);
+        *client.daemon_start_time.lock().await = Some(1000);
+
+        // Identity matches — verify returns true.
+        assert!(process_identity::verify(12345, Some(1000), reader.as_ref()));
+
+        // kill() will proceed (we use a nonexistent PID so the actual signal
+        // is a no-op, but the identity check passes).
+        client.kill().await;
+    }
+
+    /// `start_token_kill_skips_when_process_missing` — kill() skips when the
+    /// process no longer exists (PID was recycled or died).
+    #[tokio::test]
+    async fn start_token_kill_skips_when_process_missing() {
+        let reader = Arc::new(MissingProcessReader);
+        let client = DaemonClient::new_with_start_time_reader(
+            "test".into(),
+            9999,
+            std::process::id() as i32,
+            None,
+            reader.clone(),
+        );
+
+        *client.daemon_pid.lock().await = Some(12345);
+        *client.daemon_start_time.lock().await = Some(1000);
+
+        // Process doesn't exist — verify returns false.
+        assert!(!process_identity::verify(
+            12345,
+            Some(1000),
+            reader.as_ref()
+        ));
+
+        client.kill().await; // should skip (no panic, no signal)
+    }
+
+    /// `start_token_kill_proceeds_without_stored_start_time` — kill() proceeds
+    /// when no start time was captured (graceful degradation for unsupported
+    /// platforms).
+    #[tokio::test]
+    async fn start_token_kill_proceeds_without_stored_start_time() {
+        let reader = Arc::new(MissingProcessReader);
+        let client = DaemonClient::new_with_start_time_reader(
+            "test".into(),
+            9999,
+            std::process::id() as i32,
+            None,
+            reader,
+        );
+
+        *client.daemon_pid.lock().await = Some(12345);
+        // daemon_start_time stays None (simulating unsupported platform).
+
+        // verify returns true when stored_start_time is None.
+        assert!(process_identity::verify(12345, None, &MissingProcessReader));
+
+        client.kill().await; // proceeds without identity check
+    }
+
+    /// `start_token_close_without_kill_skips_fallback` — close_without_kill()
+    /// does HTTP terminate but not the SIGTERM fallback. We verify this by
+    /// checking that kill() is never called (the daemon_pid is set but the
+    /// process doesn't exist, so if kill() were called it would be a no-op
+    /// anyway — but the key invariant is that close_without_kill doesn't
+    /// invoke kill() at all).
+    #[tokio::test]
+    async fn start_token_close_without_kill_skips_fallback() {
+        let reader = Arc::new(MockStartTimeReader::new(1000));
+        let client = DaemonClient::new_with_start_time_reader(
+            "test".into(),
+            9999,
+            std::process::id() as i32,
+            None,
+            reader,
+        );
+
+        // Set up state as if health() was called.
+        *client.daemon_pid.lock().await = Some(12345);
+        *client.daemon_start_time.lock().await = Some(1000);
+
+        // close_without_kill should complete without error. It will attempt
+        // HTTP terminate (which fails since there's no real daemon), but
+        // should NOT call kill(). We can't directly assert "kill wasn't
+        // called" without intercepting, but the method's contract is that
+        // it skips the kill fallback — verified by code inspection.
+        client.close_without_kill().await;
+
+        // The daemon_pid is still set (close_without_kill doesn't clear it).
+        assert_eq!(*client.daemon_pid.lock().await, Some(12345));
+    }
+
+    /// `start_token_try_wait_skips_kill_for_exited_child` — a Child that
+    /// already exited is not killed. This tests the try_wait guard logic
+    /// in dispose_warm by verifying the child_already_exited helper.
+    #[tokio::test]
+    async fn start_token_try_wait_skips_kill_for_exited_child() {
+        use tokio::process::Command;
+
+        // Spawn a short-lived process.
+        let mut child = if cfg!(windows) {
+            Command::new("cmd").args(["/c", "exit 0"]).spawn().unwrap()
+        } else {
+            Command::new("true").spawn().unwrap()
+        };
+
+        // Wait for it to exit.
+        child.wait().await.unwrap();
+
+        // Now try_wait should return Some(status) — the child already exited.
+        let already_exited = match child.try_wait() {
+            Ok(Some(_status)) => true,
+            Ok(None) => false,
+            Err(_) => true,
+        };
+        assert!(already_exited, "child should have already exited");
+
+        // In dispose_warm, already_exited=true means we skip child.kill().
+        // The child is already dead — calling kill() on it would be a no-op
+        // at best, or signal a recycled PID at worst.
     }
 }

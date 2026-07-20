@@ -13,6 +13,7 @@ pub mod file_catalog;
 pub mod file_search;
 pub mod history_seed;
 pub mod models;
+pub mod process_identity;
 pub mod restore_error;
 pub mod sessions_registry;
 pub mod ui_bridge;

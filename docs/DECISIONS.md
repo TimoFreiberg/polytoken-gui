@@ -279,3 +279,28 @@ jwt-simple…). The desktop crate cannot depend on it. Both sides must agree on
 path layout (where polytoken binaries, XDG roots, install metadata live).
 Extracting the pure functions into a tiny shared crate is the single source
 of truth — no risk of two copies drifting.
+
+## Remote deployment Phase 4: start-token identity checks for daemon cleanup
+
+**Decision:** daemon cleanup uses a two-layer identity check to never signal
+an unrelated process (AC.10):
+
+1. **Spawned-daemon path (Layer A+C):** when a `Child` handle is available
+   (the daemon was spawned by this process), guard `child.kill()` with
+   `try_wait()` — if the child already exited, skip the kill entirely (the
+   PID may have been recycled). After killing via the `Child` handle, use
+   `close_without_kill()` (releases lease + HTTP terminate, but no SIGTERM
+   fallback) to avoid signaling the dead PID again.
+
+2. **Resume/wedged-daemon path (Layer B):** when no `Child` handle is
+   available (the daemon was attached to, not spawned), `kill()` verifies
+   process identity via start-time before signaling. The start time is
+   captured at health-check time and re-read before `kill()` — if it changed
+   (PID recycled) or the PID doesn't exist, the kill is skipped.
+
+**Rationale:** `libc::kill(pid, SIGTERM)` uses a bare PID. If the daemon died
+and the OS recycled that PID to an unrelated process, signaling it would kill
+the wrong process. The `Child` handle is the OS-level start-token for spawned
+daemons; process start-time verification is the start-token for attached
+daemons. The two mechanisms are complementary: `try_wait()` is sufficient
+when we own the process, start-time verification covers the attach path.

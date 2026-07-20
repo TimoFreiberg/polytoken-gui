@@ -2551,3 +2551,616 @@ async fn goal_actions_emit_info_notice_on_success() {
         );
     }
 }
+
+// ===========================================================================
+// AC.9 + AC.10 — In-process remote-runtime tests
+//
+// These tests construct `PolytokenDriver` in-process (via `make_fake_driver`),
+// pass it to `run_remote_runtime()` to bind a real Unix socket, and connect
+// clients over the socket — while retaining direct access to the driver object
+// for introspection (`any_turn_in_flight()`, `warm_session_count()`).
+//
+// This is the `live_path.rs` pattern extended to the remote-runtime path.
+// ===========================================================================
+
+use pantoken_protocol::frame::FrameDecoder;
+use pantoken_protocol::transport::ClientEnvelope;
+use pantoken_protocol::wire::{ClientMessage, ResumeToken, ServerMessage};
+use pantoken_server::config;
+use pantoken_server::hub::{SessionHub, hub_op_channel, run_hub_op_applier};
+use pantoken_server::polytoken::fake_daemon::FakeControlHub;
+use pantoken_server::remote::layout;
+use pantoken_server::remote::runtime::run_remote_runtime;
+use serde_json::json;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::net::UnixStream;
+
+/// Build a fake-mode driver + a remote runtime listening on a temp Unix socket.
+/// Returns the driver (for direct introspection), the fake control hub (for
+/// `run_script_partial` / `run_script_remaining`), the socket path, and a
+/// join handle for the runtime task (abort on drop to clean up).
+struct RemoteRuntimeFixture {
+    driver: PolytokenDriver,
+    control: FakeControlHub,
+    socket_path: std::path::PathBuf,
+    _runtime_handle: tokio::task::JoinHandle<()>,
+    _hub_op_handle: tokio::task::JoinHandle<()>,
+    _dir: tempfile::TempDir,
+    _clear: ClearOverrideOnDrop,
+    _root: tempfile::TempDir,
+}
+
+/// A synthetic scenario that has `turn_in_flight: true` in the `/state`
+/// response (so `any_turn_in_flight()` returns true after the driver's
+/// `FetchState` effect fires) AND has the streaming-turn SSE frames (so
+/// `run_script_partial` / `run_script_remaining` can push them).
+fn streaming_turn_with_in_flight_scenario() -> ScenarioFile {
+    // Load the real streaming-turn corpus scenario for its SSE frames.
+    let corpus = corpus_loader::load_named(VERSION, "streaming-turn");
+    // Build a synthetic /state response with turn_in_flight: true.
+    let state_body = json!({
+        "session_title": "t",
+        "todos": [],
+        "flags": [],
+        "env": {},
+        "project_cwd": "/fake",
+        "active_facet": "execute",
+        "plugin_config": {},
+        "turn_in_flight": true
+    });
+    let history_body = json!({
+        "items": [],
+        "offset": 0,
+        "total_projected_items": 0,
+        "history_revision": 0,
+        "session_id": "SESSION"
+    });
+    let json_str = json!({
+        "scenario": "streaming-turn-in-flight",
+        "version": "test",
+        "description": "streaming-turn SSE frames + turn_in_flight:true /state",
+        "canonicalization": {
+            "session_id": "SESSION",
+            "prompt_ids": {},
+            "timestamps": "monotonic-from-T0"
+        },
+        "http": [
+            { "method": "GET", "path": "/state", "status": 200,
+              "response_body": state_body },
+            { "method": "GET", "path": "/history", "status": 200,
+              "response_body": history_body }
+        ],
+        "sse": corpus.sse,
+        "expected_driver_events": null
+    })
+    .to_string();
+    serde_json::from_str::<ScenarioFile>(&json_str).expect("parse synthetic streaming scenario")
+}
+
+async fn make_remote_runtime(idle_reap_ms: i64) -> RemoteRuntimeFixture {
+    let _guard = OVERRIDE_MUTEX.lock().await;
+
+    // Build the fake-mode driver (installs the spawn override).
+    let (driver, control, dir, clear) = make_fake_driver().await;
+
+    // Build a remote root for the Unix socket.
+    let root = tempfile::tempdir().expect("tempdir for remote root");
+    let root_path = root.path().to_path_buf();
+    std::fs::create_dir_all(layout::run_dir(&root_path)).unwrap();
+
+    // Build the hub + config.
+    let (hub_ops, hub_op_rx) = hub_op_channel();
+    let run_dir = root_path.join("run");
+    std::fs::create_dir_all(&run_dir).unwrap();
+    let cfg = Arc::new(config::Config {
+        port: 0,
+        data_dir: run_dir.clone(),
+        vapid_subject: "mailto:remote@pantoken".into(),
+        host: "127.0.0.1".into(),
+        token: None,
+        debug: false,
+        client_dist: run_dir.join("client-dist"),
+        warm_cap: 8,
+        idle_reap_ms,
+        live_refresh_ms: 1000,
+        delta_flush_ms: 50,
+    });
+    let driver_arc: Arc<dyn pantoken_server::driver::PantokenDriver> = Arc::new(driver.clone());
+    let hub = SessionHub::new(
+        driver_arc.clone(),
+        hub_ops,
+        None,
+        cfg.live_refresh_ms,
+        "test-server".into(),
+        Some(run_dir.clone()),
+        "".into(),
+        cfg.delta_flush_ms,
+    );
+    let hub_op_handle = tokio::spawn(run_hub_op_applier(hub.clone(), hub_op_rx));
+
+    // Spawn the remote runtime (binds the Unix socket, starts lifecycle manager).
+    let socket_path = layout::private_socket(&root_path);
+    let runtime_driver = driver_arc.clone();
+    let runtime_root = root_path.clone();
+    let runtime_cfg = cfg.clone();
+    let runtime_handle = tokio::spawn(async move {
+        let _ = run_remote_runtime(&runtime_root, hub, runtime_cfg, runtime_driver).await;
+    });
+
+    // Wait for the socket to appear.
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(5);
+    loop {
+        if socket_path.exists() {
+            break;
+        }
+        if tokio::time::Instant::now() >= deadline {
+            panic!("remote runtime did not create the socket in time");
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+
+    RemoteRuntimeFixture {
+        driver,
+        control,
+        socket_path,
+        _runtime_handle: runtime_handle,
+        _hub_op_handle: hub_op_handle,
+        _dir: dir,
+        _clear: clear,
+        _root: root,
+    }
+}
+
+/// Send a framed client message over a Unix socket.
+async fn send_framed_msg(stream: &mut UnixStream, msg: &ClientMessage) {
+    let env = ClientEnvelope::new(msg.clone());
+    let frame = pantoken_protocol::frame::encode_client(&env).unwrap();
+    stream.write_all(&frame).await.unwrap();
+    stream.flush().await.unwrap();
+}
+
+/// Read the next framed ServerMessage from a Unix socket (with timeout).
+/// Uses a persistent decoder passed by the caller so frames split across
+/// reads are handled correctly.
+async fn recv_framed_msg(
+    decoder: &mut FrameDecoder,
+    stream: &mut UnixStream,
+    timeout_ms: u64,
+) -> Option<ServerMessage> {
+    let mut buf = [0u8; 8192];
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_millis(timeout_ms);
+    loop {
+        if tokio::time::Instant::now() >= deadline {
+            return None;
+        }
+        match tokio::time::timeout(std::time::Duration::from_millis(500), stream.read(&mut buf))
+            .await
+        {
+            Ok(Ok(0)) => return None,
+            Ok(Ok(n)) => {
+                for body in decoder.push(&buf[..n]).into_iter().flatten() {
+                    if let Ok(env) = serde_json::from_slice::<
+                        pantoken_protocol::transport::ServerEnvelope,
+                    >(&body)
+                    {
+                        return Some(env.message);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+/// `active_turn_survives_proxy_drop_real` — AC.9: a dropped SSH connection
+/// does NOT kill an active polytoken turn. The driver's SSE subscription
+/// persists across client drops; the turn completes; a reconnecting client
+/// can resume.
+///
+/// This is the real in-process test (vs. the structural `MockDriver` test in
+/// `resume_and_recovery_tests.rs`). It uses `PolytokenDriver` + fake daemon +
+/// `run_remote_runtime()` to exercise the full stack.
+#[tokio::test]
+async fn active_turn_survives_proxy_drop_real() {
+    // Disable hub-idle exit for this test (we need the runtime to stay alive
+    // across the disconnect/reconnect window).
+    // SAFETY: this test is serialized by OVERRIDE_MUTEX, and the env var is
+    // read once at runtime start. We set it before spawning the runtime.
+    // We restore it at the end.
+    let prev_hub_idle = std::env::var("PANTOKEN_HUB_IDLE_MS").ok();
+    // SAFETY: serialized by OVERRIDE_MUTEX; env var read once at runtime start.
+    unsafe {
+        std::env::set_var("PANTOKEN_HUB_IDLE_MS", "0");
+    }
+
+    let fixture = make_remote_runtime(600000).await;
+
+    // Inject a synthetic scenario that has turn_in_flight:true in /state
+    // AND has the streaming-turn SSE frames (so run_script_partial can push them).
+    let scenario = streaming_turn_with_in_flight_scenario();
+    let scenario_name = scenario.scenario.clone();
+    fixture.control.inject_scenario(scenario);
+
+    // Subscribe to driver events so we can verify the SSE consumer is alive.
+    let (_sub_id, mut driver_rx) = collect_events(&fixture.driver, 256);
+
+    // Connect a client, send Hello (no resume — fresh session).
+    let mut stream = UnixStream::connect(&fixture.socket_path).await.unwrap();
+    let mut decoder = FrameDecoder::new();
+    send_framed_msg(
+        &mut stream,
+        &ClientMessage::Hello {
+            auth: None,
+            resume: None,
+        },
+    )
+    .await;
+
+    // Wait for Hello + drain handshake messages.
+    let _hello = recv_framed_msg(&mut decoder, &mut stream, 3000).await;
+    let _handshake = {
+        let mut msgs = Vec::new();
+        let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(2);
+        while tokio::time::Instant::now() < deadline {
+            if let Some(msg) = recv_framed_msg(&mut decoder, &mut stream, 300).await {
+                msgs.push(msg);
+            } else {
+                break;
+            }
+        }
+        msgs
+    };
+
+    // Extract the session_id for later resume.
+    let session_id = "fake-bootstrap".to_string();
+
+    // Start a turn: push the first few frames of the streaming-turn scenario.
+    // The message_start frame (frame 2) emits a SessionUpdated { status: Running }
+    // event to subscribers — proof the SSE consumer is alive and folding.
+    fixture
+        .control
+        .run_script_partial(&scenario_name, 3)
+        .await
+        .expect("run_script_partial");
+
+    // Wait for the SessionUpdated event from message_start (proves the SSE
+    // consumer is alive and folding frames).
+    let mut got_session_updated = false;
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(3);
+    while let Ok(Some(ev)) = tokio::time::timeout_at(deadline, driver_rx.recv()).await {
+        if matches!(ev, SessionDriverEvent::SessionUpdated { .. }) {
+            got_session_updated = true;
+            break;
+        }
+    }
+    assert!(
+        got_session_updated,
+        "should get a SessionUpdated from message_start (SSE consumer is alive)"
+    );
+
+    // Drop the client connection (simulate proxy drop).
+    drop(stream);
+
+    // The turn survives — the driver's SSE subscription is independent of
+    // the client-facing ConnectionSession. Push the remaining frames and
+    // verify the driver's SSE consumer is still processing them (events flow).
+    fixture
+        .control
+        .run_script_remaining(&scenario_name, 3)
+        .await
+        .expect("run_script_remaining");
+
+    // Verify events still flow after the client drop — the SSE consumer
+    // is still alive and folding frames. Look for any event from the
+    // remaining frames (content_block_delta → AssistantDelta, or
+    // message_complete → RunCompleted/SessionUpdated).
+    let mut got_post_drop_event = false;
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(5);
+    while let Ok(Some(ev)) = tokio::time::timeout_at(deadline, driver_rx.recv()).await {
+        got_post_drop_event = true;
+        // If we see a RunCompleted, the turn finished — that's the strongest
+        // proof the turn survived the drop and completed.
+        if matches!(ev, SessionDriverEvent::RunCompleted { .. }) {
+            break;
+        }
+    }
+    assert!(
+        got_post_drop_event,
+        "driver events must flow after client drop — the SSE subscription \
+         persists across client drops (AC.9)"
+    );
+
+    // Reconnect a new client and verify resume is accepted.
+    let mut stream2 = UnixStream::connect(&fixture.socket_path).await.unwrap();
+    let mut decoder2 = FrameDecoder::new();
+    send_framed_msg(
+        &mut stream2,
+        &ClientMessage::Hello {
+            auth: None,
+            resume: Some(ResumeToken {
+                session_id: session_id.clone(),
+                epoch: 1,
+                seq: 0,
+            }),
+        },
+    )
+    .await;
+
+    let hello2 = recv_framed_msg(&mut decoder2, &mut stream2, 3000).await;
+    assert!(
+        matches!(hello2, Some(ServerMessage::Hello { .. })),
+        "reconnected client must get Hello (resume accepted); got {hello2:?}"
+    );
+
+    drop(stream2);
+
+    // Restore env.
+    if let Some(v) = prev_hub_idle {
+        unsafe {
+            std::env::set_var("PANTOKEN_HUB_IDLE_MS", v);
+        }
+    } else {
+        unsafe {
+            std::env::remove_var("PANTOKEN_HUB_IDLE_MS");
+        }
+    }
+}
+
+/// `idle_gc_disposes_warm_session_real` — AC.10: when there are no connections
+/// and no active turns, idle warm session daemons are reaped after the
+/// configured grace period while durable session state remains resumable.
+#[tokio::test]
+async fn idle_gc_disposes_warm_session_real() {
+    // Disable hub-idle exit (we need the runtime to stay alive after reaping).
+    let prev_hub_idle = std::env::var("PANTOKEN_HUB_IDLE_MS").ok();
+    // SAFETY: serialized by OVERRIDE_MUTEX; env var read once at runtime start.
+    unsafe {
+        std::env::set_var("PANTOKEN_HUB_IDLE_MS", "0");
+    }
+
+    // Use a short idle_reap_ms for fast test timing. The lifecycle loop's
+    // check interval has a 1000ms floor, so the reaper checks at most once
+    // per second. With idle_reap_ms=1000, wait ≥2500ms for disposal.
+    let fixture = make_remote_runtime(1000).await;
+
+    // Connect a client, send Hello, get the seed (establishes a warm session).
+    let mut stream = UnixStream::connect(&fixture.socket_path).await.unwrap();
+    send_framed_msg(
+        &mut stream,
+        &ClientMessage::Hello {
+            auth: None,
+            resume: None,
+        },
+    )
+    .await;
+    let mut decoder = FrameDecoder::new();
+    let _hello = recv_framed_msg(&mut decoder, &mut stream, 3000).await;
+    // Drain handshake messages (Seed, SessionList, ModelList, etc.)
+    let _handshake = {
+        let mut msgs = Vec::new();
+        let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(2);
+        while tokio::time::Instant::now() < deadline {
+            if let Some(msg) = recv_framed_msg(&mut decoder, &mut stream, 300).await {
+                msgs.push(msg);
+            } else {
+                break;
+            }
+        }
+        msgs
+    };
+
+    // Verify there's a warm session.
+    assert!(
+        fixture.driver.warm_session_count() > 0,
+        "should have a warm session after connecting"
+    );
+
+    // Disconnect the client (no active turn → session is idle).
+    drop(stream);
+
+    // Wait for the reap cycle. The check interval is ≥1000ms, and the reap
+    // grace is idle_reap_ms=1000ms. Wait 3000ms to be safe.
+    tokio::time::sleep(std::time::Duration::from_millis(3000)).await;
+
+    // Verify the warm session was disposed.
+    assert_eq!(
+        fixture.driver.warm_session_count(),
+        0,
+        "warm session should be disposed after idle grace period (AC.10)"
+    );
+
+    // Verify durable state is preserved: reconnect with a resume token and
+    // verify the session can be resumed (the hub serves a seed fallback).
+    let mut stream2 = UnixStream::connect(&fixture.socket_path).await.unwrap();
+    let mut decoder2 = FrameDecoder::new();
+    send_framed_msg(
+        &mut stream2,
+        &ClientMessage::Hello {
+            auth: None,
+            resume: Some(ResumeToken {
+                session_id: "fake-1".into(),
+                epoch: 1,
+                seq: 0,
+            }),
+        },
+    )
+    .await;
+    let hello2 = recv_framed_msg(&mut decoder2, &mut stream2, 3000).await;
+    assert!(
+        matches!(hello2, Some(ServerMessage::Hello { .. })),
+        "reconnect after GC must get Hello (durable state resumable); got {hello2:?}"
+    );
+
+    drop(stream2);
+
+    // Restore env.
+    if let Some(v) = prev_hub_idle {
+        unsafe {
+            std::env::set_var("PANTOKEN_HUB_IDLE_MS", v);
+        }
+    } else {
+        unsafe {
+            std::env::remove_var("PANTOKEN_HUB_IDLE_MS");
+        }
+    }
+}
+
+/// `active_turn_prevents_idle_gc_real` — AC.10: active turns are never reaped.
+/// A session with an in-flight turn is NOT disposed during idle GC.
+///
+/// This test uses the `MultiSpawnOverrideGuard` pattern with a synthetic
+/// scenario that has `turn_in_flight: true` in the initial `/state` response,
+/// so the warm session starts with `turn_in_flight: true` (the lifecycle
+/// manager's reap predicate checks `any_turn_in_flight()`).
+#[tokio::test]
+async fn active_turn_prevents_idle_gc_real() {
+    let prev_hub_idle = std::env::var("PANTOKEN_HUB_IDLE_MS").ok();
+    // SAFETY: serialized by OVERRIDE_MUTEX; env var read once at runtime start.
+    unsafe {
+        std::env::set_var("PANTOKEN_HUB_IDLE_MS", "0");
+    }
+
+    let _guard = OVERRIDE_MUTEX.lock().await;
+
+    // Use a synthetic scenario with turn_in_flight:true so the warm session
+    // starts with turn_in_flight:true (the lifecycle manager's reap guard).
+    let scenario = synthetic_turn_in_flight_scenario();
+    let _override = fake_daemon::MultiSpawnOverrideGuard::install(scenario, "gc-inflight");
+
+    // Build the driver (not fake-mode — we use the MultiSpawnOverrideGuard
+    // pattern which installs its own spawn override).
+    let dir = tempfile::tempdir().expect("tempdir");
+    let driver = PolytokenDriver::new_with_login_env(
+        dir.path().to_path_buf(),
+        "polytoken".into(),
+        false,
+        8,
+        None,
+    )
+    .await;
+
+    // Build the remote runtime.
+    let root = tempfile::tempdir().expect("tempdir for remote root");
+    let root_path = root.path().to_path_buf();
+    std::fs::create_dir_all(layout::run_dir(&root_path)).unwrap();
+    let (hub_ops, hub_op_rx) = hub_op_channel();
+    let run_dir = root_path.join("run");
+    std::fs::create_dir_all(&run_dir).unwrap();
+    let cfg = Arc::new(config::Config {
+        port: 0,
+        data_dir: run_dir.clone(),
+        vapid_subject: "mailto:remote@pantoken".into(),
+        host: "127.0.0.1".into(),
+        token: None,
+        debug: false,
+        client_dist: run_dir.join("client-dist"),
+        warm_cap: 8,
+        idle_reap_ms: 1000,
+        live_refresh_ms: 1000,
+        delta_flush_ms: 50,
+    });
+    let driver_arc: Arc<dyn pantoken_server::driver::PantokenDriver> = Arc::new(driver.clone());
+    let hub = SessionHub::new(
+        driver_arc.clone(),
+        hub_ops,
+        None,
+        cfg.live_refresh_ms,
+        "test-server".into(),
+        Some(run_dir.clone()),
+        "".into(),
+        cfg.delta_flush_ms,
+    );
+    let _hub_op_handle = tokio::spawn(run_hub_op_applier(hub.clone(), hub_op_rx));
+    let socket_path = layout::private_socket(&root_path);
+    let rt_driver = driver_arc.clone();
+    let rt_root = root_path.clone();
+    let rt_cfg = cfg.clone();
+    let _runtime_handle = tokio::spawn(async move {
+        let _ = run_remote_runtime(&rt_root, hub, rt_cfg, rt_driver).await;
+    });
+    // Wait for socket.
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(5);
+    loop {
+        if socket_path.exists() {
+            break;
+        }
+        if tokio::time::Instant::now() >= deadline {
+            panic!("socket not created");
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+
+    // Create a session directly via the driver (the MultiSpawnOverrideGuard
+    // pattern doesn't bootstrap a session — we create one explicitly).
+    let _seed = driver
+        .new_session(NewSessionOptsData::default())
+        .await
+        .expect("new_session");
+
+    // Give the warm session time to fully initialize (spawn → health → lease → state → SSE).
+    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+
+    // Connect a client.
+    let mut stream = UnixStream::connect(&socket_path).await.unwrap();
+    let mut decoder = FrameDecoder::new();
+    send_framed_msg(
+        &mut stream,
+        &ClientMessage::Hello {
+            auth: None,
+            resume: None,
+        },
+    )
+    .await;
+    let _hello = recv_framed_msg(&mut decoder, &mut stream, 3000).await;
+    // Drain handshake.
+    let _handshake = {
+        let mut msgs = Vec::new();
+        let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(2);
+        while tokio::time::Instant::now() < deadline {
+            if let Some(msg) = recv_framed_msg(&mut decoder, &mut stream, 300).await {
+                msgs.push(msg);
+            } else {
+                break;
+            }
+        }
+        msgs
+    };
+
+    // Verify the warm session has turn_in_flight:true (from the synthetic
+    // /state response).
+    assert!(
+        driver.warm_session_count() > 0,
+        "should have a warm session"
+    );
+    assert!(
+        driver.any_turn_in_flight(),
+        "warm session should have turn_in_flight:true from synthetic /state"
+    );
+
+    // Disconnect the client (turn is still in flight).
+    drop(stream);
+
+    // Wait for the reap cycle — the session should NOT be disposed because
+    // the turn is in flight.
+    tokio::time::sleep(std::time::Duration::from_millis(3000)).await;
+
+    assert!(
+        driver.warm_session_count() > 0,
+        "warm session with active turn must NOT be reaped (AC.10)"
+    );
+    assert!(
+        driver.any_turn_in_flight(),
+        "turn must still be in flight (not reaped)"
+    );
+
+    // Restore env.
+    if let Some(v) = prev_hub_idle {
+        unsafe {
+            std::env::set_var("PANTOKEN_HUB_IDLE_MS", v);
+        }
+    } else {
+        unsafe {
+            std::env::remove_var("PANTOKEN_HUB_IDLE_MS");
+        }
+    }
+}

@@ -327,7 +327,7 @@ pub struct FakeControlHub {
 
 struct FakeControlInner {
     version: String,
-    scenarios: HashMap<String, ScenarioFile>,
+    scenarios: Mutex<HashMap<String, ScenarioFile>>,
     sessions: Mutex<HashMap<String, Arc<FakeDaemon>>>,
     spawned: Mutex<Vec<Arc<FakeDaemon>>>,
 }
@@ -343,7 +343,7 @@ impl FakeControlHub {
         Self {
             inner: Arc::new(FakeControlInner {
                 version,
-                scenarios,
+                scenarios: Mutex::new(scenarios),
                 sessions: Mutex::new(HashMap::new()),
                 spawned: Mutex::new(Vec::new()),
             }),
@@ -389,6 +389,18 @@ impl FakeControlHub {
         }
     }
 
+    /// Inject a custom scenario into the control hub's scenario map, so
+    /// `run_script_partial` / `run_script_remaining` / `run_script` can push
+    /// its SSE frames by name. Used by tests that need a synthetic scenario
+    /// (e.g. `turn_in_flight: true` in the `/state` response) that isn't in
+    /// the frozen corpus.
+    pub fn inject_scenario(&self, scenario: ScenarioFile) {
+        self.inner
+            .scenarios
+            .lock()
+            .insert(scenario.scenario.clone(), scenario);
+    }
+
     pub async fn run_script(&self, name: &str) -> Result<(), String> {
         let scenario_name = match name {
             "stream" | "reply" | "streaming-turn" => "streaming-turn",
@@ -401,6 +413,7 @@ impl FakeControlHub {
         let scenario = self
             .inner
             .scenarios
+            .lock()
             .get(scenario_name)
             .ok_or_else(|| format!("fake scenario missing: {scenario_name}"))?
             .clone();
@@ -446,6 +459,110 @@ impl FakeControlHub {
             // dev surface (and a bounded `expect.poll` assertion) can observe
             // mid-flow DOM, and it exercises the live SSE fold path at a
             // realistic cadence rather than a zero-delay burst.
+            tokio::time::sleep(std::time::Duration::from_millis(
+                CONTROLLED_INTER_FRAME_DELAY_MS,
+            ))
+            .await;
+        }
+        Ok(())
+    }
+
+    /// Push the first `count` SSE frames of the named scenario, leaving the
+    /// rest for a follow-up `run_script_remaining` call. Used by the AC.9
+    /// mid-turn-drop test: push some frames (turn enters in-flight), drop the
+    /// client, then push the rest (turn completes while the driver's SSE
+    /// subscription is still alive).
+    ///
+    /// Arms the scenario's HTTP recordings (same as `run_script`) so in-turn
+    /// fetches serve the flow's own responses.
+    pub async fn run_script_partial(&self, name: &str, count: usize) -> Result<(), String> {
+        let scenario_name = match name {
+            "stream" | "reply" | "streaming-turn" => "streaming-turn",
+            "queue" | "queue-while-in-flight" => "queue-while-in-flight",
+            "abort" => "abort",
+            "ask" | "ask-user-question" => "ask-user-question",
+            "approve" | "tool" | "tool-call-approval" => "tool-call-approval",
+            other => other, // allow injected custom scenarios by name
+        };
+        let scenario = self
+            .inner
+            .scenarios
+            .lock()
+            .get(scenario_name)
+            .ok_or_else(|| format!("fake scenario missing: {scenario_name}"))?
+            .clone();
+        let fake = self
+            .inner
+            .spawned
+            .lock()
+            .last()
+            .cloned()
+            .ok_or_else(|| "no fake session spawned".to_string())?;
+        fake.arm_scenario(Arc::new(scenario.clone()));
+        let tx = {
+            let mut tx = None;
+            for _ in 0..100 {
+                if let Some(sender) = fake.state.lock().sse_tx.clone() {
+                    tx = Some(sender);
+                    break;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+            }
+            tx.ok_or_else(|| "fake SSE stream not connected".to_string())?
+        };
+        let frames = &scenario.sse;
+        let end = count.min(frames.len());
+        for frame in &frames[..end] {
+            tx.send(Ok(frame_to_event(frame)))
+                .await
+                .map_err(|_| "fake SSE stream disconnected".to_string())?;
+            tokio::time::sleep(std::time::Duration::from_millis(
+                CONTROLLED_INTER_FRAME_DELAY_MS,
+            ))
+            .await;
+        }
+        Ok(())
+    }
+
+    /// Push the remaining SSE frames of a scenario after a `run_script_partial`
+    /// call. Pushes frames from index `count` onward (where `count` was the
+    /// number passed to `run_script_partial`).
+    pub async fn run_script_remaining(&self, name: &str, from_index: usize) -> Result<(), String> {
+        let scenario_name = match name {
+            "stream" | "reply" | "streaming-turn" => "streaming-turn",
+            "queue" | "queue-while-in-flight" => "queue-while-in-flight",
+            "abort" => "abort",
+            "ask" | "ask-user-question" => "ask-user-question",
+            "approve" | "tool" | "tool-call-approval" => "tool-call-approval",
+            other => other, // allow injected custom scenarios by name
+        };
+        let scenario = self
+            .inner
+            .scenarios
+            .lock()
+            .get(scenario_name)
+            .ok_or_else(|| format!("fake scenario missing: {scenario_name}"))?
+            .clone();
+        let fake = self
+            .inner
+            .spawned
+            .lock()
+            .last()
+            .cloned()
+            .ok_or_else(|| "no fake session spawned".to_string())?;
+        // The scenario was already armed by run_script_partial; don't re-arm
+        // (that would reset cursors + clear the call log mid-turn).
+        let tx = fake
+            .state
+            .lock()
+            .sse_tx
+            .clone()
+            .ok_or_else(|| "fake SSE stream not connected".to_string())?;
+        let frames = &scenario.sse;
+        for frame in &frames[from_index..] {
+            tx.send(Ok(frame_to_event(frame)))
+                .await
+                .map_err(|_| "fake SSE stream disconnected".to_string())?;
             tokio::time::sleep(std::time::Duration::from_millis(
                 CONTROLLED_INTER_FRAME_DELAY_MS,
             ))
