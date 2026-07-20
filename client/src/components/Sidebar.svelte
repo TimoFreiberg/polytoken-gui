@@ -5,7 +5,7 @@
   import type { SessionListEntry } from "@pantoken/protocol";
   import { reveal } from "../lib/transitions.js";
   import { store } from "../lib/store.svelte.js";
-  import { filterSessions, splitGroup, SESSIONS_PER_GROUP } from "../lib/session-filter.js";
+  import { filterSessions, projectCwdOf, splitGroup, SESSIONS_PER_GROUP } from "../lib/session-filter.js";
   import { compactTime, relativeTime } from "../lib/relative-time.js";
   import { buildHash, buildDate, buildVersion } from "../lib/build-info.js";
   import ContextRing from "./ContextRing.svelte";
@@ -75,10 +75,13 @@
   }
 
   // The cwd of the currently-active session, used to prefill the new-dir input so
-  // "new session near where I am" is one keystroke, not a full path retype.
-  const activeCwd = $derived(
-    store.sessions.find((s) => s.sessionId === store.viewedSessionId)?.cwd ?? "",
-  );
+  // "new session near where I am" is one keystroke, not a full path retype. Resolves
+  // the parent project (worktree.base) so a worktree session's draft defaults to its
+  // parent repo, matching the sidebar group it appears under.
+  const activeCwd = $derived.by(() => {
+    const s = store.sessions.find((s) => s.sessionId === store.viewedSessionId);
+    return s ? projectCwdOf(s) : "";
+  });
 
   // Filter-as-you-type search over the session list (name, preview, path). Grouping +
   // the active-only filter (hide archived/stale) live in the pure `filterSessions`
@@ -989,21 +992,19 @@
                             </svg>
                           </span>
                         {/if}
-                        <!-- Unified right-edge slot: attention badge, in-progress spinner,
-                             or — when idle/read/unread — the last-activity timestamp. The
-                             unread cue itself lives in the left gutter, so an unread row
-                             keeps its timestamp here. One slot, so the title gets the width. -->
+                        <!-- Right-edge slot: attention badge or in-progress spinner only. The
+                             resting last-activity timestamp used to live here too, but now
+                             lives in its own .row-time element (hover-revealed, left of the ⋯)
+                             so idle rows stay clean and the spinner stands out. The unread cue
+                             itself lives in the left gutter. -->
                         <span
                           class="status"
                           data-state={st}
                           data-testid="session-status"
                           title={st === "initializing"
                             ? "initializing — warming up"
-                            : (activity ??
-                              (idle && relLong ? `Last activity ${relLong}` : st))}
-                          aria-label={idle
-                            ? `last activity ${relLong || "unknown"}`
-                            : `status: ${st}`}
+                            : (activity ?? st)}
+                          aria-label={`status: ${st}`}
                         >
                           {#if st === "waiting"}
                             <i class="attention-symbol">!</i>
@@ -1013,12 +1014,20 @@
                             <i class="spinner"></i>
                           {:else if st === "done"}
                             <i class="attention-symbol">✓</i>
-                          {:else if rel}
-                            <span class="time">{rel}</span>
                           {/if}
                         </span>
                       </span>
                     </button>
+                    <!-- Hover-revealed last-activity timestamp, left of the ⋯ button. Hidden
+                         by default on desktop (declutters idle rows); always visible on mobile
+                         beside the static ⋯. Carries the long-form "Last activity …" tooltip. -->
+                    {#if idle && rel}
+                      <span
+                        class="row-time"
+                        title={`Last activity ${relLong}`}
+                        aria-label={`last activity ${relLong}`}>{rel}</span
+                      >
+                    {/if}
                     <IconButton
                       class="row-menu"
                       data-testid="session-menu"
@@ -1783,6 +1792,31 @@
   .row-wrap:hover .status {
     opacity: 0;
   }
+  /* Hover-revealed last-activity timestamp, absolutely positioned to the LEFT of the ⋯
+     overlay (which sits at right:4px, width 26px). Absolute so it takes no flex space
+     when hidden — the title keeps the full row width. Hidden by default so idle rows
+     stay clean and the spinner stands out; fades in on hover alongside the ⋯ trigger. */
+  .row-time {
+    position: absolute;
+    right: 34px; /* ⋯ left edge (4px + 26px) + 4px gap */
+    top: 50%;
+    transform: translateY(-50%);
+    z-index: 2; /* same layer as ⋯, above the row content */
+    font-size: 11.5px;
+    color: var(--text-faint);
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+    opacity: 0;
+    transition: opacity 0.1s ease;
+    /* pointer-events: none while hidden so clicks pass through to the .row button
+       beneath. Toggled to auto on hover (below) so the title tooltip can fire
+       once the timestamp is visible. */
+    pointer-events: none;
+  }
+  .row-wrap:hover .row-time {
+    opacity: 1;
+    pointer-events: auto; /* now visible — let the native title tooltip fire */
+  }
   /* Floating popover: pinned in viewport coords (set inline) so it overlays the list
      rather than displacing rows. position: fixed escapes the list's overflow clip. */
   .menu {
@@ -1871,6 +1905,13 @@
     min-width: 14px;
     flex-shrink: 0;
     transition: opacity 0.1s ease;
+  }
+  /* Idle rows (read/unread) no longer render anything in .status — the timestamp moved
+     to .row-time. Collapse the slot so it doesn't reserve a trailing 14px gap that
+     undermines the decluttered look. Attention-badge states keep their min-width. */
+  .status[data-state="read"],
+  .status[data-state="unread"] {
+    min-width: 0;
   }
   .status .attention-symbol {
     display: inline-flex;
@@ -1996,12 +2037,6 @@
     flex-shrink: 0;
     font-size: 11.5px;
     color: var(--text-faint);
-  }
-  /* Last-activity timestamp ("2d"), the resting state of the status slot. */
-  .time {
-    flex-shrink: 0;
-    color: var(--text-faint);
-    font-variant-numeric: tabular-nums;
   }
   /* Faint label chip — the "archived" marker and the draft row's target dir. */
   .tag {
@@ -2132,6 +2167,15 @@
       position: static;
       transform: none;
       opacity: 1;
+    }
+    /* The timestamp is absolutely positioned + hover-revealed on desktop; on touch it
+       re-enters the flex flow beside the static ⋯ and stays always visible (no hover
+       available). Matches the pre-change mobile behavior. */
+    .row-time {
+      position: static;
+      transform: none;
+      opacity: 1;
+      pointer-events: auto;
     }
     .sheet-scrim {
       display: block;

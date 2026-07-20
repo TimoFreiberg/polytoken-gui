@@ -33,7 +33,7 @@ import { clearToken, getToken, setToken } from "./auth.js";
 import { buildFullHash } from "./build-info.js";
 import { notifyNativeUpdateStarting } from "./native-bridge.js";
 import { overlayHistory, PHONE_MQ } from "./overlay-history.js";
-import { filterSessions } from "./session-filter.js";
+import { filterSessions, projectCwdOf } from "./session-filter.js";
 import {
   DEFAULT_RIGHT_SIDEBAR_WIDTH,
   DEFAULT_SIDEBAR_WIDTH,
@@ -607,7 +607,8 @@ class PantokenStore {
   }
 
   /** ⌘N — open a new-session draft, defaulting its project to the one you're in (the
-   *  focused session's cwd), else the last project you selected, else the server's
+   *  focused session's parent project — a worktree session resolves to its repo base,
+   *  not the worktree dir), else the last project you selected, else the server's
    *  default ($HOME). Already drafting → just refocus the composer. */
   newSessionHotkey(): void {
     if (this.draft) {
@@ -615,8 +616,9 @@ class PantokenStore {
       return;
     }
     const viewedId = this.session.ref?.sessionId ?? this.activeSessionId;
-    const active = this.sessions.find((s) => s.sessionId === viewedId)?.cwd;
-    this.startDraft(active || this.lastProjectCwd || this.defaultNewSessionCwd);
+    const active = this.sessions.find((s) => s.sessionId === viewedId);
+    const cwd = active ? projectCwdOf(active) : "";
+    this.startDraft(cwd || this.lastProjectCwd || this.defaultNewSessionCwd);
   }
 
   /** Remember the most recently selected project (a session's cwd, or a draft's target);
@@ -1992,7 +1994,10 @@ class PantokenStore {
     // the move from draft → session.
     if (id) {
       this.pushNav({ kind: "session", sessionId: id });
-      if (entry?.cwd) this.setLastProjectCwd(entry.cwd);
+      if (entry) {
+        const pc = projectCwdOf(entry);
+        if (pc) this.setLastProjectCwd(pc);
+      }
     }
     // Same session (e.g. tapped the active row while drafting) — we've exited the draft
     // and restored its text; nothing to switch.
@@ -2918,7 +2923,7 @@ class PantokenStore {
       // archive, so draft into the parent repo (`worktree.base`) instead of the dead dir.
       const viewedId = this.session.ref?.sessionId ?? this.activeSessionId;
       const archivingFocused = s != null && s.sessionId === viewedId;
-      if (archivingFocused) this.startDraft(s.worktree?.base ?? s.cwd);
+      if (archivingFocused) this.startDraft(projectCwdOf(s));
       const cwd = s?.cwd;
       this.sidebarNotice(`Archived “${label}”`, {
         kind: "archive-undo",

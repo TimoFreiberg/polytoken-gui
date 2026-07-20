@@ -1055,6 +1055,12 @@ fn mock_session_seed(path: &str) -> Vec<SessionDriverEvent> {
             "Noted — nothing else here.",
         ),
         "/sessions/restored-session.jsonl" => restored_session_seed(),
+        "/sessions/wt-session.jsonl" => session_seed(
+            "wt-session",
+            "Worktree session",
+            "session in a worktree",
+            "This session runs in a worktree of the parent project.",
+        ),
         _ => session_seed(
             "unknown",
             "Session",
@@ -4182,6 +4188,33 @@ impl PantokenDriver for MockDriver {
                 sessions.insert(0, SessionListEntry {
                     display_name: Some("External session".into()),
                     ..new_session_entry("external-session", WORKSPACE_PATH)
+                });
+                return;
+            }
+            // Inject a session whose cwd is a pantoken-created worktree dir, with
+            // matching `WorktreeMeta` so `list_sessions` attaches `WorktreeInfo`
+            // (base = WORKSPACE_PATH). Lets the e2e drive the UI into the
+            // "worktree session is focused → ⌘N / sidebar +" scenario without a
+            // real worktree. Lock worktrees BEFORE sessions — `list_sessions`
+            // locks in that order (worktrees → sessions), so matching it avoids
+            // an AB-BA deadlock.
+            "worktree-session" => {
+                let wt_dir = format!("{}-worktree", WORKSPACE_PATH.trim_end_matches('/'));
+                self.worktrees.lock().insert(
+                    wt_dir.clone(),
+                    WorktreeMeta {
+                        base: WORKSPACE_PATH.to_string(),
+                        name: "pantoken-mock-wt".into(),
+                    },
+                );
+                let mut sessions = self.sessions.lock();
+                sessions.insert(0, SessionListEntry {
+                    session_id: "wt-session".into(),
+                    path: "/sessions/wt-session.jsonl".into(),
+                    cwd: wt_dir,
+                    display_name: Some("Worktree session".into()),
+                    preview: "session in a worktree".into(),
+                    ..new_session_entry("wt-session", WORKSPACE_PATH)
                 });
                 return;
             }

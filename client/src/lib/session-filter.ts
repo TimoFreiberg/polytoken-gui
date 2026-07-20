@@ -129,6 +129,15 @@ function lastInteractionKey(entry: SessionListEntry): string {
   return entry.lastUserMessageAt || entry.updatedAt;
 }
 
+/** The project directory a session belongs to for draft-prefill and grouping:
+ *  a pantoken-created worktree session's parent repo (`worktree.base`), else
+ *  its own cwd. Mirrors the `groupKey` used by `filterSessions` so the
+ *  new-session draft's default project always matches the sidebar group the
+ *  session appears under. */
+export function projectCwdOf(entry: SessionListEntry): string {
+  return entry.worktree?.base ?? entry.cwd;
+}
+
 /** Group sessions by project dir for the sidebar, applying the search query and the
  *  active-only filter. Within a group, sessions sort by last-interaction time, newest
  *  first ({@link lastInteractionKey}). Groups sort alphabetically by project name (the
@@ -151,7 +160,7 @@ export function filterSessions(
     // (`worktree.base`), not its own worktree-basename cwd — so it interleaves with the
     // parent project's main-tree sessions instead of forming its own group. Hand-made
     // workspaces (no `worktree` field) keep their own group, by design.
-    const groupKey = s.worktree?.base ?? s.cwd;
+    const groupKey = projectCwdOf(s);
     const arr = byCwd.get(groupKey);
     if (arr) arr.push(s);
     else byCwd.set(groupKey, [s]);

@@ -170,12 +170,13 @@ test("rows show a relative last-activity timestamp; the count appears only when 
   await openSidebar(page);
   const sidebar = page.getByTestId("sidebar");
 
-  // Each row carries a compact "time since last activity" label at the end of its line
-  // (the unified status slot resolves to the timestamp when the session is idle/read).
+  // Each row carries a compact "time since last activity" label at the end of its line.
+  // The timestamp is hover-revealed on desktop (hidden by default), so hover first.
   const demoRow = sidebar
     .locator(".row-wrap")
     .filter({ hasText: "Wire up the WebSocket" });
-  await expect(demoRow.locator(".time")).toHaveText(
+  await demoRow.hover();
+  await expect(demoRow.locator(".row-time")).toHaveText(
     /^(\d+(m|h|d|w|mo|y)|now)$/,
   );
 
@@ -240,11 +241,11 @@ test("relative timestamps tick forward as time passes", async ({ page }) => {
   await gotoFresh(page);
   await openSidebar(page);
 
-  const time = page
+  const demoRow = page
     .getByTestId("sidebar")
     .locator(".row-wrap")
-    .filter({ hasText: "Wire up the WebSocket" })
-    .locator(".time");
+    .filter({ hasText: "Wire up the WebSocket" });
+  const time = demoRow.locator(".row-time");
   const minutes = async (): Promise<number> => {
     const m = (await time.textContent())?.match(/^(\d+)m$/);
     if (!m) throw new Error(`expected "Nm", got "${await time.textContent()}"`);
@@ -253,6 +254,10 @@ test("relative timestamps tick forward as time passes", async ({ page }) => {
 
   const before = await minutes();
   await page.clock.runFor(5 * 60_000); // five minutes, firing the 1-minute interval
+  // The timestamp is hover-revealed on desktop; hover so toHaveText's visibility wait
+  // passes (textContent() above works on opacity-hidden elements, but toHaveText
+  // auto-waits for visibility and would time out on opacity: 0).
+  await demoRow.hover();
   await expect(time).toHaveText(`${before + 5}m`);
 });
 

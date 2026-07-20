@@ -79,3 +79,21 @@ test("the header context entry shows a panel-right icon and count badge on a pho
   await expect(badge).toBeVisible();
   await expect(badge).toHaveText("9");
 });
+
+test("the last-activity timestamp is always visible beside the ⋯ on a phone (no hover)", async ({
+  page,
+}) => {
+  // AC.3 — On mobile (≤859px) the timestamp stays always-visible beside the
+  // always-visible ⋯ button, matching the pre-change behavior. No hover available
+  // on touch, so the desktop hover-reveal must be reset to opacity:1 here.
+  await openSidebar(page);
+  const sidebar = page.getByTestId("sidebar");
+  const demoRow = sidebar
+    .locator(".row-wrap")
+    .filter({ hasText: "Wire up the WebSocket" });
+  const time = demoRow.locator(".row-time");
+  // Visible without hovering, and at full opacity (not the desktop default of 0).
+  await expect(time).toBeVisible();
+  await expect(time).toHaveCSS("opacity", "1");
+  await expect(time).toHaveText(/^\d+(m|h|d|w|mo|y)$/);
+});

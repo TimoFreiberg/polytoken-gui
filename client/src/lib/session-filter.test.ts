@@ -5,6 +5,7 @@ import {
   SESSIONS_PER_GROUP,
   filterSessions,
   isStale,
+  projectCwdOf,
   splitGroup,
 } from "./session-filter.js";
 
@@ -37,6 +38,34 @@ describe("isStale", () => {
   });
   test("an unparseable timestamp is never stale", () => {
     expect(isStale(entry({ updatedAt: "not-a-date" }), NOW)).toBe(false);
+  });
+});
+
+describe("projectCwdOf", () => {
+  test("a worktree session resolves to its parent repo (worktree.base)", () => {
+    const s = entry({
+      cwd: "/proj-pantoken-abc",
+      worktree: { path: "/proj-pantoken-abc", base: "/proj", name: "pantoken-abc" },
+    });
+    expect(projectCwdOf(s)).toBe("/proj");
+  });
+
+  test("a normal session (no worktree field) resolves to its own cwd", () => {
+    const s = entry({ cwd: "/proj" });
+    expect(projectCwdOf(s)).toBe("/proj");
+  });
+
+  test("a reaped worktree session still resolves to its parent (base retained)", () => {
+    const s = entry({
+      cwd: "/proj-pantoken-abc",
+      worktree: {
+        path: "/proj-pantoken-abc",
+        base: "/proj",
+        name: "pantoken-abc",
+        reaped: true,
+      },
+    });
+    expect(projectCwdOf(s)).toBe("/proj");
   });
 });
 
