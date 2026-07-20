@@ -8,9 +8,13 @@
 </script>
 
 <div class="think" class:open>
-  <button class="head" onclick={() => (open = !open)}>
-    <Chevron {open} size={10} />
+  <button
+    class="head"
+    aria-expanded={open}
+    onclick={() => (open = !open)}
+  >
     <span class="label">{streaming ? "Thinking…" : "Thought process"}</span>
+    <Chevron {open} size={10} />
   </button>
   {#if open}
     <div class="body" transition:reveal>{text}</div>
@@ -19,31 +23,40 @@
 
 <style>
   .think {
-    border-left: 2px solid var(--border-strong);
-    padding-left: 10px;
+    min-width: 0;
   }
   .head {
     display: inline-flex;
     align-items: center;
-    gap: 7px;
+    gap: 4px;
     background: none;
     border: none;
-    padding: 2px 0;
+    padding: 3px 0;
     color: var(--text-muted);
     font-size: 13px;
   }
+  .head:hover,
+  .head:focus-visible {
+    color: color-mix(in srgb, var(--text) 35%, var(--text-muted));
+  }
   .head:hover :global(.chevron),
   .head:focus-visible :global(.chevron) {
-    color: var(--text-muted);
+    color: color-mix(in srgb, var(--text-muted) 65%, var(--text-faint));
   }
   .label {
     font-style: italic;
   }
   .body {
     margin-top: 6px;
+    padding-left: 5px;
     font-size: 13.5px;
     color: var(--text-muted);
     white-space: pre-wrap;
     line-height: 1.55;
+  }
+  @media (max-width: 859px) {
+    .head {
+      min-height: 44px;
+    }
   }
 </style>

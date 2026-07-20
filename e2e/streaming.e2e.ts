@@ -101,9 +101,12 @@ test("disabling Hide thinking reveals the expandable thinking block", async ({
   // so expanding + clicking the thinking block can't race the inline→collapsed reflow.
   await expect(page.getByTestId("work-toggle")).toHaveCount(2);
   await expandWork(page);
-  const think = page.getByText("Thought process");
-  await expect(think).toBeVisible();
+  const think = page.locator(".think .head");
+  await expect(think).toContainText("Thought process");
+  await expect(think).toHaveAttribute("aria-expanded", "false");
+  await expect(think.locator(".label + .chevron")).toHaveCount(1);
   await think.click();
+  await expect(think).toHaveAttribute("aria-expanded", "true");
   await expect(
     page.getByText("Let me think about the cleanest way", { exact: false }),
   ).toBeVisible();
