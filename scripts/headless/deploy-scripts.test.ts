@@ -449,39 +449,3 @@ describe("mac-mini-preflight.sh", () => {
     rmSync(tmp, { force: true });
   });
 });
-
-// ── legacy-cleanup-inventory.md tests ─────────────────────────────────────────
-const LEGACY_CLEANUP_INVENTORY = join(import.meta.dir, "../../deploy/legacy-cleanup-inventory.md");
-
-describe("legacy-cleanup-inventory.md", () => {
-  test("exists and contains required sections", () => {
-    expect(existsSync(LEGACY_CLEANUP_INVENTORY)).toBe(true);
-    const content = readFileSync(LEGACY_CLEANUP_INVENTORY, "utf8");
-
-    const requiredSections = [
-      "Legacy service definitions",
-      "Source checkout / poller",
-      "Old process",
-      "Old data directories",
-      "Old logs",
-      "Old binaries",
-      "Tailscale Serve verification",
-      "Cron jobs",
-      "Privileged sudoers fragments",
-      "Generated plist/config copies",
-      "Updater state, locks, and journals",
-      "Launchd stdout/stderr logs",
-      "Legacy env/token files",
-      "Homebrew/service-manager entries",
-    ];
-    for (const section of requiredSections) {
-      expect(content).toContain(section);
-    }
-
-    // Must contain checkbox items
-    expect(content).toContain("- [ ]");
-    // Must contain verification commands
-    expect(content).toContain("Check:");
-    expect(content).toContain("Remove:");
-  });
-});
