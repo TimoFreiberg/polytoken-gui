@@ -345,6 +345,15 @@
   // are always-on diagnostics for the root-cause fix. The pure decisions live in
   // scroll-watch.ts (unit-tested). See scroll-follow.ts for the related pin decision.
   let traceBuffer: DriftSample[] = [];
+  // Frozen copy of the ring buffer at the instant a drift episode was first
+  // detected. The live `traceBuffer` keeps rolling every 250ms tick + onScroll,
+  // so by the time a sticky notice's "Copy trace" action runs (which can be
+  // minutes later — the notice is sticky, durationMs: 0), the live buffer has
+  // moved far past the actual drift and would emit whatever happened most
+  // recently (e.g. the user's own jump-to-bottom), not the drift. The snapshot
+  // freezes the evidence at detection so the trace is self-consistent with
+  // `lastDetectedAt`. See scroll-watch.test.ts "snapshot" describe block.
+  let traceSnapshot: DriftSample[] = [];
   let driftReported = false;
   // A separate latch for the un-pinned-during-streaming notice (the false-un-pin suspect).
   // Distinct from `driftReported` because the two conditions are mutually exclusive (pinned
@@ -420,6 +429,10 @@
       // surfaces if the inspector is ever opened.
       if (latch.shouldNotify) {
         lastDetectedAt = s.t;
+        // Freeze the evidence at detection — the live buffer keeps rolling and
+        // would otherwise emit post-episode samples by the time the sticky
+        // notice's "Copy trace" runs.
+        traceSnapshot = [...traceBuffer];
         console.warn("[pantoken] scroll drift (pinned, self-healed)", {
           gap,
           pinned,
@@ -441,6 +454,7 @@
       unpinnedReported = unpinnedLatch.reported;
       if (unpinnedLatch.shouldNotify) {
         lastDetectedAt = s.t;
+        traceSnapshot = [...traceBuffer];
         console.warn("[pantoken] viewport unpinned during streaming", {
           gap,
           pinned,
@@ -466,7 +480,7 @@
    *  action button (NoticeItem runs action.run() then onDismiss, so each episode yields
    *  exactly one trace copy). */
   async function copyTrace(): Promise<void> {
-    const trace = formatTrace(traceBuffer, {
+    const trace = formatTrace(traceSnapshot, {
       detectedAt: lastDetectedAt,
       ua: typeof navigator !== "undefined" ? navigator.userAgent : "",
       viewport:

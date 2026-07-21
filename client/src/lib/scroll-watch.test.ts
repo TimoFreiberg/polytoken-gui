@@ -245,3 +245,100 @@ describe("nextDriftState", () => {
     expect(r).toEqual({ reported: true, shouldNotify: true }); // new episode fires
   });
 });
+
+// The snapshot-at-notify invariant. Transcript.svelte's copyTrace() must emit the samples
+// captured AT detection time, not whatever the live rolling buffer holds when the sticky
+// notice's "Copy trace" action eventually runs (which can be minutes later — the notice is
+// sticky, durationMs: 0). The live traceBuffer keeps rolling every 250ms tick + onScroll;
+// without a snapshot, a trace copied long after the episode would contain post-episode
+// samples (e.g. the user's own jump-to-bottom) and be inconsistent with lastDetectedAt.
+//
+// This reproduces the exact wiring using the pure functions: a rolling buffer + a snapshot
+// taken when nextDriftState first fires + formatTrace on the snapshot after the buffer has
+// rolled well past the episode. Both real traces that motivated the fix showed this — the
+// header's detectedAt was ~10min older than every sample in the buffer.
+describe("trace snapshot at notify (regression: live buffer rolls past the episode)", () => {
+  const CAP = 40;
+
+  test("snapshot taken at first fire survives subsequent buffer rolls", () => {
+    // Phase 1: lead-up. A pinned viewport drifts; gap grows past the threshold.
+    let buf: DriftSample[] = [];
+    let snapshot: DriftSample[] = [];
+    let reported = false;
+    let detectedAt = 0;
+    const T = 200;
+
+    // A few sub-threshold samples (normal pinned-at-bottom).
+    for (let t = 100; t <= 400; t += 100) {
+      buf = pushSample(buf, sample({ t, gap: 0, pinned: true }), CAP);
+    }
+    // The drift: gap crosses the threshold while pinned.
+    const driftT = 500;
+    const driftSample = sample({ t: driftT, gap: 500, pinned: true });
+    buf = pushSample(buf, driftSample, CAP);
+    if (isPinnedDrift({ pinned: true, gap: 500 })) {
+      const latch = nextDriftState(reported, 500, T);
+      reported = latch.reported;
+      if (latch.shouldNotify) {
+        detectedAt = driftT;
+        snapshot = [...buf]; // ← the fix: freeze at detection
+      }
+    }
+
+    // Phase 2: the live buffer keeps rolling. The self-heal fires, the user
+    // eventually jumps to bottom, samples accumulate — for far longer than the
+    // CAP, so the drift sample is evicted from the LIVE buffer entirely.
+    for (let t = 600; t <= 600 + CAP * 250; t += 250) {
+      buf = pushSample(buf, sample({ t, gap: 0, pinned: true }), CAP);
+    }
+    // The drift sample (t=500) is gone from the live buffer.
+    expect(buf.some((s) => s.t === driftT)).toBe(false);
+
+    // Phase 3: the sticky notice's "Copy trace" finally runs. It must emit the
+    // SNAPSHOT, not the live buffer.
+    const trace = formatTrace(snapshot, {
+      detectedAt,
+      ua: "test",
+      viewport: { w: 0, h: 0 },
+    });
+    const lines = trace.split("\n");
+    const header = JSON.parse(lines[0]!);
+    expect(header.detectedAt).toBe(driftT);
+    // The drift sample survives in the snapshot's trace.
+    const sampleLines = lines.slice(1).map((l) => JSON.parse(l) as DriftSample);
+    expect(sampleLines.some((s) => s.t === driftT && s.gap === 500)).toBe(true);
+    // And the lead-up samples (the evidence of how the drift developed) too.
+    expect(sampleLines.some((s) => s.t === 100)).toBe(true);
+  });
+
+  test("without a snapshot, the live buffer would lose the drift sample (the bug)", () => {
+    // This is the negative case that documents WHY the snapshot exists: if
+    // copyTrace read the live buffer, a late copy would emit only post-episode
+    // samples and be inconsistent with detectedAt. Shown by constructing the
+    // same buffer roll and formatting the LIVE buffer (the old behavior).
+    let buf: DriftSample[] = [];
+    const driftT = 500;
+    for (let t = 100; t <= 400; t += 100) {
+      buf = pushSample(buf, sample({ t, gap: 0, pinned: true }), CAP);
+    }
+    buf = pushSample(buf, sample({ t: driftT, gap: 500, pinned: true }), CAP);
+    for (let t = 600; t <= 600 + CAP * 250; t += 250) {
+      buf = pushSample(buf, sample({ t, gap: 0, pinned: true }), CAP);
+    }
+    // The live buffer no longer contains the drift sample.
+    expect(buf.some((s) => s.t === driftT)).toBe(false);
+    // So formatting the live buffer (the old behavior) would produce a trace
+    // whose every sample postdates detectedAt — the exact inconsistency seen
+    // in the real traces.
+    const trace = formatTrace(buf, {
+      detectedAt: driftT,
+      ua: "test",
+      viewport: { w: 0, h: 0 },
+    });
+    const sampleLines = trace
+      .split("\n")
+      .slice(1)
+      .map((l) => JSON.parse(l) as DriftSample);
+    expect(sampleLines.every((s) => s.t > driftT)).toBe(true);
+  });
+});
