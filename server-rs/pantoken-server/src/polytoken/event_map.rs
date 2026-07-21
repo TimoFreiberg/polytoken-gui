@@ -16,11 +16,10 @@
 //! `polytoken event-schema`).
 
 use pantoken_daemon_types::{
-    BlockDeltaPayload, ContentBlockKind, CurrentGoal, DaemonEvent, HookOutcome,
-    NotificationType, PendingTurnInputItem, PendingTurnInputSnapshot,
-    PermissionCandidateRuleContext, PermissionMonitor, ProviderError,
-    ResolvedPromptReference, SessionStateSnapshot, SubagentResultKind,
-    SystemReminderReason, ToolLiveDisplayContent,
+    BlockDeltaPayload, ContentBlockKind, CurrentGoal, DaemonEvent, HookOutcome, NotificationType,
+    PendingTurnInputItem, PendingTurnInputSnapshot, PermissionCandidateRuleContext,
+    PermissionMonitor, ProviderError, ResolvedPromptReference, SessionStateSnapshot,
+    SubagentResultKind, SystemReminderReason, ToolLiveDisplayContent,
 };
 use pantoken_protocol::session_driver::{
     AssistantDeltaChannel, FlaggedFile, FlaggedFileMode, GoalInfo, HostUiRequest, ImageContent,
@@ -4323,6 +4322,54 @@ mod tests {
     fn hook_fired_empty() {
         assert_empty(
             json!({ "type": "hook_fired", "event_type": "pre_tool", "hook_name": "my-hook", "outcome": "allowed" }),
+        );
+    }
+
+    #[test]
+    fn hook_fired_stop_blocked_emits_run_completed_and_turn_boundary() {
+        let out = fold_fresh(
+            json!({ "type": "hook_fired", "event_type": "stop", "hook_name": "stop-test-hook", "outcome": "blocked" }),
+        );
+        assert_eq!(
+            out.events.len(),
+            2,
+            "should emit RunCompleted + CustomMessage"
+        );
+        assert!(out.effects.is_empty(), "should emit no effects");
+
+        // First event: RunCompleted (stamps completedAt on the open assistant)
+        let ev0 = event_json(&out.events[0]);
+        assert_eq!(
+            ev0["type"], "runCompleted",
+            "first event should be RunCompleted"
+        );
+        assert_eq!(ev0["snapshot"]["status"], "idle", "snapshot should be idle");
+
+        // Second event: CustomMessage with turn_boundary:true
+        let ev1 = event_json(&out.events[1]);
+        assert_eq!(
+            ev1["type"], "customMessage",
+            "second event should be CustomMessage"
+        );
+        assert_eq!(ev1["customType"], "stop_hook_redirect");
+        assert_eq!(ev1["turnBoundary"], true, "should set turnBoundary");
+        assert_eq!(ev1["display"], false, "should not display the inject");
+    }
+
+    #[test]
+    fn hook_fired_stop_allowed_is_empty() {
+        // A stop hook that allows the stop (outcome:"allowed") should be a no-op.
+        assert_empty(
+            json!({ "type": "hook_fired", "event_type": "stop", "hook_name": "my-hook", "outcome": "allowed" }),
+        );
+    }
+
+    #[test]
+    fn hook_fired_non_stop_blocked_is_empty() {
+        // A non-stop hook with outcome:"blocked" (e.g. a pre_tool hook that blocks)
+        // should NOT trigger the turn-boundary synthesis — only stop hooks do.
+        assert_empty(
+            json!({ "type": "hook_fired", "event_type": "pre_tool", "hook_name": "my-hook", "outcome": "blocked" }),
         );
     }
 
