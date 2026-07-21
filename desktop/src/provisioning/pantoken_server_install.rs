@@ -36,9 +36,7 @@ use std::io;
 use std::path::Path;
 
 use pantoken_remote_layout::layout;
-use pantoken_remote_layout::manifest::{
-    ArchiveFormat, PantokenReleaseManifest, ReleaseTarget,
-};
+use pantoken_remote_layout::manifest::{ArchiveFormat, PantokenReleaseManifest, ReleaseTarget};
 use serde::{Deserialize, Serialize};
 
 use crate::bridge::{SshCommand, SshTransport};
@@ -100,7 +98,10 @@ impl std::fmt::Display for ServerInstallError {
             }
             ServerInstallError::Download(e) => write!(f, "server download failed: {e}"),
             ServerInstallError::ChecksumMismatch { expected, actual } => {
-                write!(f, "server SHA256 mismatch: expected {expected}, got {actual}")
+                write!(
+                    f,
+                    "server SHA256 mismatch: expected {expected}, got {actual}"
+                )
             }
             ServerInstallError::Ssh(e) => write!(f, "SSH error: {e}"),
             ServerInstallError::RemoteCommand { exit_code, stderr } => {
@@ -201,12 +202,12 @@ pub fn build_server_install_command(
     let archive_q = shell_quote(archive_path);
 
     let extract_cmd = match format {
-        ArchiveFormat::TarGz => format!(
-            "tar xzf {archive_q} -C {staging_q} {SERVER_BINARY_IN_ARCHIVE}"
-        ),
-        ArchiveFormat::Zip => format!(
-            "unzip -o {archive_q} {SERVER_BINARY_IN_ARCHIVE} -d {staging_q}"
-        ),
+        ArchiveFormat::TarGz => {
+            format!("tar xzf {archive_q} -C {staging_q} {SERVER_BINARY_IN_ARCHIVE}")
+        }
+        ArchiveFormat::Zip => {
+            format!("unzip -o {archive_q} {SERVER_BINARY_IN_ARCHIVE} -d {staging_q}")
+        }
     };
 
     // The binary starts at <staging>/bin/pantoken-server; move it to
@@ -272,9 +273,8 @@ pub async fn check_server_installed(
     version: &str,
     target: &str,
 ) -> Result<bool, ServerInstallError> {
-    let binary_path =
-        layout::release_artifact(Path::new(remote_root), version, target)
-            .map_err(|e| ServerInstallError::UnsupportedTarget(e.to_string()))?;
+    let binary_path = layout::release_artifact(Path::new(remote_root), version, target)
+        .map_err(|e| ServerInstallError::UnsupportedTarget(e.to_string()))?;
     let cmd = build_binary_check_command(&binary_path.to_string_lossy());
     let output = transport.run_command(command, &cmd).await?;
     Ok(output.stdout.trim() == "exists")
@@ -411,17 +411,22 @@ mod tests {
     #[test]
     fn server_install_resolves_macos_arm64_target() {
         let manifest = test_manifest();
-        let artifact = resolve_server_artifact(&manifest, "aarch64-apple-darwin")
-            .expect("should resolve");
+        let artifact =
+            resolve_server_artifact(&manifest, "aarch64-apple-darwin").expect("should resolve");
         assert_eq!(artifact.target_triple, "aarch64-apple-darwin");
-        assert!(artifact.artifact_url.contains("pantoken-headless-macos-aarch64.tar.gz"));
+        assert!(artifact
+            .artifact_url
+            .contains("pantoken-headless-macos-aarch64.tar.gz"));
     }
 
     #[test]
     fn server_install_rejects_unsupported_target() {
         let manifest = test_manifest();
         let result = resolve_server_artifact(&manifest, "x86_64-unknown-linux-gnu");
-        assert!(matches!(result, Err(ServerInstallError::UnsupportedTarget(_))));
+        assert!(matches!(
+            result,
+            Err(ServerInstallError::UnsupportedTarget(_))
+        ));
     }
 
     #[test]
@@ -454,7 +459,10 @@ mod tests {
         let data = b"not the right content";
         let expected = "0".repeat(64);
         let result = verify_checksum(data, &expected);
-        assert!(matches!(result, Err(ServerInstallError::ChecksumMismatch { .. })));
+        assert!(matches!(
+            result,
+            Err(ServerInstallError::ChecksumMismatch { .. })
+        ));
 
         // The actual hash of the data is not the expected one.
         let actual = compute_sha256(data);
@@ -560,8 +568,7 @@ mod tests {
             build_sha: None,
             targets: vec![ReleaseTarget {
                 target_triple: "aarch64-apple-darwin".into(),
-                artifact_url: "https://example.com/pantoken-headless-macos-aarch64.tar.gz"
-                    .into(),
+                artifact_url: "https://example.com/pantoken-headless-macos-aarch64.tar.gz".into(),
                 sha256: actual_hash,
                 archive_format: ArchiveFormat::TarGz,
             }],
@@ -618,8 +625,7 @@ mod tests {
             build_sha: None,
             targets: vec![ReleaseTarget {
                 target_triple: "aarch64-apple-darwin".into(),
-                artifact_url: "https://example.com/pantoken-headless-macos-aarch64.tar.gz"
-                    .into(),
+                artifact_url: "https://example.com/pantoken-headless-macos-aarch64.tar.gz".into(),
                 sha256: wrong_hash,
                 archive_format: ArchiveFormat::TarGz,
             }],

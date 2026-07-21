@@ -196,11 +196,8 @@ pub fn connect_to_remote_impl(
                 // start the bridge.
                 let command = apply_outcome_to_command(command_for_prov, &outcome);
                 connection_for_prov.on_state(ConnectionState::Starting);
-                let bridge =
-                    Bridge::new(bridge_port_for_task, transport_for_prov, command)
-                        .with_state_sink(
-                            connection_for_prov.clone() as Arc<dyn ConnectionStateSink>
-                        );
+                let bridge = Bridge::new(bridge_port_for_task, transport_for_prov, command)
+                    .with_state_sink(connection_for_prov.clone() as Arc<dyn ConnectionStateSink>);
                 if let Err(e) = bridge.run(cancel_for_task).await {
                     eprintln!("pantoken: bridge run error: {e}");
                 }
@@ -816,7 +813,8 @@ mod tests {
             "PANTOKEN_POLYTOKEN_BIN should be set"
         );
         assert_eq!(
-            polytoken_env.unwrap().1, "polytoken",
+            polytoken_env.unwrap().1,
+            "polytoken",
             "compatible polytoken should use PATH-resolved name"
         );
     }
@@ -980,7 +978,8 @@ mod tests {
                     "polytoken should be PATH-resolved"
                 );
                 // Server path points at the installed release artifact.
-                let expected_server = "/tmp/pantoken-test/releases/0.2.75/aarch64-apple-darwin/pantoken-server";
+                let expected_server =
+                    "/tmp/pantoken-test/releases/0.2.75/aarch64-apple-darwin/pantoken-server";
                 assert_eq!(
                     server_binary_path, expected_server,
                     "server_binary_path should point at the release artifact"

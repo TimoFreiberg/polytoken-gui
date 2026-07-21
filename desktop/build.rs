@@ -19,9 +19,8 @@ fn set_headless_sha256() {
         format!("{manifest_dir}/target")
     });
 
-    let artifact_path = format!(
-        "{target_dir}/release/headless/pantoken-headless-macos-aarch64.tar.gz"
-    );
+    let artifact_path =
+        format!("{target_dir}/release/headless/pantoken-headless-macos-aarch64.tar.gz");
 
     match std::fs::read(&artifact_path) {
         Ok(bytes) => {

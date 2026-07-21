@@ -162,24 +162,28 @@ pub fn mock_http_fetch(
 pub fn configure_server_install_responses(transport: &FakeSshTransport) {
     // The full install command ends with `echo ok`. This must be checked
     // before `mkdir -p` since the install command also contains `mkdir -p`.
-    transport.add_command_response("echo ok", CommandOutput {
-        stdout: "ok".into(),
-        stderr: String::new(),
-        exit_code: Some(0),
-    });
+    transport.add_command_response(
+        "echo ok",
+        CommandOutput {
+            stdout: "ok".into(),
+            stderr: String::new(),
+            exit_code: Some(0),
+        },
+    );
     // The cache-dir mkdir (called before upload, separate run_command).
-    transport.add_command_response("mkdir -p", CommandOutput {
-        stdout: String::new(),
-        stderr: String::new(),
-        exit_code: Some(0),
-    });
+    transport.add_command_response(
+        "mkdir -p",
+        CommandOutput {
+            stdout: String::new(),
+            stderr: String::new(),
+            exit_code: Some(0),
+        },
+    );
 }
 
 /// A mock HTTP fetch for the server archive. Returns the given bytes for any
 /// URL containing "pantoken-headless" (the server artifact).
-pub fn mock_server_http_fetch(
-    archive_bytes: Vec<u8>,
-) -> crate::provisioning::reconcile::HttpFetch {
+pub fn mock_server_http_fetch(archive_bytes: Vec<u8>) -> crate::provisioning::reconcile::HttpFetch {
     let archive = Arc::new(archive_bytes);
     Arc::new(move |_url: &str| {
         let archive = archive.clone();
