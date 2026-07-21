@@ -7,5 +7,5 @@
 
 pub use pantoken_remote_layout::manifest::{
     ArchiveFormat, ManifestError, PantokenReleaseManifest, ReleaseTarget, SUPPORTED_TARGET_TRIPLES,
-    validate, validate_target_matrix_completeness,
+    validate, validate_manifest_fields, validate_target_matrix_completeness,
 };

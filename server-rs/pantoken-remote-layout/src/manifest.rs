@@ -147,7 +147,8 @@ impl std::fmt::Display for ManifestError {
 
 impl std::error::Error for ManifestError {}
 
-/// Validate a release manifest.
+/// Validate a release manifest's fields, without requiring the full platform
+/// matrix.
 ///
 /// Checks:
 /// - At least one target.
@@ -155,9 +156,14 @@ impl std::error::Error for ManifestError {}
 /// - Each `sha256` is 64 lowercase hex characters.
 /// - `protocol_version` matches [`PROTOCOL_VERSION`].
 /// - `release_version` parses as semver (with optional prerelease).
-/// - Target matrix covers all supported platforms (see
-///   [`SUPPORTED_TARGET_TRIPLES`]).
-pub fn validate(manifest: &PantokenReleaseManifest) -> Result<(), ManifestError> {
+///
+/// This is the validation an **embedded** manifest passes — one constructed at
+/// compile time to describe the artifacts a single release actually ships. The
+/// embedded manifest may legitimately cover only a subset of
+/// [`SUPPORTED_TARGET_TRIPLES`] (e.g. only the host platform's headless
+/// artifact), so the matrix-completeness check does not apply. Use
+/// [`validate`] for received manifests that must cover the full matrix.
+pub fn validate_manifest_fields(manifest: &PantokenReleaseManifest) -> Result<(), ManifestError> {
     // At least one target.
     if manifest.targets.is_empty() {
         return Err(ManifestError::NoTargets);
@@ -200,9 +206,18 @@ pub fn validate(manifest: &PantokenReleaseManifest) -> Result<(), ManifestError>
         });
     }
 
-    // Target matrix covers all supported platforms.
-    validate_target_matrix_completeness(manifest)?;
+    Ok(())
+}
 
+/// Validate a received release manifest.
+///
+/// Runs [`validate_manifest_fields`] (structural checks) **and** requires the
+/// manifest to cover the full supported platform matrix (see
+/// [`validate_target_matrix_completeness`]). Use this for manifests received
+/// from a remote source that must cover every platform Pantoken can run on.
+pub fn validate(manifest: &PantokenReleaseManifest) -> Result<(), ManifestError> {
+    validate_manifest_fields(manifest)?;
+    validate_target_matrix_completeness(manifest)?;
     Ok(())
 }
 
@@ -436,5 +451,26 @@ mod tests {
             }
             other => panic!("expected IncompleteTargetMatrix, got {:?}", other),
         }
+    }
+
+    #[test]
+    fn validate_manifest_fields_accepts_single_target() {
+        // The embedded manifest legitimately ships one target; field-level
+        // validation must pass, while full validate() must reject it for the
+        // incomplete matrix.
+        let manifest = PantokenReleaseManifest {
+            release_version: "0.1.0".into(),
+            protocol_version: PROTOCOL_VERSION,
+            build_sha: None,
+            targets: vec![valid_target()],
+        };
+        assert!(
+            validate_manifest_fields(&manifest).is_ok(),
+            "single-target manifest should pass field validation"
+        );
+        assert!(
+            validate(&manifest).is_err(),
+            "single-target manifest should fail full validation (incomplete matrix)"
+        );
     }
 }

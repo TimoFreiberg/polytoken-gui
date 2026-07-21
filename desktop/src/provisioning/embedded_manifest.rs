@@ -21,7 +21,7 @@
 
 use pantoken_protocol::wire::PROTOCOL_VERSION;
 use pantoken_remote_layout::manifest::{
-    validate, ArchiveFormat, PantokenReleaseManifest, ReleaseTarget,
+    validate_manifest_fields, ArchiveFormat, PantokenReleaseManifest, ReleaseTarget,
 };
 
 /// The GitHub releases base URL for Pantoken artifacts.
@@ -40,9 +40,12 @@ const MACOS_AARCH64_TRIPLE: &str = "aarch64-apple-darwin";
 /// `PANTOKEN_HEADLESS_SHA256` (the SHA256 of the headless artifact, computed by
 /// `build.rs`), and `PROTOCOL_VERSION`.
 ///
-/// The manifest is validated via [`validate`] before returning. A malformed
-/// manifest (wrong protocol version, bad SHA256 format, invalid semver) panics
-/// — this is a build-time configuration error, not a runtime condition.
+/// The manifest is validated via [`validate_manifest_fields`] before
+/// returning. A malformed manifest (wrong protocol version, bad SHA256
+/// format, invalid semver) panics — this is a build-time configuration error,
+/// not a runtime condition. The full-matrix [`validate`] check does not apply
+/// here: the embedded manifest describes only the headless artifact this
+/// release ships (`aarch64-apple-darwin`), not the full platform matrix.
 pub fn get() -> PantokenReleaseManifest {
     let release_version = env!("CARGO_PKG_VERSION");
     let build_sha = option_env!("PANTOKEN_BUILD_SHA").map(|s| s.to_string());
@@ -64,7 +67,7 @@ pub fn get() -> PantokenReleaseManifest {
         }],
     };
 
-    if let Err(e) = validate(&manifest) {
+    if let Err(e) = validate_manifest_fields(&manifest) {
         panic!("embedded release manifest is invalid: {e}");
     }
 
@@ -80,7 +83,8 @@ mod tests {
     use super::*;
     use pantoken_protocol::wire::PROTOCOL_VERSION;
     use pantoken_remote_layout::manifest::{
-        ArchiveFormat, ManifestError, PantokenReleaseManifest, ReleaseTarget,
+        validate_manifest_fields, ArchiveFormat, ManifestError, PantokenReleaseManifest,
+        ReleaseTarget,
     };
 
     #[test]
@@ -88,7 +92,7 @@ mod tests {
         // The embedded manifest should always validate — if it doesn't,
         // get() would have panicked at startup.
         let manifest = get();
-        assert!(validate(&manifest).is_ok());
+        assert!(validate_manifest_fields(&manifest).is_ok());
         assert_eq!(manifest.protocol_version, PROTOCOL_VERSION);
         assert!(!manifest.targets.is_empty());
         assert_eq!(manifest.targets[0].target_triple, "aarch64-apple-darwin");
@@ -101,7 +105,7 @@ mod tests {
         let mut manifest = valid_test_manifest();
         manifest.protocol_version = PROTOCOL_VERSION + 1;
         assert!(matches!(
-            validate(&manifest),
+            validate_manifest_fields(&manifest),
             Err(ManifestError::ProtocolVersionMismatch { .. })
         ));
 
@@ -109,7 +113,7 @@ mod tests {
         let mut manifest = valid_test_manifest();
         manifest.targets[0].sha256 = "short".into();
         assert!(matches!(
-            validate(&manifest),
+            validate_manifest_fields(&manifest),
             Err(ManifestError::InvalidSha256 { .. })
         ));
 
@@ -117,7 +121,7 @@ mod tests {
         let mut manifest = valid_test_manifest();
         manifest.release_version = "not-a-version".into();
         assert!(matches!(
-            validate(&manifest),
+            validate_manifest_fields(&manifest),
             Err(ManifestError::InvalidReleaseVersion { .. })
         ));
     }
