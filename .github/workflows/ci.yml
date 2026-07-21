@@ -221,14 +221,6 @@ jobs:
         run: brew install minisign
       - name: Check minisign
         run: minisign -v
-      - name: Build headless release artifact
-        env:
-          PANTOKEN_BUILD_SHA: ${{ github.sha }}
-          PANTOKEN_RELEASE_BUILD: "1"
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_TEXT: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_TEXT }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ""
-        run: bun scripts/headless/build.ts --tag "${{ github.ref_name }}"
       - name: Build signed desktop release artifacts
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
@@ -239,6 +231,14 @@ jobs:
           --dry-run
           --repo TimoFreiberg/pantoken
           --tag-must-match "${{ github.ref_name }}"
+      - name: Build headless release artifact
+        env:
+          PANTOKEN_BUILD_SHA: ${{ github.sha }}
+          PANTOKEN_RELEASE_BUILD: "1"
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_TEXT: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_TEXT }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ""
+        run: bun scripts/headless/build.ts --tag "${{ github.ref_name }}"
       - name: Install trusted tar validator for preparation
         run: test -x target/release/pantoken-tar-validate
       - name: Validate headless artifact
