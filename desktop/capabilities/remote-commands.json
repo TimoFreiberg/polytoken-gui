@@ -1,0 +1,11 @@
+{
+  "$schema": "../target/schemas/desktop-schema.json",
+  "identifier": "remote-commands",
+  "description": "Grants the hub-served web client at http://127.0.0.1:<port> access to the remote-connection Tauri commands (profile CRUD, connect, disconnect, connection state), so the Settings Remote tab can manage and drive remote connections. Same narrow-exception pattern as dock-attention.json and window-drag.json.",
+  "local": false,
+  "windows": ["main"],
+  "remote": {
+    "urls": ["http://127.0.0.1:*/**"]
+  },
+  "permissions": ["allow-remote-commands"]
+}
