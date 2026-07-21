@@ -139,15 +139,20 @@ export function createTauriHostProvider(
     },
 
     async updateProfile(profile: NativeHostDescriptor): Promise<void> {
+      // Fetch the existing profile to avoid clobbering fields not carried by
+      // NativeHostDescriptor (port, polytokenPolicy, remoteRootOverride,
+      // serverPath, xdgMode). Only label and sshDestination are updated.
+      const existing = await invoke<RemoteProfileCommand[]>(
+        "list_remote_profiles",
+      );
+      const current = existing.find((p) => p.id === profile.id);
+      if (!current) {
+        throw new Error(`no profile with id ${profile.id}`);
+      }
       const cmd: RemoteProfileCommand = {
-        id: profile.id,
+        ...current,
         label: profile.label,
         sshDestination: profile.subtitle,
-        port: undefined,
-        polytokenPolicy: "require_existing",
-        remoteRootOverride: undefined,
-        serverPath: undefined,
-        xdgMode: "isolated",
       };
       await invoke("update_remote_profile", { profile: cmd });
     },

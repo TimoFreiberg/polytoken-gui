@@ -272,14 +272,6 @@ pub fn ensure_remote_host_impl(
     // 2. If a session already exists for this id, return its current state.
     if let Some(connection) = state.get_remote(&profile_id) {
         let bridge_port = state.get_remote_bridge_port(&profile_id);
-        // Re-read the profile from the store for the snapshot (we consumed it above).
-        let path = state.config.remote_profiles_path();
-        let store = RemoteProfileStore::load(&path).map_err(|e| e.to_string())?;
-        let profile = store
-            .profiles
-            .into_iter()
-            .find(|p| p.id == profile_id)
-            .ok_or_else(|| format!("no remote profile with id {profile_id}"))?;
         return Ok(remote_snapshot(
             &profile_id,
             &profile,

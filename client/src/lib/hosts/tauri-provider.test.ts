@@ -208,8 +208,20 @@ describe("TauriHostProvider", () => {
     });
   });
 
-  test("updateProfile delegates to update_remote_profile", async () => {
-    const { invoke, calls } = makeInvokeSpy({});
+  test("updateProfile fetches existing profile and merges fields", async () => {
+    const existingProfile = {
+      id: "host-1",
+      label: "Old Label",
+      sshDestination: "user@old-host",
+      port: 2222,
+      polytokenPolicy: "offer_install",
+      remoteRootOverride: "/custom/root",
+      serverPath: "/custom/server",
+      xdgMode: "shared",
+    };
+    const { invoke, calls } = makeInvokeSpy({
+      list_remote_profiles: [() => [existingProfile]],
+    });
     installWindow(invoke);
 
     const provider = createTauriHostProvider(() => "");
@@ -217,13 +229,28 @@ describe("TauriHostProvider", () => {
       id: "host-1",
       kind: "remote",
       label: "Updated",
-      subtitle: "user@host",
+      subtitle: "user@new-host",
       state: "disconnected",
     });
 
-    const call = calls.find((c) => c.cmd === "update_remote_profile");
-    expect(call).toBeDefined();
-    expect(call?.args?.profile).toMatchObject({ id: "host-1", label: "Updated" });
+    // Verify list_remote_profiles was called (to fetch existing profile).
+    const listCall = calls.find((c) => c.cmd === "list_remote_profiles");
+    expect(listCall).toBeDefined();
+
+    // Verify update_remote_profile was called with merged profile:
+    // label + sshDestination updated, all other fields preserved.
+    const updateCall = calls.find((c) => c.cmd === "update_remote_profile");
+    expect(updateCall).toBeDefined();
+    expect(updateCall?.args?.profile).toMatchObject({
+      id: "host-1",
+      label: "Updated",
+      sshDestination: "user@new-host",
+      port: 2222,
+      polytokenPolicy: "offer_install",
+      remoteRootOverride: "/custom/root",
+      serverPath: "/custom/server",
+      xdgMode: "shared",
+    });
   });
 
   test("deleteProfile delegates to delete_remote_profile", async () => {
