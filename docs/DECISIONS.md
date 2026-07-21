@@ -279,6 +279,37 @@ jwt-simple…). The desktop crate cannot depend on it. Both sides must agree on
 path layout (where polytoken binaries, XDG roots, install metadata live).
 Extracting the pure functions into a tiny shared crate is the single source
 of truth — no risk of two copies drifting.
+**Update:** the crate now also hosts the release manifest contract types
+(`PantokenReleaseManifest`, `ReleaseTarget`, `ArchiveFormat`, `ManifestError`,
+`validate`). These were moved from `pantoken-server` so the desktop crate can
+construct an embedded manifest without depending on the server's heavy
+dependency tree. The crate is no longer zero-dep — it depends on `serde` and
+`pantoken-protocol` (for `PROTOCOL_VERSION`).
+
+## Remote deployment Phase 3: embedded server release manifest
+
+**Decision:** the desktop binary embeds a `PantokenReleaseManifest` at compile
+time, constructed from `CARGO_PKG_VERSION`, `PANTOKEN_BUILD_SHA`, and a
+build-time-computed SHA256 of the headless release artifact. No remote manifest
+fetching.
+
+**Rationale:** an embedded manifest avoids requiring a live manifest URL and
+keeps the provisioning change self-contained. The manifest points at the
+existing GitHub release artifacts. A `build.rs` script in the desktop crate
+computes the SHA256 of the local headless artifact
+(`target/release/headless/pantoken-headless-macos-aarch64.tar.gz`); in local
+dev and CI gate builds where the artifact doesn't exist, a placeholder digest
+(64 zeros) is used — dev builds don't provision real hosts.
+
+**macOS-arm64-only initial scope:** CI currently builds only
+`pantoken-headless-macos-aarch64.tar.gz`. The server-install module targets
+macOS arm64 only and rejects other targets with `UnsupportedTarget`. Cross-
+target builds (Linux amd64/arm64, macOS x86_64) require a CI matrix expansion
+— follow-up.
+
+**CI ordering:** the `release-prepare` job builds the headless artifact before
+the desktop bundle, so `build.rs` can find the artifact and embed its real
+SHA256. Both steps share `CARGO_TARGET_DIR`.
 
 ## Remote deployment Phase 4: start-token identity checks for daemon cleanup
 

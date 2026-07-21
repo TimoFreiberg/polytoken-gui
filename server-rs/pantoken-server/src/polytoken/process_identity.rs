@@ -322,10 +322,7 @@ mod tests {
     #[tokio::test]
     async fn child_already_exited_returns_true_on_error() {
         // An error from try_wait means the process was likely reaped.
-        let result = child_already_exited(|| {
-            Err(std::io::Error::other("no child process"))
-        })
-        .await;
+        let result = child_already_exited(|| Err(std::io::Error::other("no child process"))).await;
         assert!(result);
     }
 

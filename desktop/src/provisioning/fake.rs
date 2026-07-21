@@ -26,6 +26,15 @@ pub enum Scenario {
     UnsupportedTarget,
     /// Already provisioned — compatible polytoken at recorded path.
     AlreadyProvisioned,
+    /// Server binary already installed — `check_server_installed` returns
+    /// true; no download.
+    ServerAlreadyInstalled,
+    /// Server binary not installed — the fake transport serves a canned
+    /// archive; install succeeds.
+    ServerInstallNeeded,
+    /// Fake archive's hash doesn't match the manifest; install fails with
+    /// `ChecksumMismatch`.
+    ServerChecksumMismatch,
 }
 
 /// Build a `FakeSshTransport` configured for the given scenario.
@@ -73,6 +82,50 @@ pub fn build_transport(scenario: Scenario) -> FakeSshTransport {
                 },
             );
         }
+        Scenario::ServerAlreadyInstalled => {
+            // macOS arm64 with compatible polytoken.
+            transport.add_command_response(
+                "uname",
+                CommandOutput {
+                    stdout: r#"{"os":"darwin","arch":"arm64","bitness":64,"libc":"darwin","homeDir":"/home/user","writableTemp":"/tmp/x","tools":{"tar":true,"unzip":false,"curl":true,"sha256sum":true},"polytokenVersion":"0.5.0-unstable.9"}"#.into(),
+                    stderr: String::new(),
+                    exit_code: Some(0),
+                },
+            );
+            // Server binary already exists — match the check command.
+            transport.add_command_response(
+                "echo exists",
+                CommandOutput {
+                    stdout: "exists".into(),
+                    stderr: String::new(),
+                    exit_code: Some(0),
+                },
+            );
+        }
+        Scenario::ServerInstallNeeded | Scenario::ServerChecksumMismatch => {
+            // macOS arm64 with compatible polytoken.
+            transport.add_command_response(
+                "uname",
+                CommandOutput {
+                    stdout: r#"{"os":"darwin","arch":"arm64","bitness":64,"libc":"darwin","homeDir":"/home/user","writableTemp":"/tmp/x","tools":{"tar":true,"unzip":false,"curl":true,"sha256sum":true},"polytokenVersion":"0.5.0-unstable.9"}"#.into(),
+                    stderr: String::new(),
+                    exit_code: Some(0),
+                },
+            );
+            // Server binary not installed — match the check command specifically.
+            // The check command is `test -x '...' && echo exists || echo missing`.
+            // Use `echo exists` to match only the check, not the install command.
+            transport.add_command_response(
+                "echo exists",
+                CommandOutput {
+                    stdout: "missing".into(),
+                    stderr: String::new(),
+                    exit_code: Some(0),
+                },
+            );
+            // Configure the server-install shell flow responses.
+            configure_server_install_responses(&transport);
+        }
     }
 
     transport
@@ -99,6 +152,38 @@ pub fn mock_http_fetch(
                 Err(format!("unknown URL: {url}"))
             }
         })
+    })
+}
+
+/// Pre-configure canned command responses for the full server-install shell
+/// flow. The fake transport matches by substring (first match wins), so we
+/// use `echo ok` (the last line of the install command) to identify the install
+/// command specifically, and `mkdir -p` for the cache-dir creation step.
+pub fn configure_server_install_responses(transport: &FakeSshTransport) {
+    // The full install command ends with `echo ok`. This must be checked
+    // before `mkdir -p` since the install command also contains `mkdir -p`.
+    transport.add_command_response("echo ok", CommandOutput {
+        stdout: "ok".into(),
+        stderr: String::new(),
+        exit_code: Some(0),
+    });
+    // The cache-dir mkdir (called before upload, separate run_command).
+    transport.add_command_response("mkdir -p", CommandOutput {
+        stdout: String::new(),
+        stderr: String::new(),
+        exit_code: Some(0),
+    });
+}
+
+/// A mock HTTP fetch for the server archive. Returns the given bytes for any
+/// URL containing "pantoken-headless" (the server artifact).
+pub fn mock_server_http_fetch(
+    archive_bytes: Vec<u8>,
+) -> crate::provisioning::reconcile::HttpFetch {
+    let archive = Arc::new(archive_bytes);
+    Arc::new(move |_url: &str| {
+        let archive = archive.clone();
+        Box::pin(async move { Ok((*archive).clone()) })
     })
 }
 

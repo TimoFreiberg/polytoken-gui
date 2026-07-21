@@ -88,6 +88,39 @@ pub fn delete_remote_profile_impl(state: &AppState, id: String) -> Result<(), St
     Ok(())
 }
 
+/// Apply the reconcile outcome's resolved paths to the SshCommand, overriding
+/// the profile defaults. This is the single place where `server_path` and
+/// `PANTOKEN_POLYTOKEN_BIN` are set from provisioning results.
+pub fn apply_outcome_to_command(
+    command: SshCommand,
+    outcome: &crate::provisioning::reconcile::ReconcileOutcome,
+) -> SshCommand {
+    use crate::provisioning::reconcile::ReconcileOutcome;
+
+    let mut command = command;
+    match outcome {
+        ReconcileOutcome::Ready {
+            polytoken_binary_path,
+            server_binary_path,
+            ..
+        }
+        | ReconcileOutcome::Installed {
+            polytoken_binary_path,
+            server_binary_path,
+            ..
+        } => {
+            command.server_path = server_binary_path.clone();
+            if let Some(path) = polytoken_binary_path {
+                command
+                    .extra_env
+                    .push(("PANTOKEN_POLYTOKEN_BIN".into(), path.clone()));
+            }
+        }
+        _ => {}
+    }
+    command
+}
+
 /// Connect to a remote runtime: load the profile, acquire a free loopback
 /// port, start the bridge + SSH proxy on the dedicated runtime, navigate the
 /// WebView to the hub with `?ws=` pointing at the bridge.
@@ -143,22 +176,28 @@ pub fn connect_to_remote_impl(
         // This drives Connecting → Provisioning → Starting (or Failed).
         connection_for_prov.on_state(ConnectionState::Connecting);
 
+        let manifest = crate::provisioning::embedded_manifest::get();
+
         let outcome = crate::provisioning::reconcile::reconcile(
             transport_for_prov.as_ref(),
             command_for_prov.clone(),
             &profile_for_prov,
             Some(&(connection_for_prov.clone() as Arc<dyn ConnectionStateSink>)),
             crate::provisioning::polytoken_install::default_http_fetch(),
+            &manifest,
         )
         .await;
 
         match outcome {
             crate::provisioning::reconcile::ReconcileOutcome::Ready { .. }
             | crate::provisioning::reconcile::ReconcileOutcome::Installed { .. } => {
-                // Provisioning succeeded — start the bridge.
+                // Provisioning succeeded — apply the resolved paths to the
+                // bridge command (server_path + PANTOKEN_POLYTOKEN_BIN), then
+                // start the bridge.
+                let command = apply_outcome_to_command(command_for_prov, &outcome);
                 connection_for_prov.on_state(ConnectionState::Starting);
                 let bridge =
-                    Bridge::new(bridge_port_for_task, transport_for_prov, command_for_prov)
+                    Bridge::new(bridge_port_for_task, transport_for_prov, command)
                         .with_state_sink(
                             connection_for_prov.clone() as Arc<dyn ConnectionStateSink>
                         );
@@ -370,6 +409,32 @@ mod tests {
         std::sync::Arc::new(|_url: &str| Box::pin(async { Err("no http in test".into()) }))
     }
 
+    fn test_manifest() -> pantoken_remote_layout::manifest::PantokenReleaseManifest {
+        use pantoken_protocol::wire::PROTOCOL_VERSION;
+        use pantoken_remote_layout::manifest::{ArchiveFormat, ReleaseTarget};
+
+        pantoken_remote_layout::manifest::PantokenReleaseManifest {
+            release_version: "0.2.75".into(),
+            protocol_version: PROTOCOL_VERSION,
+            build_sha: None,
+            targets: vec![ReleaseTarget {
+                target_triple: "x86_64-unknown-linux-gnu".into(),
+                artifact_url: "https://example.com/server.tar.gz".into(),
+                sha256: "a".repeat(64),
+                archive_format: ArchiveFormat::TarGz,
+            }],
+        }
+    }
+
+    /// Canned response for the server binary check (test -x → "exists").
+    fn server_exists_response() -> crate::bridge::CommandOutput {
+        crate::bridge::CommandOutput {
+            stdout: "exists".into(),
+            stderr: String::new(),
+            exit_code: Some(0),
+        }
+    }
+
     /// AC.3/AC.6: the bridge starts on a dedicated tokio runtime, forwards
     /// over WS, and tears down cleanly (no leaked child, runtime shuts down).
     #[tokio::test]
@@ -552,6 +617,7 @@ mod tests {
         use crate::provisioning::reconcile;
 
         let transport = build_transport(Scenario::Healthy);
+        transport.add_command_response("echo exists", server_exists_response());
         let command = SshCommand {
             destination: "fake".into(),
             port: None,
@@ -574,12 +640,14 @@ mod tests {
         connection.on_state(ConnectionState::Connecting);
 
         let sink: Arc<dyn ConnectionStateSink> = connection.clone() as Arc<dyn ConnectionStateSink>;
+        let manifest = test_manifest();
         let outcome = reconcile::reconcile(
             &transport,
             command,
             &profile,
             Some(&sink),
             test_no_http_fetch(),
+            &manifest,
         )
         .await;
 
@@ -624,12 +692,14 @@ mod tests {
         connection.on_state(ConnectionState::Connecting);
 
         let sink: Arc<dyn ConnectionStateSink> = connection.clone() as Arc<dyn ConnectionStateSink>;
+        let manifest = test_manifest();
         let outcome = reconcile::reconcile(
             &transport,
             command,
             &profile,
             Some(&sink),
             test_no_http_fetch(),
+            &manifest,
         )
         .await;
 
@@ -652,6 +722,7 @@ mod tests {
         use crate::provisioning::reconcile;
 
         let transport = build_transport(Scenario::Healthy);
+        transport.add_command_response("echo exists", server_exists_response());
         let command = SshCommand {
             destination: "fake".into(),
             port: None,
@@ -673,16 +744,265 @@ mod tests {
         connection.begin(profile.clone());
 
         let sink: Arc<dyn ConnectionStateSink> = connection.clone() as Arc<dyn ConnectionStateSink>;
+        let manifest = test_manifest();
         let outcome = reconcile::reconcile(
             &transport,
             command,
             &profile,
             Some(&sink),
             test_no_http_fetch(),
+            &manifest,
         )
         .await;
 
         // Compatible polytoken → Ready (no install needed).
         assert!(matches!(outcome, reconcile::ReconcileOutcome::Ready { .. }));
+    }
+
+    /// AC.2: when polytoken is already compatible (found on PATH), the
+    /// `SshCommand` built from the outcome contains
+    /// `PANTOKEN_POLYTOKEN_BIN=polytoken` (PATH-resolved).
+    #[tokio::test]
+    async fn compatible_polytoken_path_threaded_to_bridge_command() {
+        use crate::provisioning::fake::{build_transport, Scenario};
+        use crate::provisioning::reconcile;
+
+        let transport = build_transport(Scenario::Healthy);
+        transport.add_command_response("echo exists", server_exists_response());
+
+        let command = SshCommand {
+            destination: "fake".into(),
+            port: None,
+            remote_root: "/tmp/pantoken-test".into(),
+            server_path: "pantoken-server".into(),
+            extra_env: Vec::new(),
+        };
+        let profile = RemoteProfile {
+            id: "test".into(),
+            label: "Test".into(),
+            ssh_destination: "fake".into(),
+            port: None,
+            polytoken_policy: PolytokenPolicy::RequireExisting,
+            remote_root_override: Some("/tmp/pantoken-test".into()),
+            server_path: None,
+            xdg_mode: crate::remote_profile::XdgMode::default(),
+        };
+
+        let manifest = test_manifest();
+        let outcome = reconcile::reconcile(
+            &transport,
+            command.clone(),
+            &profile,
+            None,
+            test_no_http_fetch(),
+            &manifest,
+        )
+        .await;
+
+        let result = apply_outcome_to_command(command, &outcome);
+
+        // server_path should be overridden to the installed server binary path.
+        let expected_server =
+            "/tmp/pantoken-test/releases/0.2.75/x86_64-unknown-linux-gnu/pantoken-server";
+        assert_eq!(result.server_path, expected_server);
+
+        // PANTOKEN_POLYTOKEN_BIN should be set to "polytoken" (PATH-resolved).
+        let polytoken_env = result
+            .extra_env
+            .iter()
+            .find(|(k, _)| k == "PANTOKEN_POLYTOKEN_BIN");
+        assert!(
+            polytoken_env.is_some(),
+            "PANTOKEN_POLYTOKEN_BIN should be set"
+        );
+        assert_eq!(
+            polytoken_env.unwrap().1, "polytoken",
+            "compatible polytoken should use PATH-resolved name"
+        );
+    }
+
+    /// AC.1: after a successful polytoken install, the `SshCommand` contains
+    /// `PANTOKEN_POLYTOKEN_BIN` pointing at the installed binary path under
+    /// `<remote_root>/tools/polytoken/<version>/<target>/polytoken`.
+    #[tokio::test]
+    async fn installed_polytoken_path_threaded_to_bridge_command() {
+        use crate::provisioning::fake::{build_transport, Scenario};
+        use crate::provisioning::polytoken_install::compute_sha256;
+        use crate::provisioning::reconcile;
+        use pantoken_daemon_types::POLYTOKEN_DAEMON_TARGET_VERSION;
+
+        let transport = build_transport(Scenario::MissingPolytoken);
+        // Server binary already installed — idempotent skip.
+        transport.add_command_response("echo exists", server_exists_response());
+
+        // Polytoken install needs a working http_fetch. Build a fake archive
+        // + checksums that the installer will accept.
+        let archive = b"fake polytoken archive".to_vec();
+        let hash = compute_sha256(&archive);
+        let sums = format!("{hash}  polytoken-linux-amd64.tar.gz\n");
+        let http_fetch = crate::provisioning::fake::mock_http_fetch(archive, sums);
+
+        let command = SshCommand {
+            destination: "fake".into(),
+            port: None,
+            remote_root: "/tmp/pantoken-test".into(),
+            server_path: "pantoken-server".into(),
+            extra_env: Vec::new(),
+        };
+        let profile = RemoteProfile {
+            id: "test".into(),
+            label: "Test".into(),
+            ssh_destination: "fake".into(),
+            port: None,
+            polytoken_policy: PolytokenPolicy::OfferInstall,
+            remote_root_override: Some("/tmp/pantoken-test".into()),
+            server_path: None,
+            xdg_mode: crate::remote_profile::XdgMode::default(),
+        };
+
+        let manifest = test_manifest();
+        let outcome = reconcile::reconcile(
+            &transport,
+            command.clone(),
+            &profile,
+            None,
+            http_fetch,
+            &manifest,
+        )
+        .await;
+
+        // The polytoken install command uses `echo ok` at the end, same as
+        // the server install. The fake transport's default (empty success)
+        // covers the install + provenance commands.
+        match &outcome {
+            reconcile::ReconcileOutcome::Installed {
+                polytoken_binary_path,
+                ..
+            } => {
+                // The path should be the managed install path.
+                let expected = format!(
+                    "/tmp/pantoken-test/tools/polytoken/{}/{}/polytoken",
+                    POLYTOKEN_DAEMON_TARGET_VERSION, "x86_64-unknown-linux-gnu"
+                );
+                assert_eq!(
+                    polytoken_binary_path.as_deref(),
+                    Some(expected.as_str()),
+                    "polytoken_binary_path should be the managed install path"
+                );
+            }
+            other => panic!("expected Installed, got {other:?}"),
+        }
+
+        // apply_outcome_to_command threads the path into PANTOKEN_POLYTOKEN_BIN.
+        let result = apply_outcome_to_command(command, &outcome);
+        let polytoken_env = result
+            .extra_env
+            .iter()
+            .find(|(k, _)| k == "PANTOKEN_POLYTOKEN_BIN");
+        assert!(
+            polytoken_env.is_some(),
+            "PANTOKEN_POLYTOKEN_BIN should be set"
+        );
+        let val = &polytoken_env.unwrap().1;
+        assert!(
+            val.contains("/tools/polytoken/"),
+            "PANTOKEN_POLYTOKEN_BIN should point at the managed install path, got {val}"
+        );
+        assert!(
+            val.ends_with("/polytoken"),
+            "path should end with the binary name"
+        );
+    }
+
+    /// AC.6: reconcile installs the server and threads both paths (server_path
+    /// + PANTOKEN_POLYTOKEN_BIN) into the SshCommand via
+    /// `apply_outcome_to_command`.
+    #[tokio::test]
+    async fn reconcile_installs_server_and_threads_both_paths() {
+        use crate::provisioning::fake::{build_transport, Scenario};
+        use crate::provisioning::reconcile;
+        use pantoken_remote_layout::manifest::{ArchiveFormat, ReleaseTarget};
+
+        let transport = build_transport(Scenario::ServerAlreadyInstalled);
+
+        let command = SshCommand {
+            destination: "fake".into(),
+            port: None,
+            remote_root: "/tmp/pantoken-test".into(),
+            server_path: "pantoken-server".into(),
+            extra_env: Vec::new(),
+        };
+        let profile = RemoteProfile {
+            id: "test".into(),
+            label: "Test".into(),
+            ssh_destination: "fake".into(),
+            port: None,
+            polytoken_policy: PolytokenPolicy::RequireExisting,
+            remote_root_override: Some("/tmp/pantoken-test".into()),
+            server_path: None,
+            xdg_mode: crate::remote_profile::XdgMode::default(),
+        };
+
+        // Use macOS arm64 manifest to match the ServerAlreadyInstalled scenario.
+        let manifest = pantoken_remote_layout::manifest::PantokenReleaseManifest {
+            release_version: "0.2.75".into(),
+            protocol_version: pantoken_protocol::wire::PROTOCOL_VERSION,
+            build_sha: None,
+            targets: vec![ReleaseTarget {
+                target_triple: "aarch64-apple-darwin".into(),
+                artifact_url: "https://example.com/server.tar.gz".into(),
+                sha256: "a".repeat(64),
+                archive_format: ArchiveFormat::TarGz,
+            }],
+        };
+
+        let outcome = reconcile::reconcile(
+            &transport,
+            command.clone(),
+            &profile,
+            None,
+            test_no_http_fetch(),
+            &manifest,
+        )
+        .await;
+
+        // Should be Ready (compatible polytoken + server already installed).
+        match &outcome {
+            reconcile::ReconcileOutcome::Ready {
+                polytoken_binary_path,
+                server_binary_path,
+                ..
+            } => {
+                // Polytoken path is PATH-resolved "polytoken".
+                assert_eq!(
+                    polytoken_binary_path.as_deref(),
+                    Some("polytoken"),
+                    "polytoken should be PATH-resolved"
+                );
+                // Server path points at the installed release artifact.
+                let expected_server = "/tmp/pantoken-test/releases/0.2.75/aarch64-apple-darwin/pantoken-server";
+                assert_eq!(
+                    server_binary_path, expected_server,
+                    "server_binary_path should point at the release artifact"
+                );
+            }
+            other => panic!("expected Ready, got {other:?}"),
+        }
+
+        // apply_outcome_to_command threads both into the SshCommand.
+        let result = apply_outcome_to_command(command, &outcome);
+        assert_eq!(
+            result.server_path,
+            "/tmp/pantoken-test/releases/0.2.75/aarch64-apple-darwin/pantoken-server"
+        );
+        let polytoken_env = result
+            .extra_env
+            .iter()
+            .find(|(k, _)| k == "PANTOKEN_POLYTOKEN_BIN");
+        assert!(
+            polytoken_env.is_some(),
+            "PANTOKEN_POLYTOKEN_BIN should be set"
+        );
+        assert_eq!(polytoken_env.unwrap().1, "polytoken");
     }
 }

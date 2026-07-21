@@ -262,7 +262,7 @@ pub fn build_install_command(
         .to_string_lossy()
         .to_string();
 
-    let staging_dir = format!("{final_dir}/.staging-$$");
+    let staging_dir = format!("{final_dir}.staging-$$");
     let staging_q = shell_quote(&staging_dir);
     let final_q = shell_quote(&final_dir);
     let archive_q = shell_quote(archive_path);
@@ -305,8 +305,9 @@ pub fn build_cleanup_staging_command(remote_root: &str, version: &str, target: &
         .unwrap_or(None)
         .unwrap_or_default();
     let final_q = shell_quote(&final_dir);
+    // Staging dirs are siblings of final_dir (e.g. `<final_dir>.staging-123`).
     // The glob .staging-* must be outside the quotes for shell expansion.
-    format!("rm -rf {final_q}/.staging-* 2>/dev/null; true")
+    format!("rm -rf {final_q}.staging-* 2>/dev/null; true")
 }
 
 /// Build the command to check if a polytoken binary exists at a given path.

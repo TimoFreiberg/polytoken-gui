@@ -16,13 +16,16 @@
 #![allow(dead_code)]
 
 use std::io;
+use std::path::Path;
 use std::sync::Arc;
 
 use pantoken_daemon_types::POLYTOKEN_DAEMON_TARGET_VERSION;
 use pantoken_remote_layout::layout;
+use pantoken_remote_layout::manifest::PantokenReleaseManifest;
 
 use crate::bridge::{ConnectionStateSink, SshCommand, SshTransport};
-use crate::provisioning::polytoken_compat::{self, PolytokenCompat};
+use crate::provisioning::pantoken_server_install;
+use crate::provisioning::polytoken_compat::{self, polytoken_path_from_probe, PolytokenCompat};
 use crate::provisioning::polytoken_install::{self, InstallProvenance};
 use crate::provisioning::probe::{self, ProbeResult};
 use crate::remote_connection::{ConnectionFailureState, ConnectionState};
@@ -45,11 +48,20 @@ pub enum ReconcileOutcome {
     Ready {
         probe: ProbeResult,
         compat: PolytokenCompat,
+        /// Resolved polytoken binary path on the remote (PATH-resolved name
+        /// "polytoken" if found on PATH, or the Pantoken-managed install path).
+        polytoken_binary_path: Option<String>,
+        /// Resolved server binary path on the remote.
+        server_binary_path: String,
     },
     /// polytoken was installed (or upgraded) and is now ready.
     Installed {
         probe: ProbeResult,
         provenance: InstallProvenance,
+        /// The Pantoken-managed polytoken binary path on the remote.
+        polytoken_binary_path: Option<String>,
+        /// Resolved server binary path on the remote.
+        server_binary_path: String,
     },
     /// polytoken is missing and the policy doesn't allow install.
     Missing { probe: ProbeResult },
@@ -69,6 +81,7 @@ pub async fn reconcile(
     profile: &RemoteProfile,
     state_sink: Option<&Arc<dyn ConnectionStateSink>>,
     http_fetch: HttpFetch,
+    manifest: &PantokenReleaseManifest,
 ) -> ReconcileOutcome {
     // Signal: we're entering provisioning.
     if let Some(sink) = state_sink {
@@ -111,8 +124,31 @@ pub async fn reconcile(
 
     match &compat {
         PolytokenCompat::Compatible { .. } => {
-            // Already compatible — proceed to connect.
-            ReconcileOutcome::Ready { probe, compat }
+            // Already compatible — resolve the polytoken path (PATH-resolved).
+            let polytoken_binary_path = polytoken_path_from_probe(&probe);
+
+            // Step 4: Ensure the Pantoken server binary is installed.
+            let server_binary_path = match ensure_server_installed(
+                transport,
+                command.clone(),
+                profile.remote_root(),
+                &probe,
+                manifest,
+                http_fetch.clone(),
+                state_sink,
+            )
+            .await
+            {
+                Ok(path) => path,
+                Err(detail) => return fail(state_sink, detail),
+            };
+
+            ReconcileOutcome::Ready {
+                probe,
+                compat,
+                polytoken_binary_path,
+                server_binary_path,
+            }
         }
         PolytokenCompat::Missing | PolytokenCompat::TooOld { .. } => {
             // Need to install/upgrade. Check policy.
@@ -151,13 +187,102 @@ pub async fn reconcile(
             )
             .await
             {
-                Ok(provenance) => ReconcileOutcome::Installed { probe, provenance },
+                Ok(provenance) => {
+                    // Resolve the installed polytoken binary path.
+                    let polytoken_binary_path = layout::polytoken_binary(
+                        Path::new(profile.remote_root()),
+                        POLYTOKEN_DAEMON_TARGET_VERSION,
+                        &target,
+                    )
+                    .ok()
+                    .map(|p| p.to_string_lossy().into_owned());
+
+                    // Step 4: Ensure the Pantoken server binary is installed.
+                    let server_binary_path = match ensure_server_installed(
+                        transport,
+                        command.clone(),
+                        profile.remote_root(),
+                        &probe,
+                        manifest,
+                        http_fetch.clone(),
+                        state_sink,
+                    )
+                    .await
+                    {
+                        Ok(path) => path,
+                        Err(detail) => return fail(state_sink, detail),
+                    };
+
+                    ReconcileOutcome::Installed {
+                        probe,
+                        provenance,
+                        polytoken_binary_path,
+                        server_binary_path,
+                    }
+                }
                 Err(e) => fail(state_sink, format!("install failed: {e}")),
             }
         }
         PolytokenCompat::Unparseable { raw } => {
             fail(state_sink, format!("polytoken version unparseable: {raw}"))
         }
+    }
+}
+
+/// Ensure the Pantoken server binary is installed on the remote.
+///
+/// Checks if it already exists (idempotent); if not, downloads, verifies, and
+/// installs it. Returns the resolved binary path on success, or an error
+/// detail string on failure.
+async fn ensure_server_installed(
+    transport: &dyn SshTransport,
+    command: SshCommand,
+    remote_root: &str,
+    probe: &ProbeResult,
+    manifest: &PantokenReleaseManifest,
+    http_fetch: HttpFetch,
+    _state_sink: Option<&Arc<dyn ConnectionStateSink>>,
+) -> Result<String, String> {
+    // NOTE: server_version is the PANTOKEN SERVER release version (from the
+    // manifest's release_version / CARGO_PKG_VERSION, e.g. "0.2.75"), NOT the
+    // polytoken daemon version (POLYTOKEN_DAEMON_TARGET_VERSION, e.g.
+    // "0.5.0-unstable.9"). These are different binaries with different versions.
+    let server_version = &manifest.release_version;
+    let target = match probe::target_triple(probe) {
+        Ok(t) => t,
+        Err(e) => return Err(format!("target resolution: {e}")),
+    };
+
+    match pantoken_server_install::check_server_installed(
+        transport,
+        command.clone(),
+        remote_root,
+        server_version,
+        &target,
+    )
+    .await
+    {
+        Ok(true) => {
+            // Already installed — use the expected path.
+            layout::release_artifact(Path::new(remote_root), server_version, &target)
+                .map(|p| p.to_string_lossy().into_owned())
+                .map_err(|e| format!("server binary path: {e}"))
+        }
+        Ok(false) => {
+            // Install it.
+            let result = pantoken_server_install::install_server(
+                transport,
+                command,
+                remote_root,
+                probe,
+                manifest,
+                http_fetch,
+            )
+            .await
+            .map_err(|e| format!("server install: {e}"))?;
+            Ok(result.binary_path)
+        }
+        Err(e) => Err(format!("server install check: {e}")),
     }
 }
 
@@ -220,9 +345,35 @@ mod tests {
         Arc::new(|_url: &str| Box::pin(async { Err("http fetch not configured in test".into()) }))
     }
 
+    fn test_manifest() -> PantokenReleaseManifest {
+        use pantoken_protocol::wire::PROTOCOL_VERSION;
+        use pantoken_remote_layout::manifest::{ArchiveFormat, ReleaseTarget};
+
+        PantokenReleaseManifest {
+            release_version: "0.2.75".into(),
+            protocol_version: PROTOCOL_VERSION,
+            build_sha: None,
+            targets: vec![ReleaseTarget {
+                target_triple: "x86_64-unknown-linux-gnu".into(),
+                artifact_url: "https://example.com/server.tar.gz".into(),
+                sha256: "a".repeat(64),
+                archive_format: ArchiveFormat::TarGz,
+            }],
+        }
+    }
+
     fn compatible_probe_response() -> CommandOutput {
         CommandOutput {
             stdout: r#"{"os":"linux","arch":"x86_64","bitness":64,"libc":"glibc","homeDir":"/home/user","writableTemp":"/tmp/x","tools":{"tar":true,"unzip":false,"curl":true,"sha256sum":true},"polytokenVersion":"0.5.0-unstable.9"}"#.into(),
+            stderr: String::new(),
+            exit_code: Some(0),
+        }
+    }
+
+    /// Response indicating the server binary already exists (idempotent skip).
+    fn server_exists_response() -> CommandOutput {
+        CommandOutput {
+            stdout: "exists".into(),
             stderr: String::new(),
             exit_code: Some(0),
         }
@@ -263,9 +414,19 @@ mod tests {
     async fn reconcile_skips_install_when_compatible_exists() {
         let transport = FakeSshTransport::new(crate::bridge::fake::FakeScenario::healthy());
         transport.add_command_response("uname", compatible_probe_response());
+        // Server binary already installed — idempotent skip.
+        transport.add_command_response("echo exists", server_exists_response());
 
         let profile = test_profile(PolytokenPolicy::RequireExisting);
-        let outcome = reconcile(&transport, ssh_command(), &profile, None, no_http_fetch()).await;
+        let outcome = reconcile(
+            &transport,
+            ssh_command(),
+            &profile,
+            None,
+            no_http_fetch(),
+            &test_manifest(),
+        )
+        .await;
 
         match outcome {
             ReconcileOutcome::Ready { compat, .. } => {
@@ -281,7 +442,15 @@ mod tests {
         transport.add_command_response("uname", missing_probe_response());
 
         let profile = test_profile(PolytokenPolicy::RequireExisting);
-        let outcome = reconcile(&transport, ssh_command(), &profile, None, no_http_fetch()).await;
+        let outcome = reconcile(
+            &transport,
+            ssh_command(),
+            &profile,
+            None,
+            no_http_fetch(),
+            &test_manifest(),
+        )
+        .await;
 
         assert!(matches!(outcome, ReconcileOutcome::Missing { .. }));
     }
@@ -292,7 +461,15 @@ mod tests {
         transport.add_command_response("uname", missing_probe_response());
 
         let profile = test_profile(PolytokenPolicy::OfferInstall);
-        let outcome = reconcile(&transport, ssh_command(), &profile, None, no_http_fetch()).await;
+        let outcome = reconcile(
+            &transport,
+            ssh_command(),
+            &profile,
+            None,
+            no_http_fetch(),
+            &test_manifest(),
+        )
+        .await;
 
         // Install will fail because http_fetch returns an error, but the
         // important thing is that it attempted the install path (not Missing).

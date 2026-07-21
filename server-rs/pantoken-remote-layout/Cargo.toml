@@ -5,4 +5,5 @@ edition.workspace = true
 rust-version.workspace = true
 
 [dependencies]
-# Zero runtime deps — pure path/string functions only.
+serde = { workspace = true }
+pantoken-protocol = { workspace = true }
