@@ -72,13 +72,20 @@ function splitLeadUp(run: TranscriptItem[]): [TranscriptItem[], TranscriptItem[]
  *  trailing notice(s) into pinned lanes keeps both visible in place.
  *
  *  A preserved segment starts at a `completedAt`-stamped assistant item that is
- *  followed (within `workItems`) by a non-assistant item, and extends to include
- *  every immediately-following non-assistant item up to the next settled assistant
- *  or the end of `workItems`. Returns the inclusive `[start, end]` index ranges.
+ *  followed (within `workItems`) by a `notice`, and extends to include every
+ *  immediately-following `notice` up to the next settled assistant or the end of
+ *  `workItems`. Returns the inclusive `[start, end]` index ranges.
+ *
+ *  Only `notice` items trigger promotion — never `inject`. Extension injects
+ *  (journal-nudges, system reminders) are designed to fold INTO the collapsed work
+ *  block (rendering as an `.inject-pill` inside it), so promoting them out would
+ *  wrongly split a single work run into two. A notice, by contrast, is a passive
+ *  cross-session event (a late background-agent notification) that should stay
+ *  visible in place rather than hide behind a collapse header.
  *
  *  Key non-regression: when the `completedAt` assistant is the genuine trailing
- *  run (the greeting/cold-restore case — not trailed by a non-assistant item), no
- *  segment is produced, so behavior is unchanged. The promotion is also keyed on
+ *  run (the greeting/cold-restore case — not trailed by a notice), no segment is
+ *  produced, so behavior is unchanged. The promotion is also keyed on
  *  `completedAt` *presence*, not its value, so cold-restored turns (whose
  *  `completedAt` sits far past `ts`) still collapse correctly when no notice
  *  follows. A non-settled streaming assistant (no `completedAt`) interrupted by a
@@ -91,29 +98,23 @@ export function findPreservedSegments(
     const it = workItems[i]!;
     // A preserved segment starts at a settled assistant response.
     if (!(it.kind === "assistant" && it.completedAt !== undefined)) continue;
-    // …that is trailed by a passive, non-assistant, non-tool item (a notice/inject —
-    // the thing that breaks the trailing-run scan without being active work). If
-    // this is the last item, or the next item is an assistant (the normal trailing
-    // run) or a tool (new work — the "buggy order" follow-up case), it's not
-    // preserved. Tools are never part of a preserved segment: promotion must never
-    // move tools out of `work` so the turn-level `collapsible` (which keys on
-    // `work.some(isWorkTool)`) stays stable.
+    // …that is trailed by a `notice` — the late-notification case. Only a notice
+    // (a passive cross-session event) triggers promotion; an `inject` (extension
+    // nudge like journal-nudge) does NOT — it folds into the work block as an
+    // `.inject-pill`. If this is the last item, or the next item is an assistant
+    // (the normal trailing run), a tool (new work), or an inject (folds into work),
+    // it's not preserved. Tools/injects are never part of a preserved segment: the
+    // former keeps turn-level `collapsible` stable (keys on `work.some(isWorkTool)`),
+    // the latter must stay inside the collapsed work block.
     const next = workItems[i + 1];
-    if (
-      i + 1 >= workItems.length ||
-      next!.kind === "assistant" ||
-      next!.kind === "tool"
-    )
-      continue;
+    if (i + 1 >= workItems.length || next!.kind !== "notice") continue;
     // Extend the segment over the settled response + every immediately-following
-    // non-assistant, non-tool item (notices/injects). An inject that lands after a
-    // settled response is intentionally promoted alongside the notice — it should
-    // stay visible rather than hide behind a collapse header, same as the notice.
+    // notice (multiple late notifications can stack). Stops at any assistant, tool,
+    // or inject — those stay in the work run.
     let end = i;
     while (
       end + 1 < workItems.length &&
-      workItems[end + 1]!.kind !== "assistant" &&
-      workItems[end + 1]!.kind !== "tool"
+      workItems[end + 1]!.kind === "notice"
     )
       end++;
     segments.push([i, end]);

@@ -662,6 +662,21 @@ describe("findPreservedSegments", () => {
     ];
     expect(findPreservedSegments(items)).toEqual([]);
   });
+
+  test("a settled response trailed by an inject yields no segment (inject folds into work)", () => {
+    // Journal-nudge injects are designed to fold INTO the collapsed work block
+    // (rendering as an `.inject-pill` inside it). Promoting them out would wrongly
+    // split a single work run into two. Only `notice` items trigger promotion.
+    const items = [
+      asst("narration"),
+      tool("b1"),
+      asst("finalA", { completedAt: "9000" }),
+      inject("jn-1"),
+      tool("b2"),
+      asst("finalB", { completedAt: "10000" }),
+    ];
+    expect(findPreservedSegments(items)).toEqual([]);
+  });
 });
 
 describe("groupTurns: answer (visible) tools", () => {

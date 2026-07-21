@@ -15,6 +15,16 @@ test("dock badge shows unread count then clears when session is viewed", async (
 }) => {
   // Inject a __TAURI_INTERNALS__ spy before navigation. Records every invoke
   // call so we can assert the badge was set/cleared reactively.
+  //
+  // The stub must also answer `list_hosts`: the multi-host manager routes
+  // through TauriHostProvider when __TAURI_INTERNALS__ is present (i.e. when
+  // isDesktopShell() returns true). Without a valid list_hosts response,
+  // provider.listHosts() crashes on `.map(undefined)` and store.start() never
+  // runs — no WS connection, no sessionList, "No sessions yet." The local host
+  // descriptor returned here mirrors what the native layer produces: id "local",
+  // state "ready", empty label/subtitle (the client fills those from
+  // store.serverLabel + "This computer"). The local host never invokes
+  // connect_host — store.start() wires the compatibility singleton for it.
   await page.addInitScript(() => {
     const calls: { cmd: string; args?: Record<string, unknown> }[] = [];
     (window as unknown as { __dockBadgeCalls: typeof calls }).__dockBadgeCalls =
@@ -23,6 +33,17 @@ test("dock badge shows unread count then clears when session is viewed", async (
       value: {
         invoke: (cmd: string, args?: Record<string, unknown>) => {
           calls.push({ cmd, args });
+          if (cmd === "list_hosts") {
+            return Promise.resolve([
+              {
+                id: "local",
+                kind: "local",
+                label: "",
+                subtitle: "",
+                state: "ready",
+              },
+            ]);
+          }
           return Promise.resolve(undefined);
         },
       },

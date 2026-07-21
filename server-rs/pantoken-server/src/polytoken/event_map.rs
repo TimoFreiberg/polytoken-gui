@@ -16,10 +16,11 @@
 //! `polytoken event-schema`).
 
 use pantoken_daemon_types::{
-    BlockDeltaPayload, ContentBlockKind, CurrentGoal, DaemonEvent, NotificationType,
-    PendingTurnInputItem, PendingTurnInputSnapshot, PermissionCandidateRuleContext,
-    PermissionMonitor, ProviderError, ResolvedPromptReference, SessionStateSnapshot,
-    SubagentResultKind, SystemReminderReason, ToolLiveDisplayContent,
+    BlockDeltaPayload, ContentBlockKind, CurrentGoal, DaemonEvent, HookOutcome,
+    NotificationType, PendingTurnInputItem, PendingTurnInputSnapshot,
+    PermissionCandidateRuleContext, PermissionMonitor, ProviderError,
+    ResolvedPromptReference, SessionStateSnapshot, SubagentResultKind,
+    SystemReminderReason, ToolLiveDisplayContent,
 };
 use pantoken_protocol::session_driver::{
     AssistantDeltaChannel, FlaggedFile, FlaggedFileMode, GoalInfo, HostUiRequest, ImageContent,
@@ -2054,6 +2055,52 @@ pub fn map_daemon_event(
             fold_result(
                 vec![SessionDriverEvent::SessionUpdated { base, snapshot }],
                 vec![DaemonEffect::SetAutodrainEnabled { enabled: *enabled }],
+            )
+        }
+
+        // A stop hook returned "continue" (mapped to outcome:"blocked" on the
+        // SSE stream). The daemon injects the hook's reason text as a new user
+        // turn internally, but does NOT emit a pending_turn_input_drained or any
+        // event carrying the reason text. Without intervention, the preceding
+        // assistant response has no completedAt and no turn boundary — so it
+        // collapses behind "Worked for Ns" when the agent continues.
+        //
+        // We synthesize both signals from hook_fired itself:
+        // 1. RunCompleted — stamps completedAt on the open assistant bubble and
+        //    settles running tools (the turn IS over; the agent stopped).
+        // 2. CustomMessage with turn_boundary:true — creates an InjectItem that
+        //    startsTurn returns true for, splitting the transcript into two
+        //    turns so the summary stays visible as the prior turn's trailing
+        //    response.
+        //
+        // The hook's reason text is not on the SSE stream, so the inject
+        // carries a generic label. On history replay (reconnect), the daemon's
+        // type:"user" item replaces this with the real reason text.
+        DaemonEvent::HookFired {
+            event_type,
+            outcome: HookOutcome::Blocked,
+            ..
+        } if event_type == "stop" => {
+            let snapshot = ctx.snapshot(SessionStatus::Idle);
+            let ts = base.timestamp.clone();
+            fold_result(
+                vec![
+                    SessionDriverEvent::RunCompleted {
+                        base: base.clone(),
+                        snapshot,
+                        user_entry_id: None,
+                        assistant_entry_id: None,
+                    },
+                    SessionDriverEvent::CustomMessage {
+                        base,
+                        id: format!("stop-hook-redirect-{}", ts),
+                        custom_type: "stop_hook_redirect".to_string(),
+                        text: "Stop hook redirected — continuing.".to_string(),
+                        display: false,
+                        turn_boundary: true,
+                    },
+                ],
+                vec![],
             )
         }
 
