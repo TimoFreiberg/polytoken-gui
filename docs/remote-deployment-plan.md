@@ -73,6 +73,12 @@ Phases 0 and 1 are **implemented**. Each step below is annotated with a status m
 
 #### Phase 2 — Desktop/mobile connection UX and SSH lifecycle
 
+The detailed implementation brief for the host-scoped UI, multi-host connection
+lifetime, activity indicators, Settings management surface, and connection/provisioning
+sheet is [`remote-connection-ui-task.md`](remote-connection-ui-task.md). It records the
+settled `Computer → Project → Session` hierarchy and the requirement that already-open
+inactive computers remain connected.
+
 > **Carried over from Phase 1 (step 11 caveats):** (a) upgrade `desktop/src/bridge.rs` from raw TCP + newline-delimited JSON to a real WebSocket upgrade (add `tokio-tungstenite` as a non-dev dependency, or restructure so the WS upgrade lives where it's already available); (b) wire the bridge into the desktop connection-state UX (it currently ships as dead code used only by tests); (c) add bounded backoff on reconnect (step 10 caveat) and structured remote-process-exit-vs-auth-failure diagnostics.
 
 12. Add a persisted remote-host model/profile with SSH destination, username, port/config alias, known host label, preferred polytoken policy (`require-existing` versus `offer-install`), and optional runtime-root override. Do not persist plaintext SSH passwords or private keys.
