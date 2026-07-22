@@ -52,6 +52,49 @@ test("Escape cancels the plan-handoff card (deny-safe)", async ({ page }) => {
   await expect(page.getByText("Dialog cancelled.")).toBeVisible();
 });
 
+test("plan-handoff Cancel uses a click-twice confirm gate", async ({ page }) => {
+  await drive(page, "planhandoff");
+  const dialog = page.getByRole("dialog");
+
+  // ── AC.2: first click arms, does not dismiss ──────────────────
+  await dialog.getByRole("button", { name: "Cancel", exact: true }).click();
+  await expect(dialog.getByRole("button", { name: "Click again" })).toBeVisible();
+  // Dialog is still visible (not dismissed).
+  await expect(dialog).toBeVisible();
+
+  // ── AC.6: armed button carries the .armed class + danger color ─
+  const armedBtn = dialog.getByRole("button", { name: "Click again" });
+  await expect(armedBtn).toHaveClass(/\bbtn\b.*\barmed\b/);
+  const dangerColor = await page.evaluate(() => {
+    const el = document.querySelector(".sheet.plan .actions .btn.armed") as HTMLElement | null;
+    return el ? getComputedStyle(el).color : null;
+  });
+  expect(dangerColor).not.toBeNull();
+  expect(dangerColor).toMatch(/rgb|rgba|hsl|hsla/);
+
+  // Second click fires the cancel — mock acks as "Received: Cancel".
+  await armedBtn.click();
+  await expect(dialog).toBeHidden();
+  await expect(page.getByText("Received: Cancel")).toBeVisible();
+});
+
+test("plan-handoff Cancel Esc disarms when armed without cancelling", async ({
+  page,
+}) => {
+  await drive(page, "planhandoff");
+  const dialog = page.getByRole("dialog");
+
+  // Arm the cancel gate.
+  await dialog.getByRole("button", { name: "Cancel", exact: true }).click();
+  await expect(dialog.getByRole("button", { name: "Click again" })).toBeVisible();
+
+  // AC.4: Esc while armed disarms (label reverts) without cancelling.
+  await page.keyboard.press("Escape");
+  await expect(dialog.getByRole("button", { name: "Cancel", exact: true })).toBeVisible();
+  // The dialog is still visible (Esc did NOT cancel).
+  await expect(dialog).toBeVisible();
+});
+
 test("⌘/Ctrl+Enter submits the primary action (Implement, new context)", async ({
   page,
 }) => {

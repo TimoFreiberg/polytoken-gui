@@ -142,8 +142,87 @@ test("qna form renders markdown in the context field", async ({ page }) => {
 test("qna form: Cancel dismisses without answering", async ({ page }) => {
   await drive(page, "qna");
   await qnaForm(page).getByRole("button", { name: "Cancel" }).click();
+  // First click arms the confirm gate — label switches to "Click again".
+  await expect(qnaForm(page).getByRole("button", { name: "Click again" })).toBeVisible();
+  await qnaForm(page).getByRole("button", { name: "Click again" }).click();
   await expect(qnaForm(page)).toBeHidden();
   await expect(page.getByText("Dialog cancelled.")).toBeVisible();
+});
+
+test("qna Cancel uses a click-twice confirm gate", async ({ page }) => {
+  await drive(page, "qna");
+  const form = qnaForm(page);
+
+  // ── AC.1: first click arms, does not dismiss ──────────────────
+  await form.getByRole("button", { name: "Cancel" }).click();
+  await expect(form.getByRole("button", { name: "Click again" })).toBeVisible();
+  // Form is still visible (not dismissed).
+  await expect(form).toBeVisible();
+
+  // ── AC.6: armed button carries the .armed class + danger color ─
+  const armedBtn = form.getByRole("button", { name: "Click again" });
+  await expect(armedBtn).toHaveClass(/\bbtn\b.*\barmed\b/);
+  const dangerColor = await page.evaluate(() => {
+    const el = document.querySelector(".qna .actions .btn.armed") as HTMLElement | null;
+    return el ? getComputedStyle(el).color : null;
+  });
+  expect(dangerColor).not.toBeNull();
+  // The --danger CSS variable must resolve to a non-transparent color.
+  expect(dangerColor).toMatch(/rgb|rgba|hsl|hsla/);
+
+  // Second click fires the cancel.
+  await armedBtn.click();
+  await expect(form).toBeHidden();
+  await expect(page.getByText("Dialog cancelled.")).toBeVisible();
+});
+
+test("qna Cancel armed state auto-disarms after 3s", async ({ page }) => {
+  await drive(page, "qna");
+  const form = qnaForm(page);
+
+  // Arm the cancel gate.
+  await form.getByRole("button", { name: "Cancel" }).click();
+  await expect(form.getByRole("button", { name: "Click again" })).toBeVisible();
+
+  // AC.3: poll until the label reverts to "Cancel" (the 3s timer fires).
+  await expect
+    .poll(async () => {
+      const btn = form.getByRole("button", { name: /Cancel|Click again/ });
+      return await btn.textContent();
+    }, { timeout: 4500 })
+    .toBe("Cancel");
+
+  // The button is back to its un-armed state — a click now arms again, not cancels.
+  await expect(form).toBeVisible();
+});
+
+test("qna Cancel armed state resets on question navigation", async ({ page }) => {
+  await drive(page, "qna");
+  const form = qnaForm(page);
+
+  // Arm the cancel gate on Q1.
+  await form.getByRole("button", { name: "Cancel" }).click();
+  await expect(form.getByRole("button", { name: "Click again" })).toBeVisible();
+
+  // AC.5: navigating to the next question disarms — the Cancel label returns.
+  await form.getByRole("button", { name: "Next" }).click();
+  await expect(form.getByRole("button", { name: "Cancel" })).toBeVisible();
+  await expect(form.getByRole("button", { name: "Click again" })).toBeHidden();
+});
+
+test("qna Cancel Esc disarms when armed without cancelling", async ({ page }) => {
+  await drive(page, "qna");
+  const form = qnaForm(page);
+
+  // Arm the cancel gate.
+  await form.getByRole("button", { name: "Cancel" }).click();
+  await expect(form.getByRole("button", { name: "Click again" })).toBeVisible();
+
+  // AC.4: Esc while armed disarms (label reverts) without cancelling.
+  await page.keyboard.press("Escape");
+  await expect(form.getByRole("button", { name: "Cancel" })).toBeVisible();
+  // The form is still visible (Esc did NOT cancel).
+  await expect(form).toBeVisible();
 });
 
 test("qna question text scales with --font-scale; action buttons do not", async ({

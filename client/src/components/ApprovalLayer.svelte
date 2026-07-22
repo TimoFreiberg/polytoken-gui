@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { onDestroy } from "svelte";
   import { reveal } from "../lib/transitions.js";
   import { isDialogRequest, type HostUiRequest } from "@pantoken/protocol";
   import { store } from "../lib/store.svelte.js";
@@ -161,6 +162,40 @@
     store.respondUi({ requestId: current.requestId, value: v });
   }
 
+  // Click-twice confirm gate for the plan-kind Cancel button (mirrors
+  // ContextMeter.svelte). First click arms (label → "Click again",
+  // danger-red); second click fires submitValue(cancelLabel). A 3s timer
+  // auto-disarms. Only the plan kind's Cancel is gated — other approval kinds
+  // stay single-click per the issue.
+  const ARM_TIMEOUT = 3000;
+  let planCancelArmed = $state(false);
+  let planCancelTimer: ReturnType<typeof setTimeout> | null = null;
+  function disarmPlanCancel(): void {
+    planCancelArmed = false;
+    if (planCancelTimer) {
+      clearTimeout(planCancelTimer);
+      planCancelTimer = null;
+    }
+  }
+  function attemptPlanCancel(): void {
+    if (!current || current.kind !== "plan") return;
+    if (planCancelArmed) {
+      disarmPlanCancel();
+      submitValue(current.actionLabels[2]);
+    } else {
+      planCancelArmed = true;
+      planCancelTimer = setTimeout(disarmPlanCancel, ARM_TIMEOUT);
+    }
+  }
+  onDestroy(() => disarmPlanCancel());
+  const planCancelLabel = $derived(
+    planCancelArmed
+      ? "Click again"
+      : current?.kind === "plan"
+        ? current.actionLabels[2]
+        : "",
+  );
+
   // --- Binary 2-option select → Yes/No card ---
   // Classify an option label as affirmative / negative / neutral so we can
   // mirror the confirm dialog's ordering (negative ghost on the left,
@@ -322,6 +357,7 @@
     const id = current?.requestId;
     if (id !== lastApprovalId) {
       if (lastApprovalId !== undefined) attention.clear("approval");
+      disarmPlanCancel();
       lastApprovalId = id;
     }
   });
@@ -366,6 +402,10 @@
   function onSheetKeydown(e: KeyboardEvent): void {
     if (e.key === "Escape") {
       e.preventDefault();
+      if (current?.kind === "plan" && planCancelArmed) {
+        disarmPlanCancel();
+        return;
+      }
       cancel();
       return;
     }
@@ -480,7 +520,7 @@
         <Markdown content={current.planText} final />
       </div>
       <div class="actions three">
-        <Button variant="secondary" size="lg" block title={current.actionLabels[2]} onclick={() => submitValue(current.actionLabels[2])}>{current.actionLabels[2]}</Button>
+        <Button variant="secondary" size="lg" block class={planCancelArmed ? "armed" : ""} title={planCancelArmed ? "Click again to cancel" : current.actionLabels[2]} onclick={attemptPlanCancel}>{planCancelLabel}</Button>
         <Button variant="secondary" size="lg" block title={current.actionLabels[1]} onclick={() => submitValue(current.actionLabels[1])}>{current.actionLabels[1]}</Button>
         <Button variant="primary" size="lg" block title={current.actionLabels[0]} onclick={() => submitValue(current.actionLabels[0])}>{current.actionLabels[0]}</Button>
       </div>
@@ -665,6 +705,16 @@
   .actions :global(.btn) {
     white-space: normal;
     min-width: 0;
+  }
+  /* Armed (click-twice confirm): destructive red so the operator sees the
+     consequence of a second click. Mirrors ContextMeter's .action.armed. */
+  .actions :global(.btn.armed) {
+    color: var(--danger);
+    border-color: var(--danger);
+    background: color-mix(in srgb, var(--danger) 10%, transparent);
+  }
+  .actions :global(.btn.armed:hover) {
+    background: color-mix(in srgb, var(--danger) 15%, transparent);
   }
   .actions.two {
     flex-direction: row;

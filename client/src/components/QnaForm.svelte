@@ -11,7 +11,7 @@
 </script>
 
 <script lang="ts">
-  import { untrack } from "svelte";
+  import { onDestroy, untrack } from "svelte";
   import { reveal } from "../lib/transitions.js";
   import type { HostUiRequest, QnaAnswer } from "@pantoken/protocol";
   import Button from "./ui/Button.svelte";
@@ -179,9 +179,42 @@
     );
   }
 
+  // Click-twice confirm gate for the Cancel button (mirrors ContextMeter.svelte).
+  // First click arms the button (label → "Click again", danger-red); the second
+  // click fires oncancel(). A 3s timer auto-disarms so a stale armed button
+  // can't trap the user.
+  const ARM_TIMEOUT = 3000;
+  let cancelArmed = $state(false);
+  let cancelTimer: ReturnType<typeof setTimeout> | null = null;
+  function disarmCancel(): void {
+    cancelArmed = false;
+    if (cancelTimer) {
+      clearTimeout(cancelTimer);
+      cancelTimer = null;
+    }
+  }
+  function attemptCancel(): void {
+    if (cancelArmed) {
+      disarmCancel();
+      oncancel();
+    } else {
+      cancelArmed = true;
+      cancelTimer = setTimeout(disarmCancel, ARM_TIMEOUT);
+    }
+  }
+  onDestroy(() => disarmCancel());
+  const cancelLabel = $derived(cancelArmed ? "Click again" : "Cancel");
+  const cancelTitle = $derived(
+    cancelArmed ? "Click again to cancel" : "Cancel without answering (Esc)",
+  );
+
   function onkeydown(e: KeyboardEvent) {
     if (e.key === "Escape") {
       e.preventDefault();
+      if (cancelArmed) {
+        disarmCancel();
+        return;
+      }
       oncancel();
       return;
     }
@@ -228,6 +261,16 @@
   $effect(() => {
     phase;
     root?.focus();
+  });
+
+  // Reset the cancel confirm gate when navigating between questions or
+  // phases so a stale "Click again" label can't persist across cards.
+  // Synchronous (no rAF deferral) — a deferred disarm could flash the armed
+  // label during the next card's reveal transition.
+  $effect(() => {
+    current;
+    phase;
+    disarmCancel();
   });
 
   // Reset scroll to top on every page change so each question starts at the top.
@@ -424,8 +467,9 @@
     <Button
       variant="secondary"
       size="lg"
-      title="Cancel without answering (Esc)"
-      onclick={oncancel}>Cancel</Button
+      class={cancelArmed ? "armed" : ""}
+      title={cancelTitle}
+      onclick={attemptCancel}>{cancelLabel}</Button
     >
     {#if total > 1}
       <Button
@@ -666,6 +710,16 @@
   }
   .actions :global(.btn) {
     flex: 1 1 0;
+  }
+  /* Armed (click-twice confirm): destructive red so the operator sees the
+     consequence of a second click. Mirrors ContextMeter's .action.armed. */
+  .actions :global(.btn.armed) {
+    color: var(--danger);
+    border-color: var(--danger);
+    background: color-mix(in srgb, var(--danger) 10%, transparent);
+  }
+  .actions :global(.btn.armed:hover) {
+    background: color-mix(in srgb, var(--danger) 15%, transparent);
   }
   .summary {
     flex: 1;

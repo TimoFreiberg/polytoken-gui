@@ -34,7 +34,11 @@ test("plan-handoff card: 3 buttons stack full-width and the body scrolls on mobi
 
   // Cancel dismisses the card. The button sends {value:"Cancel"} (not {cancelled}),
   // so the mock acks it as "Received: Cancel" — distinct from the Esc path.
+  // The click-twice confirm gate means the first click arms the button
+  // (label → "Click again"), and the second click fires.
   await dialog.getByRole("button", { name: "Cancel", exact: true }).click();
+  await expect(dialog.getByRole("button", { name: "Click again" })).toBeVisible();
+  await dialog.getByRole("button", { name: "Click again" }).click();
   await expect(dialog).toBeHidden();
   await expect(page.getByText("Received: Cancel")).toBeVisible();
 });
