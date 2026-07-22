@@ -606,7 +606,7 @@ impl SessionHub {
         // Mark session list dirty for events that change sidebar content
         let disc = ev.type_discriminator();
         if matches!(
-            disc.as_str(),
+            disc,
             "userMessage"
                 | "runCompleted"
                 | "runFailed"
@@ -704,7 +704,7 @@ impl SessionHub {
         let before = self.running.contains(sid);
         let before_init = self.initializing.contains(sid);
         let disc = ev.type_discriminator();
-        match disc.as_str() {
+        match disc {
             "sessionOpened" | "sessionUpdated" | "runCompleted" => {
                 let status = ev.snapshot_status();
                 self.set_running(sid, status == Some(SessionStatus::Running));
@@ -779,7 +779,7 @@ impl SessionHub {
         let disc = ev.type_discriminator();
         let timestamp = ev.timestamp();
 
-        match disc.as_str() {
+        match disc {
             "sessionOpened" | "sessionUpdated" => {
                 if let Some(title) = ev.snapshot_title() {
                     self.session_titles.insert(sid.clone(), title);
@@ -2430,14 +2430,12 @@ impl SessionHub {
             }
             self.last_usage_emitted.insert(sid.clone(), usage.clone());
 
-            // Get the session ref from the journal's first event
+            // Get the session ref from the journal's cached field (avoids a
+            // full build_seed clone per running session per live tick).
             let session_ref = self
                 .journals
                 .get(&sid)
-                .and_then(|j| {
-                    let (_, _, events) = build_seed(j);
-                    events.first().map(|e| e.session_ref().clone())
-                })
+                .and_then(|j| j.session_ref.clone())
                 .unwrap_or(SessionRef {
                     workspace_id: sid.clone(),
                     session_id: sid.clone(),
@@ -3072,7 +3070,7 @@ trait SessionDriverEventExt {
         reason = "extension helpers are retained for parity with TS event access patterns during Phase 1 hub work"
     )]
     fn timestamp(&self) -> &str;
-    fn type_discriminator(&self) -> String;
+    fn type_discriminator(&self) -> &'static str;
     fn snapshot_status(&self) -> Option<SessionStatus>;
     fn snapshot_title(&self) -> Option<String>;
     fn assistant_delta_channel(&self) -> Option<String>;
@@ -3126,15 +3124,30 @@ impl SessionDriverEventExt for SessionDriverEvent {
         }
     }
 
-    fn type_discriminator(&self) -> String {
-        serde_json::to_value(self)
-            .ok()
-            .and_then(|v| {
-                v.get("type")
-                    .and_then(|t| t.as_str())
-                    .map(|s| s.to_string())
-            })
-            .unwrap_or_default()
+    fn type_discriminator(&self) -> &'static str {
+        // Exhaustive match — each arm returns the exact serde tag string
+        // (#[serde(tag = "type", rename_all = "camelCase")] on SessionDriverEvent).
+        // The drift-guard test below asserts these never diverge from serde.
+        match self {
+            E::SessionOpened { .. } => "sessionOpened",
+            E::SessionUpdated { .. } => "sessionUpdated",
+            E::SessionClosed { .. } => "sessionClosed",
+            E::AssistantDelta { .. } => "assistantDelta",
+            E::ToolStarted { .. } => "toolStarted",
+            E::ToolUpdated { .. } => "toolUpdated",
+            E::ToolFinished { .. } => "toolFinished",
+            E::UserMessage { .. } => "userMessage",
+            E::RunCompleted { .. } => "runCompleted",
+            E::RunFailed { .. } => "runFailed",
+            E::UsageUpdated { .. } => "usageUpdated",
+            E::HostUiRequest { .. } => "hostUiRequest",
+            E::HostUiResolved { .. } => "hostUiResolved",
+            E::QueueUpdated { .. } => "queueUpdated",
+            E::QueuedMessageStarted { .. } => "queuedMessageStarted",
+            E::CustomMessage { .. } => "customMessage",
+            E::ExtensionCompatibilityIssue { .. } => "extensionCompatibilityIssue",
+            E::SessionReset { .. } => "sessionReset",
+        }
     }
 
     fn snapshot_status(&self) -> Option<SessionStatus> {
@@ -3288,6 +3301,169 @@ mod hub_models_tests {
         let hub_for_events = hub.clone();
         driver.subscribe(Box::new(move |ev| hub_for_events.lock().on_event(ev)));
         (driver, hub, rx)
+    }
+
+    #[test]
+    fn type_discriminator_matches_serde_tag() {
+        // Drift guard: the static &'static str returned by type_discriminator()
+        // must match the serde "type" tag for every variant. We build events
+        // from JSON to avoid coupling to internal field shapes.
+        use crate::mock_driver::ts;
+
+        // (variant_name, full JSON) — one per variant, minimal fields.
+        let cases: Vec<(&str, String)> = vec![
+            (
+                "sessionOpened",
+                format!(
+                    r#"{{"type":"sessionOpened","snapshot":{{"ref":{{"workspaceId":"ws","sessionId":"s1"}},"workspace":{{"workspaceId":"ws","path":""}},"title":"t","status":"idle","updatedAt":"{}"}},"sessionRef":{{"workspaceId":"ws","sessionId":"s1"}},"timestamp":"{}"}}"#,
+                    ts(),
+                    ts()
+                ),
+            ),
+            (
+                "sessionUpdated",
+                format!(
+                    r#"{{"type":"sessionUpdated","snapshot":{{"ref":{{"workspaceId":"ws","sessionId":"s1"}},"workspace":{{"workspaceId":"ws","path":""}},"title":"t","status":"idle","updatedAt":"{}"}},"sessionRef":{{"workspaceId":"ws","sessionId":"s1"}},"timestamp":"{}"}}"#,
+                    ts(),
+                    ts()
+                ),
+            ),
+            (
+                "sessionClosed",
+                format!(
+                    r#"{{"type":"sessionClosed","reason":"ended","sessionRef":{{"workspaceId":"ws","sessionId":"s1"}},"timestamp":"{}"}}"#,
+                    ts()
+                ),
+            ),
+            (
+                "assistantDelta",
+                format!(
+                    r#"{{"type":"assistantDelta","text":"hi","sessionRef":{{"workspaceId":"ws","sessionId":"s1"}},"timestamp":"{}"}}"#,
+                    ts()
+                ),
+            ),
+            (
+                "toolStarted",
+                format!(
+                    r#"{{"type":"toolStarted","toolName":"t","callId":"c","sessionRef":{{"workspaceId":"ws","sessionId":"s1"}},"timestamp":"{}"}}"#,
+                    ts()
+                ),
+            ),
+            (
+                "toolUpdated",
+                format!(
+                    r#"{{"type":"toolUpdated","callId":"c","sessionRef":{{"workspaceId":"ws","sessionId":"s1"}},"timestamp":"{}"}}"#,
+                    ts()
+                ),
+            ),
+            (
+                "toolFinished",
+                format!(
+                    r#"{{"type":"toolFinished","callId":"c","success":true,"sessionRef":{{"workspaceId":"ws","sessionId":"s1"}},"timestamp":"{}"}}"#,
+                    ts()
+                ),
+            ),
+            (
+                "userMessage",
+                format!(
+                    r#"{{"type":"userMessage","id":"u","text":"hi","sessionRef":{{"workspaceId":"ws","sessionId":"s1"}},"timestamp":"{}"}}"#,
+                    ts()
+                ),
+            ),
+            (
+                "runCompleted",
+                format!(
+                    r#"{{"type":"runCompleted","snapshot":{{"ref":{{"workspaceId":"ws","sessionId":"s1"}},"workspace":{{"workspaceId":"ws","path":""}},"title":"t","status":"idle","updatedAt":"{}"}},"sessionRef":{{"workspaceId":"ws","sessionId":"s1"}},"timestamp":"{}"}}"#,
+                    ts(),
+                    ts()
+                ),
+            ),
+            (
+                "runFailed",
+                format!(
+                    r#"{{"type":"runFailed","error":{{"message":"e"}},"sessionRef":{{"workspaceId":"ws","sessionId":"s1"}},"timestamp":"{}"}}"#,
+                    ts()
+                ),
+            ),
+            (
+                "usageUpdated",
+                format!(
+                    r#"{{"type":"usageUpdated","usage":{{"contextWindow":0}},"sessionRef":{{"workspaceId":"ws","sessionId":"s1"}},"timestamp":"{}"}}"#,
+                    ts()
+                ),
+            ),
+            (
+                "hostUiRequest",
+                format!(
+                    r#"{{"type":"hostUiRequest","request":{{"kind":"confirm","requestId":"r","title":"t","message":"m"}},"sessionRef":{{"workspaceId":"ws","sessionId":"s1"}},"timestamp":"{}"}}"#,
+                    ts()
+                ),
+            ),
+            (
+                "hostUiResolved",
+                format!(
+                    r#"{{"type":"hostUiResolved","requestId":"r","sessionRef":{{"workspaceId":"ws","sessionId":"s1"}},"timestamp":"{}"}}"#,
+                    ts()
+                ),
+            ),
+            (
+                "queueUpdated",
+                format!(
+                    r#"{{"type":"queueUpdated","messages":[],"sessionRef":{{"workspaceId":"ws","sessionId":"s1"}},"timestamp":"{}"}}"#,
+                    ts()
+                ),
+            ),
+            (
+                "queuedMessageStarted",
+                format!(
+                    r#"{{"type":"queuedMessageStarted","message":{{"id":"q","mode":"steer","text":"hi","createdAt":"{}","updatedAt":"{}"}},"sessionRef":{{"workspaceId":"ws","sessionId":"s1"}},"timestamp":"{}"}}"#,
+                    ts(),
+                    ts(),
+                    ts()
+                ),
+            ),
+            (
+                "customMessage",
+                format!(
+                    r#"{{"type":"customMessage","id":"c","customType":"t","text":"hi","display":false,"sessionRef":{{"workspaceId":"ws","sessionId":"s1"}},"timestamp":"{}"}}"#,
+                    ts()
+                ),
+            ),
+            (
+                "extensionCompatibilityIssue",
+                format!(
+                    r#"{{"type":"extensionCompatibilityIssue","issue":{{"capability":"c","classification":"terminal-only","message":"m"}},"sessionRef":{{"workspaceId":"ws","sessionId":"s1"}},"timestamp":"{}"}}"#,
+                    ts()
+                ),
+            ),
+            (
+                "sessionReset",
+                format!(
+                    r#"{{"type":"sessionReset","sessionRef":{{"workspaceId":"ws","sessionId":"s1"}},"timestamp":"{}"}}"#,
+                    ts()
+                ),
+            ),
+        ];
+
+        for (expected_tag, json) in &cases {
+            let ev: SessionDriverEvent = serde_json::from_str(json)
+                .unwrap_or_else(|e| panic!("failed to parse {expected_tag}: {e}\njson: {json}"));
+            assert_eq!(
+                ev.type_discriminator(),
+                *expected_tag,
+                "type_discriminator drift for {expected_tag}"
+            );
+            // Also verify serde round-trips the tag consistently
+            let serde_tag = serde_json::to_value(&ev)
+                .ok()
+                .and_then(|v| v.get("type").and_then(|t| t.as_str()).map(String::from))
+                .unwrap_or_default();
+            assert_eq!(
+                ev.type_discriminator(),
+                serde_tag.as_str(),
+                "serde tag drift for {expected_tag}"
+            );
+        }
     }
 
     #[tokio::test]

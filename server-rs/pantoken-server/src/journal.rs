@@ -17,6 +17,10 @@ use pantoken_protocol::state::SessionState;
 /// Tail ring caps: whichever trips first evicts oldest frames into `compacted`.
 /// Bigger = a longer resumable gap for reconnecting clients, more RAM. A resume
 /// older than the tail degrades to a full seed — never an error.
+///
+/// `TAIL_MAX_BYTES` is checked against `estimated_bytes`, a cheap heuristic —
+/// not an exact serialized length. Eviction correctness is bounded by the hard
+/// `TAIL_MAX_FRAMES` cap regardless of the byte estimate.
 pub const TAIL_MAX_FRAMES: usize = 1024;
 pub const TAIL_MAX_BYTES: usize = 256 * 1024;
 
@@ -45,6 +49,10 @@ pub struct SessionJournal {
     pub tail: Vec<JournalFrame>,
     /// Total bytes of all tail frames.
     pub tail_bytes: usize,
+    /// Cached session_ref from the first seed event (avoids a full `build_seed`
+    /// clone on every `refresh_usage` tick). `None` when the journal was created
+    /// with an empty seed and no event has been ingested yet.
+    pub session_ref: Option<SessionRef>,
 }
 
 pub fn create_journal(epoch: u64, seed: &[SessionDriverEvent]) -> SessionJournal {
@@ -54,6 +62,7 @@ pub fn create_journal(epoch: u64, seed: &[SessionDriverEvent]) -> SessionJournal
         compacted: coalesce_events(seed),
         tail: Vec::new(),
         tail_bytes: 0,
+        session_ref: seed.first().map(|e| e.session_ref().clone()),
     }
 }
 
@@ -65,13 +74,70 @@ pub fn bump_epoch(j: &mut SessionJournal, epoch: u64, seed: &[SessionDriverEvent
     j.compacted = coalesce_events(seed);
     j.tail.clear();
     j.tail_bytes = 0;
+    j.session_ref = seed.first().map(|e| e.session_ref().clone());
+}
+
+/// Cheap byte-size estimate for eviction heuristics. Sums the lengths of the
+/// variant's string-like fields plus a per-variant constant overhead. This is
+/// an approximation — not the exact serialized JSON length — but sufficient for
+/// the `TAIL_MAX_BYTES` eviction trigger. The hard `TAIL_MAX_FRAMES` cap makes
+/// the estimate's imprecision harmless for correctness.
+fn estimated_bytes(ev: &SessionDriverEvent) -> usize {
+    use SessionDriverEvent::*;
+    const OVERHEAD: usize = 64; // JSON braces, tags, field names, etc.
+    match ev {
+        AssistantDelta { text, .. } => text.len() + OVERHEAD,
+        UserMessage { id, text, .. } => id.len() + text.len() + OVERHEAD,
+        CustomMessage {
+            id,
+            custom_type,
+            text,
+            ..
+        } => id.len() + custom_type.len() + text.len() + OVERHEAD,
+        ToolStarted {
+            tool_name,
+            call_id,
+            input,
+            label,
+            description,
+            ..
+        } => {
+            tool_name.len()
+                + call_id.len()
+                + input.as_ref().map(|v| v.to_string().len()).unwrap_or(0)
+                + label.as_ref().map(|s| s.len()).unwrap_or(0)
+                + description.as_ref().map(|s| s.len()).unwrap_or(0)
+                + OVERHEAD
+        }
+        ToolUpdated { call_id, text, .. } => {
+            call_id.len() + text.as_ref().map(|s| s.len()).unwrap_or(0) + OVERHEAD
+        }
+        ToolFinished {
+            call_id, output, ..
+        } => call_id.len() + output.as_ref().map(|v| v.to_string().len()).unwrap_or(0) + OVERHEAD,
+        RunFailed { error, .. } => error.message.len() + OVERHEAD,
+        HostUiRequest { request, .. } => serde_json::to_string(request)
+            .map(|s| s.len())
+            .unwrap_or(OVERHEAD),
+        // Variants with no large string payload — just the base + overhead.
+        SessionOpened { .. }
+        | SessionUpdated { .. }
+        | SessionClosed { .. }
+        | RunCompleted { .. }
+        | UsageUpdated { .. }
+        | HostUiResolved { .. }
+        | QueueUpdated { .. }
+        | QueuedMessageStarted { .. }
+        | ExtensionCompatibilityIssue { .. }
+        | SessionReset { .. } => OVERHEAD,
+    }
 }
 
 /// Stamp one event into the tail, evicting oldest frames into the compacted
 /// prefix when the ring overflows. Returns the assigned seq.
 pub fn append_event(j: &mut SessionJournal, ev: SessionDriverEvent) -> u64 {
     j.seq += 1;
-    let bytes = serde_json::to_string(&ev).map(|s| s.len()).unwrap_or(0);
+    let bytes = estimated_bytes(&ev);
     let frame = JournalFrame {
         seq: j.seq,
         ev,
@@ -649,6 +715,50 @@ mod tests {
     }
 
     // ── Ported from journal.test.ts.bak ──────────────────────────
+
+    #[test]
+    fn create_journal_empty_seed_has_no_session_ref() {
+        let j = create_journal(1, &[]);
+        assert!(j.session_ref.is_none());
+    }
+
+    #[test]
+    fn create_journal_with_seed_caches_session_ref() {
+        let seed = vec![E::SessionOpened {
+            base: base(),
+            snapshot: snapshot(),
+        }];
+        let j = create_journal(1, &seed);
+        assert!(j.session_ref.is_some());
+        assert_eq!(j.session_ref.as_ref().unwrap(), seed[0].session_ref());
+    }
+
+    #[test]
+    fn bump_epoch_updates_session_ref() {
+        let mut j = create_journal(1, &[]);
+        assert!(j.session_ref.is_none());
+        bump_epoch(&mut j, 2, &[user_msg("u1", "hello")]);
+        assert!(j.session_ref.is_some());
+    }
+
+    #[test]
+    fn estimated_bytes_is_positive_for_all_variants() {
+        // Smoke: estimated_bytes should return > 0 for representative variants.
+        let variants: Vec<SessionDriverEvent> = vec![
+            user_msg("u1", "hello"),
+            assistant_delta("some text"),
+            E::SessionOpened {
+                base: base(),
+                snapshot: snapshot(),
+            },
+        ];
+        for ev in &variants {
+            // Call via append_event and check tail_bytes > 0
+            let mut j = create_journal(1, &[]);
+            append_event(&mut j, ev.clone());
+            assert!(j.tail_bytes > 0, "estimated_bytes was 0 for variant");
+        }
+    }
 
     #[test]
     fn evicts_by_byte_budget_and_single_over_budget_event_passes_through() {

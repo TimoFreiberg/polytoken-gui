@@ -1,5 +1,11 @@
 import { expect, type Locator, test } from "@playwright/test";
-import { drive, gotoFresh, openSettings, openSidebar } from "./helpers.js";
+import {
+  drive,
+  gotoFresh,
+  openSettings,
+  openSidebar,
+  waitForSettledWorkBlocks,
+} from "./helpers.js";
 
 const PNG = Buffer.from(
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl2nWQAAAAASUVORK5CYII=",
@@ -135,4 +141,32 @@ test("queue tray steer and edit buttons meet the 44px touch target and have tool
     await expect(edit).toHaveAttribute("title", /.+/);
     await expect(edit).toHaveAttribute("aria-label", /.+/);
   }
+});
+
+// AC.7 — The collapse footer's tap target is ≥44px on mobile (≤859px).
+test("collapse footer meets 44px touch target", async ({ page }) => {
+  await drive(page, "longoutput");
+  await waitForSettledWorkBlocks(page, 2);
+  await page.getByTestId("work-toggle").last().click();
+  // Open the tool card and expand its output so the body grows tall.
+  const head = page
+    .getByTestId("work-body")
+    .last()
+    .locator(":scope > .tool > .head");
+  await head.click();
+  const expandBtn = page
+    .getByTestId("work-body")
+    .last()
+    .locator(".out-bar")
+    .getByRole("button", { name: "Expand", exact: true });
+  await expect(expandBtn).toBeVisible();
+  await expandBtn.click();
+
+  const footer = page
+    .getByTestId("work-body")
+    .last()
+    .locator(":scope > .tool > .body")
+    .locator(".collapse-footer");
+  await expect(footer).toBeVisible();
+  await expectTall(footer);
 });

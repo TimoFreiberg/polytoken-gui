@@ -3,6 +3,7 @@
   // so there's a single expandable variant — no minimal/placeholder mode.
   import { reveal } from "../lib/transitions.js";
   import Chevron from "./ui/Chevron.svelte";
+  import CollapseFooter from "./ui/CollapseFooter.svelte";
   let { text, streaming }: { text: string; streaming: boolean } = $props();
   let open = $state(false);
 </script>
@@ -17,7 +18,7 @@
     <Chevron {open} size={10} />
   </button>
   {#if open}
-    <div class="body" transition:reveal>{text}</div>
+    <div class="body" transition:reveal>{text}<CollapseFooter onCollapse={() => (open = false)} /></div>
   {/if}
 </div>
 
@@ -37,12 +38,9 @@
     color: var(--text-muted);
     font-size: 13px;
   }
-  .think.open .head {
-    position: sticky;
-    top: 8px;
-    z-index: 1;
-    background: var(--bg);
-  }
+  /* The pinned (sticky) header was removed per issue #81 — the sticky header was
+     hard to see when the block was tall. A bottom collapse chevron (CollapseFooter)
+     replaces it. The header stays in normal flow as a label + top toggle. */
   .head:hover,
   .head:focus-visible {
     color: color-mix(in srgb, var(--text) 35%, var(--text-muted));

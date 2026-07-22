@@ -4126,6 +4126,32 @@ impl PantokenDriver for MockDriver {
                 s.push(ScriptStep { wait_ms: 80, event: SessionDriverEvent::RunCompleted { base: base(), snapshot: mock_snapshot(SessionStatus::Idle), user_entry_id: None, assistant_entry_id: None } });
                 s
             }
+            "longthinking" => {
+                // Long thinking block that overflows ~50% of the viewport when expanded —
+                // exercises the CollapseFooter chevron. Includes a tool call so the turn
+                // is collapsible (groupTurns requires ≥1 work tool). Fewer paragraphs with
+                // larger chunks so the script settles quickly while still overflowing.
+                let thinking: String = (1..=20).map(|i| format!("Paragraph {i}: This is a longer line of thinking reasoning text to ensure the block overflows the viewport height threshold when expanded, covering the analysis of step {i} in the overall plan.\n")).collect::<Vec<_>>().join("");
+                let mut s = vec![
+                    ScriptStep { wait_ms: 0, event: SessionDriverEvent::UserMessage { base: base(), id: format!("u-{}", ts()), text: "Think through this carefully.".into(), images: None, entry_id: None, references: None } },
+                    ScriptStep { wait_ms: 0, event: SessionDriverEvent::SessionUpdated { base: base(), snapshot: mock_snapshot(SessionStatus::Running) } },
+                ];
+                for chunk in deltas("Let me investigate first.", 3) {
+                    s.push(ScriptStep { wait_ms: 28, event: SessionDriverEvent::AssistantDelta { base: base(), text: chunk, channel: Some(AssistantDeltaChannel::Text), entry_id: None } });
+                }
+                s.extend(tool_span("lt-1", "bash", "Run shell command", Some("Execute a command in the workspace shell"),
+                    serde_json::json!({"command": "echo thinking"}),
+                    true, serde_json::json!("ok"), 40, 90, 180));
+                // Stream the thinking in 3 large chunks (fast settle).
+                for chunk in deltas(&thinking, 50) {
+                    s.push(ScriptStep { wait_ms: 10, event: SessionDriverEvent::AssistantDelta { base: base(), text: chunk, channel: Some(AssistantDeltaChannel::Thinking), entry_id: None } });
+                }
+                for chunk in deltas("After all that consideration, the answer is straightforward.", 3) {
+                    s.push(ScriptStep { wait_ms: 28, event: SessionDriverEvent::AssistantDelta { base: base(), text: chunk, channel: Some(AssistantDeltaChannel::Text), entry_id: None } });
+                }
+                s.push(ScriptStep { wait_ms: 80, event: SessionDriverEvent::RunCompleted { base: base(), snapshot: mock_snapshot(SessionStatus::Idle), user_entry_id: None, assistant_entry_id: None } });
+                s
+            }
             "markdown" => {
                 let mut s = vec![
                     ScriptStep { wait_ms: 0, event: SessionDriverEvent::UserMessage { base: base(), id: format!("u-{}", ts()), text: "Show me a markdown formatting sample.".into(), images: None, entry_id: None, references: None } },

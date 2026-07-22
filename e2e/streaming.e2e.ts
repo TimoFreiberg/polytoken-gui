@@ -107,9 +107,11 @@ test("disabling Hide thinking reveals the expandable thinking block", async ({
   await expect(think.locator(".label + .chevron")).toHaveCount(1);
   await think.click();
   await expect(think).toHaveAttribute("aria-expanded", "true");
+  // The pinned (sticky) thinking header was removed (issue #81): a bottom
+  // collapse chevron replaces it, and the header stays in normal flow.
   await expect
     .poll(() => think.evaluate((element) => getComputedStyle(element).position))
-    .toBe("sticky");
+    .toBe("static");
   await expect(
     page.getByText("Let me think about the cleanest way", { exact: false }),
   ).toBeVisible();

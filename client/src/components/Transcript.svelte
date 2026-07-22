@@ -3,6 +3,7 @@
   import { cubicOut } from "svelte/easing";
   import { reveal } from "../lib/transitions.js";
   import Chevron from "./ui/Chevron.svelte";
+  import CollapseFooter from "./ui/CollapseFooter.svelte";
   import CoinMark from "./ui/CoinMark.svelte";
   import { store } from "../lib/store.svelte.js";
   import {
@@ -1297,6 +1298,7 @@
                 {#each lane.items as it (it.id)}
                   {@render itemView(it)}
                 {/each}
+                <CollapseFooter onCollapse={() => toggleWork(lane.id, turn)} />
               </div>
             {/if}
           </div>

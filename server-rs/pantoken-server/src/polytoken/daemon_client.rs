@@ -2466,7 +2466,7 @@ impl DaemonClient {
                                 // Parse complete frames (separated by \n\n).
                                 while let Some(idx) = buffer.find("\n\n") {
                                     let frame = buffer[..idx].to_string();
-                                    buffer = buffer[idx + 2..].to_string();
+                                    buffer.drain(..idx + 2);
                                     let lines: Vec<&str> = frame.split('\n').collect();
                                     let mut data_lines: Vec<String> = Vec::new();
                                     for l in &lines {

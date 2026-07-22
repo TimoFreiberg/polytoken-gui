@@ -3,6 +3,7 @@
   import { reveal } from "../lib/transitions.js";
   import type { ToolItem } from "@pantoken/protocol";
   import Chevron from "./ui/Chevron.svelte";
+  import CollapseFooter from "./ui/CollapseFooter.svelte";
   import { imageViewer } from "../lib/image-viewer.svelte.js";
   import { store } from "../lib/store.svelte.js";
   import { toolPreview } from "../lib/tool-preview.js";
@@ -679,6 +680,7 @@
       {#if item.status === "interrupted" && item.output === undefined}
         <div class="interrupted">interrupted before a result was recorded</div>
       {/if}
+      <CollapseFooter onCollapse={() => (open = false)} />
     </div>
   {/if}
 </div>
