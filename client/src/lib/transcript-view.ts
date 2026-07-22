@@ -77,7 +77,7 @@ function splitLeadUp(run: TranscriptItem[]): [TranscriptItem[], TranscriptItem[]
  *  `workItems`. Returns the inclusive `[start, end]` index ranges.
  *
  *  Only `notice` items trigger promotion — never `inject`. Extension injects
- *  (journal-nudges, system reminders) are designed to fold INTO the collapsed work
+ *  (extension nudges, system reminders) are designed to fold INTO the collapsed work
  *  block (rendering as an `.inject-pill` inside it), so promoting them out would
  *  wrongly split a single work run into two. A notice, by contrast, is a passive
  *  cross-session event (a late background-agent notification) that should stay
@@ -100,7 +100,7 @@ export function findPreservedSegments(
     if (!(it.kind === "assistant" && it.completedAt !== undefined)) continue;
     // …that is trailed by a `notice` — the late-notification case. Only a notice
     // (a passive cross-session event) triggers promotion; an `inject` (extension
-    // nudge like journal-nudge) does NOT — it folds into the work block as an
+    // nudge like extension-nudge) does NOT — it folds into the work block as an
     // `.inject-pill`. If this is the last item, or the next item is an assistant
     // (the normal trailing run), a tool (new work), or an inject (folds into work),
     // it's not preserved. Tools/injects are never part of a preserved segment: the
@@ -281,7 +281,7 @@ function buildTurn(
   // Lanes preserve chronological order: a contiguous run of non-visible work folds into
   // one collapsible run; each visible tool stays pinned in place between runs, so it
   // doesn't float to the bottom of the work block as later work streams in. Non-boundary
-  // injects (system reminders, journal nudges, compaction markers, …) fold into the
+  // injects (system reminders, extension nudges, compaction markers, …) fold into the
   // current work run as inline content rather than being pinned as separate lanes, so a
   // turn with `edit_plan` → reminder → `edit_plan` → reminder produces one contiguous
   // "Worked for Ns" block, not one per tool call. The inject pill still renders (when
@@ -579,7 +579,7 @@ export function isInjectItem(i: TranscriptItem): i is InjectItem {
 }
 
 /** The text to show when an injected note is expanded. Extensions wrap their nudge in
- *  a single XML-ish tag (e.g. `<journal-nudge>…</journal-nudge>`) as an attribution
+ *  a single XML-ish tag (e.g. `<extension-nudge>…</extension-nudge>`) as an attribution
  *  signal; strip one matching outer tag so the body reads clean. Falls back to the raw
  *  text when there's no wrapper. */
 export function injectText(item: InjectItem): string {

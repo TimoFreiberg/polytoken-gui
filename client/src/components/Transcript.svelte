@@ -1214,7 +1214,7 @@
       {:else if item.kind === "tool"}
         <ToolCard {item} />
       {:else if item.kind === "inject"}
-        <!-- An extension-injected custom message (e.g. a journal nudge). `display:false`
+        <!-- An extension-injected custom message (e.g. an extension nudge). `display:false`
              ones are turn-boundary markers only — render nothing. The rest show a tiny
              collapsed pill that expands to the (de-wrapped) note text. -->
         {#if item.display}

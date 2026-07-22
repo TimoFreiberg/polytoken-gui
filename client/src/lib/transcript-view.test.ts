@@ -53,7 +53,7 @@ const inject = (
 ): TranscriptItem => ({
   kind: "inject",
   id,
-  customType: "journal-nudge",
+  customType: "extension-nudge",
   text: id,
   display: true,
   ...over,
@@ -664,7 +664,7 @@ describe("findPreservedSegments", () => {
   });
 
   test("a settled response trailed by an inject yields no segment (inject folds into work)", () => {
-    // Journal-nudge injects are designed to fold INTO the collapsed work block
+    // Extension-nudge injects are designed to fold INTO the collapsed work block
     // (rendering as an `.inject-pill` inside it). Promoting them out would wrongly
     // split a single work run into two. Only `notice` items trigger promotion.
     const items = [
@@ -935,7 +935,7 @@ describe("groupTurns: injected custom messages", () => {
     expect(
       injectText(
         inject("x", {
-          text: "<journal-nudge>do the thing</journal-nudge>",
+          text: "<extension-nudge>do the thing</extension-nudge>",
         }) as InjectItem,
       ),
     ).toBe("do the thing");

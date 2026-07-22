@@ -3908,8 +3908,8 @@ impl PantokenDriver for MockDriver {
                     event_name: Some("session_start".into()),
                 } } },
             ],
-            // ── Journal nudge ──────────────────────────────────────────────
-            "journalnudge" => {
+            // ── Extension nudge ──────────────────────────────────────────
+            "inject" => {
                 let mut s: Vec<ScriptStep> = vec![
                     ScriptStep { wait_ms: 0, event: SessionDriverEvent::UserMessage { base: base(), id: "u-jn-1".into(), text: "Rename the helper and update its callers.".into(), images: None, entry_id: None, references: None } },
                 ];
@@ -3928,14 +3928,14 @@ impl PantokenDriver for MockDriver {
                 s.push(ScriptStep { wait_ms: 60, event: SessionDriverEvent::RunCompleted { base: base(), snapshot: mock_snapshot(SessionStatus::Idle), user_entry_id: None, assistant_entry_id: None } });
                 advance_ts(400);
                 s.push(ScriptStep { wait_ms: 120, event: SessionDriverEvent::SessionUpdated { base: base(), snapshot: mock_snapshot(SessionStatus::Running) } });
-                s.push(ScriptStep { wait_ms: 0, event: SessionDriverEvent::CustomMessage { base: base(), id: "inject-jn-1".into(), custom_type: "journal-nudge".into(), text: "<journal-nudge>this turn did work and didn't journal. if a fork or correction formed that's generally applicable AND isn't already in your skills/AGENTS.md, call the journal skill now.</journal-nudge>".into(), display: true, turn_boundary: false } });
+                s.push(ScriptStep { wait_ms: 0, event: SessionDriverEvent::CustomMessage { base: base(), id: "inject-1".into(), custom_type: "extension-nudge".into(), text: "<extension-nudge>Review this turn's work for any follow-up needed.</extension-nudge>".into(), display: true, turn_boundary: false } });
                 advance_ts(2_000);
-                s.extend(tool_span("jn-t2", "bash", "Run shell command", Some("Execute a command in the workspace shell"),
-                    serde_json::json!({"command": "./skills/journal/scripts/journal observation \"prefer X over Y\""}),
+                s.extend(tool_span("inj-t2", "bash", "Run shell command", Some("Execute a command in the workspace shell"),
+                    serde_json::json!({"command": "./scripts/check-followups \"prefer X over Y\""}),
                     true,
-                    serde_json::json!("journal entry staged"),
+                    serde_json::json!("followup note staged"),
                     120, 220, 520));
-                for chunk in deltas("Journaled a note about the helper-naming convention.", 3) {
+                for chunk in deltas("Reviewed the turn and staged a followup note.", 3) {
                     s.push(ScriptStep { wait_ms: 28, event: SessionDriverEvent::AssistantDelta { base: base(), text: chunk, channel: Some(AssistantDeltaChannel::Text), entry_id: None } });
                 }
                 s.push(ScriptStep { wait_ms: 60, event: SessionDriverEvent::RunCompleted { base: base(), snapshot: mock_snapshot(SessionStatus::Idle), user_entry_id: None, assistant_entry_id: None } });

@@ -69,7 +69,7 @@
       typeof window !== "undefined" &&
       window.matchMedia(PHONE_MQ).matches,
   );
-  const scripts = ["reply", "reset", "markdown", "search", "thinkingtools", "skill", "confirm", "input", "qna", "qnatall", "answercard", "answerleadup", "ambient", "compat", "bgrun", "bgwait", "queue", "deliverqueue", "discardqueue", "initializing", "editdiff", "editbounds", "editcountguard", "editemptyguards", "editpatch", "images", "error", "idle", "streamhold", "staleidle", "pendinghold", "slowabort", "toolhold", "timeout", "yesno", "journalnudge", "contextfull", "longoutput", "longthinking", "selectmany", "planhandoff", "planhandofftimeout", "planfacet", "planview", "goalactive", "goalclear", "context", "permission", "failnewsession", "failsession", "goal", "unknown", "jobs", "cleantools", "manysessions", "latenotify"];
+  const scripts = ["reply", "reset", "markdown", "search", "thinkingtools", "skill", "confirm", "input", "qna", "qnatall", "answercard", "answerleadup", "ambient", "compat", "bgrun", "bgwait", "queue", "deliverqueue", "discardqueue", "initializing", "editdiff", "editbounds", "editcountguard", "editemptyguards", "editpatch", "images", "error", "idle", "streamhold", "staleidle", "pendinghold", "slowabort", "toolhold", "timeout", "yesno", "inject", "contextfull", "longoutput", "longthinking", "selectmany", "planhandoff", "planhandofftimeout", "planfacet", "planview", "goalactive", "goalclear", "context", "permission", "failnewsession", "failsession", "goal", "unknown", "jobs", "cleantools", "manysessions", "latenotify"];
 
   // The agent-driven attention surfaces currently active, in cycle order. The ⌘\
   // hotkey advances focus through these; each cycled-away-from surface collapses to

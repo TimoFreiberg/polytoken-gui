@@ -128,8 +128,8 @@ describe("foldEvent", () => {
       base({
         type: "customMessage",
         id: "inject-1",
-        customType: "journal-nudge",
-        text: "<journal-nudge>do it</journal-nudge>",
+        customType: "extension-nudge",
+        text: "<extension-nudge>do it</extension-nudge>",
         display: true,
         turnBoundary: true,
         timestamp: "t9",
@@ -142,8 +142,8 @@ describe("foldEvent", () => {
     expect(s.items[1]).toMatchObject({
       kind: "inject",
       id: "inject-1",
-      customType: "journal-nudge",
-      text: "<journal-nudge>do it</journal-nudge>",
+      customType: "extension-nudge",
+      text: "<extension-nudge>do it</extension-nudge>",
       display: true,
       turnBoundary: true,
       ts: "t9",
