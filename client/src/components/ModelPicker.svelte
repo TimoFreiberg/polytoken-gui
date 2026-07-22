@@ -88,7 +88,11 @@
 
   function openPicker(viaKeyboard: boolean): void {
     open = true;
-    sel = 0;
+    // Highlight the active model's row so ←/→ cycle its effort immediately.
+    const idx = activeModel
+      ? ranked.findIndex((r) => r.model.modelId === activeModel.modelId)
+      : -1;
+    sel = idx >= 0 ? idx : 0;
     // Seed the active model's staged effort with its current effort so the
     // active row shows the live value, not the model default.
     if (activeModel) {

@@ -171,6 +171,34 @@ test("Enter applies the combined model + effort", async ({ page }) => {
   );
 });
 
+test("opening the picker preselects the active model", async ({ page }) => {
+  // Issue #82 — the picker must highlight the current model on open, not the
+  // first in the list, so the user can immediately cycle its effort level.
+
+  // Switch to a non-first model (Sonnet, index 1 in the mock catalog).
+  await page.getByTestId("model-badge").click();
+  const panel = page.locator(".mp .panel");
+  const filter = panel.getByPlaceholder("Type to filter…");
+  await filter.press("ArrowDown");
+  await filter.press("Enter");
+  await expect(page.getByTestId("model-badge")).toContainText(
+    "Claude Sonnet 4.6",
+  );
+
+  // Reopen — the active model (Sonnet) should be highlighted, not Opus.
+  await page.getByTestId("model-badge").click();
+  const hlRow = page.locator(".mp .panel .item.hl");
+  await expect(hlRow).toContainText("Claude Sonnet 4.6");
+
+  // Arrow right cycles the highlighted (active) model's effort from
+  // "medium" (Sonnet's default, index 2 of [off, low, medium, high]) to "high".
+  await page
+    .locator(".mp .panel")
+    .getByPlaceholder("Type to filter…")
+    .press("ArrowRight");
+  await expect(hlRow.locator(".eff-val")).toContainText("high");
+});
+
 test("first Esc clears the filter; second Esc closes and refocuses", async ({
   page,
 }) => {
