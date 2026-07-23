@@ -29,6 +29,7 @@ import { join, resolve } from "node:path";
 import {
   DESKTOP_ASSET,
   DESKTOP_SIGNATURE,
+  HEADLESS_TARGETS,
   RELEASE_REPO,
   assertReleaseTag,
   desktopUpdateEndpoint,
@@ -52,22 +53,61 @@ async function sha256(path: string): Promise<string> {
 }
 
 async function validateRetainedHeadlessBundle(dir: string, tag: string, version: string): Promise<void> {
-  const archive = join(dir, "pantoken-headless-macos-aarch64.tar.gz");
-  const signature = `${archive}.sig`;
   const metadataPath = join(dir, "release-metadata.json");
-  for (const path of [archive, signature, metadataPath]) if (!existsSync(path)) fail(`retained headless asset missing: ${path}`);
-  const metadata = await Bun.file(metadataPath).json() as { tag?: string; version?: string; buildSha?: string; releaseRepo?: string; assetSha256?: Record<string, string> };
+  if (!existsSync(metadataPath)) fail(`retained release metadata missing: ${metadataPath}`);
+  const metadata = await Bun.file(metadataPath).json() as {
+    tag?: string;
+    version?: string;
+    buildSha?: string;
+    releaseRepo?: string;
+    headlessTargets?: Array<{
+      targetTriple: string;
+      asset: string;
+      signature: string;
+      assetSha256: string;
+      signatureSha256: string;
+    }>;
+    assetSha256?: Record<string, string>;
+  };
   if (metadata.tag !== tag || metadata.version !== version || metadata.releaseRepo !== RELEASE_REPO)
     fail("retained release metadata disagrees with desktop artifact/tag/release host");
   if (!/^[0-9a-f]{40}$/.test(metadata.buildSha ?? "")) fail("retained metadata has invalid buildSha");
-  const expected = metadata.assetSha256 ?? {};
-  for (const [name, path] of [["headlessAsset", archive], ["headlessSignature", signature]] as const) {
-    if (expected[name] !== await sha256(path)) fail(`retained metadata digest mismatch for ${name}`);
+
+  // Validate every headless target in the matrix is present with a matching digest.
+  if (!metadata.headlessTargets || metadata.headlessTargets.length === 0)
+    fail("retained metadata has no headlessTargets — was the metadata aggregated from all target builds?");
+
+  const presentTriples = new Set(metadata.headlessTargets.map((t) => t.targetTriple));
+  for (const target of HEADLESS_TARGETS) {
+    if (!presentTriples.has(target.targetTriple))
+      fail(`retained metadata is missing headless target ${target.targetTriple} (${target.asset})`);
   }
+
+  for (const ht of metadata.headlessTargets) {
+    const archive = join(dir, ht.asset);
+    const signature = join(dir, ht.signature);
+    for (const path of [archive, signature])
+      if (!existsSync(path)) fail(`retained headless asset missing: ${path}`);
+    if (await sha256(archive) !== ht.assetSha256)
+      fail(`retained metadata digest mismatch for ${ht.asset}`);
+    if (await sha256(signature) !== ht.signatureSha256)
+      fail(`retained metadata digest mismatch for ${ht.signature}`);
+  }
+
+  // Cross-check the flat assetSha256 map too.
+  const expected = metadata.assetSha256 ?? {};
+  for (const target of HEADLESS_TARGETS) {
+    if (expected[target.asset] !== await sha256(join(dir, target.asset)))
+      fail(`retained metadata flat-digest mismatch for ${target.asset}`);
+  }
+
   const validator = process.env.PANTOKEN_TAR_VALIDATOR;
   if (validator) {
-    const checked = await capture([validator, archive]);
-    if (checked.code !== 0) fail(`retained headless archive failed tar validation: ${checked.stderr}`);
+    for (const target of HEADLESS_TARGETS) {
+      const archive = join(dir, target.asset);
+      const checked = await capture([validator, archive]);
+      if (checked.code !== 0) fail(`retained ${target.asset} failed tar validation: ${checked.stderr}`);
+    }
   }
 }
 
@@ -313,6 +353,12 @@ if (import.meta.main) {
         `Re-publishing a tag with different bytes would strand installed apps.`,
     );
   }
+  // Build the asset upload list: desktop bundle + all headless target artifacts.
+  const headlessAssets: string[] = [];
+  for (const target of HEADLESS_TARGETS) {
+    headlessAssets.push(join(bundleDir, target.asset), join(bundleDir, target.signature));
+  }
+
   await run([
     "gh",
     "release",
@@ -327,14 +373,10 @@ if (import.meta.main) {
     tar,
     sig,
     manifestPath,
-    join(bundleDir, "pantoken-headless-macos-aarch64.tar.gz"),
-    join(bundleDir, "pantoken-headless-macos-aarch64.tar.gz.sig"),
+    ...headlessAssets,
     join(bundleDir, "release-metadata.json"),
   ]);
   console.log(
-    `\npublished ${tag}. Desktop apps poll ${endpoint}; the headless service uses the ` +
-      `${DESKTOP_ASSET} release asset alongside this bundle.\n` +
-      `First install (curl sets no quarantine xattr):\n` +
-      `  curl -sSL ${releaseAssetUrl(tag, DESKTOP_ASSET)} | tar xz -C /Applications`,
+    `\npublished ${tag}. Desktop apps poll ${endpoint}; headless targets: ${HEADLESS_TARGETS.map((t) => t.targetTriple).join(", ")}.`,
   );
 }

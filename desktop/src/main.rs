@@ -10,11 +10,13 @@
 mod bridge;
 mod config;
 mod dock_attention;
+mod docker_target;
 mod mouse_nav;
 mod proc;
 mod provisioning;
 mod remote_commands;
 mod remote_connection;
+mod remote_executor;
 mod remote_profile;
 mod shell;
 mod state;
@@ -59,6 +61,9 @@ fn main() {
             remote_commands::host_state,
             remote_commands::list_hosts,
             remote_commands::disconnect_host,
+            remote_commands::acknowledge_risk,
+            remote_commands::cancel_connection,
+            remote_commands::resume_connection,
             dock_attention::request_dock_attention,
             dock_attention::set_dock_badge,
         ])

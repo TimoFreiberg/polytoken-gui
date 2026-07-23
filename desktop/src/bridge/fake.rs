@@ -155,8 +155,11 @@ pub struct FakeSshTransport {
     /// Canned responses for `run_command`, keyed by a substring match against
     /// the remote command. The first matching entry wins.
     command_responses: Arc<Mutex<Vec<CommandResponseEntry>>>,
-    /// In-memory model of the remote filesystem for `upload_file`.
+    /// In-memory model of the remote filesystem for host `upload_file`.
     remote_fs: Arc<Mutex<FakeRemoteFs>>,
+    /// Exact remote stdin commands and their byte streams (Docker uploads).
+    #[allow(clippy::type_complexity)]
+    stdin_commands: Arc<Mutex<Vec<(String, Vec<u8>)>>>,
 }
 
 /// A canned response for a `run_command` call.
@@ -208,6 +211,7 @@ impl FakeSshTransport {
             spawn_notify: Arc::new(Notify::new()),
             command_responses: Arc::new(Mutex::new(Vec::new())),
             remote_fs: Arc::new(Mutex::new(FakeRemoteFs::new())),
+            stdin_commands: Arc::new(Mutex::new(Vec::new())),
         }
     }
 
@@ -238,6 +242,73 @@ impl FakeSshTransport {
     pub fn remote_fs(&self) -> Arc<Mutex<FakeRemoteFs>> {
         self.remote_fs.clone()
     }
+
+    #[allow(clippy::type_complexity)]
+    pub fn stdin_commands(&self) -> Arc<Mutex<Vec<(String, Vec<u8>)>>> {
+        self.stdin_commands.clone()
+    }
+}
+
+#[cfg(test)]
+impl crate::remote_executor::RemoteExecutor for FakeSshTransport {
+    fn run_script(
+        &self,
+        script: String,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = io::Result<CommandOutput>> + Send>>
+    {
+        self.run_command(
+            SshCommand {
+                destination: "fake".into(),
+                port: None,
+                remote_root: "/tmp/pantoken-test".into(),
+                server_path: "pantoken-server".into(),
+                extra_env: Vec::new(),
+                raw_remote_command: None,
+            },
+            &script,
+        )
+    }
+
+    fn upload(
+        &self,
+        destination: String,
+        data: Vec<u8>,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = io::Result<()>> + Send>> {
+        self.upload_file(
+            SshCommand {
+                destination: "fake".into(),
+                port: None,
+                remote_root: "/tmp/pantoken-test".into(),
+                server_path: "pantoken-server".into(),
+                extra_env: Vec::new(),
+                raw_remote_command: None,
+            },
+            &destination,
+            data,
+        )
+    }
+
+    fn spawn_proxy(
+        &self,
+        server_path: String,
+        env: Vec<(String, String)>,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = io::Result<SshProxy>> + Send>> {
+        SshTransport::spawn_proxy(
+            self,
+            SshCommand {
+                destination: "fake".into(),
+                port: None,
+                remote_root: "/tmp/pantoken-test".into(),
+                server_path,
+                extra_env: env,
+                raw_remote_command: None,
+            },
+        )
+    }
+
+    fn remote_root(&self) -> &str {
+        "/tmp/pantoken-test"
+    }
 }
 
 impl Clone for FakeSshTransport {
@@ -251,6 +322,7 @@ impl Clone for FakeSshTransport {
             spawn_notify: self.spawn_notify.clone(),
             command_responses: self.command_responses.clone(),
             remote_fs: self.remote_fs.clone(),
+            stdin_commands: self.stdin_commands.clone(),
         }
     }
 }
@@ -392,6 +464,19 @@ impl SshTransport for FakeSshTransport {
                     })
                 }
             }
+        })
+    }
+
+    fn run_command_with_stdin(
+        &self,
+        _command: SshCommand,
+        remote_command: String,
+        data: Vec<u8>,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = io::Result<()>> + Send>> {
+        let commands = self.stdin_commands.clone();
+        Box::pin(async move {
+            commands.lock().unwrap().push((remote_command, data));
+            Ok(())
         })
     }
 

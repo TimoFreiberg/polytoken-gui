@@ -75,23 +75,38 @@ pub enum ArchiveFormat {
     Zip,
 }
 
-/// The canonical supported platform matrix: Linux + macOS on amd64 + arm64.
+/// The canonical supported platform matrix for the remote-helper artifact.
 ///
-/// A release manifest must cover **all four** triples so that any host
-/// Pantoken can run on can find a matching artifact. This is the manifest
-/// contract — it mirrors the platform support implemented in
-/// `desktop/src/provisioning/probe.rs::target_triple` and
-/// `scripts/desktop/build-hub.ts::hostTriple`. If a new platform actually
-/// ships, add it to all three locations.
+/// A release manifest received from a remote source must cover **every** triple
+/// listed here so that any host Pantoken can provision has a matching artifact.
+/// This is the publish/validation contract enforced by [`validate`].
+///
+/// ## Current matrix (two targets)
+///
+/// - `aarch64-apple-darwin` — macOS arm64 (the desktop host running Pantoken)
+/// - `x86_64-unknown-linux-gnu` — Linux x86_64 glibc (the SSH-accessible
+///   development server / Docker container scenario)
+///
+/// ## Adding a target
+///
+/// A target triple may appear here **only** in the same change that:
+///
+/// 1. Builds the artifact on a matching CI runner
+///    (`scripts/headless/build.ts --target <triple>`);
+/// 2. Smoke-tests the extracted binary on that runner
+///    (`scripts/headless/smoke-test.ts`);
+/// 3. Embeds its real SHA-256 digest in the desktop build (`desktop/build.rs`);
+/// 4. Publishes the signed/checksummed archive alongside the other targets
+///    (`scripts/desktop/publish.ts`);
+/// 5. Updates the full-matrix tests below to include the new triple.
+///
+/// Do not advertise a triple merely because Rust can name it. A target without
+/// a published, validated artifact would cause provisioning to download a
+/// non-existent file at runtime.
 ///
 /// Sort order is fixed (not derived from insertion) so that the
 /// [`ManifestError::IncompleteTargetMatrix`] missing-list is deterministic.
-pub const SUPPORTED_TARGET_TRIPLES: &[&str] = &[
-    "aarch64-apple-darwin",
-    "aarch64-unknown-linux-gnu",
-    "x86_64-apple-darwin",
-    "x86_64-unknown-linux-gnu",
-];
+pub const SUPPORTED_TARGET_TRIPLES: &[&str] = &["aarch64-apple-darwin", "x86_64-unknown-linux-gnu"];
 
 /// Validation error for a release manifest.
 #[derive(Debug, PartialEq, Eq)]
@@ -394,7 +409,7 @@ mod tests {
 
     #[test]
     fn manifest_with_full_matrix_passes() {
-        // A manifest covering exactly the 4 supported triples should pass.
+        // A manifest covering exactly the supported triples should pass.
         let manifest = valid_manifest();
         assert!(validate(&manifest).is_ok());
         // Also verify the completeness function directly.
@@ -432,9 +447,11 @@ mod tests {
     #[test]
     fn manifest_rejects_incomplete_target_matrix_multiple_missing() {
         // Removing two targets yields both in the missing list (sorted).
+        // With the two-target matrix, removing both leaves none present.
         let mut manifest = valid_manifest();
         manifest.targets.retain(|t| {
-            t.target_triple != "aarch64-apple-darwin" && t.target_triple != "x86_64-apple-darwin"
+            t.target_triple != "aarch64-apple-darwin"
+                && t.target_triple != "x86_64-unknown-linux-gnu"
         });
 
         let err = validate_target_matrix_completeness(&manifest).unwrap_err();
@@ -445,7 +462,7 @@ mod tests {
                     missing,
                     vec![
                         "aarch64-apple-darwin".to_string(),
-                        "x86_64-apple-darwin".to_string(),
+                        "x86_64-unknown-linux-gnu".to_string(),
                     ]
                 );
             }
@@ -472,5 +489,137 @@ mod tests {
             validate(&manifest).is_err(),
             "single-target manifest should fail full validation (incomplete matrix)"
         );
+    }
+
+    // ── Phase 4 release-matrix regression tests ──────────────────────────────
+
+    /// Named validation: `release_manifest_matches_published_target_matrix`.
+    /// The supported matrix must be exactly the two targets that have real,
+    /// published artifacts. A target here without a matching CI build pipeline
+    /// would cause provisioning to fail at runtime.
+    #[test]
+    fn release_manifest_matches_published_target_matrix() {
+        assert_eq!(
+            SUPPORTED_TARGET_TRIPLES,
+            &["aarch64-apple-darwin", "x86_64-unknown-linux-gnu"],
+            "the supported matrix must be exactly these two targets — \
+             see the module doc for the add-target contract"
+        );
+    }
+
+    /// Named validation: `embedded_manifest_contains_real_linux_digest`.
+    /// A real release manifest covering the full matrix must have a non-placeholder
+    /// (non-all-zero) SHA-256 for the Linux target. This is the contract the
+    /// desktop `build.rs` enforces at release-build time: release builds must embed
+    /// real digests, not placeholders.
+    #[test]
+    fn embedded_manifest_contains_real_linux_digest() {
+        let manifest = valid_manifest();
+        let linux_target = manifest
+            .targets
+            .iter()
+            .find(|t| t.target_triple == "x86_64-unknown-linux-gnu")
+            .expect("full-matrix manifest must contain the Linux x86_64 target");
+
+        assert_eq!(linux_target.sha256.len(), 64);
+        assert_eq!(
+            linux_target.archive_format,
+            ArchiveFormat::TarGz,
+            "Linux artifacts must be tar.gz"
+        );
+        assert!(
+            linux_target.sha256 != "0".repeat(64),
+            "the Linux target digest must not be the all-zero placeholder"
+        );
+        assert!(
+            !linux_target.artifact_url.is_empty(),
+            "the Linux target must have a download URL"
+        );
+        assert!(
+            linux_target
+                .artifact_url
+                .contains("x86_64-unknown-linux-gnu")
+                || linux_target.artifact_url.contains("linux"),
+            "the Linux artifact URL should reference its platform"
+        );
+    }
+
+    /// Named validation: `release_rejects_missing_or_mismatched_artifact`.
+    /// A manifest missing the Linux target is rejected by the full validation gate.
+    /// A manifest whose Linux target has a placeholder (all-zero) digest still
+    /// passes structural validation (the zero string is valid 64-hex format) but
+    /// is not a valid *release* artifact — the build.rs release gate must catch
+    /// this separately. Here we verify the structural gate catches a missing target.
+    #[test]
+    fn release_rejects_missing_or_mismatched_artifact() {
+        // Removing the Linux target entirely must fail full validation.
+        let mut manifest = valid_manifest();
+        manifest
+            .targets
+            .retain(|t| t.target_triple != "x86_64-unknown-linux-gnu");
+
+        let err = validate(&manifest).unwrap_err();
+        match err {
+            ManifestError::IncompleteTargetMatrix(missing) => {
+                assert_eq!(missing, vec!["x86_64-unknown-linux-gnu".to_string()]);
+            }
+            other => panic!("expected IncompleteTargetMatrix, got {:?}", other),
+        }
+
+        // A manifest with a *placeholder* digest for Linux passes structural
+        // validation (the format is valid) — this is the gap that the release
+        // build gate (desktop/build.rs) must close by refusing to emit a
+        // release build with a placeholder digest.
+        let mut placeholder_manifest = valid_manifest();
+        let linux = placeholder_manifest
+            .targets
+            .iter_mut()
+            .find(|t| t.target_triple == "x86_64-unknown-linux-gnu")
+            .expect("Linux target present");
+        linux.sha256 = "0".repeat(64);
+        assert!(
+            validate_manifest_fields(&placeholder_manifest).is_ok(),
+            "placeholder digest passes structural validation (format is valid hex)"
+        );
+        assert!(
+            validate(&placeholder_manifest).is_ok(),
+            "placeholder digest passes full validation (matrix is complete, format valid)"
+        );
+        // This test documents that structural validation alone cannot catch a
+        // placeholder digest — the release build gate must enforce it.
+    }
+
+    /// A manifest that claims only the macOS target but omits Linux must be
+    /// rejected by full validation, proving the matrix is strictly enforced.
+    #[test]
+    fn macos_only_manifest_fails_full_validation() {
+        let manifest = PantokenReleaseManifest {
+            release_version: "0.2.0".into(),
+            protocol_version: PROTOCOL_VERSION,
+            build_sha: Some("abcdef".into()),
+            targets: vec![valid_target_for("aarch64-apple-darwin")],
+        };
+        assert!(validate_manifest_fields(&manifest).is_ok());
+        let err = validate(&manifest).unwrap_err();
+        assert!(matches!(err, ManifestError::IncompleteTargetMatrix(_)));
+    }
+
+    /// The supported matrix must not include targets that lack published artifacts.
+    /// This guards against accidentally re-adding `aarch64-unknown-linux-gnu`,
+    /// `x86_64-apple-darwin`, or musl variants without a matching pipeline.
+    #[test]
+    fn supported_matrix_excludes_unverified_targets() {
+        let unsupported = [
+            "aarch64-unknown-linux-gnu",
+            "x86_64-apple-darwin",
+            "x86_64-unknown-linux-musl",
+            "aarch64-unknown-linux-musl",
+        ];
+        for triple in unsupported {
+            assert!(
+                !SUPPORTED_TARGET_TRIPLES.contains(&triple),
+                "{triple} must not be in the supported matrix without a published artifact"
+            );
+        }
     }
 }

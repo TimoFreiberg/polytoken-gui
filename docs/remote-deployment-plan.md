@@ -181,3 +181,46 @@ Update `docs/DESIGN.md` and `docs/DECISIONS.md` with the remote architecture, tr
 - **Mobile SSH implementation:** arbitrary SSH cannot be initiated by a browser/PWA alone. Mobile requires a native SSH transport implementation; the shared transport/provisioning contract should be built first, while mobile native integration may be a separately sequenced execution task.
 - **SSH command-shell variability:** remote login shell startup files can emit noise or alter PATH. The probe and proxy commands must use a controlled non-interactive invocation and parse structured records; diagnostics must tell the user when shell initialization is the cause.
 - **Security boundary:** SSH host-key verification is the primary host identity; the remote Unix socket must be user-private; no agent forwarding or reverse forwarding should be enabled by default; cleanup must verify process identity before signaling.
+
+---
+
+## Docker Target Extension
+
+This section extends the remote deployment plan to support connecting through
+an SSH-accessible development server to an already-running Docker container.
+It has its own planned/in-progress/completed status markers. It does not
+rewrite existing completed phase descriptions or checkmarks.
+
+### Status
+
+- **Phase 1 (profile contract + risk acknowledgements):** ✅ Implemented.
+  `ExecutionTargetProfile` enum, `RiskAcknowledgements` with SHA-256
+  fingerprints, client/native DTO round-trip, validation, secret-field guards.
+- **Phase 2 (Docker discovery + preflight):** ✅ Implemented.
+  `docker_target.rs` (exact-name resolution, inspect parsing, mount coverage,
+  persistence classification), `remote_connection.rs` (`PreflightPhase`,
+  `PendingRisk`, `AwaitingAcknowledgement` state), `remote_executor.rs`
+  (`preflight_docker` function).
+- **Phase 3 (target-aware execution + provisioning migration):** ✅ Implemented.
+  `RemoteExecutor` trait, `HostExecutor`, `DockerExecutor`, provisioning
+  modules migrated to `&dyn RemoteExecutor`, libc-aware target selection,
+  reconnect identity checks.
+- **Phase 4 (Linux release artifact):** ✅ Implemented.
+  Two-target matrix (`aarch64-apple-darwin`, `x86_64-unknown-linux-gnu`),
+  `scripts/headless/build.ts` target-aware, `scripts/headless/merge-metadata.ts`,
+  CI `release-prepare-linux` job, embedded manifest with real digests,
+  regression-sensitive release tests.
+- **Phase 5 (behavioral UI integration):** ⚠️ Partially done.
+  Client types and provider are wired. Actual Svelte UI components (profile
+  editor, progress phases, warning dialogs, failure rendering) are blocked on
+  separately approved mockups. See `docs/docker-target-guide.md` for the user
+  contract.
+- **Phase 6 (documentation):** ✅ This section + `docs/DESIGN.md` +
+  `docs/DECISIONS.md` + `docs/docker-target-guide.md` + `deploy/DEPLOY.md`.
+
+### Implementation/user guide
+
+See [`docs/docker-target-guide.md`](docker-target-guide.md) for the
+user-facing Docker target guide covering prerequisites, warnings, supported
+targets, troubleshooting, and the explicit statement that Pantoken does not
+manage container lifecycle.

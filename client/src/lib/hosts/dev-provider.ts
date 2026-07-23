@@ -1,5 +1,5 @@
 import type { ServerMessage, SessionAttention } from "@pantoken/protocol";
-import type { HostActivity, HostConnectionState, NativeHostDescriptor } from "./types.js";
+import type { HostActivity, HostConnectionState, NativeHostDescriptor, RemoteProfile } from "./types.js";
 import type { HostProvider } from "./provider.js";
 
 export interface DevHostControls {
@@ -24,6 +24,7 @@ export function createDevHostProvider(wsUrl: string): DevHostProvider {
     }],
   ]);
   let sink: ((id: string, message: ServerMessage) => void) | null = null;
+  const profileMap = new Map<string, RemoteProfile>();
 
   const emit = (id: string, message: ServerMessage): void => sink?.(id, message);
   const setState = (id: string, state: HostConnectionState): void => {
@@ -66,12 +67,27 @@ export function createDevHostProvider(wsUrl: string): DevHostProvider {
       setState(id, "ready");
     },
     disconnectHost: async (id) => setState(id, "disconnected"),
-    addProfile: async (profile) => { hostMap.set(profile.id, { ...profile }); return profile; },
-    updateProfile: async (profile) => {
-      const current = hostMap.get(profile.id);
-      if (current) hostMap.set(profile.id, { ...current, ...profile });
+    listProfiles: async () => [...profileMap.values()].map((p) => structuredClone(p)),
+    getProfile: async (id) => {
+      const p = profileMap.get(id);
+      return p ? structuredClone(p) : null;
     },
-    deleteProfile: async (id) => { hostMap.delete(id); },
+    addProfile: async (profile) => {
+      const stored = structuredClone(profile);
+      profileMap.set(profile.id, stored);
+      return structuredClone(stored);
+    },
+    updateProfile: async (profile) => {
+      profileMap.set(profile.id, structuredClone(profile));
+    },
+    deleteProfile: async (id) => { profileMap.delete(id); hostMap.delete(id); },
+    acknowledgeRisk: async () => {
+      // No-op: dev provider does not model Docker preflight risks.
+    },
+    cancelConnection: async (id) => { setState(id, "disconnected"); },
+    resumeConnection: async () => {
+      // No-op: dev provider does not model preflight/acknowledgement pauses.
+    },
     setState,
     setActivity,
     emit,

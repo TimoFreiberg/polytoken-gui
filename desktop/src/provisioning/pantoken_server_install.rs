@@ -39,9 +39,10 @@ use pantoken_remote_layout::layout;
 use pantoken_remote_layout::manifest::{ArchiveFormat, PantokenReleaseManifest, ReleaseTarget};
 use serde::{Deserialize, Serialize};
 
-use crate::bridge::{SshCommand, SshTransport};
+use crate::docker_target::posix_quote as shell_quote;
 use crate::provisioning::probe::ProbeResult;
 use crate::provisioning::reconcile::HttpFetch;
+use crate::remote_executor::RemoteExecutor;
 
 /// The path to `pantoken-server` inside the headless archive.
 const SERVER_BINARY_IN_ARCHIVE: &str = "bin/pantoken-server";
@@ -159,12 +160,6 @@ fn verify_checksum(data: &[u8], expected_sha256: &str) -> Result<(), ServerInsta
     }
 }
 
-/// Single-quote a shell word for safe interpolation into SSH commands.
-/// Wraps in `'...'` and escapes embedded single quotes as `'\''`.
-fn shell_quote(word: &str) -> String {
-    format!("'{}'", word.replace('\'', "'\\''"))
-}
-
 /// Build the remote extraction + atomic-install command for the server binary.
 ///
 /// The headless archive contains `bin/pantoken-server` (a nested path), but the
@@ -267,8 +262,7 @@ pub fn build_write_install_json_command(
 /// Idempotent reconciliation: returns `true` if the binary exists and is
 /// executable, `false` otherwise.
 pub async fn check_server_installed(
-    transport: &dyn SshTransport,
-    command: SshCommand,
+    executor: &dyn RemoteExecutor,
     remote_root: &str,
     version: &str,
     target: &str,
@@ -276,7 +270,7 @@ pub async fn check_server_installed(
     let binary_path = layout::release_artifact(Path::new(remote_root), version, target)
         .map_err(|e| ServerInstallError::UnsupportedTarget(e.to_string()))?;
     let cmd = build_binary_check_command(&binary_path.to_string_lossy());
-    let output = transport.run_command(command, &cmd).await?;
+    let output = executor.run_script(cmd).await?;
     Ok(output.stdout.trim() == "exists")
 }
 
@@ -285,8 +279,7 @@ pub async fn check_server_installed(
 /// Uses the provided HTTP fetch function (injectable for testing) and the SSH
 /// transport. Returns the installed binary path on success.
 pub async fn install_server(
-    transport: &dyn SshTransport,
-    command: SshCommand,
+    executor: &dyn RemoteExecutor,
     remote_root: &str,
     probe: &ProbeResult,
     manifest: &PantokenReleaseManifest,
@@ -316,7 +309,7 @@ pub async fn install_server(
     let archive_remote_path = format!("{remote_root}/.cache/{filename}");
     let cache_dir = format!("{remote_root}/.cache");
     let mkdir_cmd = format!("mkdir -p {}", shell_quote(&cache_dir));
-    let mkdir_output = transport.run_command(command.clone(), &mkdir_cmd).await?;
+    let mkdir_output = executor.run_script(mkdir_cmd).await?;
     if !mkdir_output.is_success() {
         return Err(ServerInstallError::RemoteCommand {
             exit_code: mkdir_output.exit_code,
@@ -324,8 +317,8 @@ pub async fn install_server(
         });
     }
 
-    transport
-        .upload_file(command.clone(), &archive_remote_path, archive_data)
+    executor
+        .upload(archive_remote_path.clone(), archive_data)
         .await?;
 
     // 5. Extract + atomic install on remote.
@@ -336,7 +329,7 @@ pub async fn install_server(
         &archive_remote_path,
         artifact.archive_format.clone(),
     )?;
-    let install_output = transport.run_command(command.clone(), &install_cmd).await?;
+    let install_output = executor.run_script(install_cmd).await?;
     if !install_output.is_success() || !install_output.stdout.contains("ok") {
         return Err(ServerInstallError::RemoteCommand {
             exit_code: install_output.exit_code,
@@ -354,7 +347,7 @@ pub async fn install_server(
         trust_level: "checksum-only".into(),
     };
     let write_cmd = build_write_install_json_command(remote_root, version, &target, &provenance)?;
-    let write_output = transport.run_command(command, &write_cmd).await?;
+    let write_output = executor.run_script(write_cmd).await?;
     if !write_output.is_success() {
         return Err(ServerInstallError::RemoteCommand {
             exit_code: write_output.exit_code,
@@ -510,6 +503,7 @@ mod tests {
             remote_root: "/tmp/pantoken-test".into(),
             server_path: "pantoken-server".into(),
             extra_env: Vec::new(),
+            raw_remote_command: None,
         }
     }
 
@@ -540,7 +534,6 @@ mod tests {
 
         let installed = check_server_installed(
             &transport,
-            ssh_command(),
             "/tmp/pantoken-test",
             &manifest.release_version,
             "aarch64-apple-darwin",
@@ -584,7 +577,6 @@ mod tests {
 
         let result = install_server(
             &transport,
-            ssh_command(),
             "/tmp/pantoken-test",
             &macos_arm64_probe(),
             &manifest,
@@ -641,7 +633,6 @@ mod tests {
 
         let result = install_server(
             &transport,
-            ssh_command(),
             "/tmp/pantoken-test",
             &macos_arm64_probe(),
             &manifest,

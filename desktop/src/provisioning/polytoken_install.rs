@@ -25,8 +25,9 @@ use pantoken_remote_layout::layout;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
-use crate::bridge::{SshCommand, SshTransport};
+use crate::docker_target::posix_quote as shell_quote;
 use crate::provisioning::probe::ProbeResult;
+use crate::remote_executor::RemoteExecutor;
 
 /// Type alias for the HTTP fetch function used by the installer.
 pub type HttpFetch = Arc<
@@ -145,8 +146,6 @@ pub fn channel_for_version(version: &str) -> Channel {
 fn target_to_platform(target: &str) -> Option<(&'static str, &'static str)> {
     match target {
         "x86_64-unknown-linux-gnu" => Some(("linux", "amd64")),
-        "aarch64-unknown-linux-gnu" => Some(("linux", "arm64")),
-        "x86_64-apple-darwin" => Some(("macos", "amd64")),
         "aarch64-apple-darwin" => Some(("macos", "arm64")),
         _ => None,
     }
@@ -234,12 +233,6 @@ pub fn verify_checksum(data: &[u8], expected_sha256: &str) -> Result<(), Install
             actual,
         })
     }
-}
-
-/// Single-quote a shell word for safe interpolation into SSH commands.
-/// Wraps in `'...'` and escapes embedded single quotes as `'\''`.
-fn shell_quote(word: &str) -> String {
-    format!("'{}'", word.replace('\'', "'\\''"))
 }
 
 /// Build the remote extraction + atomic-install command.
@@ -343,8 +336,7 @@ pub fn build_read_install_json_command(remote_root: &str) -> String {
 /// This is the high-level orchestrator. It uses the provided HTTP fetch
 /// function (injectable for testing) and the SSH transport.
 pub async fn install_polytoken(
-    transport: &dyn SshTransport,
-    command: SshCommand,
+    executor: &dyn RemoteExecutor,
     remote_root: &str,
     probe: &ProbeResult,
     http_fetch: HttpFetch,
@@ -380,7 +372,7 @@ pub async fn install_polytoken(
     // Ensure the cache dir exists.
     let cache_dir = format!("{remote_root}/.cache");
     let mkdir_cmd = format!("mkdir -p {}", shell_quote(&cache_dir));
-    let mkdir_output = transport.run_command(command.clone(), &mkdir_cmd).await?;
+    let mkdir_output = executor.run_script(mkdir_cmd).await?;
     if !mkdir_output.is_success() {
         return Err(InstallError::RemoteCommand {
             exit_code: mkdir_output.exit_code,
@@ -388,8 +380,8 @@ pub async fn install_polytoken(
         });
     }
 
-    transport
-        .upload_file(command.clone(), &archive_remote_path, archive_data)
+    executor
+        .upload(archive_remote_path.clone(), archive_data)
         .await?;
 
     // 4. Extract + atomic install on remote.
@@ -400,7 +392,7 @@ pub async fn install_polytoken(
         &archive_remote_path,
         urls.format,
     )?;
-    let install_output = transport.run_command(command.clone(), &install_cmd).await?;
+    let install_output = executor.run_script(install_cmd).await?;
     if !install_output.is_success() {
         return Err(InstallError::RemoteCommand {
             exit_code: install_output.exit_code,
@@ -423,7 +415,7 @@ pub async fn install_polytoken(
     };
 
     let write_cmd = build_write_install_json_command(remote_root, &provenance)?;
-    let write_output = transport.run_command(command, &write_cmd).await?;
+    let write_output = executor.run_script(write_cmd).await?;
     if !write_output.is_success() {
         return Err(InstallError::RemoteCommand {
             exit_code: write_output.exit_code,
@@ -490,6 +482,9 @@ mod tests {
     fn polytoken_install_artifact_matrix() {
         let version = "0.5.0-unstable.9";
 
+        // Only targets with published, smoke-tested artifacts are supported.
+        // aarch64-unknown-linux-gnu and x86_64-apple-darwin are intentionally
+        // absent until matching artifacts are built and validated.
         let cases = [
             (
                 "x86_64-unknown-linux-gnu",
@@ -497,13 +492,6 @@ mod tests {
                 "amd64",
                 ArchiveFormat::TarGz,
             ),
-            (
-                "aarch64-unknown-linux-gnu",
-                "linux",
-                "arm64",
-                ArchiveFormat::TarGz,
-            ),
-            ("x86_64-apple-darwin", "macos", "amd64", ArchiveFormat::Zip),
             ("aarch64-apple-darwin", "macos", "arm64", ArchiveFormat::Zip),
         ];
 

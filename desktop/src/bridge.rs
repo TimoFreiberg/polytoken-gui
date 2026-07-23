@@ -82,6 +82,9 @@ pub struct SshCommand {
     /// Extra env vars to set on the remote command (e.g. XDG override paths
     /// for isolated polytoken). Prepended as `KEY=VAL ` before the exec.
     pub extra_env: Vec<(String, String)>,
+    /// Audited complete remote command for target executors. Host mode leaves
+    /// this unset and uses the structured root/server/env fields above.
+    pub raw_remote_command: Option<String>,
 }
 
 impl SshCommand {
@@ -109,6 +112,9 @@ impl SshCommand {
 
     /// The remote shell command: env prefix + `exec <server_path>`.
     fn remote_command(&self) -> String {
+        if let Some(command) = &self.raw_remote_command {
+            return command.clone();
+        }
         let mut env_prefix = String::new();
         for (key, val) in &self.extra_env {
             env_prefix.push_str(key);
@@ -210,6 +216,7 @@ impl From<&RemoteProfile> for SshCommand {
             remote_root: profile.remote_root().to_string(),
             server_path: profile.server_path().to_string(),
             extra_env,
+            raw_remote_command: None,
         }
     }
 }
@@ -287,14 +294,26 @@ pub trait SshTransport: Send + Sync {
         remote_command: &str,
     ) -> Pin<Box<dyn Future<Output = io::Result<CommandOutput>> + Send>>;
 
+    /// Stream bytes to an exact remote command over SSH stdin.
+    fn run_command_with_stdin(
+        &self,
+        command: SshCommand,
+        remote_command: String,
+        data: Vec<u8>,
+    ) -> Pin<Box<dyn Future<Output = io::Result<()>> + Send>>;
+
     /// Upload file bytes to the remote host via SSH stdin.
-    /// Used by the installer to transfer verified archives before extraction.
+    /// Used by the host executor; Docker upload uses `run_command_with_stdin`
+    /// with a fixed positional-argument script.
     fn upload_file(
         &self,
         command: SshCommand,
         remote_path: &str,
         data: Vec<u8>,
-    ) -> Pin<Box<dyn Future<Output = io::Result<()>> + Send>>;
+    ) -> Pin<Box<dyn Future<Output = io::Result<()>> + Send>> {
+        let remote_command = format!("cat > {}", shell_quote(remote_path));
+        self.run_command_with_stdin(command, remote_command, data)
+    }
 }
 
 // ─────────────────────────── SystemSshTransport ──────────────────────────
@@ -461,13 +480,12 @@ impl SshTransport for SystemSshTransport {
         })
     }
 
-    fn upload_file(
+    fn run_command_with_stdin(
         &self,
         command: SshCommand,
-        remote_path: &str,
+        remote_cmd: String,
         data: Vec<u8>,
     ) -> Pin<Box<dyn Future<Output = io::Result<()>> + Send>> {
-        let remote_cmd = format!("cat > {}", shell_quote(remote_path));
         Box::pin(async move {
             let mut args = vec![
                 "-T".into(),
@@ -739,11 +757,9 @@ fn keepalive_frame() -> WsMessage {
 pub struct Bridge {
     /// The loopback port the browser connects to.
     pub port: u16,
-    /// The SSH transport (spawns proxy processes).
-    transport: Arc<dyn SshTransport>,
-    /// The resolved SSH command (destination, port, remote root, server path).
-    /// Passed to each `spawn_proxy` call so the transport stays stateless.
-    command: SshCommand,
+    executor: Arc<dyn crate::remote_executor::RemoteExecutor>,
+    server_path: String,
+    proxy_env: Vec<(String, String)>,
     /// Optional sink for connection-state updates (drives the native overlay).
     /// `None` in tests; the desktop wires a real one in Step 6.
     state_sink: Option<Arc<dyn ConnectionStateSink>>,
@@ -761,11 +777,31 @@ impl Bridge {
     /// Create a new bridge bound to the given loopback port with no state sink
     /// (test/standalone use). The `command` is the resolved SSH command built
     /// from the profile; the transport spawns it.
+    #[allow(dead_code)]
     pub fn new(port: u16, transport: Arc<dyn SshTransport>, command: SshCommand) -> Self {
+        let server_path = command.server_path.clone();
+        let proxy_env = command.extra_env.clone();
+        Self::new_with_executor(
+            port,
+            Arc::new(crate::remote_executor::HostExecutor::new(
+                transport, command,
+            )),
+            server_path,
+            proxy_env,
+        )
+    }
+
+    pub fn new_with_executor(
+        port: u16,
+        executor: Arc<dyn crate::remote_executor::RemoteExecutor>,
+        server_path: String,
+        proxy_env: Vec<(String, String)>,
+    ) -> Self {
         Self {
             port,
-            transport,
-            command,
+            executor,
+            server_path,
+            proxy_env,
             state_sink: None,
         }
     }
@@ -788,8 +824,9 @@ impl Bridge {
         let listener = TcpListener::bind(("127.0.0.1", self.port)).await?;
         info!(target: "pantoken::bridge", "bridge: listening on 127.0.0.1:{}", self.port);
 
-        let transport = self.transport;
-        let command = Arc::new(self.command);
+        let executor = self.executor;
+        let server_path = Arc::new(self.server_path);
+        let proxy_env = Arc::new(self.proxy_env);
         let state_sink = self.state_sink;
 
         loop {
@@ -812,8 +849,9 @@ impl Bridge {
                         }
                     };
                     info!(target: "pantoken::bridge", "bridge: browser connected from {addr}");
-                    let transport = transport.clone();
-                    let command = command.clone();
+                    let executor = executor.clone();
+                    let server_path = server_path.clone();
+                    let proxy_env = proxy_env.clone();
                     let state_sink = state_sink.clone();
                     // Child token: cancels this connection's relay task when the
                     // bridge shuts down. Without this, the detached relay task
@@ -823,8 +861,9 @@ impl Bridge {
                     tokio::spawn(async move {
                         if let Err(e) = handle_browser_connection(
                             stream,
-                            transport,
-                            command,
+                            executor,
+                            server_path,
+                            proxy_env,
                             state_sink,
                             conn_cancel,
                         )
@@ -843,8 +882,9 @@ impl Bridge {
 /// and forward messages bidirectionally with reconnect-with-backoff.
 async fn handle_browser_connection(
     stream: tokio::net::TcpStream,
-    transport: Arc<dyn SshTransport>,
-    command: Arc<SshCommand>,
+    executor: Arc<dyn crate::remote_executor::RemoteExecutor>,
+    server_path: Arc<String>,
+    proxy_env: Arc<Vec<(String, String)>>,
     state_sink: Option<Arc<dyn ConnectionStateSink>>,
     cancel: CancellationToken,
 ) -> io::Result<()> {
@@ -860,7 +900,15 @@ async fn handle_browser_connection(
         sink.on_state(ConnectionState::Connecting);
     }
 
-    run_ws_relay(ws_stream, transport, command, state_sink, cancel).await
+    run_ws_relay(
+        ws_stream,
+        executor,
+        server_path,
+        proxy_env,
+        state_sink,
+        cancel,
+    )
+    .await
 }
 
 /// The WS↔SSH relay loop with reconnect-with-backoff on the SSH side.
@@ -870,8 +918,9 @@ async fn handle_browser_connection(
 /// browser reconnect to the same bridge port — the resume token survives).
 async fn run_ws_relay(
     ws_stream: WebSocketStream<tokio::net::TcpStream>,
-    transport: Arc<dyn SshTransport>,
-    command: Arc<SshCommand>,
+    executor: Arc<dyn crate::remote_executor::RemoteExecutor>,
+    server_path: Arc<String>,
+    proxy_env: Arc<Vec<(String, String)>>,
     state_sink: Option<Arc<dyn ConnectionStateSink>>,
     cancel: CancellationToken,
 ) -> io::Result<()> {
@@ -886,7 +935,10 @@ async fn run_ws_relay(
             sink.on_state(ConnectionState::Starting);
         }
 
-        let proxy = match transport.spawn_proxy((*command).clone()).await {
+        let proxy = match executor
+            .spawn_proxy((*server_path).clone(), (*proxy_env).clone())
+            .await
+        {
             Ok(p) => p,
             Err(e) => {
                 warn!(target: "pantoken::bridge", "bridge: ssh spawn failed: {e}");
@@ -1246,6 +1298,7 @@ mod tests {
             remote_root: "/tmp/fake".into(),
             server_path: "pantoken-server".into(),
             extra_env: Vec::new(),
+            raw_remote_command: None,
         }
     }
 
@@ -1389,6 +1442,7 @@ mod tests {
             remote_root: "/srv/pantoken".into(),
             server_path: "pantoken-server".into(),
             extra_env: Vec::new(),
+            raw_remote_command: None,
         };
         let argv = cmd.argv();
 
@@ -1433,6 +1487,7 @@ mod tests {
             remote_root: "/r".into(),
             server_path: "pantoken-server".into(),
             extra_env: Vec::new(),
+            raw_remote_command: None,
         };
         let argv = cmd.argv();
         assert!(!argv.iter().any(|a| a == "-p"), "no -p when port is None");
@@ -1447,6 +1502,7 @@ mod tests {
             remote_root: "/srv/p".into(),
             server_path: "pantoken-server".into(),
             extra_env: Vec::new(),
+            raw_remote_command: None,
         };
         let debug = format!("{:?}", cmd);
         assert!(
@@ -1465,6 +1521,7 @@ mod tests {
             remote_root: "/r".into(),
             server_path: "pantoken-server".into(),
             extra_env: Vec::new(),
+            raw_remote_command: None,
         };
         let debug = format!("{:?}", cmd);
         assert!(
@@ -1765,6 +1822,7 @@ mod native_transport_seam_smoke_tests {
             remote_root: "/tmp/fake".into(),
             server_path: "pantoken-server".into(),
             extra_env: Vec::new(),
+            raw_remote_command: None,
         }
     }
 

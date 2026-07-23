@@ -24,6 +24,35 @@ use std::sync::Mutex;
 use crate::bridge::ConnectionStateSink;
 use crate::remote_profile::RemoteProfile;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum PreflightPhase {
+    CheckingDockerAccess,
+    LocatingContainer,
+    InspectingIdentity,
+    CheckingUserPermissions,
+    CheckingPersistence,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum RiskKind {
+    RootExecution,
+    EphemeralData,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PendingRisk {
+    pub id: String,
+    pub kind: RiskKind,
+    pub fingerprint: String,
+    pub title: String,
+    pub explanation: String,
+    pub consequences: String,
+    pub continue_label: String,
+}
+
 /// The full connection state model. All states are present; only the
 /// Phase-2-wired transitions are driven by the bridge.
 ///
@@ -37,6 +66,13 @@ pub enum ConnectionState {
     /// SSH handshake + auth in progress. `BatchMode=yes` means a failure here
     /// is actionable (auth/host-key), not retried.
     TestingSsh,
+    /// Docker discovery/inspection and target policy checks are in progress.
+    Preflight { phase: PreflightPhase },
+    /// Preflight found explicit risks that require user acknowledgement.
+    AwaitingAcknowledgement {
+        phase: PreflightPhase,
+        pending_risks: Vec<PendingRisk>,
+    },
     /// SSH connected; the bridge is spawning the stdio proxy and the runtime
     /// hasn't answered its first frame yet.
     Connecting,
@@ -159,6 +195,8 @@ impl ConnectionState {
         match self {
             ConnectionState::Disconnected => "Disconnected",
             ConnectionState::TestingSsh => "Testing SSH…",
+            ConnectionState::Preflight { .. } => "Checking Docker target…",
+            ConnectionState::AwaitingAcknowledgement { .. } => "Awaiting acknowledgement",
             ConnectionState::Connecting => "Connecting…",
             ConnectionState::Starting => "Starting runtime…",
             ConnectionState::Ready => "Ready",
@@ -252,6 +290,8 @@ pub struct ConnectionStateInfo {
     pub failure_action: Option<String>,
     /// The failure detail (e.g. SSH stderr), if `failed`.
     pub failure_detail: Option<String>,
+    pub preflight_phase: Option<PreflightPhase>,
+    pub pending_risks: Option<Vec<PendingRisk>>,
 }
 
 impl RemoteConnection {
@@ -268,6 +308,14 @@ impl RemoteConnection {
             ),
             _ => (false, None, None, None),
         };
+        let (preflight_phase, pending_risks) = match &state {
+            ConnectionState::Preflight { phase } => (Some(*phase), None),
+            ConnectionState::AwaitingAcknowledgement {
+                phase,
+                pending_risks,
+            } => (Some(*phase), Some(pending_risks.clone())),
+            _ => (None, None),
+        };
         ConnectionStateInfo {
             state: state.overlay_label().to_string(),
             profile_label: inner.profile.as_ref().map(|p| p.label.clone()),
@@ -275,6 +323,8 @@ impl RemoteConnection {
             failure_label,
             failure_action,
             failure_detail,
+            preflight_phase,
+            pending_risks,
         }
     }
 }
@@ -333,6 +383,8 @@ mod tests {
             remote_root_override: None,
             server_path: None,
             xdg_mode: XdgMode::default(),
+            execution_target: crate::remote_profile::ExecutionTargetProfile::default(),
+            risk_acknowledgements: crate::remote_profile::RiskAcknowledgements::default(),
         }
     }
 

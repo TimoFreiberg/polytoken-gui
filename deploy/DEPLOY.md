@@ -144,3 +144,26 @@ Use the retained prior version or an explicit known-good tag:
 Never kill the server by PID and never run the updater as root. If an update or
 rollback fails, preserve the journal and both release directories for diagnosis;
 repair launchd authorization or restore a known-good tag manually before cleanup.
+
+## App-provisioned Linux container helper artifacts
+
+In addition to the standalone macOS headless deployment above, tagged releases
+now publish and validate an `x86_64-unknown-linux-gnu` Pantoken helper artifact.
+This artifact is **not** deployed via the launchd/headless update mechanism.
+Instead, the desktop app provisions it automatically inside a Docker container
+during the connection preflight flow.
+
+The release matrix is exactly two targets:
+
+| Target triple | Archive | Use |
+|---|---|---|
+| `aarch64-apple-darwin` | `pantoken-headless-macos-aarch64.tar.gz` | Standalone macOS deployment (above) + desktop app provisioning |
+| `x86_64-unknown-linux-gnu` | `pantoken-headless-linux-x86_64.tar.gz` | App-provisioned inside Docker containers |
+
+Both artifacts are signed/checksummed. The desktop app embeds their SHA-256
+digests in its release manifest and verifies them before execution. Linux arm64,
+macOS x86_64, and musl targets are explicitly unsupported — they are not
+advertised in the manifest and no artifacts are published for them.
+
+For the user-facing guide to Docker target connections, see
+[`docs/docker-target-guide.md`](../docs/docker-target-guide.md).

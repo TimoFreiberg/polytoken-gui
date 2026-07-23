@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { createFakeHostProvider, createSingleHostProvider } from "./provider.js";
 import { createDevHostProvider } from "./dev-provider.js";
-import type { NativeHostDescriptor } from "./types.js";
+import type { NativeHostDescriptor, RemoteProfile } from "./types.js";
 
 function descriptor(
   id: string,
@@ -14,6 +14,40 @@ function descriptor(
     subtitle: "",
     state: "ready",
     wsUrl: `ws://127.0.0.1:9000/${id}`,
+    ...overrides,
+  };
+}
+
+function dockerProfile(
+  id: string,
+  overrides: Partial<RemoteProfile> = {},
+): RemoteProfile {
+  return {
+    id,
+    label: `Docker ${id}`,
+    sshDestination: "timo@dev-server",
+    polytokenPolicy: "requireExisting",
+    xdgMode: "isolated",
+    executionTarget: {
+      kind: "dockerContainer",
+      containerName: "work-api",
+      user: "app",
+      pantokenRoot: "/srv/pantoken",
+    },
+    riskAcknowledgements: {},
+    ...overrides,
+  };
+}
+
+function hostProfile(id: string, overrides: Partial<RemoteProfile> = {}): RemoteProfile {
+  return {
+    id,
+    label: `Host ${id}`,
+    sshDestination: "timo@mac-mini.local",
+    polytokenPolicy: "requireExisting",
+    xdgMode: "isolated",
+    executionTarget: { kind: "host" },
+    riskAcknowledgements: {},
     ...overrides,
   };
 }
@@ -46,13 +80,32 @@ describe("SingleHostProvider", () => {
 
   test("addProfile returns the profile as-is (no remote management)", async () => {
     const provider = createSingleHostProvider("ws://127.0.0.1:8787/ws");
-    const profile = descriptor("remote-1", { kind: "remote" });
+    const profile = hostProfile("remote-1");
     const result = await provider.addProfile(profile);
     expect(result).toEqual(profile);
     // listHosts still returns only the local host.
     const hosts = await provider.listHosts();
     expect(hosts).toHaveLength(1);
     expect(hosts[0].id).toBe("local");
+  });
+
+  test("listProfiles returns empty in single-host mode", async () => {
+    const provider = createSingleHostProvider("ws://127.0.0.1:8787/ws");
+    const profiles = await provider.listProfiles();
+    expect(profiles).toEqual([]);
+  });
+
+  test("getProfile returns null in single-host mode", async () => {
+    const provider = createSingleHostProvider("ws://127.0.0.1:8787/ws");
+    const profile = await provider.getProfile("anything");
+    expect(profile).toBeNull();
+  });
+
+  test("acknowledgeRisk / cancelConnection / resumeConnection are no-ops", async () => {
+    const provider = createSingleHostProvider("ws://127.0.0.1:8787/ws");
+    await expect(provider.acknowledgeRisk("x", "r1", "fp")).resolves.toBeUndefined();
+    await expect(provider.cancelConnection("x")).resolves.toBeUndefined();
+    await expect(provider.resumeConnection("x")).resolves.toBeUndefined();
   });
 });
 
@@ -102,22 +155,224 @@ describe("FakeHostProvider", () => {
     expect(hosts[0].state).toBe("disconnected");
   });
 
-  test("addProfile adds a new host", async () => {
+  test("addProfile adds a new profile and getProfile retrieves it", async () => {
     const { provider } = createFakeHostProvider([descriptor("local")]);
-    const newProfile = descriptor("remote-2", { kind: "remote" });
-    await provider.addProfile(newProfile);
-    const hosts = await provider.listHosts();
-    expect(hosts.map((h) => h.id)).toContain("remote-2");
+    const profile = hostProfile("remote-2");
+    await provider.addProfile(profile);
+
+    const retrieved = await provider.getProfile("remote-2");
+    expect(retrieved).not.toBeNull();
+    expect(retrieved?.id).toBe("remote-2");
+    expect(retrieved?.label).toBe("Host remote-2");
   });
 
-  test("deleteProfile removes a host", async () => {
-    const { provider } = createFakeHostProvider([
-      descriptor("local"),
-      descriptor("remote-1", { kind: "remote" }),
-    ]);
+  test("addProfile stores a deep clone (mutations do not leak)", async () => {
+    const { provider } = createFakeHostProvider([descriptor("local")]);
+    const profile = hostProfile("remote-2");
+    await provider.addProfile(profile);
+
+    // Mutate the original after add.
+    profile.label = "Mutated";
+    const retrieved = await provider.getProfile("remote-2");
+    expect(retrieved?.label).toBe("Host remote-2");
+  });
+
+  test("listProfiles returns all stored profiles", async () => {
+    const { provider } = createFakeHostProvider(
+      [descriptor("local")],
+      [hostProfile("p1"), dockerProfile("p2")],
+    );
+    const profiles = await provider.listProfiles();
+    expect(profiles).toHaveLength(2);
+    expect(profiles.map((p) => p.id).sort()).toEqual(["p1", "p2"]);
+  });
+
+  test("updateProfile overwrites the stored profile", async () => {
+    const { provider } = createFakeHostProvider(
+      [descriptor("local")],
+      [hostProfile("p1")],
+    );
+    await provider.updateProfile({ ...hostProfile("p1"), label: "Updated" });
+    const retrieved = await provider.getProfile("p1");
+    expect(retrieved?.label).toBe("Updated");
+  });
+
+  test("deleteProfile removes the profile and its descriptor", async () => {
+    const { provider } = createFakeHostProvider(
+      [descriptor("local"), descriptor("remote-1", { kind: "remote" })],
+      [hostProfile("remote-1")],
+    );
     await provider.deleteProfile("remote-1");
+    const profiles = await provider.listProfiles();
+    expect(profiles.map((p) => p.id)).not.toContain("remote-1");
     const hosts = await provider.listHosts();
     expect(hosts.map((h) => h.id)).not.toContain("remote-1");
+  });
+
+  // ── Docker preflight / awaiting acknowledgement behavior ──────────────
+
+  test("connectHost does not throw when awaitingAcknowledgement", async () => {
+    const { provider, driveState, setPendingRisks } = createFakeHostProvider([
+      descriptor("docker-1", {
+        kind: "remote",
+        state: "connecting",
+        subtitle: "work-api via dev-server",
+      }),
+    ]);
+    setPendingRisks("docker-1", [
+      {
+        id: "root-1",
+        kind: "rootExecution",
+        fingerprint: "abc123",
+        title: "Running as root",
+        explanation: "The container runs as root.",
+        consequences: "Root can affect the host via mounts.",
+        continueLabel: "Allow root",
+      },
+    ]);
+    driveState("docker-1", "awaitingAcknowledgement");
+
+    // connectHost must resolve, not throw, so the UI can render the risk.
+    await expect(provider.connectHost("docker-1")).resolves.toBeUndefined();
+
+    const hosts = await provider.listHosts();
+    expect(hosts[0].state).toBe("awaitingAcknowledgement");
+    expect(hosts[0].pendingRisks).toHaveLength(1);
+    expect(hosts[0].pendingRisks![0].id).toBe("root-1");
+  });
+
+  test("connectHost does not throw during preflight phase", async () => {
+    const { provider, driveState, setPreflightPhase } = createFakeHostProvider([
+      descriptor("docker-1", {
+        kind: "remote",
+        state: "preflight",
+        subtitle: "work-api via dev-server",
+      }),
+    ]);
+    setPreflightPhase("docker-1", "locatingContainer");
+    driveState("docker-1", "preflight");
+
+    await expect(provider.connectHost("docker-1")).resolves.toBeUndefined();
+
+    const hosts = await provider.listHosts();
+    expect(hosts[0].state).toBe("preflight");
+    expect(hosts[0].preflightPhase).toBe("locatingContainer");
+  });
+
+  test("acknowledgeRisk validates fingerprint and records it", async () => {
+    const { provider, setPendingRisks } = createFakeHostProvider([
+      descriptor("docker-1", { kind: "remote", state: "awaitingAcknowledgement" }),
+    ]);
+    setPendingRisks("docker-1", [
+      {
+        id: "ephemeral-1",
+        kind: "ephemeralData",
+        fingerprint: "fp-aaa",
+        title: "Ephemeral data",
+        explanation: "Container recreation may lose data.",
+        consequences: "Pantoken runtime/session state may be lost.",
+        continueLabel: "Allow ephemeral",
+      },
+    ]);
+
+    await provider.acknowledgeRisk("docker-1", "ephemeral-1", "fp-aaa");
+    // No throw means accepted.
+  });
+
+  test("acknowledgeRisk throws on fingerprint mismatch", async () => {
+    const { provider, setPendingRisks } = createFakeHostProvider([
+      descriptor("docker-1", { kind: "remote", state: "awaitingAcknowledgement" }),
+    ]);
+    setPendingRisks("docker-1", [
+      {
+        id: "root-1",
+        kind: "rootExecution",
+        fingerprint: "fp-original",
+        title: "Running as root",
+        explanation: "x",
+        consequences: "y",
+        continueLabel: "Allow root",
+      },
+    ]);
+
+    await expect(
+      provider.acknowledgeRisk("docker-1", "root-1", "fp-changed"),
+    ).rejects.toThrow(/fingerprint mismatch/);
+  });
+
+  test("acknowledgeRisk throws for unknown risk id", async () => {
+    const { provider } = createFakeHostProvider([
+      descriptor("docker-1", { kind: "remote", state: "awaitingAcknowledgement" }),
+    ]);
+    await expect(
+      provider.acknowledgeRisk("docker-1", "nope", "fp"),
+    ).rejects.toThrow(/no pending risk/);
+  });
+
+  test("cancelConnection disconnects and clears pending risks", async () => {
+    const { provider, driveState, setPendingRisks, setPreflightPhase } =
+      createFakeHostProvider([
+        descriptor("docker-1", { kind: "remote", state: "awaitingAcknowledgement" }),
+      ]);
+    setPendingRisks("docker-1", [
+      {
+        id: "root-1",
+        kind: "rootExecution",
+        fingerprint: "fp",
+        title: "x",
+        explanation: "y",
+        consequences: "z",
+        continueLabel: "Allow",
+      },
+    ]);
+    setPreflightPhase("docker-1", "checkingUserPermissions");
+    driveState("docker-1", "awaitingAcknowledgement");
+
+    await provider.cancelConnection("docker-1");
+
+    const hosts = await provider.listHosts();
+    expect(hosts[0].state).toBe("disconnected");
+    expect(hosts[0].pendingRisks).toBeUndefined();
+    expect(hosts[0].preflightPhase).toBeUndefined();
+  });
+
+  test("resumeConnection advances from awaitingAcknowledgement to ready", async () => {
+    const { provider, driveState, setPendingRisks } = createFakeHostProvider([
+      descriptor("docker-1", { kind: "remote", state: "awaitingAcknowledgement" }),
+    ]);
+    setPendingRisks("docker-1", [
+      {
+        id: "root-1",
+        kind: "rootExecution",
+        fingerprint: "fp",
+        title: "x",
+        explanation: "y",
+        consequences: "z",
+        continueLabel: "Allow",
+      },
+    ]);
+    driveState("docker-1", "awaitingAcknowledgement");
+
+    await provider.resumeConnection("docker-1");
+
+    const hosts = await provider.listHosts();
+    expect(hosts[0].state).toBe("ready");
+    expect(hosts[0].pendingRisks).toBeUndefined();
+  });
+
+  test("getProfile on fake returns stored docker profile with advanced fields", async () => {
+    const { provider } = createFakeHostProvider(
+      [descriptor("local")],
+      [dockerProfile("docker-1")],
+    );
+    const profile = await provider.getProfile("docker-1");
+    expect(profile).not.toBeNull();
+    expect(profile?.executionTarget.kind).toBe("dockerContainer");
+    if (profile?.executionTarget.kind === "dockerContainer") {
+      expect(profile.executionTarget.containerName).toBe("work-api");
+      expect(profile.executionTarget.user).toBe("app");
+      expect(profile.executionTarget.pantokenRoot).toBe("/srv/pantoken");
+    }
   });
 });
 

@@ -10,4 +10,7 @@ commands.allow = [
   "host_state",
   "list_hosts",
   "disconnect_host",
+  "acknowledge_risk",
+  "cancel_connection",
+  "resume_connection",
 ]

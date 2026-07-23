@@ -19,7 +19,8 @@ use std::io;
 
 use serde::{Deserialize, Serialize};
 
-use crate::bridge::{CommandOutput, SshCommand, SshTransport};
+use crate::bridge::CommandOutput;
+use crate::remote_executor::RemoteExecutor;
 
 /// Structured result of probing the remote host.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -128,12 +129,9 @@ printf "{\"os\":\"%s\",\"arch\":\"%s\",\"bitness\":%s,\"libc\":\"%s\",\"homeDir\
 '"#;
 
 /// Run the probe over SSH and parse the result.
-pub async fn probe_remote(
-    transport: &dyn SshTransport,
-    command: SshCommand,
-) -> Result<ProbeResult, ProbeError> {
-    let output = transport
-        .run_command(command, PROBE_SCRIPT)
+pub async fn probe_remote(executor: &dyn RemoteExecutor) -> Result<ProbeResult, ProbeError> {
+    let output = executor
+        .run_script(PROBE_SCRIPT.to_owned())
         .await
         .map_err(ProbeError::Ssh)?;
 
@@ -176,17 +174,18 @@ pub fn parse_probe_output(output: &CommandOutput) -> Result<ProbeResult, ProbeEr
     Ok(result)
 }
 
-/// Map a [`ProbeResult`] to a Rust target triple.
+/// Map a [`ProbeResult`] to a published Pantoken helper target triple.
 ///
-/// Returns [`ProbeError::UnsupportedTarget`] for unsupported combinations.
+/// A Rust target name alone does not make a remote target supported. This
+/// mapping intentionally contains only combinations whose helper artifacts are
+/// built, embedded, published, and smoke-tested. In particular, musl must not
+/// be treated as glibc-compatible and unshipped architectures stay unsupported.
 pub fn target_triple(probe: &ProbeResult) -> Result<String, ProbeError> {
-    match (probe.os.as_str(), probe.arch.as_str()) {
-        ("linux", "x86_64") => Ok("x86_64-unknown-linux-gnu".into()),
-        ("linux", "aarch64") => Ok("aarch64-unknown-linux-gnu".into()),
-        ("darwin", "x86_64") => Ok("x86_64-apple-darwin".into()),
-        ("darwin", "aarch64") | ("darwin", "arm64") => Ok("aarch64-apple-darwin".into()),
+    match (probe.os.as_str(), probe.arch.as_str(), probe.libc.as_str()) {
+        ("linux", "x86_64", "glibc") => Ok("x86_64-unknown-linux-gnu".into()),
+        ("darwin", "aarch64" | "arm64", "darwin") => Ok("aarch64-apple-darwin".into()),
         _ => Err(ProbeError::UnsupportedTarget {
-            os: probe.os.clone(),
+            os: format!("{}/{}", probe.os, probe.libc),
             arch: probe.arch.clone(),
         }),
     }
@@ -249,24 +248,46 @@ mod tests {
     #[test]
     fn probe_normalizes_target_triples() {
         let cases = [
-            ("linux", "x86_64", "x86_64-unknown-linux-gnu"),
-            ("linux", "aarch64", "aarch64-unknown-linux-gnu"),
-            ("darwin", "x86_64", "x86_64-apple-darwin"),
-            ("darwin", "aarch64", "aarch64-apple-darwin"),
-            ("darwin", "arm64", "aarch64-apple-darwin"),
+            ("linux", "x86_64", "glibc", "x86_64-unknown-linux-gnu"),
+            ("darwin", "aarch64", "darwin", "aarch64-apple-darwin"),
+            ("darwin", "arm64", "darwin", "aarch64-apple-darwin"),
         ];
-        for (os, arch, expected) in cases {
+        for (os, arch, libc, expected) in cases {
             let probe = ProbeResult {
                 os: os.into(),
                 arch: arch.into(),
                 bitness: 64,
-                libc: "glibc".into(),
+                libc: libc.into(),
                 home_dir: "/h".into(),
                 writable_temp: None,
                 tools: ProbeTools::default(),
                 polytoken_version: None,
             };
             assert_eq!(target_triple(&probe).unwrap(), expected);
+        }
+    }
+
+    #[test]
+    fn docker_musl_is_explicitly_unsupported() {
+        for (os, arch, libc) in [
+            ("linux", "x86_64", "musl"),
+            ("linux", "aarch64", "glibc"),
+            ("darwin", "x86_64", "darwin"),
+        ] {
+            let probe = ProbeResult {
+                os: os.into(),
+                arch: arch.into(),
+                bitness: 64,
+                libc: libc.into(),
+                home_dir: "/h".into(),
+                writable_temp: None,
+                tools: ProbeTools::default(),
+                polytoken_version: None,
+            };
+            assert!(matches!(
+                target_triple(&probe),
+                Err(ProbeError::UnsupportedTarget { .. })
+            ));
         }
     }
 

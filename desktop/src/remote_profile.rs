@@ -20,6 +20,33 @@
 use std::path::Path;
 
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
+
+/// How an SSH endpoint is used for execution. Missing values deserialize as host mode.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum ExecutionTargetProfile {
+    #[serde(rename = "host")]
+    #[default]
+    Host,
+    #[serde(rename = "dockerContainer")]
+    DockerContainer {
+        container_name: String,
+        user: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        workdir: Option<String>,
+        pantoken_root: String,
+    },
+}
+
+/// Persisted hashes of explicitly acknowledged execution risks.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct RiskAcknowledgements {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub root_fingerprint: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ephemeral_fingerprint: Option<String>,
+}
 
 /// A persisted remote-host profile.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -50,6 +77,10 @@ pub struct RemoteProfile {
     /// `Isolated` — Pantoken-managed XDG roots under the remote root.
     #[serde(default)]
     pub xdg_mode: XdgMode,
+    #[serde(default)]
+    pub execution_target: ExecutionTargetProfile,
+    #[serde(default)]
+    pub risk_acknowledgements: RiskAcknowledgements,
 }
 
 /// Policy for the remote polytoken runtime install.
@@ -107,6 +138,36 @@ impl RemoteProfile {
                 return Err(RemoteProfileError::InvalidPort(port));
             }
         }
+        match &self.execution_target {
+            ExecutionTargetProfile::Host => {}
+            ExecutionTargetProfile::DockerContainer {
+                container_name,
+                user,
+                workdir,
+                pantoken_root,
+            } => {
+                if container_name.trim().is_empty() {
+                    return Err(RemoteProfileError::EmptyContainerName);
+                }
+                if !valid_docker_user(user) {
+                    return Err(RemoteProfileError::InvalidContainerUser);
+                }
+                validate_absolute_path(pantoken_root)?;
+                if let Some(path) = workdir {
+                    validate_absolute_path(path)?;
+                }
+            }
+        }
+        if let Some(a) = [
+            &self.risk_acknowledgements.root_fingerprint,
+            &self.risk_acknowledgements.ephemeral_fingerprint,
+        ]
+        .into_iter()
+        .flatten()
+        .find(|s| !valid_fingerprint(s))
+        {
+            return Err(RemoteProfileError::InvalidFingerprint(a.clone()));
+        }
         Ok(())
     }
 
@@ -150,6 +211,10 @@ pub enum RemoteProfileError {
     EmptyDestination,
     /// `port` is 0 (or, by future extension, out of range).
     InvalidPort(u16),
+    EmptyContainerName,
+    InvalidContainerUser,
+    InvalidPath(String),
+    InvalidFingerprint(String),
 }
 
 impl std::fmt::Display for RemoteProfileError {
@@ -163,8 +228,122 @@ impl std::fmt::Display for RemoteProfileError {
             RemoteProfileError::InvalidPort(p) => {
                 write!(f, "port {p} is invalid (must be 1..=65535)")
             }
+            RemoteProfileError::EmptyContainerName => write!(f, "container name must not be empty"),
+            RemoteProfileError::InvalidContainerUser => write!(f, "container user is invalid"),
+            RemoteProfileError::InvalidPath(p) => write!(f, "unsafe absolute path: {p}"),
+            RemoteProfileError::InvalidFingerprint(_) => {
+                write!(f, "risk fingerprint must be lowercase SHA-256 hex")
+            }
         }
     }
+}
+
+fn valid_docker_user(s: &str) -> bool {
+    if s.is_empty()
+        || s.chars()
+            .any(|c| c.is_control() || c.is_whitespace() || c == '/')
+    {
+        return false;
+    }
+    if s.chars().all(|c| c.is_ascii_digit()) {
+        return true;
+    }
+    if let Some((u, g)) = s.split_once(':') {
+        return !u.is_empty()
+            && !g.is_empty()
+            && u.chars().all(|c| c.is_ascii_digit())
+            && g.chars().all(|c| c.is_ascii_digit());
+    }
+    s.chars()
+        .all(|c| c.is_ascii_alphanumeric() || "._-".contains(c))
+}
+
+fn validate_absolute_path(path: &str) -> Result<(), RemoteProfileError> {
+    let p = Path::new(path);
+    if !p.is_absolute()
+        || path.is_empty()
+        || path.chars().any(|c| c.is_control())
+        || p.components()
+            .any(|c| matches!(c, std::path::Component::ParentDir))
+    {
+        return Err(RemoteProfileError::InvalidPath(path.to_owned()));
+    }
+    Ok(())
+}
+
+fn valid_fingerprint(s: &str) -> bool {
+    s.len() == 64
+        && s.bytes()
+            .all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase())
+}
+
+fn encode_field(bytes: &mut Vec<u8>, value: &str) {
+    bytes.extend_from_slice(value.len().to_string().as_bytes());
+    bytes.push(b':');
+    bytes.extend_from_slice(value.as_bytes());
+}
+fn fingerprint(fields: &[String]) -> String {
+    let mut bytes = Vec::new();
+    for field in fields {
+        encode_field(&mut bytes, field);
+    }
+    Sha256::digest(bytes)
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect()
+}
+
+pub fn root_risk_fingerprint(
+    schema_version: u16,
+    profile_id: &str,
+    container_name: &str,
+    container_id: &str,
+    requested_user: &str,
+    uid: u64,
+    gid: u64,
+) -> String {
+    fingerprint(&[
+        schema_version.to_string(),
+        profile_id.into(),
+        container_name.into(),
+        container_id.into(),
+        requested_user.into(),
+        uid.to_string(),
+        gid.to_string(),
+    ])
+}
+
+/// Ephemeral-data risk fingerprint.
+///
+/// Parameters mirror the canonical field order specified in the plan:
+/// schema version, profile id, container name, container ID, root,
+/// classification, mount destination, mount type, read/write mode,
+/// and backing identity hash.
+#[allow(clippy::too_many_arguments)]
+pub fn ephemeral_risk_fingerprint(
+    schema_version: u16,
+    profile_id: &str,
+    container_name: &str,
+    container_id: &str,
+    root: &str,
+    classification: &str,
+    mount_destination: &str,
+    mount_type: &str,
+    read_write: &str,
+    backing_identity_hash: &str,
+) -> String {
+    fingerprint(&[
+        schema_version.to_string(),
+        profile_id.into(),
+        container_name.into(),
+        container_id.into(),
+        root.into(),
+        classification.into(),
+        mount_destination.into(),
+        mount_type.into(),
+        read_write.into(),
+        backing_identity_hash.into(),
+    ])
 }
 
 impl std::error::Error for RemoteProfileError {}
@@ -265,6 +444,8 @@ mod tests {
             remote_root_override: Some("/srv/pantoken".into()),
             server_path: Some("/usr/local/bin/pantoken-server".into()),
             xdg_mode: XdgMode::default(),
+            execution_target: ExecutionTargetProfile::default(),
+            risk_acknowledgements: RiskAcknowledgements::default(),
         }
     }
 
@@ -328,145 +509,160 @@ mod tests {
 
     #[test]
     fn remote_profile_validation() {
-        // Valid profile with all optional fields set.
         assert!(sample_profile().validate().is_ok());
 
-        // Valid profile with no optional fields.
-        assert!(RemoteProfile {
-            id: "id".into(),
-            label: "L".into(),
-            ssh_destination: "host".into(),
-            port: None,
-            polytoken_policy: PolytokenPolicy::default(),
-            remote_root_override: None,
-            server_path: None,
-            xdg_mode: XdgMode::default(),
-        }
-        .validate()
-        .is_ok());
+        let mut profile = sample_profile();
+        profile.id = "   ".into();
+        assert_eq!(profile.validate(), Err(RemoteProfileError::EmptyId));
 
-        // Empty id.
-        assert_eq!(
-            RemoteProfile {
-                id: "   ".into(),
-                label: "L".into(),
-                ssh_destination: "host".into(),
-                port: None,
-                polytoken_policy: PolytokenPolicy::default(),
-                remote_root_override: None,
-                server_path: None,
-                xdg_mode: XdgMode::default(),
-            }
-            .validate(),
-            Err(RemoteProfileError::EmptyId)
-        );
+        let mut profile = sample_profile();
+        profile.label.clear();
+        assert_eq!(profile.validate(), Err(RemoteProfileError::EmptyLabel));
 
-        // Empty label.
+        let mut profile = sample_profile();
+        profile.ssh_destination.clear();
         assert_eq!(
-            RemoteProfile {
-                id: "id".into(),
-                label: "".into(),
-                ssh_destination: "host".into(),
-                port: None,
-                polytoken_policy: PolytokenPolicy::default(),
-                remote_root_override: None,
-                server_path: None,
-                xdg_mode: XdgMode::default(),
-            }
-            .validate(),
-            Err(RemoteProfileError::EmptyLabel)
-        );
-
-        // Empty destination.
-        assert_eq!(
-            RemoteProfile {
-                id: "id".into(),
-                label: "L".into(),
-                ssh_destination: "".into(),
-                port: None,
-                polytoken_policy: PolytokenPolicy::default(),
-                remote_root_override: None,
-                server_path: None,
-                xdg_mode: XdgMode::default(),
-            }
-            .validate(),
+            profile.validate(),
             Err(RemoteProfileError::EmptyDestination)
         );
 
-        // Port 0 is invalid.
+        let mut profile = sample_profile();
+        profile.port = Some(0);
+        assert_eq!(profile.validate(), Err(RemoteProfileError::InvalidPort(0)));
+
+        let mut profile = sample_profile();
+        profile.port = Some(65535);
+        assert!(profile.validate().is_ok());
+    }
+
+    #[test]
+    fn remote_profile_host_mode_migration() {
+        let legacy = serde_json::json!({
+            "id": "legacy",
+            "label": "Legacy host",
+            "ssh_destination": "work-server",
+            "polytoken_policy": "requireExisting",
+            "xdg_mode": "isolated"
+        });
+        let profile: RemoteProfile = serde_json::from_value(legacy).expect("legacy profile");
+        assert_eq!(profile.execution_target, ExecutionTargetProfile::Host);
         assert_eq!(
-            RemoteProfile {
-                id: "id".into(),
-                label: "L".into(),
-                ssh_destination: "host".into(),
-                port: Some(0),
-                polytoken_policy: PolytokenPolicy::default(),
-                remote_root_override: None,
-                server_path: None,
-                xdg_mode: XdgMode::default(),
-            }
-            .validate(),
-            Err(RemoteProfileError::InvalidPort(0))
+            profile.risk_acknowledgements,
+            RiskAcknowledgements::default()
+        );
+    }
+
+    #[test]
+    fn remote_profile_execution_target_roundtrip() {
+        let mut profile = sample_profile();
+        profile.execution_target = ExecutionTargetProfile::DockerContainer {
+            container_name: "work-api".into(),
+            user: "1000:1000".into(),
+            workdir: Some("/workspace/api".into()),
+            pantoken_root: "/var/lib/pantoken".into(),
+        };
+        let json = serde_json::to_string(&profile).expect("serialize");
+        let decoded: RemoteProfile = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(decoded.execution_target, profile.execution_target);
+        assert!(decoded.validate().is_ok());
+    }
+
+    #[test]
+    fn docker_profile_validation_rejects_unsafe_values() {
+        for target in [
+            ExecutionTargetProfile::DockerContainer {
+                container_name: "".into(),
+                user: "1000".into(),
+                workdir: None,
+                pantoken_root: "/data".into(),
+            },
+            ExecutionTargetProfile::DockerContainer {
+                container_name: "api".into(),
+                user: "1000:bad".into(),
+                workdir: None,
+                pantoken_root: "/data".into(),
+            },
+            ExecutionTargetProfile::DockerContainer {
+                container_name: "api".into(),
+                user: "worker".into(),
+                workdir: Some("relative".into()),
+                pantoken_root: "/data".into(),
+            },
+            ExecutionTargetProfile::DockerContainer {
+                container_name: "api".into(),
+                user: "worker".into(),
+                workdir: None,
+                pantoken_root: "/data/../escape".into(),
+            },
+        ] {
+            let mut profile = sample_profile();
+            profile.execution_target = target;
+            assert!(profile.validate().is_err());
+        }
+    }
+
+    #[test]
+    fn risk_fingerprint_fixed_vectors_and_invalidation() {
+        let root = root_risk_fingerprint(1, "profile-1", "work-api", "sha256:012345", "0:0", 0, 0);
+        assert_eq!(
+            root,
+            "7eb85b106802f68b8ef9560b3284786a967a86a37d38c8c1ca8b4b698bd08b27"
+        );
+        assert_ne!(
+            root,
+            root_risk_fingerprint(1, "profile-1", "work-api", "sha256:999999", "0:0", 0, 0)
         );
 
-        // Port at the top of the range is valid.
-        assert!(RemoteProfile {
-            id: "id".into(),
-            label: "L".into(),
-            ssh_destination: "host".into(),
-            port: Some(65535),
-            polytoken_policy: PolytokenPolicy::default(),
-            remote_root_override: None,
-            server_path: None,
-            xdg_mode: XdgMode::default(),
-        }
-        .validate()
-        .is_ok());
+        let ephemeral = ephemeral_risk_fingerprint(
+            1,
+            "profile-1",
+            "work-api",
+            "sha256:012345",
+            "/var/lib/pantoken",
+            "writableLayer",
+            "<no-covering-mount>",
+            "writableLayer",
+            "readWrite",
+            "<writable-layer>",
+        );
+        assert_eq!(
+            ephemeral,
+            "53ba98c59c3553e5a07bfb761a153df95c4770da4cf2925a28a0d3d05a7e1580"
+        );
+        assert_ne!(
+            ephemeral,
+            ephemeral_risk_fingerprint(
+                1,
+                "profile-1",
+                "work-api",
+                "sha256:012345",
+                "/different-root",
+                "writableLayer",
+                "<no-covering-mount>",
+                "writableLayer",
+                "readWrite",
+                "<writable-layer>",
+            )
+        );
     }
 
     #[test]
     fn remote_profile_defaults_resolve() {
-        // Override absent → default.
-        let p = RemoteProfile {
-            id: "id".into(),
-            label: "L".into(),
-            ssh_destination: "host".into(),
-            port: None,
-            polytoken_policy: PolytokenPolicy::default(),
-            remote_root_override: None,
-            server_path: None,
-            xdg_mode: XdgMode::default(),
-        };
-        assert_eq!(p.remote_root(), "~/.local/share/pantoken");
-        assert_eq!(p.server_path(), "pantoken-server");
+        let mut profile = sample_profile();
+        profile.remote_root_override = None;
+        profile.server_path = None;
+        assert_eq!(profile.remote_root(), "~/.local/share/pantoken");
+        assert_eq!(profile.server_path(), "pantoken-server");
 
-        // Override present → used.
-        let p = RemoteProfile {
-            id: "id".into(),
-            label: "L".into(),
-            ssh_destination: "host".into(),
-            port: None,
-            polytoken_policy: PolytokenPolicy::default(),
-            remote_root_override: Some("/srv/p".into()),
-            server_path: Some("/x/pantoken-server".into()),
-            xdg_mode: XdgMode::default(),
-        };
-        assert_eq!(p.remote_root(), "/srv/p");
-        assert_eq!(p.server_path(), "/x/pantoken-server");
+        profile.remote_root_override = Some("/srv/p".into());
+        profile.server_path = Some("/x/pantoken-server".into());
+        assert_eq!(profile.remote_root(), "/srv/p");
+        assert_eq!(profile.server_path(), "/x/pantoken-server");
 
-        // Empty-string override → fall back to default.
-        let p = RemoteProfile {
-            id: "id".into(),
-            label: "L".into(),
-            ssh_destination: "host".into(),
-            port: None,
-            polytoken_policy: PolytokenPolicy::default(),
-            remote_root_override: Some("".into()),
-            server_path: Some("".into()),
-            xdg_mode: XdgMode::default(),
-        };
-        assert_eq!(p.remote_root(), "~/.local/share/pantoken");
-        assert_eq!(p.server_path(), "pantoken-server");
+        profile.remote_root_override = Some(String::new());
+        profile.server_path = Some(String::new());
+        assert_eq!(profile.remote_root(), "~/.local/share/pantoken");
+        assert_eq!(profile.server_path(), "pantoken-server");
     }
 
     #[test]

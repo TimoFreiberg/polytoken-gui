@@ -439,3 +439,98 @@ The `SshTransport` trait gained two methods:
 Both are implemented for `SystemSshTransport` (real `ssh`), `FakeSshTransport`
 (in-memory test seam with canned responses + `FakeRemoteFs`), and
 `MobileSshTransport` (stub returning `Unsupported`).
+
+## Remote deployment — Docker Target Extension
+
+The Docker target extension generalizes the remote path from "SSH endpoint equals
+execution target" into two layers:
+
+- an **`SshEndpoint`** describing how the physical SSH transport reaches the
+  development server (destination + optional port); and
+- an **`ExecutionTarget`**, defaulting to the existing SSH host or resolving to a
+  pinned, running Docker container by exact name.
+
+### Execution-target contract
+
+`ExecutionTargetProfile` in `desktop/src/remote_profile.rs` is a tagged enum:
+`Host` (the serde default for all existing profile JSON) or `DockerContainer`
+carrying exact container name, explicitly selected user, optional absolute
+workdir, and absolute Pantoken root. The container ID is **not** durable identity —
+it is resolution metadata for a single connection attempt, pinned only after
+preflight inspection.
+
+Risk acknowledgements (root execution, ephemeral data) are versioned SHA-256
+fingerprints of canonical risk facts, not booleans. Each fingerprint encodes
+fields as UTF-8 bytes preceded by decimal byte length + `:`, hashed with SHA-256.
+A missing acknowledgement is never treated as accepted; a changed container ID,
+effective identity, root, or mount backing invalidates the relevant fingerprint
+and forces re-prompting.
+
+### Docker discovery and preflight
+
+`desktop/src/docker_target.rs` implements host-side Docker discovery using
+one-shot SSH commands:
+
+1. **List** containers with `docker container ls -a --format` (a stable
+   Go-template, not `--format json` which may be too new), parse locally, and
+   compare `.Names` by exact equality. Docker documents `--filter name=...` as
+   substring matching — it is not trusted.
+2. **Resolve** the exact name to a full container ID. Zero or multiple matches
+   are rejected. Only running containers are accepted; stopped/paused/restarting/
+   dead/removing are unavailable. Pantoken never mutates container lifecycle.
+3. **Inspect** the resolved ID with machine-readable JSON, capturing full ID,
+   running/state, image, configured user/workdir, and mounts.
+4. **Re-inspect** by ID immediately before provisioning and proxy launch. If the
+   name resolves to a different ID or the pinned ID stops, preflight restarts
+   rather than silently crossing identity.
+
+Mount coverage uses component boundaries (`P == D` or `P` begins with `D + "/"`),
+selecting the deepest covering destination. `/data` does not cover `/database`.
+Writable bind mounts and named volumes are persistent; tmpfs and writable-layer
+storage are ephemeral; read-only covering mounts are rejected.
+
+### Target-aware execution
+
+`desktop/src/remote_executor.rs` defines a `RemoteExecutor` trait with three
+operations (captured command, stdin-streamed upload, framed stdio proxy spawn)
+and two implementors:
+
+- **`HostExecutor`** wraps `SshTransport + SshCommand` and emits the existing
+  remote commands (host-mode regression).
+- **`DockerExecutor`** wraps the same physical transport plus a resolved
+  `ResolvedDockerTarget` and wraps every target operation in `docker exec -i`
+  with `--user`, optional `--workdir`, and explicit `--env` arguments. No TTY.
+
+All remote shell commands are built from structured words via one audited POSIX
+quoting function (`desktop/src/docker_target.rs::posix_quote`). The upload path
+uses the exact inner argv shape `docker exec -i --user <user> <pinned-id> sh -c
+'cat > "$1"' sh <destination>` — the script is fixed, `sh` occupies `$0`, and
+the validated destination is a distinct structured argv word bound to `$1`.
+
+### Provisioning inside the container
+
+Provisioning modules (`probe`, `reconcile`, `pantoken_server_install`,
+`polytoken_compat`, `polytoken_install`) take `&dyn RemoteExecutor` (plus domain
+inputs). In Docker mode, every probe, compatibility check, install command,
+upload, metadata operation, and runtime launch executes inside the pinned
+container via `docker exec`. Host-only inspection is limited to Docker
+discovery/inspect.
+
+Target selection includes libc: Linux x86_64 glibc maps to
+`x86_64-unknown-linux-gnu`. Musl is explicitly unsupported until a matching
+artifact is built and smoke-tested.
+
+### Reconnect identity checks
+
+On proxy EOF/exit and bounded reconnect, the container's name→ID mapping and
+running state are revalidated before spawning a fresh exec. The TOCTOU window
+between final inspection and `docker exec` is handled: if the pinned container
+stops in that window, the nonzero exec result is classified as `ContainerStopped`,
+not Docker unavailable. A stopped/replaced container is never auto-started.
+
+### Release matrix
+
+The supported remote-helper matrix is `aarch64-apple-darwin` and
+`x86_64-unknown-linux-gnu`. The manifest's `validate()` enforces both targets
+are present with real (non-placeholder) SHA-256 digests in release builds.
+Linux arm64, macOS x86_64, and musl targets are explicitly unsupported.

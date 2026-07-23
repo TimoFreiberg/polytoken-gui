@@ -23,12 +23,13 @@ use pantoken_daemon_types::POLYTOKEN_DAEMON_TARGET_VERSION;
 use pantoken_remote_layout::layout;
 use pantoken_remote_layout::manifest::PantokenReleaseManifest;
 
-use crate::bridge::{ConnectionStateSink, SshCommand, SshTransport};
+use crate::bridge::ConnectionStateSink;
 use crate::provisioning::pantoken_server_install;
 use crate::provisioning::polytoken_compat::{self, polytoken_path_from_probe, PolytokenCompat};
 use crate::provisioning::polytoken_install::{self, InstallProvenance};
 use crate::provisioning::probe::{self, ProbeResult};
 use crate::remote_connection::{ConnectionFailureState, ConnectionState};
+use crate::remote_executor::RemoteExecutor;
 use crate::remote_profile::{PolytokenPolicy, RemoteProfile};
 
 /// Type alias for the HTTP fetch function used by the installer.
@@ -76,8 +77,7 @@ pub enum ReconcileOutcome {
 /// Drives the connection state machine through `Provisioning` and back to
 /// `Starting` (or `Failed`).
 pub async fn reconcile(
-    transport: &dyn SshTransport,
-    command: SshCommand,
+    executor: &dyn RemoteExecutor,
     profile: &RemoteProfile,
     state_sink: Option<&Arc<dyn ConnectionStateSink>>,
     http_fetch: HttpFetch,
@@ -89,7 +89,7 @@ pub async fn reconcile(
     }
 
     // Step 1: Probe the remote host.
-    let probe = match probe::probe_remote(transport, command.clone()).await {
+    let probe = match probe::probe_remote(executor).await {
         Ok(p) => p,
         Err(e) => {
             return fail(state_sink, format!("probe failed: {e}"));
@@ -109,18 +109,15 @@ pub async fn reconcile(
     }
 
     // Step 2: Check polytoken compatibility.
-    let compat = match polytoken_compat::check_compatibility(
-        transport,
-        command.clone(),
-        probe.polytoken_version.as_deref(),
-    )
-    .await
-    {
-        Ok(c) => c,
-        Err(e) => {
-            return fail(state_sink, format!("compat check failed: {e}"));
-        }
-    };
+    let compat =
+        match polytoken_compat::check_compatibility(executor, probe.polytoken_version.as_deref())
+            .await
+        {
+            Ok(c) => c,
+            Err(e) => {
+                return fail(state_sink, format!("compat check failed: {e}"));
+            }
+        };
 
     match &compat {
         PolytokenCompat::Compatible { .. } => {
@@ -129,8 +126,7 @@ pub async fn reconcile(
 
             // Step 4: Ensure the Pantoken server binary is installed.
             let server_binary_path = match ensure_server_installed(
-                transport,
-                command.clone(),
+                executor,
                 profile.remote_root(),
                 &probe,
                 manifest,
@@ -175,12 +171,11 @@ pub async fn reconcile(
                 POLYTOKEN_DAEMON_TARGET_VERSION,
                 &target,
             );
-            let _ = transport.run_command(command.clone(), &cleanup_cmd).await;
+            let _ = executor.run_script(cleanup_cmd).await;
 
             // Step 3: Install polytoken.
             match polytoken_install::install_polytoken(
-                transport,
-                command.clone(),
+                executor,
                 profile.remote_root(),
                 &probe,
                 http_fetch.clone(),
@@ -199,8 +194,7 @@ pub async fn reconcile(
 
                     // Step 4: Ensure the Pantoken server binary is installed.
                     let server_binary_path = match ensure_server_installed(
-                        transport,
-                        command.clone(),
+                        executor,
                         profile.remote_root(),
                         &probe,
                         manifest,
@@ -235,8 +229,7 @@ pub async fn reconcile(
 /// installs it. Returns the resolved binary path on success, or an error
 /// detail string on failure.
 async fn ensure_server_installed(
-    transport: &dyn SshTransport,
-    command: SshCommand,
+    executor: &dyn RemoteExecutor,
     remote_root: &str,
     probe: &ProbeResult,
     manifest: &PantokenReleaseManifest,
@@ -254,8 +247,7 @@ async fn ensure_server_installed(
     };
 
     match pantoken_server_install::check_server_installed(
-        transport,
-        command.clone(),
+        executor,
         remote_root,
         server_version,
         &target,
@@ -271,8 +263,7 @@ async fn ensure_server_installed(
         Ok(false) => {
             // Install it.
             let result = pantoken_server_install::install_server(
-                transport,
-                command,
+                executor,
                 remote_root,
                 probe,
                 manifest,
@@ -299,12 +290,11 @@ fn fail(state_sink: Option<&Arc<dyn ConnectionStateSink>>, detail: String) -> Re
 
 /// Read and parse install.json from the remote host.
 pub async fn read_install_metadata(
-    transport: &dyn SshTransport,
-    command: SshCommand,
+    executor: &dyn RemoteExecutor,
     remote_root: &str,
 ) -> Result<Option<InstallProvenance>, io::Error> {
     let cmd = polytoken_install::build_read_install_json_command(remote_root);
-    let output = transport.run_command(command, &cmd).await?;
+    let output = executor.run_script(cmd).await?;
     if !output.is_success() || output.stdout.trim().is_empty() {
         return Ok(None);
     }
@@ -316,8 +306,7 @@ pub async fn read_install_metadata(
 
 /// Check if a polytoken binary exists at the expected path on the remote.
 pub async fn check_binary_exists(
-    transport: &dyn SshTransport,
-    command: SshCommand,
+    executor: &dyn RemoteExecutor,
     remote_root: &str,
     version: &str,
     target: &str,
@@ -325,7 +314,7 @@ pub async fn check_binary_exists(
     let binary_path = layout::polytoken_binary(std::path::Path::new(remote_root), version, target)
         .map_err(|e| io::Error::other(e.to_string()))?;
     let cmd = polytoken_install::build_binary_check_command(&binary_path.to_string_lossy());
-    let output = transport.run_command(command, &cmd).await?;
+    let output = executor.run_script(cmd).await?;
     Ok(output.stdout.trim() == "exists")
 }
 
@@ -397,16 +386,8 @@ mod tests {
             remote_root_override: Some("/tmp/pantoken-test".into()),
             server_path: None,
             xdg_mode: XdgMode::default(),
-        }
-    }
-
-    fn ssh_command() -> SshCommand {
-        SshCommand {
-            destination: "fake".into(),
-            port: None,
-            remote_root: "/tmp/pantoken-test".into(),
-            server_path: "pantoken-server".into(),
-            extra_env: Vec::new(),
+            execution_target: crate::remote_profile::ExecutionTargetProfile::default(),
+            risk_acknowledgements: crate::remote_profile::RiskAcknowledgements::default(),
         }
     }
 
@@ -420,7 +401,6 @@ mod tests {
         let profile = test_profile(PolytokenPolicy::RequireExisting);
         let outcome = reconcile(
             &transport,
-            ssh_command(),
             &profile,
             None,
             no_http_fetch(),
@@ -444,7 +424,6 @@ mod tests {
         let profile = test_profile(PolytokenPolicy::RequireExisting);
         let outcome = reconcile(
             &transport,
-            ssh_command(),
             &profile,
             None,
             no_http_fetch(),
@@ -463,7 +442,6 @@ mod tests {
         let profile = test_profile(PolytokenPolicy::OfferInstall);
         let outcome = reconcile(
             &transport,
-            ssh_command(),
             &profile,
             None,
             no_http_fetch(),

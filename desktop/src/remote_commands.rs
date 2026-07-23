@@ -33,8 +33,9 @@ use std::sync::Arc;
 use tauri::State;
 
 use crate::bridge::{Bridge, ConnectionStateSink, SshCommand, SshTransport, SystemSshTransport};
-use crate::remote_connection::{ConnectionState, RemoteConnection};
-use crate::remote_profile::{RemoteProfile, RemoteProfileStore};
+use crate::remote_connection::{ConnectionState, PendingRisk, PreflightPhase, RemoteConnection};
+use crate::remote_executor::{preflight_docker, HostExecutor, PreflightOutcome, RemoteExecutor};
+use crate::remote_profile::{ExecutionTargetProfile, RemoteProfile, RemoteProfileStore};
 use crate::state::{AppState, RemoteSession};
 
 // ── core logic (callable from tray handlers + commands) ──────────────────
@@ -120,6 +121,10 @@ pub struct HostStateSnapshot {
     pub failure_action: Option<String>,
     /// Redacted diagnostic detail, if failed.
     pub failure_detail: Option<String>,
+    pub preflight_phase: Option<PreflightPhase>,
+    pub pending_risks: Option<Vec<PendingRisk>>,
+    pub redacted_ssh_host: Option<String>,
+    pub container_name: Option<String>,
 }
 
 /// Map `ConnectionState` → the client's `HostConnectionState` string.
@@ -129,6 +134,8 @@ fn connection_state_to_host_string(state: &ConnectionState) -> String {
     match state {
         ConnectionState::Disconnected => "disconnected",
         ConnectionState::TestingSsh => "testingSsh",
+        ConnectionState::Preflight { .. } => "preflight",
+        ConnectionState::AwaitingAcknowledgement { .. } => "awaitingAcknowledgement",
         ConnectionState::Connecting => "connecting",
         ConnectionState::Provisioning => "provisioning",
         ConnectionState::Starting => "starting",
@@ -161,6 +168,35 @@ fn redact_detail(raw: &str) -> String {
         cleaned.push('…');
     }
     cleaned
+}
+
+fn state_preflight_metadata(
+    state: &ConnectionState,
+) -> (Option<PreflightPhase>, Option<Vec<PendingRisk>>) {
+    match state {
+        ConnectionState::Preflight { phase } => (Some(*phase), None),
+        ConnectionState::AwaitingAcknowledgement {
+            phase,
+            pending_risks,
+        } => (Some(*phase), Some(pending_risks.clone())),
+        _ => (None, None),
+    }
+}
+
+fn profile_target_context(profile: &RemoteProfile) -> (Option<String>, Option<String>) {
+    match &profile.execution_target {
+        crate::remote_profile::ExecutionTargetProfile::Host => (None, None),
+        crate::remote_profile::ExecutionTargetProfile::DockerContainer {
+            container_name, ..
+        } => {
+            let host = profile
+                .ssh_destination
+                .rsplit_once('@')
+                .map_or(profile.ssh_destination.as_str(), |(_, host)| host)
+                .to_owned();
+            (Some(host), Some(container_name.clone()))
+        }
+    }
 }
 
 /// Build a `HostStateSnapshot` from a remote session's connection state.
@@ -198,6 +234,8 @@ fn remote_snapshot(
         None
     };
 
+    let (preflight_phase, pending_risks) = state_preflight_metadata(&state);
+    let (redacted_ssh_host, container_name) = profile_target_context(profile);
     HostStateSnapshot {
         id: id.into(),
         kind: "remote".into(),
@@ -208,6 +246,10 @@ fn remote_snapshot(
         failure_label,
         failure_action,
         failure_detail,
+        preflight_phase,
+        pending_risks,
+        redacted_ssh_host,
+        container_name,
     }
 }
 
@@ -305,15 +347,48 @@ pub fn ensure_remote_host_impl(
     let cancel = tokio_util::sync::CancellationToken::new();
     let cancel_for_task = cancel.clone();
     let handle = state.remote_handle.spawn(async move {
-        // Phase 3: run provisioning reconciliation before the bridge starts.
-        // This drives Connecting → Provisioning → Starting (or Failed).
+        let executor: Arc<dyn RemoteExecutor> = match &profile_for_prov.execution_target {
+            ExecutionTargetProfile::Host => Arc::new(HostExecutor::new(
+                transport_for_prov.clone(),
+                command_for_prov.clone(),
+            )),
+            ExecutionTargetProfile::DockerContainer { .. } => {
+                let connection_for_phase = connection_for_prov.clone();
+                match preflight_docker(
+                    transport_for_prov.clone(),
+                    &profile_for_prov,
+                    move |phase| {
+                        connection_for_phase.on_state(ConnectionState::Preflight { phase });
+                    },
+                )
+                .await
+                {
+                    Ok(PreflightOutcome::Ready(executor)) => Arc::new(executor),
+                    Ok(PreflightOutcome::AwaitingAcknowledgement {
+                        phase,
+                        pending_risks,
+                        ..
+                    }) => {
+                        connection_for_prov.on_state(ConnectionState::AwaitingAcknowledgement {
+                            phase,
+                            pending_risks,
+                        });
+                        return;
+                    }
+                    Err(error) => {
+                        connection_for_prov.on_state(ConnectionState::failed(
+                            crate::remote_connection::ConnectionFailureState::ProvisioningFailed,
+                            error.to_string(),
+                        ));
+                        return;
+                    }
+                }
+            }
+        };
         connection_for_prov.on_state(ConnectionState::Connecting);
-
         let manifest = crate::provisioning::embedded_manifest::get();
-
         let outcome = crate::provisioning::reconcile::reconcile(
-            transport_for_prov.as_ref(),
-            command_for_prov.clone(),
+            executor.as_ref(),
             &profile_for_prov,
             Some(&(connection_for_prov.clone() as Arc<dyn ConnectionStateSink>)),
             crate::provisioning::polytoken_install::default_http_fetch(),
@@ -329,8 +404,13 @@ pub fn ensure_remote_host_impl(
                 // start the bridge.
                 let command = apply_outcome_to_command(command_for_prov, &outcome);
                 connection_for_prov.on_state(ConnectionState::Starting);
-                let bridge = Bridge::new(bridge_port_for_task, transport_for_prov, command)
-                    .with_state_sink(connection_for_prov.clone() as Arc<dyn ConnectionStateSink>);
+                let bridge = Bridge::new_with_executor(
+                    bridge_port_for_task,
+                    executor,
+                    command.server_path,
+                    command.extra_env,
+                )
+                .with_state_sink(connection_for_prov.clone() as Arc<dyn ConnectionStateSink>);
                 if let Err(e) = bridge.run(cancel_for_task).await {
                     eprintln!("pantoken: bridge run error: {e}");
                 }
@@ -387,6 +467,10 @@ pub fn host_state_impl(state: &AppState, id: &str) -> Option<HostStateSnapshot> 
             failure_label: None,
             failure_action: None,
             failure_detail: None,
+            preflight_phase: None,
+            pending_risks: None,
+            redacted_ssh_host: None,
+            container_name: None,
         })
     } else {
         // Remote: read from the RemoteConnection state machine.
@@ -424,6 +508,7 @@ pub fn list_hosts_impl(state: &AppState) -> Vec<HostStateSnapshot> {
             ));
         } else {
             // No running session → disconnected.
+            let (redacted_ssh_host, container_name) = profile_target_context(profile);
             snapshots.push(HostStateSnapshot {
                 id: profile.id.clone(),
                 kind: "remote".into(),
@@ -434,6 +519,10 @@ pub fn list_hosts_impl(state: &AppState) -> Vec<HostStateSnapshot> {
                 failure_label: None,
                 failure_action: None,
                 failure_detail: None,
+                preflight_phase: None,
+                pending_risks: None,
+                redacted_ssh_host,
+                container_name,
             });
         }
     }
@@ -445,6 +534,48 @@ pub fn list_hosts_impl(state: &AppState) -> Vec<HostStateSnapshot> {
 pub fn disconnect_host_impl(state: &AppState, id: &str) -> Result<(), String> {
     state.stop_remote(id);
     Ok(())
+}
+
+pub fn acknowledge_risk_impl(
+    state: &AppState,
+    id: &str,
+    risk_id: &str,
+    fingerprint: &str,
+) -> Result<(), String> {
+    let connection = state
+        .get_remote(id)
+        .ok_or_else(|| format!("no active connection for {id}"))?;
+    let ConnectionState::AwaitingAcknowledgement { pending_risks, .. } = connection.state() else {
+        return Err("connection is not awaiting acknowledgement".into());
+    };
+    let risk = pending_risks
+        .iter()
+        .find(|risk| risk.id == risk_id && risk.fingerprint == fingerprint)
+        .ok_or_else(|| "pending risk fingerprint no longer matches; retry preflight".to_string())?;
+
+    let path = state.config.remote_profiles_path();
+    let mut store = RemoteProfileStore::load(&path).map_err(|error| error.to_string())?;
+    let profile = store
+        .profiles
+        .iter_mut()
+        .find(|profile| profile.id == id)
+        .ok_or_else(|| format!("no remote profile with id {id}"))?;
+    match risk.kind {
+        crate::remote_connection::RiskKind::RootExecution => {
+            profile.risk_acknowledgements.root_fingerprint = Some(fingerprint.into());
+        }
+        crate::remote_connection::RiskKind::EphemeralData => {
+            profile.risk_acknowledgements.ephemeral_fingerprint = Some(fingerprint.into());
+        }
+    }
+    profile.validate().map_err(|error| error.to_string())?;
+    store.save(&path).map_err(|error| error.to_string())?;
+    state.stop_remote(id);
+    Ok(())
+}
+
+pub fn cancel_connection_impl(state: &AppState, id: &str) -> Result<(), String> {
+    disconnect_host_impl(state, id)
 }
 
 // ── Tauri command wrappers (thin: delegate to the _impl functions) ───────
@@ -508,6 +639,29 @@ pub fn disconnect_host(id: String, state: State<'_, AppState>) -> Result<(), Str
     disconnect_host_impl(state.inner(), &id)
 }
 
+#[tauri::command]
+pub fn acknowledge_risk(
+    id: String,
+    risk_id: String,
+    fingerprint: String,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    acknowledge_risk_impl(state.inner(), &id, &risk_id, &fingerprint)
+}
+
+#[tauri::command]
+pub fn cancel_connection(id: String, state: State<'_, AppState>) -> Result<(), String> {
+    cancel_connection_impl(state.inner(), &id)
+}
+
+#[tauri::command]
+pub fn resume_connection(
+    id: String,
+    state: State<'_, AppState>,
+) -> Result<HostStateSnapshot, String> {
+    ensure_remote_host(id, state)
+}
+
 /// Register all remote commands on the Tauri builder. Kept for standalone
 /// test wiring; the main builder registers them inline via `generate_handler!`.
 #[allow(dead_code)]
@@ -521,6 +675,9 @@ pub fn invoke_handler(builder: tauri::Builder<tauri::Wry>) -> tauri::Builder<tau
         host_state,
         list_hosts,
         disconnect_host,
+        acknowledge_risk,
+        cancel_connection,
+        resume_connection,
     ])
 }
 
@@ -601,6 +758,7 @@ mod tests {
             remote_root: "/tmp".into(),
             server_path: "pantoken-server".into(),
             extra_env: Vec::new(),
+            raw_remote_command: None,
         };
         let connection = Arc::new(RemoteConnection::new());
         let bridge = Bridge::new(port, transport, command)
@@ -692,6 +850,8 @@ mod tests {
                     remote_root_override: Some("/tmp/pantoken-a".into()),
                     server_path: None,
                     xdg_mode: XdgMode::default(),
+                    execution_target: crate::remote_profile::ExecutionTargetProfile::default(),
+                    risk_acknowledgements: crate::remote_profile::RiskAcknowledgements::default(),
                 },
                 RemoteProfile {
                     id: "host-b".into(),
@@ -702,6 +862,8 @@ mod tests {
                     remote_root_override: Some("/tmp/pantoken-b".into()),
                     server_path: None,
                     xdg_mode: XdgMode::default(),
+                    execution_target: crate::remote_profile::ExecutionTargetProfile::default(),
+                    risk_acknowledgements: crate::remote_profile::RiskAcknowledgements::default(),
                 },
             ],
         };
@@ -1085,13 +1247,6 @@ mod tests {
 
         let transport = build_transport(Scenario::Healthy);
         transport.add_command_response("echo exists", server_exists_response());
-        let command = SshCommand {
-            destination: "fake".into(),
-            port: None,
-            remote_root: "/tmp/pantoken-test".into(),
-            server_path: "pantoken-server".into(),
-            extra_env: Vec::new(),
-        };
         let profile = RemoteProfile {
             id: "test".into(),
             label: "Test".into(),
@@ -1101,6 +1256,8 @@ mod tests {
             remote_root_override: Some("/tmp/pantoken-test".into()),
             server_path: None,
             xdg_mode: crate::remote_profile::XdgMode::default(),
+            execution_target: crate::remote_profile::ExecutionTargetProfile::default(),
+            risk_acknowledgements: crate::remote_profile::RiskAcknowledgements::default(),
         };
         let connection = Arc::new(RemoteConnection::new());
         connection.begin(profile.clone());
@@ -1110,7 +1267,6 @@ mod tests {
         let manifest = test_manifest();
         let outcome = reconcile::reconcile(
             &transport,
-            command,
             &profile,
             Some(&sink),
             test_no_http_fetch(),
@@ -1137,13 +1293,6 @@ mod tests {
         use crate::provisioning::reconcile;
 
         let transport = build_transport(Scenario::MissingPolytoken);
-        let command = SshCommand {
-            destination: "fake".into(),
-            port: None,
-            remote_root: "/tmp/pantoken-test".into(),
-            server_path: "pantoken-server".into(),
-            extra_env: Vec::new(),
-        };
         let profile = RemoteProfile {
             id: "test".into(),
             label: "Test".into(),
@@ -1153,6 +1302,8 @@ mod tests {
             remote_root_override: Some("/tmp/pantoken-test".into()),
             server_path: None,
             xdg_mode: crate::remote_profile::XdgMode::default(),
+            execution_target: crate::remote_profile::ExecutionTargetProfile::default(),
+            risk_acknowledgements: crate::remote_profile::RiskAcknowledgements::default(),
         };
         let connection = Arc::new(RemoteConnection::new());
         connection.begin(profile.clone());
@@ -1162,7 +1313,6 @@ mod tests {
         let manifest = test_manifest();
         let outcome = reconcile::reconcile(
             &transport,
-            command,
             &profile,
             Some(&sink),
             test_no_http_fetch(),
@@ -1190,13 +1340,6 @@ mod tests {
 
         let transport = build_transport(Scenario::Healthy);
         transport.add_command_response("echo exists", server_exists_response());
-        let command = SshCommand {
-            destination: "fake".into(),
-            port: None,
-            remote_root: "/tmp/pantoken-test".into(),
-            server_path: "pantoken-server".into(),
-            extra_env: Vec::new(),
-        };
         let profile = RemoteProfile {
             id: "test".into(),
             label: "Test".into(),
@@ -1206,6 +1349,8 @@ mod tests {
             remote_root_override: Some("/tmp/pantoken-test".into()),
             server_path: None,
             xdg_mode: crate::remote_profile::XdgMode::default(),
+            execution_target: crate::remote_profile::ExecutionTargetProfile::default(),
+            risk_acknowledgements: crate::remote_profile::RiskAcknowledgements::default(),
         };
         let connection = Arc::new(RemoteConnection::new());
         connection.begin(profile.clone());
@@ -1214,7 +1359,6 @@ mod tests {
         let manifest = test_manifest();
         let outcome = reconcile::reconcile(
             &transport,
-            command,
             &profile,
             Some(&sink),
             test_no_http_fetch(),
@@ -1243,6 +1387,7 @@ mod tests {
             remote_root: "/tmp/pantoken-test".into(),
             server_path: "pantoken-server".into(),
             extra_env: Vec::new(),
+            raw_remote_command: None,
         };
         let profile = RemoteProfile {
             id: "test".into(),
@@ -1253,18 +1398,13 @@ mod tests {
             remote_root_override: Some("/tmp/pantoken-test".into()),
             server_path: None,
             xdg_mode: crate::remote_profile::XdgMode::default(),
+            execution_target: crate::remote_profile::ExecutionTargetProfile::default(),
+            risk_acknowledgements: crate::remote_profile::RiskAcknowledgements::default(),
         };
 
         let manifest = test_manifest();
-        let outcome = reconcile::reconcile(
-            &transport,
-            command.clone(),
-            &profile,
-            None,
-            test_no_http_fetch(),
-            &manifest,
-        )
-        .await;
+        let outcome =
+            reconcile::reconcile(&transport, &profile, None, test_no_http_fetch(), &manifest).await;
 
         let result = apply_outcome_to_command(command, &outcome);
 
@@ -1316,6 +1456,7 @@ mod tests {
             remote_root: "/tmp/pantoken-test".into(),
             server_path: "pantoken-server".into(),
             extra_env: Vec::new(),
+            raw_remote_command: None,
         };
         let profile = RemoteProfile {
             id: "test".into(),
@@ -1326,18 +1467,12 @@ mod tests {
             remote_root_override: Some("/tmp/pantoken-test".into()),
             server_path: None,
             xdg_mode: crate::remote_profile::XdgMode::default(),
+            execution_target: crate::remote_profile::ExecutionTargetProfile::default(),
+            risk_acknowledgements: crate::remote_profile::RiskAcknowledgements::default(),
         };
 
         let manifest = test_manifest();
-        let outcome = reconcile::reconcile(
-            &transport,
-            command.clone(),
-            &profile,
-            None,
-            http_fetch,
-            &manifest,
-        )
-        .await;
+        let outcome = reconcile::reconcile(&transport, &profile, None, http_fetch, &manifest).await;
 
         // The polytoken install command uses `echo ok` at the end, same as
         // the server install. The fake transport's default (empty success)
@@ -1399,6 +1534,7 @@ mod tests {
             remote_root: "/tmp/pantoken-test".into(),
             server_path: "pantoken-server".into(),
             extra_env: Vec::new(),
+            raw_remote_command: None,
         };
         let profile = RemoteProfile {
             id: "test".into(),
@@ -1409,6 +1545,8 @@ mod tests {
             remote_root_override: Some("/tmp/pantoken-test".into()),
             server_path: None,
             xdg_mode: crate::remote_profile::XdgMode::default(),
+            execution_target: crate::remote_profile::ExecutionTargetProfile::default(),
+            risk_acknowledgements: crate::remote_profile::RiskAcknowledgements::default(),
         };
 
         // Use macOS arm64 manifest to match the ServerAlreadyInstalled scenario.
@@ -1424,15 +1562,8 @@ mod tests {
             }],
         };
 
-        let outcome = reconcile::reconcile(
-            &transport,
-            command.clone(),
-            &profile,
-            None,
-            test_no_http_fetch(),
-            &manifest,
-        )
-        .await;
+        let outcome =
+            reconcile::reconcile(&transport, &profile, None, test_no_http_fetch(), &manifest).await;
 
         // Should be Ready (compatible polytoken + server already installed).
         match &outcome {

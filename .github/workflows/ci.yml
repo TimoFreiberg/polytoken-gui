@@ -275,14 +275,84 @@ jobs:
       - name: Upload signed release artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: signed-release-artifacts
+          name: signed-release-artifacts-macos
+          path: target/release/release-bundle
+          retention-days: 1
+
+  # Build + smoke-test the Linux x86_64 headless artifact on a Linux runner.
+  # The binary must be compiled natively (no cross-compilation) so the smoke
+  # test can actually execute it. This job runs in parallel with the macOS
+  # release-prepare and the gate jobs.
+  release-prepare-linux:
+    name: release — prepare Linux x86_64 headless artifact
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      SCCACHE_GHA_ENABLED: "true"
+      CARGO_TARGET_DIR: ${{ github.workspace }}/target
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+      - name: Cache Bun install cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.bun/install/cache
+          key: bun-${{ runner.os }}-${{ hashFiles('bun.lock') }}
+          restore-keys: bun-${{ runner.os }}-
+      - run: bun install --frozen-lockfile
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: .
+      - uses: mozilla-actions/sccache-action@v0.0.10
+      - name: Install minisign
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq minisign
+      - name: Check minisign
+        run: minisign -v
+      - name: Build Linux x86_64 headless release artifact
+        env:
+          PANTOKEN_BUILD_SHA: ${{ github.sha }}
+          PANTOKEN_RELEASE_BUILD: "1"
+          TAURI_SIGNING_PRIVATE_KEY_TEXT: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_TEXT }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ""
+        run: >
+          bun scripts/headless/build.ts
+          --target x86_64-unknown-linux-gnu
+          --tag "${{ github.ref_name }}"
+      - name: Install trusted tar validator for preparation
+        run: test -x target/release/pantoken-tar-validate
+      - name: Validate Linux headless artifact
+        env:
+          PANTOKEN_UPDATE_TEST_MODE: "1"
+          PANTOKEN_TAR_VALIDATOR: ${{ github.workspace }}/target/release/pantoken-tar-validate
+        run: bun scripts/headless/validate-artifact.ts target/release/headless/pantoken-headless-linux-x86_64.tar.gz
+      - name: Smoke-test compiled Linux headless artifact
+        run: |
+          mkdir -p target/release/headless/payload
+          tar -xzf target/release/headless/pantoken-headless-linux-x86_64.tar.gz \
+            -C target/release/headless/payload
+          bun scripts/headless/smoke-test.ts target/release/headless/payload
+      - name: Assemble Linux release bundle
+        run: |
+          set -e
+          mkdir -p target/release/release-bundle
+          cp target/release/headless/pantoken-headless-linux-x86_64.tar.gz target/release/release-bundle/
+          cp target/release/headless/pantoken-headless-linux-x86_64.tar.gz.sig target/release/release-bundle/
+          cp target/release/headless/release-metadata.json target/release/release-bundle/release-metadata-linux.json
+      - name: Upload Linux release artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: signed-release-artifacts-linux
           path: target/release/release-bundle
           retention-days: 1
 
   release:
     name: release — publish
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [web-check, web-e2e, desktop, rust-server, release-prepare]
+    needs: [web-check, web-e2e, desktop, rust-server, release-prepare, release-prepare-linux]
     runs-on: macos-14 # publish.ts validates the macOS bundle with plutil
     timeout-minutes: 10
     permissions:
@@ -297,11 +367,28 @@ jobs:
           key: bun-${{ runner.os }}-${{ hashFiles('bun.lock') }}
           restore-keys: bun-${{ runner.os }}-
       - run: bun install --frozen-lockfile
-      - name: Download signed release artifacts
+      - name: Download macOS release artifacts
         uses: actions/download-artifact@v4
         with:
-          name: signed-release-artifacts
+          name: signed-release-artifacts-macos
           path: target/release/release-bundle
+      - name: Download Linux release artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: signed-release-artifacts-linux
+          path: target/release/release-bundle-linux
+      - name: Merge Linux artifacts into release bundle
+        run: |
+          set -e
+          cp target/release/release-bundle-linux/pantoken-headless-linux-x86_64.tar.gz \
+             target/release/release-bundle/
+          cp target/release/release-bundle-linux/pantoken-headless-linux-x86_64.tar.gz.sig \
+             target/release/release-bundle/
+          # Merge per-target metadata into the macOS metadata (which already
+          # has the desktop assets). The merged file is what publish.ts validates.
+          bun scripts/headless/merge-metadata.ts \
+            target/release/release-bundle/release-metadata.json \
+            target/release/release-bundle-linux/release-metadata-linux.json
       - name: Validate retained release bundle
         run: |
           test -f target/release/release-bundle/Pantoken.app.tar.gz
@@ -309,6 +396,8 @@ jobs:
           test -f target/release/release-bundle/latest.json
           test -f target/release/release-bundle/pantoken-headless-macos-aarch64.tar.gz
           test -f target/release/release-bundle/pantoken-headless-macos-aarch64.tar.gz.sig
+          test -f target/release/release-bundle/pantoken-headless-linux-x86_64.tar.gz
+          test -f target/release/release-bundle/pantoken-headless-linux-x86_64.tar.gz.sig
           test -f target/release/release-bundle/release-metadata.json
       - name: Publish release
         env:

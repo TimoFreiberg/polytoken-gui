@@ -15,8 +15,9 @@ use std::io;
 use pantoken_daemon_types::POLYTOKEN_DAEMON_TARGET_VERSION;
 use pantoken_remote_layout::semver;
 
-use crate::bridge::{CommandOutput, SshCommand, SshTransport};
+use crate::bridge::CommandOutput;
 use crate::provisioning::probe::ProbeResult;
+use crate::remote_executor::RemoteExecutor;
 
 /// The compatibility state of the remote polytoken install.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -46,8 +47,7 @@ pub const VERSION_CHECK_COMMAND: &str = "polytoken --version 2>/dev/null | head 
 /// If the probe already found a polytoken version, pass it via `probe_version`
 /// to avoid a redundant SSH command.
 pub async fn check_compatibility(
-    transport: &dyn SshTransport,
-    command: SshCommand,
+    executor: &dyn RemoteExecutor,
     probe_version: Option<&str>,
 ) -> Result<PolytokenCompat, io::Error> {
     // If the probe already found a version, use it directly.
@@ -59,8 +59,8 @@ pub async fn check_compatibility(
         }
     } else {
         // Run the version check command.
-        let output = transport
-            .run_command(command, VERSION_CHECK_COMMAND)
+        let output = executor
+            .run_script(VERSION_CHECK_COMMAND.to_owned())
             .await?;
         extract_version_string(&output)
     };

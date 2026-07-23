@@ -389,3 +389,75 @@ they drove the exclusive navigate-the-WebView flow, which is incompatible
 with the multi-host model. The in-app host picker (stage 5) + Settings
 "Computers" section (stage 6) replace the tray as the primary management
 surface.
+
+## Docker Target Extension: running-only lifecycle
+
+**Decision:** Pantoken accepts only currently running containers. It never
+creates, starts, stops, restarts, rebuilds, pulls, or deletes a container.
+
+**Rationale:** container lifecycle is owned by the user or orchestrator
+(Compose, devcontainer, k8s). Pantoken is a guest inside an existing
+container; managing its lifecycle would blur responsibility and risk
+disrupting the user's environment. A stopped container is surfaced as an
+actionable error ("container is not running") rather than silently started.
+
+## Docker Target Extension: container-as-Computer identity
+
+**Decision:** a Docker target profile appears as its own top-level Pantoken
+Computer, not a project or sub-entry under the SSH host. Primary identity is
+the editable profile/container label; secondary context identifies the exact
+container name and redacted SSH host (e.g. `work-api via dev-server`).
+
+**Rationale:** the user's mental model is "I have a computer running inside a
+container on dev-server." Treating it as a top-level Computer matches that
+model and reuses the existing multi-host manager for background
+connection/activity behavior. Server hello identity must not overwrite the saved
+label.
+
+## Docker Target Extension: root execution acknowledgement
+
+**Decision:** effective root (UID 0) inside a container is allowed only after an
+explicit acknowledgement whose fingerprint covers the resolved container ID,
+requested user, effective UID, and effective GID. There is no silent fallback
+to root and no blanket `allowRoot` boolean.
+
+**Rationale:** container root is a real privilege boundary. Docker access by the
+SSH account is itself a high-privilege host boundary. The user must knowingly
+accept root execution for the specific container+identity combination. If the
+container is replaced or the effective identity changes, the fingerprint no
+longer matches and re-acknowledgement is required.
+
+## Docker Target Extension: persistence warning and acknowledgement
+
+**Decision:** ephemeral storage (tmpfs, writable layer with no covering mount)
+is allowed only after an explicit acknowledgement whose fingerprint covers the
+resolved container ID, normalized Pantoken root, persistence classification,
+deepest covering mount destination, mount type, read/write mode, and a
+privacy-preserving hash of the backing identity.
+
+**Rationale:** container recreation, rebuild, or `docker rm` can silently lose
+Pantoken runtime state, session journals, and polytoken XDG data. The user must
+understand that `docker stop`/`start` normally retains the writable layer, but
+removal/recreation does not. Bind mounts and named volumes are persistent; the
+warning accurately distinguishes the cases. A same-container stop/start with
+unchanged fingerprints does not re-prompt.
+
+## Docker Target Extension: host-mode migration default
+
+**Decision:** existing profile JSON without execution-target fields deserializes
+as `Host` mode (the serde default). Saving an old profile does not silently
+convert it to Docker or lose advanced fields.
+
+**Rationale:** backward compatibility is load-bearing. Users with existing SSH
+profiles must see no behavior change. The `ExecutionTargetProfile` enum uses
+`#[default] Host` so missing fields are safe.
+
+## Docker Target Extension: no host-hub split
+
+**Decision:** the Pantoken remote runtime and polytoken daemon both run inside
+the selected container. There is no host-side Pantoken hub or container-only
+daemon split.
+
+**Rationale:** keeping everything inside the container simplifies the trust
+model and avoids a host-side process that could outlive or conflict with the
+container. The SSH host is merely the transport and Docker discovery layer.

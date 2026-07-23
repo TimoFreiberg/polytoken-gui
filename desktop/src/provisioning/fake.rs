@@ -211,6 +211,7 @@ mod tests {
             remote_root: "/tmp/pantoken-test".into(),
             server_path: "pantoken-server".into(),
             extra_env: Vec::new(),
+            raw_remote_command: None,
         }
     }
 
@@ -327,6 +328,7 @@ mod fake_ssh_harness_smoke_tests {
             remote_root: "/tmp/pantoken-test".into(),
             server_path: "pantoken-server".into(),
             extra_env: Vec::new(),
+            raw_remote_command: None,
         }
     }
 

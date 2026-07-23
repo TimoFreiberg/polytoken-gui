@@ -1,17 +1,22 @@
 #!/usr/bin/env bun
-// build.ts — build a headless macOS arm64 release artifact.
+// build.ts — build a headless release artifact for a supported target triple.
 //
-//   bun scripts/headless/build.ts [--dry-run] [--skip-build] [--tag <vMAJOR.MINOR.PATCH>]
+//   bun scripts/headless/build.ts [--target <triple>] [--dry-run] [--skip-build] [--tag <vMAJOR.MINOR.PATCH>]
 //
-// Produces:
-//   target/release/pantoken-headless-macos-aarch64.tar.gz
-//   target/release/pantoken-headless-macos-aarch64.tar.gz.sig
-//   target/release/release-metadata.json
+// Default --target: aarch64-apple-darwin (the macOS arm64 host).
+// Supported targets are defined in release-constants.ts HEADLESS_TARGETS and
+// must match SUPPORTED_TARGET_TRIPLES in the Rust manifest module.
+//
+// Produces (per target):
+//   target/release/headless/<asset>           (archive)
+//   target/release/headless/<asset>.sig      (minisign signature)
+//   target/release/headless/release-metadata.json  (aggregated, written by the
+//       CI aggregation step or publish.ts, not by a single build invocation)
 //
 // The artifact contains:
 //   VERSION              (plain text: MAJOR.MINOR.PATCH)
 //   BUILD_SHA            (40-char lowercase hex)
-//   bin/pantoken-server  (compiled arm64 Rust binary)
+//   bin/pantoken-server  (compiled Rust binary for the target)
 //   run.sh               (runtime wrapper, executable)
 //   update.sh            (updater, executable)
 //   client-dist/index.html  (bundled static client)
@@ -34,14 +39,10 @@ import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import {
   RELEASE_REPO,
-  RELEASE_BASE_URL,
-  HEADLESS_ASSET,
-  HEADLESS_SIGNATURE,
-  isReleaseTag,
-  assertReleaseTag,
-  releaseAssetUrl,
-  latestAssetUrl,
+  HEADLESS_TARGETS,
+  headlessTargetForTriple,
   TAURI_UPDATER_PUBLIC_KEY,
+  assertReleaseTag,
 } from "../desktop/release-constants";
 
 const repoRoot = resolve(import.meta.dir, "../..");
@@ -96,6 +97,7 @@ function parseArgs(argv: string[]): {
   dryRun: boolean;
   skipBuild: boolean;
   tag: string | undefined;
+  targetTriple: string;
 } {
   const dryRun = argv.includes("--dry-run");
   const skipBuild = argv.includes("--skip-build");
@@ -104,7 +106,14 @@ function parseArgs(argv: string[]): {
   if (tagIdx >= 0 && !tag)
     fail("--tag needs a value (e.g. v0.2.1)");
   if (tag) assertReleaseTag(tag);
-  return { dryRun, skipBuild, tag };
+  const targetIdx = argv.indexOf("--target");
+  const targetTriple =
+    targetIdx >= 0
+      ? (argv[targetIdx + 1] ?? fail("--target needs a value (e.g. x86_64-unknown-linux-gnu)"))
+      : "aarch64-apple-darwin";
+  // Validate against the supported matrix.
+  headlessTargetForTriple(targetTriple);
+  return { dryRun, skipBuild, tag, targetTriple };
 }
 
 // ── version extraction ──
@@ -206,6 +215,7 @@ async function assembleTarGz(
   outputDir: string,
   clientDist: string,
   binaryPath: string,
+  assetName: string,
 ): Promise<string> {
   const stagingDir = mkdtempSync(join(tmpdir(), "pantoken-headless-"));
   try {
@@ -247,13 +257,13 @@ async function assembleTarGz(
     // The Rust tar validator handles directory entries (bin/, client-dist/) correctly,
     // so we use a normal recursive archive command.
     const tarCmd = await capture(
-      ["tar", "czf", join(outputDir, HEADLESS_ASSET), "-C", stagingDir, "."],
+      ["tar", "czf", join(outputDir, assetName), "-C", stagingDir, "."],
       { env: { COPYFILE_DISABLE: "1" } },
     );
     if (tarCmd.code !== 0)
       fail(`tar failed: ${tarCmd.stderr}`);
 
-    return join(outputDir, HEADLESS_ASSET);
+    return join(outputDir, assetName);
   } finally {
     rmSync(stagingDir, { recursive: true, force: true });
   }
@@ -302,6 +312,14 @@ async function signWithMinisign(
 
 // ── metadata ──
 
+interface HeadlessTargetMetadata {
+  targetTriple: string;
+  asset: string;
+  signature: string;
+  assetSha256: string;
+  signatureSha256: string;
+}
+
 interface ReleaseMetadata {
   tag: string;
   version: string;
@@ -310,8 +328,7 @@ interface ReleaseMetadata {
   desktopAsset: string;
   desktopSignature: string;
   latestJsonAsset: string;
-  headlessAsset: string;
-  headlessSignature: string;
+  headlessTargets: HeadlessTargetMetadata[];
   assetSha256: Record<string, string>;
 }
 
@@ -373,13 +390,23 @@ function copyDirRecursive(src: string, dst: string): void {
 // ── main ──
 
 if (import.meta.main) {
-  const { dryRun, skipBuild, tag: cliTag } = parseArgs(process.argv.slice(2));
+  const { dryRun, skipBuild, tag: cliTag, targetTriple } = parseArgs(process.argv.slice(2));
+  const target = headlessTargetForTriple(targetTriple);
 
   // ── preflight: platform ──
-  if (process.platform !== "darwin")
-    fail(`headless build is macOS-only (host: ${process.platform})`);
-  if (process.arch !== "arm64")
-    fail(`headless build requires arm64 (host: ${process.arch})`);
+  // Each target must be built on its native runner so the binary actually runs
+  // on the target platform (no cross-compilation).
+  if (targetTriple === "aarch64-apple-darwin") {
+    if (process.platform !== "darwin")
+      fail(`aarch64-apple-darwin build requires macOS (host: ${process.platform})`);
+    if (process.arch !== "arm64")
+      fail(`aarch64-apple-darwin build requires arm64 (host: ${process.arch})`);
+  } else if (targetTriple === "x86_64-unknown-linux-gnu") {
+    if (process.platform !== "linux")
+      fail(`x86_64-unknown-linux-gnu build requires Linux (host: ${process.platform})`);
+    if (process.arch !== "x64")
+      fail(`x86_64-unknown-linux-gnu build requires x86_64 (host: ${process.arch})`);
+  }
 
   // ── build SHA ──
   const buildSha = await resolveBuildSha(cliTag);
@@ -428,11 +455,25 @@ if (import.meta.main) {
       );
   }
 
-  // ── extract version from desktop bundle ──
-  // In --skip-build mode without a tag, we cannot verify against the desktop bundle.
-  // If a tag is provided, we validate against it.
+  // ── extract version ──
+  // The version comes from the release tag if provided. On macOS, the desktop
+  // bundle's Info.plist is the fallback. On Linux (no desktop bundle), the tag
+  // is required for release builds.
   const tagPrefix = cliTag ? assertReleaseTag(cliTag).slice(1) : undefined;
-  const version = tagPrefix ?? (await extractVersionFromDesktop(cliTag));
+  let version: string;
+  if (tagPrefix) {
+    version = tagPrefix;
+  } else if (process.platform === "darwin") {
+    version = await extractVersionFromDesktop(cliTag);
+  } else {
+    // Non-macOS without a tag: read the version from desktop/Cargo.toml as a
+    // best-effort fallback (dev/local builds only — release builds always pass --tag).
+    const cargo = await Bun.file(join(repoRoot, "desktop", "Cargo.toml")).text();
+    const m = cargo.match(/^version\s*=\s*"(\d+\.\d+\.\d+)"/m);
+    if (!m) fail("could not extract version from desktop/Cargo.toml — pass --tag");
+    version = m[1]!;
+    console.log(`[warning] no --tag; using version ${version} from desktop/Cargo.toml (dev build)`);
+  }
 
   // ── assemble tar.gz ──
   const outputDir = join(repoRoot, "target", "release", "headless");
@@ -443,6 +484,7 @@ if (import.meta.main) {
     outputDir,
     clientDist,
     binaryPath,
+    target.asset,
   );
   console.log(`Assembled archive: ${archivePath}`);
 
@@ -481,10 +523,35 @@ if (import.meta.main) {
   console.log("Local minisign verification passed.");
 
   // ── write metadata ──
+  // A single build invocation writes metadata for its target only. The CI
+  // aggregation step (or publish.ts --skip-build) merges per-target metadata
+  // into the final release-metadata.json.
   const tagStr = cliTag ?? `v${version}`;
   const archiveSha = await fileSha256(archivePath);
   const sigSha = await fileSha256(sigPath);
+
+  // Desktop assets exist only on the macOS runner; skip them on Linux.
   const desktopDir = join(repoRoot, "target", "release", "bundle", "macos");
+  const hasDesktopBundle = existsSync(join(desktopDir, "Pantoken.app.tar.gz"));
+
+  const headlessTargetEntry: HeadlessTargetMetadata = {
+    targetTriple: target.targetTriple,
+    asset: target.asset,
+    signature: target.signature,
+    assetSha256: archiveSha,
+    signatureSha256: sigSha,
+  };
+
+  const assetSha256: Record<string, string> = {
+    [target.asset]: archiveSha,
+    [target.signature]: sigSha,
+  };
+
+  if (hasDesktopBundle) {
+    assetSha256["Pantoken.app.tar.gz"] = await requiredAssetSha(desktopDir, "Pantoken.app.tar.gz");
+    assetSha256["Pantoken.app.tar.gz.sig"] = await requiredAssetSha(desktopDir, "Pantoken.app.tar.gz.sig");
+    assetSha256["latest.json"] = await requiredAssetSha(desktopDir, "latest.json");
+  }
 
   await writeMetadata(
     {
@@ -492,18 +559,11 @@ if (import.meta.main) {
       version,
       buildSha,
       releaseRepo: RELEASE_REPO,
-      desktopAsset: "Pantoken.app.tar.gz",
-      desktopSignature: "Pantoken.app.tar.gz.sig",
-      latestJsonAsset: "latest.json",
-      headlessAsset: HEADLESS_ASSET,
-      headlessSignature: HEADLESS_SIGNATURE,
-      assetSha256: {
-        desktopAsset: await requiredAssetSha(desktopDir, "Pantoken.app.tar.gz"),
-        desktopSignature: await requiredAssetSha(desktopDir, "Pantoken.app.tar.gz.sig"),
-        latestJsonAsset: await requiredAssetSha(desktopDir, "latest.json"),
-        headlessAsset: archiveSha,
-        headlessSignature: sigSha,
-      },
+      desktopAsset: hasDesktopBundle ? "Pantoken.app.tar.gz" : "",
+      desktopSignature: hasDesktopBundle ? "Pantoken.app.tar.gz.sig" : "",
+      latestJsonAsset: hasDesktopBundle ? "latest.json" : "",
+      headlessTargets: [headlessTargetEntry],
+      assetSha256,
     },
     outputDir,
   );
