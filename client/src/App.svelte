@@ -4,6 +4,7 @@
   import { HostCoordinator } from "./lib/hosts.svelte.js";
   import { createSingleHostProvider } from "./lib/hosts/provider.js";
   import { createTauriHostProvider } from "./lib/hosts/tauri-provider.js";
+  import { createDevHostProvider } from "./lib/hosts/dev-provider.js";
   import { isDesktopShell } from "./lib/desktop.js";
   import { resolveWsUrl } from "./lib/ws-url.js";
   import StatusHeader from "./components/StatusHeader.svelte";
@@ -146,12 +147,31 @@
       window.location,
       import.meta.env.VITE_PANTOKEN_WS_URL,
     );
+    if (dev) {
+      const provider = createDevHostProvider(wsUrl);
+      const coordinator = new HostCoordinator(provider);
+      provider.setMessageSink((hostId, message) => coordinator.receiveHostMessage(hostId, message));
+      onMount(() => {
+        (window as unknown as { __pantokenHosts?: unknown }).__pantokenHosts = {
+          setState: provider.setState,
+          setActivity: provider.setActivity,
+          emit: provider.emit,
+        };
+        return () => delete (window as unknown as { __pantokenHosts?: unknown }).__pantokenHosts;
+      });
+      return coordinator;
+    }
     return new HostCoordinator(createSingleHostProvider(wsUrl));
   })();
 
-  onMount(async () => {
-    await hostCoordinator.init();
-    store.start();
+  onMount(() => {
+    void (async () => {
+      await hostCoordinator.init();
+      store.start();
+    })().catch((error: unknown) => {
+      console.error("[HostCoordinator] initialization failed", error);
+    });
+    return () => hostCoordinator.cleanup();
   });
 
   // Transcript zoom: intercept the browser-zoom keys (⌘=/⌘+ grow, ⌘- shrink, ⌘0 reset)
@@ -441,7 +461,7 @@
   </div>
 {:else}
 <div class="shell">
-  <Sidebar edge={edge} />
+  <Sidebar edge={edge} coordinator={hostCoordinator} />
   <!-- No edge pop-in arrows on either side: both collapsed panels reopen from a chevron
        in the header (StatusHeader), at the leading/trailing edge respectively — the top
        corner each panel's own collapse control sits in. (⌘B / ⌘⇧J too.) A collapsed
@@ -456,7 +476,7 @@
       onCancel: edge.cancel,
     }}
   >
-    <StatusHeader />
+    <StatusHeader coordinator={hostCoordinator} />
     <div class="chat">
       <ConnectionBanner />
       <ChatNotice />

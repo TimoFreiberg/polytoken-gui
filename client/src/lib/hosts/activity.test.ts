@@ -40,6 +40,12 @@ describe("deriveIndicator", () => {
     expect(deriveIndicator(none, true)).toBe("quiet");
   });
 
+  test("reconnecting suppresses stale unseen/running but preserves attention", () => {
+    expect(deriveIndicator({ ...none, unseen: true, running: true }, "reconnecting")).toBe("reconnecting");
+    expect(deriveIndicator({ ...none, waiting: true }, "reconnecting")).toBe("waiting");
+    expect(deriveIndicator({ ...none, failed: true }, "reconnecting")).toBe("failed");
+  });
+
   test("offline takes precedence over everything (disconnected host with failed activity)", () => {
     expect(
       deriveIndicator({ ...none, failed: true, running: true }, false),

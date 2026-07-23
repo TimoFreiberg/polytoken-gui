@@ -53,4 +53,10 @@ export interface HostSummary {
   activity: HostActivity;
   /** True once the first sessionStatus has established a baseline. */
   baselined: boolean;
+  /** Whether this is the coordinator's selected host. */
+  selected: boolean;
+  /** Authoritative visual/activity state for compact host surfaces. */
+  indicator: import("./activity.js").HostIndicator;
+  /** Localized, accessible connection/activity description. */
+  statusText: string;
 }

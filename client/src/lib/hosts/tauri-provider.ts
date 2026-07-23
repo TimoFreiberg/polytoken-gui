@@ -108,6 +108,9 @@ export function createTauriHostProvider(
   localServerLabel: () => string,
 ): HostProvider {
   return {
+    supportsMultiHost() {
+      return true;
+    },
     async listHosts(): Promise<NativeHostDescriptor[]> {
       const snapshots = await invoke<HostStateSnapshot[]>("list_hosts");
       return snapshots.map((s) => snapshotToDescriptor(s, localServerLabel));

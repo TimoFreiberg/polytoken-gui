@@ -23,6 +23,8 @@
   import { createPullRefresh } from "../lib/pull-to-refresh.svelte.js";
   import type { EdgeSwipe } from "../lib/edge-swipe.svelte.js";
   import { overlayHistory } from "../lib/overlay-history.js";
+  import HostSwitcher from "./HostSwitcher.svelte";
+  import type { HostCoordinator } from "../lib/hosts.svelte.js";
 
   // Pull-to-refresh (touch only): pulling the session list down from the top forces a
   // reconnect + re-snapshot, same gesture as the transcript.
@@ -34,7 +36,7 @@
   // .edge-drag disables the open/close transition so the follow is frame-accurate.
   // Passed in from App.svelte (the swipe surface is the main pane), so the one
   // controller owns both the action's callbacks and the snapshot we read here.
-  const { edge }: { edge: EdgeSwipe } = $props();
+  const { edge, coordinator }: { edge: EdgeSwipe; coordinator: HostCoordinator } = $props();
   const edgeDragging = $derived(edge.snap.phase !== "idle");
   const sidebarTransform = $derived(
     edgeDragging
@@ -770,6 +772,9 @@
 
   <SidebarNotice />
 
+  {#if coordinator.multiHostCapable}
+    <HostSwitcher {coordinator} />
+  {/if}
   <div class="new" data-testid="sidebar-new-session">
     <button
       class="new-btn"

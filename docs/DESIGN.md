@@ -122,6 +122,25 @@ over a root `PathBuf`. Default root is `~/.local/share/pantoken`
 empty/relative/`..`-traversing roots; version/target inputs are sanitized
 against traversal.
 
+### Stage 5 host-scoped connection UI
+
+The native/equivalent multi-host client presents a local-first computer switcher directly
+above **New session** in the sessions sidebar. The selected computer's saved profile label
+and redacted destination are shown in the switcher, and the session header includes a
+compact `pantoken · <host>` identity even when the sidebar is collapsed. Switching hosts
+clears the visible server-scoped store before adopting cached/authoritative bootstrap, so
+transcripts and new-session defaults remain scoped to the selected computer.
+
+Browser/PWA mode remains a single-server compatibility path: it does not render the
+computer switcher, native host identity, or Add/Manage computer actions, and it does not
+claim that the network server is `This computer`.
+
+Host activity indicators use this precedence: offline, failed, waiting, reconnecting,
+unseen, running, quiet. Reconnecting suppresses stale unseen/running state while waiting
+and failed session attention remains actionable. The `?dev` preview gate exposes a
+non-production multi-host fixture for deterministic UI testing; it does not implement
+profile management or provisioning.
+
 ### Not yet implemented (future phases)
 
 - ~~Stdio adapter runtime (Phase 1)~~ → see "Remote deployment — Phase 1" below

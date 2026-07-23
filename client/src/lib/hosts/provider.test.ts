@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { createFakeHostProvider, createSingleHostProvider } from "./provider.js";
+import { createDevHostProvider } from "./dev-provider.js";
 import type { NativeHostDescriptor } from "./types.js";
 
 function descriptor(
@@ -26,6 +27,7 @@ describe("SingleHostProvider", () => {
     expect(hosts[0].kind).toBe("local");
     expect(hosts[0].state).toBe("ready");
     expect(hosts[0].wsUrl).toBe("ws://127.0.0.1:8787/ws");
+    expect(provider.supportsMultiHost()).toBe(false);
   });
 
   test("connectHost is a no-op (local is always connected)", async () => {
@@ -63,6 +65,7 @@ describe("FakeHostProvider", () => {
     const hosts = await provider.listHosts();
     expect(hosts).toHaveLength(2);
     expect(hosts.map((h) => h.id)).toEqual(["local", "remote-1"]);
+    expect(provider.supportsMultiHost()).toBe(true);
   });
 
   test("can drive different states for two hosts independently", async () => {
@@ -115,5 +118,20 @@ describe("FakeHostProvider", () => {
     await provider.deleteProfile("remote-1");
     const hosts = await provider.listHosts();
     expect(hosts.map((h) => h.id)).not.toContain("remote-1");
+  });
+});
+
+describe("DevHostProvider", () => {
+  test("exposes independent fixtures and routes activity through its sink", async () => {
+    const provider = createDevHostProvider("ws://127.0.0.1:9000/ws");
+    const messages: Array<{ id: string; message: unknown }> = [];
+    provider.setMessageSink((id, message) => messages.push({ id, message }));
+    expect(provider.supportsMultiHost()).toBe(true);
+    expect((await provider.listHosts()).map((host) => host.id)).toEqual(["local", "dev-remote"]);
+    provider.setState("dev-remote", "failed");
+    expect((await provider.listHosts()).find((host) => host.id === "dev-remote")?.state).toBe("failed");
+    provider.setActivity("dev-remote", { running: true, unseen: false, waiting: false, failed: false });
+    expect(messages.at(-1)?.id).toBe("dev-remote");
+    expect((messages.at(-1)?.message as { type: string }).type).toBe("sessionStatus");
   });
 });

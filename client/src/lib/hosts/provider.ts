@@ -14,6 +14,8 @@ import type {
  *  by Tauri (stage 4); in browser/e2e builds it's a SingleHostProvider; in
  *  tests it's a FakeHostProvider. */
 export interface HostProvider {
+  /** Whether this provider exposes multiple selectable computers. */
+  supportsMultiHost(): boolean;
   /** List local + saved remote computer descriptors. */
   listHosts(): Promise<NativeHostDescriptor[]>;
   /** Ensure/connect one remote computer; poll its state and bridge URL. */
@@ -40,6 +42,9 @@ export function createSingleHostProvider(wsUrl: string): HostProvider {
   };
 
   return {
+    supportsMultiHost() {
+      return false;
+    },
     async listHosts() {
       return [localDescriptor];
     },
@@ -78,6 +83,9 @@ export function createFakeHostProvider(
   );
 
   const provider: HostProvider = {
+    supportsMultiHost() {
+      return hosts.length > 1;
+    },
     async listHosts() {
       return [...hostMap.values()];
     },

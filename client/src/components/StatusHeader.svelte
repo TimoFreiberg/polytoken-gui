@@ -5,7 +5,9 @@
   import GoalBadge from "./GoalBadge.svelte";
   import IconButton from "./ui/IconButton.svelte";
   import SidebarPanelIcon from "./ui/SidebarPanelIcon.svelte";
+  import type { HostCoordinator } from "../lib/hosts.svelte.js";
 
+  const { coordinator }: { coordinator: HostCoordinator } = $props();
   let hotkeyN = $state(0);
 
   function onWindowKeydown(e: KeyboardEvent) {
@@ -92,6 +94,12 @@
         ? `Worktree ${entry.cwd} (of ${entry.worktree.base})`
         : entry.cwd,
   );
+  const selectedHost = $derived(
+    coordinator.multiHostCapable
+      ? coordinator.summaries.find((summary) => summary.selected)
+      : undefined,
+  );
+  const hostIdentity = $derived(selectedHost?.descriptor.label ?? "");
 
   const push = $derived(store.pushState);
   const pushTitle: Record<string, string> = {
@@ -169,6 +177,12 @@
     </span>
     <div class="sub">
       <span class="path" title={subtitleTitle}>{subtitle}</span>
+      {#if selectedHost}
+        <span class="dot-sep host-sep">·</span>
+        <span class="host-identity" data-testid="header-host-identity" title={selectedHost.descriptor.subtitle || "This computer"}>
+          pantoken · {hostIdentity}
+        </span>
+      {/if}
       {#if !drafting && s.goal}
         <span class="dot-sep">·</span>
         <GoalBadge />
@@ -348,6 +362,10 @@
   }
   .dot-sep {
     color: var(--text-faint);
+  }
+  .host-identity {
+    color: var(--text-muted);
+    font-weight: 600;
   }
   .right {
     display: flex;

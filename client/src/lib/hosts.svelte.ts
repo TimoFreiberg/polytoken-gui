@@ -16,7 +16,12 @@ import type { IWsClient, MessageListener } from "./ws-client.svelte.js";
 import { WsClient } from "./ws-client.svelte.js";
 import { compatibilityClient } from "./ws.svelte.js";
 import { store } from "./store.svelte.js";
-import type { HostActivity, NativeHostDescriptor } from "./hosts/types.js";
+import type {
+  HostActivity,
+  HostSummary,
+  NativeHostDescriptor,
+} from "./hosts/types.js";
+import { deriveIndicator } from "./hosts/activity.js";
 import type { HostProvider } from "./hosts/provider.js";
 import {
   applySessionStatus,
@@ -53,18 +58,64 @@ const BOOTSTRAP_TYPES = new Set([
   "jobsList",
 ]);
 
+export type ConnectHostResult =
+  | { ok: true }
+  | {
+      ok: false;
+      failure: {
+        label: string;
+        action?: string;
+        detail?: string;
+      };
+    };
+
+function statusText(
+  descriptor: NativeHostDescriptor,
+  activity: HostActivity,
+): string {
+  if (descriptor.state === "failed") return descriptor.failureLabel ?? "Connection failed";
+  if (descriptor.state === "disconnected") return "Offline";
+  if (descriptor.state === "reconnecting") return "Reconnecting";
+  if (["connecting", "testingSsh", "provisioning", "starting"].includes(descriptor.state)) return "Connecting";
+  if (activity.failed) return "Session failed";
+  if (activity.waiting) return "Waiting for input";
+  if (activity.unseen) return "New activity";
+  if (activity.running) return "Running";
+  return "Connected";
+}
+
 export class HostCoordinator {
   /** All host descriptors (local + remote). */
   hosts = $state<NativeHostDescriptor[]>([]);
+  /** UI-facing reactive projection; components do not inspect hostState. */
+  summaries = $state<HostSummary[]>([]);
+  /** Whether this provider supports native-style host switching. */
+  readonly multiHostCapable: boolean;
   /** The selected host id. */
   selectedHostId = $state<string | null>(null);
   /** Per-host connection state + cached bootstrap. */
   private hostState = new Map<string, HostEntry>();
   /** The provider (Tauri in desktop, single-host in browser, fake in tests). */
   private provider: HostProvider;
+  private unsubscribeLocal: (() => void) | null = null;
 
   constructor(provider: HostProvider) {
     this.provider = provider;
+    this.multiHostCapable = provider.supportsMultiHost();
+    this.unsubscribeLocal = compatibilityClient.onMessage((msg) => {
+      this.observeLocalMessage(msg);
+    });
+  }
+
+  /** Remove the single read-only compatibility observer. */
+  cleanup(): void {
+    this.unsubscribeLocal?.();
+    this.unsubscribeLocal = null;
+    for (const entry of this.hostState.values()) {
+      entry.unsubscribe?.();
+      entry.client?.destroy();
+      entry.client = null;
+    }
   }
 
   /** Initialize: list hosts, select local. */
@@ -78,17 +129,18 @@ export class HostCoordinator {
   }
 
   /** Select a host. Switches the visible store. */
-  async selectHost(id: string): Promise<void> {
+  async selectHost(id: string): Promise<ConnectHostResult> {
     const entry = this.hostState.get(id);
-    if (!entry) return;
+    if (!entry) return { ok: false, failure: { label: "Computer not found" } };
 
     // 1. If the target host is not connected, connect it first.
     // The local host does NOT get a WsClient created — its messages flow
     // through the compatibility singleton (wired by store.start()). Creating
     // a WsClient for the local host would double-register onMessage and cause
     // every server message to be processed twice.
-    if (id !== "local" && !entry.client && entry.descriptor.wsUrl) {
-      await this.connectHost(id);
+    if (id !== "local" && !entry.client) {
+      const result = await this.connectHost(id);
+      if (result && !result.ok) return result;
     }
 
     // 2-3. Stash current host's per-client state + clear server-scoped state.
@@ -118,27 +170,54 @@ export class HostCoordinator {
 
     // 6. Clear the target host's unseen.
     entry.unread = clearOnSelect(entry.unread);
+    this.refreshSummaries();
 
     // 7. If the target host's WsClient is connected, request a fresh seed.
     if (entry.client) {
       entry.client.send({ type: "requestSeed" } as ClientMessage);
     }
+    this.refreshSummaries();
+    return { ok: true };
   }
 
   /** Connect a remote host (lazy, first selection). Creates a WsClient and
    *  registers an onMessage listener that routes to the coordinator. */
-  async connectHost(id: string): Promise<void> {
+  async connectHost(id: string): Promise<ConnectHostResult> {
     const entry = this.hostState.get(id);
-    if (!entry) return;
-    if (entry.client) return; // Already connected.
+    if (!entry) return { ok: false, failure: { label: "Computer not found" } };
+    if (entry.client) return { ok: true }; // Already connected.
 
-    const descriptor = entry.descriptor;
-    if (!descriptor.wsUrl) {
+    const priorState = entry.descriptor.state;
+    entry.descriptor = { ...entry.descriptor, state: "connecting" };
+    this.refreshSummaries();
+    try {
       await this.provider.connectHost(id);
       await this.refreshHosts();
       const updated = this.hostState.get(id);
-      if (!updated?.descriptor.wsUrl) return;
+      if (!updated?.descriptor.wsUrl) {
+        entry.descriptor = { ...entry.descriptor, state: priorState };
+        this.refreshSummaries();
+        return { ok: false, failure: { label: "Computer did not provide a connection" } };
+      }
       entry.descriptor = updated.descriptor;
+    } catch (error) {
+      const e = error as { message?: string; failureAction?: string; failureDetail?: string };
+      entry.descriptor = {
+        ...entry.descriptor,
+        state: priorState,
+        failureLabel: e.message ?? "Connection failed",
+        failureAction: e.failureAction,
+        failureDetail: e.failureDetail,
+      };
+      this.refreshSummaries();
+      return {
+        ok: false,
+        failure: {
+          label: entry.descriptor.failureLabel ?? "Connection failed",
+          action: entry.descriptor.failureAction,
+          detail: entry.descriptor.failureDetail,
+        },
+      };
     }
 
     // Create a WsClient for this host.
@@ -157,6 +236,8 @@ export class HostCoordinator {
 
     // Connect the client.
     client.connect();
+    this.refreshSummaries();
+    return { ok: true };
   }
 
   /** Disconnect a remote host. */
@@ -175,6 +256,7 @@ export class HostCoordinator {
 
     await this.provider.disconnectHost(id);
     await this.refreshHosts();
+    this.refreshSummaries();
   }
 
   /** Get the WsClient for a host (or null if not connected). */
@@ -215,6 +297,41 @@ export class HostCoordinator {
         entry.descriptor = desc;
       }
     }
+    this.refreshSummaries();
+  }
+
+  private refreshSummaries(): void {
+    this.summaries = this.hosts.map((descriptor) => {
+      const entry = this.hostState.get(descriptor.id);
+      const currentDescriptor = entry?.descriptor ?? descriptor;
+      const activity = this.getActivity(descriptor.id);
+      return {
+        descriptor: currentDescriptor,
+        activity,
+        baselined: entry?.unread.baselined ?? false,
+        selected: currentDescriptor.id === this.selectedHostId,
+        indicator: deriveIndicator(activity, currentDescriptor.state),
+        statusText: statusText(currentDescriptor, activity),
+      };
+    });
+  }
+
+  private observeLocalMessage(msg: ServerMessage): void {
+    const entry = this.hostState.get("local");
+    if (!entry) return;
+    this.cacheBootstrapMessage(entry, msg);
+    if (msg.type === "sessionStatus") {
+      entry.unread = applySessionStatus(
+        entry.unread,
+        {
+          runningIds: msg.runningIds,
+          initializingIds: msg.initializingIds,
+          attention: msg.attention,
+        },
+        this.selectedHostId === "local",
+      );
+    }
+    this.refreshSummaries();
   }
 
   /** The selected host's WsClient (for compatibility delegation).
@@ -228,6 +345,11 @@ export class HostCoordinator {
   }
 
   // ── Message routing boundary ──────────────────────────────────────────
+
+  /** Route a targeted dev/provider message through the normal host boundary. */
+  receiveHostMessage(hostId: string, msg: ServerMessage): void {
+    this.onHostMessage(hostId, msg);
+  }
 
   /** Handle a message from a host's WsClient. */
   private onHostMessage(hostId: string, msg: ServerMessage): void {
@@ -250,6 +372,7 @@ export class HostCoordinator {
         isActive,
       );
     }
+    this.refreshSummaries();
 
     // 3. Only forward to the visible store if this is the selected host.
     if (hostId === this.selectedHostId) {
