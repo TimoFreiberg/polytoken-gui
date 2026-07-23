@@ -622,14 +622,28 @@ test("Ctrl/Cmd+Up anchors to the scroll position, not always the last prompt", a
       return best;
     });
 
-  // ⌘↑ jumps to the prompt at the top of where we're reading (#1, just above the parked
+  // ↑ jumps to the prompt at the top of where we're reading (#1, just above the parked
   // #2) — it does NOT yank down to the most recent prompt the way it used to.
-  await page.keyboard.press("Control+ArrowUp");
+  await page.locator(".transcript-wrap").hover();
+  await page.getByTestId("prompt-nav-up").click();
   await expect.poll(topRowIndex).toBeLessThanOrEqual(2);
   const idx = await topRowIndex();
   expect(idx).toBeGreaterThanOrEqual(1); // moved up to an early prompt
   expect(idx).toBeLessThan(last); // and nowhere near the live tail
   expect(await gap()).toBeGreaterThan(80); // didn't scroll back to the bottom
+
+  // The removed ⌘↑ keyboard handler no longer fires — pressing Control+ArrowUp now
+  // leaves the scroll position untouched (no navigation happens).
+  const scrollTopBefore = await page.evaluate(() => {
+    const sc = document.querySelector(".scroller") as HTMLElement;
+    return sc.scrollTop;
+  });
+  await page.keyboard.press("Control+ArrowUp");
+  const scrollTopAfter = await page.evaluate(() => {
+    const sc = document.querySelector(".scroller") as HTMLElement;
+    return sc.scrollTop;
+  });
+  expect(scrollTopAfter).toBe(scrollTopBefore);
 });
 
 test("Ctrl/Cmd+Up/Down step through user prompts", async ({ page }) => {
@@ -668,23 +682,26 @@ test("Ctrl/Cmd+Up/Down step through user prompts", async ({ page }) => {
       return sc.scrollHeight - sc.scrollTop - sc.clientHeight < 4;
     });
 
-  // From the live tail, ⌘↑ walks one prompt older per press, all the way to the oldest.
-  // Stepping one at a time (settling between presses) keeps each smooth scroll short.
+  // From the live tail, clicking ↑ walks one prompt older per click, all the way to the oldest.
+  // Stepping one at a time (settling between clicks) keeps each smooth scroll short.
+  await page.locator(".transcript-wrap").hover();
+  const upBtn = page.getByTestId("prompt-nav-up");
+  const downBtn = page.getByTestId("prompt-nav-down");
   for (let i = last; i >= 0; i--) {
-    await page.keyboard.press("Control+ArrowUp");
+    await upBtn.click();
     await expect.poll(() => atPrompt(i)).toBe(true);
   }
-  // Past the oldest, ⌘↑ clamps — it stays on the first prompt.
-  await page.keyboard.press("Control+ArrowUp");
+  // Past the oldest, ↑ clamps — it stays on the first prompt.
+  await upBtn.click();
   await expect.poll(() => atPrompt(0)).toBe(true);
 
-  // ⌘↓ walks back toward newer prompts…
+  // ↓ walks back toward newer prompts…
   for (let i = 1; i <= last; i++) {
-    await page.keyboard.press("Control+ArrowDown");
+    await downBtn.click();
     await expect.poll(() => atPrompt(i)).toBe(true);
   }
   // …and stepping past the newest returns to the live bottom.
-  await page.keyboard.press("Control+ArrowDown");
+  await downBtn.click();
   await expect.poll(atBottom).toBe(true);
 });
 
@@ -766,9 +783,9 @@ test("prev/next prompt-nav buttons are visible on hover and step through prompts
   await expect(upBtn).toBeVisible();
   await expect(downBtn).toBeVisible();
 
-  // Buttons have the right tooltips (repo rule: every action names itself + shortcut).
-  await expect(upBtn).toHaveAttribute("title", "Previous prompt (⌘↑)");
-  await expect(downBtn).toHaveAttribute("title", "Next prompt (⌘↓)");
+  // Buttons have the right tooltips (repo rule: every action names itself).
+  await expect(upBtn).toHaveAttribute("title", "Previous prompt");
+  await expect(downBtn).toHaveAttribute("title", "Next prompt");
 
   // From the live tail, clicking ↑ steps one prompt older per click.
   for (let i = last; i >= 0; i--) {

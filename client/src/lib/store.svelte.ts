@@ -2178,19 +2178,6 @@ class PantokenStore {
     if (this.turnActive) return;
     send({ type: "branch", entryId });
   }
-  /** Rewind from the most recent user prompt — the "edit & resend my last message"
-   *  gesture, bound to a global hotkey. Finds the last user item carrying a branch
-   *  handle and rewinds to it. */
-  branchLastPrompt(): void {
-    const items = this.session.items;
-    for (let i = items.length - 1; i >= 0; i--) {
-      const it = items[i];
-      if (it && it.kind === "user" && it.entryId) {
-        this.branch(it.entryId);
-        return;
-      }
-    }
-  }
   openSession(path: string): void {
     const switching = path !== this.activeSessionPath;
     // Save the draft we're leaving (the new-session draft, or the prior session's text)

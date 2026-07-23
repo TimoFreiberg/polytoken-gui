@@ -56,16 +56,6 @@
   const isTouch =
     typeof navigator !== "undefined" && navigator.maxTouchPoints > 0;
 
-  // The branch handle of the most recent user prompt — the target of the
-  // Cmd/Ctrl+Shift+↑ "branch from last prompt" hotkey, so its button can advertise the
-  // shortcut. undefined when no prompt carries an entry id yet.
-  const lastUserEntryId = $derived.by(() => {
-    for (let i = items.length - 1; i >= 0; i--) {
-      const it = items[i];
-      if (it && it.kind === "user" && it.entryId) return it.entryId;
-    }
-    return undefined;
-  });
   // The entry id of the active path's TIP — the last transcript item that carries one.
   // Branching "from here" on the tip is a no-op (it's already where the next message
   // appends), so the turn-final assistant footer suppresses its branch button there.
@@ -288,7 +278,7 @@
   // Starts at -1 so the first measurement never reads as growth.
   let prevSize = -1;
 
-  // --- Prompt-stepping nav (Cmd/Ctrl+↑/↓). `navIndex` is a cursor into the visible
+  // --- Prompt-stepping nav (↑/↓ buttons). `navIndex` is a cursor into the visible
   //     `.row.user` list: null = not stepping (sitting at the live tail). ↑ walks toward
   //     older prompts, ↓ toward newer ones, and stepping past the newest returns to the
   //     live bottom. The CURSOR — not the scroll position — is the source of truth, so a
@@ -563,7 +553,7 @@
     lastScrollTop = top;
     // Reaching the bottom clears the active-session unread flag (you've seen it all).
     if (pinned) store.clearActiveUnread();
-    // A user scroll (not one of ours) abandons prompt-stepping, so the next ⌘↑ re-anchors.
+    // A user scroll (not one of ours) abandons prompt-stepping, so the next ↑ button press re-anchors.
     if (Date.now() >= progScrollUntil) navIndex = null;
     // Persist where the user is reading (debounced). Skipped during our own programmatic
     // scrolls (prompt-stepping / settleScroll) — those set progScrollUntil, and saving a
@@ -754,7 +744,7 @@
   // True when the active session has content below the viewport (drives the pill).
   const showNewPill = $derived(!pinned && store.activeUnread);
 
-  /** Where the first ⌘↑ lands when you're not already stepping. At the live tail it's the
+  /** Where the first ↑ button press lands when you're not already stepping. At the live tail it's the
    *  most recent prompt (re-read what you just asked) — a short final turn can leave that
    *  prompt mid-viewport instead of scrolled off the top, so the tail is detected from the
    *  scroll gap, not the top edge. Scrolled up, it's the most recent prompt above the
@@ -774,8 +764,8 @@
   }
 
   /** Step the prompt cursor and scroll the target prompt to the top of the viewport
-   *  (your message + the response below it). ⌘↑ (dir -1) walks toward older prompts; the
-   *  first press anchors relative to where you're reading (see firstUpAnchor). ⌘↓ (dir +1)
+   *  (your message + the response below it). ↑ (dir -1) walks toward older prompts; the
+   *  first press anchors relative to where you're reading (see firstUpAnchor). ↓ (dir +1)
    *  walks back toward newer ones, and stepping past the newest returns to the live
    *  bottom. */
   function stepPrompt(dir: -1 | 1): void {
@@ -783,8 +773,8 @@
     const prompts = scroller.querySelectorAll<HTMLElement>(".row.user");
     const last = prompts.length - 1;
     if (dir === 1) {
-      // ⌘↓: not stepping yet, or already at/past the newest prompt → return to the live
-      // bottom (preserves the old "⌘↓ jumps to the tail from anywhere" gesture).
+      // ↓: not stepping yet, or already at/past the newest prompt → return to the live
+      // bottom (preserves the old "↓ jumps to the tail from anywhere" gesture).
       if (navIndex === null || navIndex >= last) {
         navIndex = null;
         markProgScroll();
@@ -794,7 +784,7 @@
       navIndex += 1;
     } else {
       if (last < 0) return; // no prompts to step to
-      // ⌘↑: first press anchors to your reading spot; otherwise one older, clamped oldest.
+      // ↑: first press anchors to your reading spot; otherwise one older, clamped oldest.
       navIndex = navIndex === null ? firstUpAnchor(prompts) : Math.max(0, navIndex - 1);
     }
     const target = prompts[navIndex];
@@ -829,23 +819,7 @@
     flashTimer = setTimeout(() => row.classList.remove("nav-flash"), 700);
   }
 
-  // Global hotkey. Cmd/Ctrl modifier keeps it clear of the composer's type-to-focus
-  // (which only grabs unmodified printable keys). Fires regardless of focus so it
-  // works while reading scrollback.
   onMount(() => {
-    function onKey(e: KeyboardEvent): void {
-      if ((e.metaKey || e.ctrlKey) && e.key === "ArrowUp") {
-        e.preventDefault();
-        // Shift = act on the last prompt (branch/re-edit); plain = step to the previous one.
-        if (e.shiftKey) store.branchLastPrompt();
-        else stepPrompt(-1);
-      } else if ((e.metaKey || e.ctrlKey) && e.key === "ArrowDown") {
-        // ⌘↓ steps to the next prompt; past the newest it returns to the live bottom.
-        e.preventDefault();
-        stepPrompt(1);
-      }
-    }
-    window.addEventListener("keydown", onKey);
     // Stash the reading position on tab-close/navigate-away so it restores next visit.
     // (Mirrors Composer's pagehide draft stash.) pagehide fires on bfcache eviction too,
     // so a return from the back-stack still has the position.
@@ -915,7 +889,6 @@
     // user scrolls land in the trace; this interval covers the no-input case.
     const driftTimer = setInterval(sampleGeometry, 250);
     return () => {
-      window.removeEventListener("keydown", onKey);
       window.removeEventListener("pagehide", onPageHide);
       settleObserver?.disconnect();
       viewportObserver?.disconnect();
@@ -1127,9 +1100,7 @@
                   }}
                   title={armedRewindId === item.entryId
                     ? "Click again to rewind — this drops this prompt and everything after (destructive)"
-                    : item.entryId === lastUserEntryId
-                      ? "Rewind to this prompt — edit & resend (⌘⇧↑)"
-                      : "Rewind to this prompt — edit & resend"}
+                    : "Rewind to this prompt — edit & resend"}
                   aria-label="Rewind to this prompt"
                 >
                   {@render branchIcon()}
@@ -1330,7 +1301,7 @@
   <button
     class="new-pill"
     data-testid="new-messages-pill"
-    title="Jump to the newest messages (⌘↓) · ⌘↑/⌘↓ step through your prompts"
+    title="Jump to the newest messages"
     aria-label="New messages below — jump to newest"
     onclick={scrollToBottom}
   >
@@ -1347,7 +1318,7 @@
     class="prompt-nav-btn"
     data-testid="prompt-nav-up"
     type="button"
-    title="Previous prompt (⌘↑)"
+    title="Previous prompt"
     aria-label="Previous prompt"
     onclick={() => stepPrompt(-1)}
   >
@@ -1368,7 +1339,7 @@
     class="prompt-nav-btn"
     data-testid="prompt-nav-down"
     type="button"
-    title="Next prompt (⌘↓)"
+    title="Next prompt"
     aria-label="Next prompt"
     onclick={() => stepPrompt(1)}
   >
@@ -1452,8 +1423,8 @@
       transition: none;
     }
   }
-  /* Floating prev/next-prompt nav — a discoverability affordance for the ⌘↑/⌘↓
-     prompt-stepping. Fades in on transcript hover/focus; always visible on touch
+  /* Floating prev/next-prompt nav — a discoverability affordance for the prompt-stepping
+     buttons. Fades in on transcript hover/focus; always visible on touch
      (pointer: coarse) where hover doesn't apply. Always mounted (opacity toggle)
      so the fade-out works symmetrically with the fade-in. */
   .prompt-nav {
@@ -1674,7 +1645,7 @@
     text-overflow: ellipsis;
     white-space: nowrap;
   }
-  /* Brief accent flash on a prompt row the user jumped to via ⌘↑/⌘↓, confirming the
+  /* Brief accent flash on a prompt row the user jumped to via the ↑/↓ buttons, confirming the
      landing target after an instant (non-animated) scroll. The flash is on the row, not
      the bubble, so it reads as a location marker rather than a state change. */
   .row.user.nav-flash {

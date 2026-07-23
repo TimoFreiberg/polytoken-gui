@@ -68,8 +68,8 @@ discussion before becoming a gate (or being rejected).
       `BranchResult` so a daemon `/rewind` rejection can't propagate — it collapses
       to the generic "session switch returned no session" client error, real reason
       only in server logs; give branch its own error surface. (b) The LIVE driver
-      hardcodes `editor_text: None`, so the "edit & resend" gesture (⌘⇧↑,
-      `branchLastPrompt`) destroys the prompt text on the live path — prefill is
+      hardcodes `editor_text: None`, so the "edit & resend" gesture (click-twice
+      rewind → `store.branch()`) destroys the prompt text on the live path — prefill is
       mock-only. Needs confirming whether polytoken `/rewind` returns the dropped
       prompt's text (the daemon source isn't in-repo). (c) Zero live-path coverage:
       the fake daemon has no `/rewind` route, so a branch under `PANTOKEN_DRIVER=fake`

@@ -316,7 +316,7 @@
   // be perceivable and operable without a pointer: focus moves into it on open, Esc
   // cancels (deny-safe), ⌘/Ctrl+Enter submits the affirmative action, and Tab is
   // trapped inside. Keydown lives on the sheet (focus is inside it after open) to avoid
-  // clashing with the global ⌘↑ / composer-Esc handlers.
+  // clashing with the composer-Esc handler.
   let sheetEl = $state<HTMLElement | null>(null);
 
   function focusSheet(): void {

@@ -82,10 +82,3 @@ test("rewinding from a user prompt rewinds the transcript and prefills the compo
   await expect(page.getByText("Routes live in")).toHaveCount(0);
   await expect(page.getByText("No messages yet")).toBeVisible();
 });
-
-test("Cmd/Ctrl+Shift+↑ rewinds from the last prompt", async ({ page }) => {
-  // The hotkey bypasses the click-twice confirm gate (it's a deliberate keyboard gesture).
-  await page.keyboard.press("Control+Shift+ArrowUp");
-  await expect(page.getByPlaceholder("Message pantoken…")).toHaveValue(PROMPT);
-  await expect(page.getByText("Routes live in")).toHaveCount(0);
-});
