@@ -73,6 +73,7 @@ function statusText(
   descriptor: NativeHostDescriptor,
   activity: HostActivity,
 ): string {
+  if (descriptor.failureLabel) return descriptor.failureLabel;
   if (descriptor.state === "failed") return descriptor.failureLabel ?? "Connection failed";
   if (descriptor.state === "disconnected") return "Offline";
   if (descriptor.state === "reconnecting") return "Reconnecting";
@@ -140,7 +141,7 @@ export class HostCoordinator {
     // every server message to be processed twice.
     if (id !== "local" && !entry.client) {
       const result = await this.connectHost(id);
-      if (result && !result.ok) return result;
+      if (!result.ok) return result;
     }
 
     // 2-3. Stash current host's per-client state + clear server-scoped state.
@@ -170,7 +171,6 @@ export class HostCoordinator {
 
     // 6. Clear the target host's unseen.
     entry.unread = clearOnSelect(entry.unread);
-    this.refreshSummaries();
 
     // 7. If the target host's WsClient is connected, request a fresh seed.
     if (entry.client) {
@@ -195,7 +195,11 @@ export class HostCoordinator {
       await this.refreshHosts();
       const updated = this.hostState.get(id);
       if (!updated?.descriptor.wsUrl) {
-        entry.descriptor = { ...entry.descriptor, state: priorState };
+        entry.descriptor = {
+          ...entry.descriptor,
+          state: priorState,
+          failureLabel: "Computer did not provide a connection",
+        };
         this.refreshSummaries();
         return { ok: false, failure: { label: "Computer did not provide a connection" } };
       }
@@ -310,7 +314,11 @@ export class HostCoordinator {
         activity,
         baselined: entry?.unread.baselined ?? false,
         selected: currentDescriptor.id === this.selectedHostId,
-        indicator: deriveIndicator(activity, currentDescriptor.state),
+        indicator: deriveIndicator(
+          activity,
+          currentDescriptor.state,
+          Boolean(currentDescriptor.failureLabel),
+        ),
         statusText: statusText(currentDescriptor, activity),
       };
     });

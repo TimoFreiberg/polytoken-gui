@@ -26,12 +26,13 @@ export type HostIndicator =
 export function deriveIndicator(
   activity: HostActivity,
   connection: HostConnectionState | boolean,
+  failurePresent = false,
 ): HostIndicator {
   const state = typeof connection === "boolean"
     ? connection ? "ready" : "disconnected"
     : connection;
-  if (state === "disconnected") return "offline";
-  if (state === "failed" || activity.failed) return "failed";
+  if (state === "disconnected" && !failurePresent) return "offline";
+  if (failurePresent || state === "failed" || activity.failed) return "failed";
   if (activity.waiting) return "waiting";
   if (state === "reconnecting" || state === "testingSsh" || state === "provisioning" || state === "starting" || state === "connecting") return "reconnecting";
   if (activity.unseen) return "unseen";
@@ -51,7 +52,7 @@ export function indicatorColor(indicator: HostIndicator): string {
     case "waiting":
       return "var(--warning)";
     case "reconnecting":
-      return "var(--progress)";
+      return "var(--accent)";
     case "unseen":
       return "var(--highlight)";
     case "running":

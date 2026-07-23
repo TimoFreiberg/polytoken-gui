@@ -52,6 +52,10 @@ describe("deriveIndicator", () => {
     ).toBe("offline");
   });
 
+  test("persistent failure metadata is visible even when lifecycle restores to disconnected", () => {
+    expect(deriveIndicator(none, "disconnected", true)).toBe("failed");
+  });
+
   test("precedence: connection failure > session attention > unseen > running > quiet", () => {
     // connected, all false → quiet
     expect(deriveIndicator(none, true)).toBe("quiet");
@@ -86,6 +90,7 @@ describe("indicatorColor", () => {
     expect(indicatorColor("failed")).toBe("var(--danger)");
     expect(indicatorColor("waiting")).toBe("var(--warning)");
     expect(indicatorColor("unseen")).toBe("var(--highlight)");
+    expect(indicatorColor("reconnecting")).toBe("var(--accent)");
     expect(indicatorColor("running")).toBe("var(--progress)");
     expect(indicatorColor("quiet")).toBe("transparent");
   });

@@ -153,7 +153,10 @@
       provider.setMessageSink((hostId, message) => coordinator.receiveHostMessage(hostId, message));
       onMount(() => {
         (window as unknown as { __pantokenHosts?: unknown }).__pantokenHosts = {
-          setState: provider.setState,
+          setState: async (hostId: string, state: Parameters<typeof provider.setState>[1]) => {
+            provider.setState(hostId, state);
+            await coordinator.refreshHosts();
+          },
           setActivity: provider.setActivity,
           emit: provider.emit,
         };

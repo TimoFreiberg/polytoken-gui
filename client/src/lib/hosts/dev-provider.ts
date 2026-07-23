@@ -29,7 +29,12 @@ export function createDevHostProvider(wsUrl: string): DevHostProvider {
   const setState = (id: string, state: HostConnectionState): void => {
     const host = hostMap.get(id);
     if (!host) return;
-    hostMap.set(id, { ...host, state, wsUrl: state === "ready" ? wsUrl : host.wsUrl });
+    hostMap.set(id, {
+      ...host,
+      state,
+      wsUrl: state === "ready" ? wsUrl : host.wsUrl,
+      ...(state === "ready" ? { failureLabel: undefined, failureAction: undefined, failureDetail: undefined } : {}),
+    });
   };
   const setActivity = (id: string, activity: HostActivity): void => {
     const attention: SessionAttention[] = [];

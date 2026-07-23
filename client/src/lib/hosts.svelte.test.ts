@@ -152,6 +152,7 @@ describe("HostCoordinator message routing boundary", () => {
           }).onHostMessage(id, msg);
         entry.unsubscribe = fakeClient.onMessage(listener);
       }
+      return { ok: true };
     };
 
     await coordinator.init();
@@ -187,6 +188,7 @@ describe("HostCoordinator message routing boundary", () => {
           }).onHostMessage(id, msg);
         entry.unsubscribe = fakeClient.onMessage(listener);
       }
+      return { ok: true };
     };
 
     await coordinator.init();
@@ -219,6 +221,7 @@ describe("HostCoordinator message routing boundary", () => {
           }).onHostMessage(id, msg);
         entry.unsubscribe = fakeClient.onMessage(listener);
       }
+      return { ok: true };
     };
 
     await coordinator.init();
@@ -252,6 +255,7 @@ describe("HostCoordinator message routing boundary", () => {
           }).onHostMessage(id, msg);
         entry.unsubscribe = fakeClient.onMessage(listener);
       }
+      return { ok: true };
     };
 
     await coordinator.init();
@@ -265,12 +269,21 @@ describe("HostCoordinator message routing boundary", () => {
 
     const activity = coordinator.getActivity("remote-1");
     expect(activity.unseen).toBe(true);
+    expect(coordinator.summaries.find((summary) => summary.descriptor.id === "remote-1")).toMatchObject({
+      activity,
+      indicator: "unseen",
+      selected: false,
+    });
 
     // Select remote-1 — unseen should be cleared.
     await coordinator.selectHost("remote-1");
 
     const activityAfter = coordinator.getActivity("remote-1");
     expect(activityAfter.unseen).toBe(false);
+    expect(coordinator.summaries.find((summary) => summary.descriptor.id === "remote-1")).toMatchObject({
+      indicator: "quiet",
+      selected: true,
+    });
   });
 
   test("waiting/failed attention survives selection", async () => {
@@ -293,6 +306,7 @@ describe("HostCoordinator message routing boundary", () => {
           }).onHostMessage(id, msg);
         entry.unsubscribe = fakeClient.onMessage(listener);
       }
+      return { ok: true };
     };
 
     await coordinator.init();
@@ -322,6 +336,29 @@ describe("HostCoordinator message routing boundary", () => {
     expect(activity.waiting).toBe(true); // survives
   });
 
+  test("failed lazy selection preserves the current host and exposes a failed summary", async () => {
+    const remote = descriptor("remote-1", { state: "disconnected", wsUrl: undefined });
+    const provider = {
+      supportsMultiHost: () => true,
+      listHosts: async () => [descriptor("local"), remote],
+      connectHost: async () => { throw Object.assign(new Error("SSH unreachable"), { failureAction: "Retry" }); },
+      disconnectHost: async () => {},
+      addProfile: async (profile: NativeHostDescriptor) => profile,
+      updateProfile: async () => {},
+      deleteProfile: async () => {},
+    };
+    const coordinator = new HostCoordinator(provider);
+    await coordinator.init();
+    const result = await coordinator.selectHost("remote-1");
+    expect(result).toEqual({ ok: false, failure: { label: "SSH unreachable", action: "Retry", detail: undefined } });
+    expect(coordinator.selectedHostId).toBe("local");
+    expect(coordinator.summaries.find((summary) => summary.descriptor.id === "remote-1")).toMatchObject({
+      indicator: "failed",
+      statusText: "SSH unreachable",
+      selected: false,
+    });
+  });
+
   test("queued prompts remain bound to their original serverId", async () => {
     const { provider } = createFakeHostProvider([
       descriptor("local"),
@@ -342,6 +379,7 @@ describe("HostCoordinator message routing boundary", () => {
           }).onHostMessage(id, msg);
         entry.unsubscribe = fakeClient.onMessage(listener);
       }
+      return { ok: true };
     };
 
     await coordinator.init();
@@ -386,6 +424,7 @@ describe("HostCoordinator message routing boundary", () => {
           }).onHostMessage(id, msg);
         entry.unsubscribe = fakeClient.onMessage(listener);
       }
+      return { ok: true };
     };
 
     await coordinator.init();
@@ -426,6 +465,7 @@ describe("HostCoordinator message routing boundary", () => {
           }).onHostMessage(id, msg);
         entry.unsubscribe = client.onMessage(listener);
       }
+      return { ok: true };
     };
 
     await coordinator.init();
@@ -485,6 +525,7 @@ describe("HostCoordinator message routing boundary", () => {
           }).onHostMessage(id, msg);
         entry.unsubscribe = fakeClient.onMessage(listener);
       }
+      return { ok: true };
     };
 
     await coordinator.init();

@@ -9,12 +9,24 @@
   let open = $state(false);
   let trigger = $state<HTMLButtonElement | null>(null);
   let panel = $state<HTMLElement | null>(null);
+  let phone = $state(
+    typeof window !== "undefined" && window.matchMedia("(max-width: 859px)").matches,
+  );
   let failure = $state<{ id: string; label: string; action?: string } | null>(null);
   const selected = $derived(coordinator.summaries.find((s) => s.selected) ?? coordinator.summaries[0]);
 
   function isPhone(): boolean {
-    return typeof window !== "undefined" && window.matchMedia("(max-width: 859px)").matches;
+    return phone;
   }
+
+  $effect(() => {
+    if (typeof window === "undefined") return;
+    const media = window.matchMedia("(max-width: 859px)");
+    const update = () => (phone = media.matches);
+    update();
+    media.addEventListener("change", update);
+    return () => media.removeEventListener("change", update);
+  });
 
   function restoreFocus(): void {
     void tick().then(() => trigger?.isConnected && trigger.focus());
@@ -53,24 +65,40 @@
   }
 
   function onKeydown(e: KeyboardEvent): void {
-    if (e.key === "Escape" && open) {
+    if (!open) return;
+    if (e.key === "Escape") {
       e.preventDefault();
       close();
+      return;
+    }
+    if (e.key !== "Tab" || !isPhone() || !panel) return;
+    const focusable = Array.from(
+      panel.querySelectorAll<HTMLElement>("button:not(:disabled)")
+    );
+    const first = focusable[0];
+    const last = focusable[focusable.length - 1];
+    if (!first || !last) return;
+    if (e.shiftKey && document.activeElement === first) {
+      e.preventDefault();
+      last.focus();
+    } else if (!e.shiftKey && document.activeElement === last) {
+      e.preventDefault();
+      first.focus();
     }
   }
 
   $effect(() => {
-    if (!open || isPhone()) return;
+    if (!open) return;
     const onClick = (e: MouseEvent) => {
+      if (isPhone()) return;
       const target = e.target as Node;
       if (!panel?.contains(target) && !trigger?.contains(target)) close();
     };
-    const onKey = (e: KeyboardEvent) => onKeydown(e);
     document.addEventListener("click", onClick);
-    document.addEventListener("keydown", onKey);
+    document.addEventListener("keydown", onKeydown);
     return () => {
       document.removeEventListener("click", onClick);
-      document.removeEventListener("keydown", onKey);
+      document.removeEventListener("keydown", onKeydown);
     };
   });
 </script>
@@ -107,6 +135,7 @@
       id="host-switcher-panel"
       bind:this={panel}
       role="dialog"
+      aria-modal="true"
       aria-label="Choose computer"
     >
       <div class="panel-head">
@@ -166,7 +195,8 @@
   .indicator.offline { background: var(--muted); }
   .indicator.failed { background: var(--danger); }
   .indicator.waiting { background: var(--warning); }
-  .indicator.reconnecting, .indicator.running { background: var(--progress); }
+  .indicator.reconnecting { background: var(--accent); }
+  .indicator.running { background: var(--progress); }
   .indicator.unseen { background: var(--highlight); }
   .host-panel { position: absolute; z-index: 80; top: calc(100% - 2px); left: 10px; right: 10px; padding: 8px; border: 1px solid var(--border-strong); border-radius: 10px; background: var(--bg); box-shadow: 0 12px 32px color-mix(in srgb, var(--text) 18%, transparent); }
   .panel-head { display: flex; align-items: center; justify-content: space-between; padding: 5px 8px 8px; color: var(--text-muted); font-size: 12px; }
