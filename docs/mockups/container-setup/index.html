@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Container Setup — Mockup Index</title>
+<style>
+  :root {
+    --bg: #f4f1e9;
+    --bg-elevated: #fffdf8;
+    --surface: #fbf8f1;
+    --surface-sunken: #ece7dd;
+    --border: #ded8cc;
+    --border-strong: #cbc3b5;
+    --text: #1f1e1d;
+    --text-muted: #686159;
+    --text-faint: #989087;
+    --accent: #6f675e;
+    --accent-soft: #e2dcd1;
+    --highlight: #cf962b;
+    --highlight-soft: #f6ead2;
+    --highlight-text: #191b25;
+    --progress: #955a24;
+    --danger: #b4413a;
+    --danger-soft: #f6e0de;
+    --warning: #955a24;
+    --warning-soft: #f7e8dc;
+    --ok: #4f7a4a;
+    --radius: 14px;
+    --radius-sm: 9px;
+    --radius-xs: 6px;
+    --font-sans: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    --font-mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 40px;
+    background: var(--bg); color: var(--text);
+    font-family: var(--font-sans); font-size: 15px; line-height: 1.5;
+  }
+  h1 { font-size: 22px; font-weight: 650; margin: 0 0 8px; }
+  .lede { color: var(--text-muted); margin: 0 0 32px; max-width: 640px; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 16px; }
+  .card {
+    display: block; text-decoration: none; color: inherit;
+    padding: 16px; border: 1px solid var(--border); border-radius: var(--radius-sm);
+    background: var(--surface); transition: border-color .15s, box-shadow .15s;
+  }
+  .card:hover { border-color: var(--accent); box-shadow: 0 4px 14px rgba(31,30,29,.05); }
+  .card .num { font-size: 12px; color: var(--text-faint); font-weight: 600; }
+  .card .title { font-size: 15px; font-weight: 600; margin: 2px 0 4px; }
+  .card .desc { font-size: 13px; color: var(--text-muted); }
+  .section-label { font-size: 12px; font-weight: 600; color: var(--text-faint); text-transform: uppercase; letter-spacing: .04em; margin: 28px 0 12px; }
+</style>
+</head>
+<body>
+<h1>Container Connection UI — Mockups</h1>
+<p class="lede">Static HTML mockups approximating the Pantoken warm-paper theme. They communicate layout, hierarchy, copy, and state — not pixel-perfect final styling. See <code>docs/container-connection-ui-task.md</code> for the full brief.</p>
+
+<div class="section-label">Setup dialog</div>
+<div class="grid">
+  <a class="card" href="01-setup-stage1.html"><span class="num">01</span><div class="title">Setup dialog — Stage 1</div><div class="desc">SSH fields + Host|Docker segmented control (desktop + phone)</div></a>
+  <a class="card" href="02-testing-ssh.html"><span class="num">02</span><div class="title">Testing SSH & finding containers</div><div class="desc">In-progress state after Test SSH & find containers</div></a>
+  <a class="card" href="03-ssh-failure.html"><span class="num">03</span><div class="title">SSH failure</div><div class="desc">Auth failure attached to the test action, with Retry/Edit</div></a>
+  <a class="card" href="04-picker-few.html"><span class="num">04</span><div class="title">Container picker — few containers</div><div class="desc">No search field (≤6 results)</div></a>
+  <a class="card" href="05-picker-many.html"><span class="num">05</span><div class="title">Container picker — many containers</div><div class="desc">Search field visible + Enter exact name instead</div></a>
+  <a class="card" href="06-exact-name-disconnected.html"><span class="num">06</span><div class="title">Exact-name entry — non-running</div><div class="desc">Save-disconnected explanation for a not-currently-running container</div></a>
+  <a class="card" href="07-customize-target.html"><span class="num">07</span><div class="title">Customize target disclosure</div><div class="desc">User + resolved root + backing line expanded</div></a>
+  <a class="card" href="08-risks-all-three.html"><span class="num">08</span><div class="title">Review risks — all three</div><div class="desc">Root + ephemeral + socket, single Accept risks & continue</div></a>
+  <a class="card" href="08b-risks-ephemeral-only.html"><span class="num">08b</span><div class="title">Review risks — ephemeral only</div><div class="desc">Choose another path primary, Accept risks & continue secondary</div></a>
+</div>
+
+<div class="section-label">Provisioning & background</div>
+<div class="grid">
+  <a class="card" href="09-provisioning.html"><span class="num">09</span><div class="title">Provisioning — four Docker phases</div><div class="desc">Mid-flight, Container phase active</div></a>
+  <a class="card" href="10-provisioning-failure.html"><span class="num">10</span><div class="title">Provisioning failure</div><div class="desc">Container phase failure (configured user missing) with actions</div></a>
+  <a class="card" href="11-run-in-background.html"><span class="num">11</span><div class="title">Run in background</div><div class="desc">Close control = Run in background, computer row shows Provisioning…</div></a>
+</div>
+
+<div class="section-label">Switcher, Settings & recovery</div>
+<div class="grid">
+  <a class="card" href="12-switcher-row.html"><span class="num">12</span><div class="title">Host switcher — Docker row</div><div class="desc">Container glyph + name via host subtitle</div></a>
+  <a class="card" href="13-settings-computers.html"><span class="num">13</span><div class="title">Settings → Computers</div><div class="desc">List including a container profile row</div></a>
+  <a class="card" href="14-edit-dialog.html"><span class="num">14</span><div class="title">Edit dialog</div><div class="desc">Read-only Execution environment: Docker container</div></a>
+  <a class="card" href="15-replacement-recovery.html"><span class="num">15</span><div class="title">Replacement & recovery</div><div class="desc">Container replaced · Reconnecting + Container not running row</div></a>
+</div>
+
+<div class="section-label">Phone (375px)</div>
+<div class="grid">
+  <a class="card" href="16-phone-flow.html"><span class="num">16</span><div class="title">Phone full-screen flow</div><div class="desc">Picker + risks panel (two 375px frames)</div></a>
+</div>
+</body>
+</html>

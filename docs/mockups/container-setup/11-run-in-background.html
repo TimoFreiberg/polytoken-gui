@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>11 — Run in background</title>
+<style>
+  :root { --bg: #f4f1e9; --bg-elevated: #fffdf8; --surface: #fbf8f1; --surface-sunken: #ece7dd; --border: #ded8cc; --border-strong: #cbc3b5; --text: #1f1e1d; --text-muted: #686159; --text-faint: #989087; --accent: #6f675e; --accent-soft: #e2dcd1; --accent-text: #fff; --highlight: #cf962b; --highlight-soft: #f6ead2; --highlight-text: #191b25; --progress: #955a24; --danger: #b4413a; --danger-soft: #f6e0de; --warning: #955a24; --warning-soft: #f7e8dc; --ok: #4f7a4a; --radius: 14px; --radius-sm: 9px; --radius-xs: 6px; --font-sans: ui-sans-serif, -apple-system, sans-serif; }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font-family: var(--font-sans); font-size: 15px; line-height: 1.5; }
+  .page { padding: 32px; display: flex; gap: 32px; flex-wrap: wrap; }
+  .frame-label { font-size: 12px; font-weight: 600; color: var(--text-faint); text-transform: uppercase; letter-spacing: .04em; margin-bottom: 8px; }
+  /* Dialog with Run in background */
+  .dialog-backdrop { position: relative; width: 640px; height: 560px; background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; }
+  .dialog-backdrop::before { content: ""; position: absolute; inset: 0; background: rgba(31,30,29,.25); }
+  .dialog { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); width: 480px; background: var(--bg-elevated); border: 1px solid var(--border-strong); border-radius: var(--radius); box-shadow: 0 8px 30px rgba(31,30,29,.14); overflow: hidden; }
+  .dialog-head { display: flex; align-items: center; justify-content: space-between; padding: 16px 20px; border-bottom: 1px solid var(--border); }
+  .dialog-head h2 { margin: 0; font-size: 16px; font-weight: 650; }
+  .dialog-head .run-bg-btn { font-size: 13px; color: var(--accent); background: none; border: 0; cursor: pointer; font-weight: 600; }
+  .dialog-body { padding: 20px; }
+  .prov-title { font-size: 15px; font-weight: 650; margin: 0 0 4px; }
+  .prov-sub { font-size: 13px; color: var(--text-muted); margin: 0 0 20px; }
+  .phase-list { display: grid; gap: 0; }
+  .phase { display: flex; align-items: flex-start; gap: 12px; padding: 12px 0; border-bottom: 1px solid var(--border); }
+  .phase:last-child { border-bottom: 0; }
+  .phase .marker { width: 24px; height: 24px; border-radius: 50%; flex-shrink: 0; display: flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 700; }
+  .phase.done .marker { background: var(--ok); color: #fff; }
+  .phase.active .marker { background: var(--progress); color: #fff; }
+  .phase.pending .marker { background: var(--surface-sunken); color: var(--text-faint); border: 1px solid var(--border); }
+  .phase .info { flex: 1; }
+  .phase .label { font-size: 14px; font-weight: 600; }
+  .phase .detail { font-size: 12px; color: var(--text-muted); margin-top: 2px; }
+  .phase.active .label { color: var(--progress); }
+  .phase.pending .label { color: var(--text-faint); }
+  .phase .spinner { display: inline-block; width: 12px; height: 12px; border: 2px solid var(--border); border-top-color: var(--progress); border-radius: 50%; animation: spin .8s linear infinite; margin-left: 6px; vertical-align: middle; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .dialog-foot { display: flex; justify-content: flex-end; gap: 8px; padding: 12px 20px; border-top: 1px solid var(--border); }
+  .btn-secondary { padding: 8px 16px; border: 1px solid var(--border-strong); border-radius: var(--radius-xs); background: var(--surface); color: var(--text); font: inherit; font-size: 13px; font-weight: 600; cursor: pointer; }
+  /* Switcher row */
+  .switcher-panel { width: 320px; background: var(--bg-elevated); border: 1px solid var(--border-strong); border-radius: var(--radius); box-shadow: 0 8px 30px rgba(31,30,29,.14); overflow: hidden; }
+  .switcher-head { padding: 12px 14px 8px; font-size: 12px; color: var(--text-muted); font-weight: 600; display: flex; justify-content: space-between; }
+  .switcher-row { display: flex; align-items: center; gap: 8px; padding: 10px 12px; border-radius: var(--radius-xs); margin: 0 6px; }
+  .switcher-row.selected { background: var(--accent-soft); box-shadow: inset 3px 0 var(--accent); }
+  .switcher-row .icon { font-size: 18px; color: var(--accent); flex-shrink: 0; }
+  .switcher-row .copy { flex: 1; min-width: 0; }
+  .switcher-row .copy strong { display: block; font-size: 12px; font-weight: 650; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .switcher-row .copy span { display: block; font-size: 11px; color: var(--text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .switcher-row .indicator { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+  .switcher-row .indicator.running { background: var(--progress); }
+  .switcher-row .indicator.offline { background: var(--text-faint); }
+  .switcher-row .status-text { font-size: 10px; color: var(--text-muted); white-space: nowrap; }
+</style>
+</head>
+<body>
+<div class="page">
+  <div>
+    <div class="frame-label">Dialog — provisioning in background</div>
+    <div class="dialog-backdrop">
+      <div class="dialog">
+        <div class="dialog-head">
+          <h2>Connecting to Work API Dev</h2>
+          <button class="run-bg-btn">Run in background</button>
+        </div>
+        <div class="dialog-body">
+          <p class="prov-title">Setting up Docker target</p>
+          <p class="prov-sub">work-api-dev via dev-server</p>
+          <div class="phase-list">
+            <div class="phase done">
+              <div class="marker">✓</div>
+              <div class="info"><div class="label">SSH &amp; Docker</div><div class="detail">SSH connected · Docker available</div></div>
+            </div>
+            <div class="phase done">
+              <div class="marker">✓</div>
+              <div class="info"><div class="label">Container</div><div class="detail">work-api-dev · dev (UID 1000) · linux/arm64 · persistent volume</div></div>
+            </div>
+            <div class="phase active">
+              <div class="marker">3</div>
+              <div class="info"><div class="label">Polytoken<span class="spinner"></span></div><div class="detail">Checking compatibility…</div></div>
+            </div>
+            <div class="phase pending">
+              <div class="marker">4</div>
+              <div class="info"><div class="label">Pantoken runtime</div></div>
+            </div>
+          </div>
+        </div>
+        <div class="dialog-foot">
+          <button class="btn-secondary">Cancel setup</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div>
+    <div class="frame-label">Switcher — computer row shows Provisioning…</div>
+    <div class="switcher-panel">
+      <div class="switcher-head"><span>Computers</span><span style="color:var(--accent);cursor:pointer">Close</span></div>
+      <div class="switcher-row">
+        <span class="icon">⌂</span>
+        <div class="copy"><strong>This computer</strong><span>Dev computer</span></div>
+        <span class="indicator offline"></span>
+        <span class="status-text">Ready</span>
+      </div>
+      <div class="switcher-row selected">
+        <span class="icon">▣</span>
+        <div class="copy"><strong>Work API Dev</strong><span>work-api-dev via dev-server</span></div>
+        <span class="indicator running"></span>
+        <span class="status-text">Provisioning…</span>
+      </div>
+    </div>
+  </div>
+</div>
+</body>
+</html>

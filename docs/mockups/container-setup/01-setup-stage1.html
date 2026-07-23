@@ -1,0 +1,168 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>01 — Setup dialog, Stage 1</title>
+<style>
+  :root {
+    --bg: #f4f1e9; --bg-elevated: #fffdf8; --surface: #fbf8f1; --surface-sunken: #ece7dd;
+    --border: #ded8cc; --border-strong: #cbc3b5; --text: #1f1e1d; --text-muted: #686159;
+    --text-faint: #989087; --accent: #6f675e; --accent-soft: #e2dcd1; --accent-text: #fff;
+    --highlight: #cf962b; --highlight-soft: #f6ead2; --highlight-text: #191b25;
+    --progress: #955a24; --danger: #b4413a; --danger-soft: #f6e0de;
+    --warning: #955a24; --warning-soft: #f7e8dc; --ok: #4f7a4a;
+    --radius: 14px; --radius-sm: 9px; --radius-xs: 6px; --radius-pill: 999px;
+    --font-sans: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    --font-mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font-family: var(--font-sans); font-size: 15px; line-height: 1.5; }
+  .page { display: flex; gap: 32px; padding: 32px; flex-wrap: wrap; }
+  .frame-label { font-size: 12px; font-weight: 600; color: var(--text-faint); text-transform: uppercase; letter-spacing: .04em; margin-bottom: 8px; }
+  /* Desktop dialog */
+  .dialog-backdrop { position: relative; width: 1280px; height: 720px; background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; }
+  .dialog-backdrop::before { content: ""; position: absolute; inset: 0; background: rgba(31,30,29,.25); }
+  .dialog { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); width: 520px; max-height: 90%; background: var(--bg-elevated); border: 1px solid var(--border-strong); border-radius: var(--radius); box-shadow: 0 8px 30px rgba(31,30,29,.14); overflow: hidden; }
+  .dialog-head { display: flex; align-items: center; justify-content: space-between; padding: 16px 20px; border-bottom: 1px solid var(--border); }
+  .dialog-head h2 { margin: 0; font-size: 16px; font-weight: 650; }
+  .dialog-head .close-btn { font-size: 13px; color: var(--text-muted); background: none; border: 0; cursor: pointer; }
+  .dialog-body { padding: 20px; overflow-y: auto; }
+  .field { margin-bottom: 16px; }
+  .field label { display: block; font-size: 13px; font-weight: 600; margin-bottom: 4px; }
+  .field .hint { font-size: 12px; color: var(--text-faint); margin-top: 3px; }
+  .field input { width: 100%; padding: 8px 10px; border: 1px solid var(--border-strong); border-radius: var(--radius-xs); font: inherit; font-size: 14px; background: var(--surface); color: var(--text); }
+  .field input:focus { outline: none; border-color: var(--accent); }
+  .field input::placeholder { color: var(--text-faint); }
+  .port-row { display: flex; gap: 12px; }
+  .port-row .ssh-dest { flex: 1; }
+  .port-row .port { width: 100px; }
+  .seg-control { display: flex; gap: 0; border: 1px solid var(--border-strong); border-radius: var(--radius-xs); overflow: hidden; }
+  .seg-control button { flex: 1; padding: 8px 12px; font: inherit; font-size: 13px; font-weight: 600; border: 0; background: var(--surface); color: var(--text-muted); cursor: pointer; border-right: 1px solid var(--border-strong); }
+  .seg-control button:last-child { border-right: 0; }
+  .seg-control button.active { background: var(--accent); color: var(--accent-text); }
+  .seg-control button:disabled { opacity: .5; cursor: not-allowed; }
+  .test-btn { width: 100%; padding: 10px; border: 0; border-radius: var(--radius-xs); background: var(--highlight); color: var(--highlight-text); font: inherit; font-size: 14px; font-weight: 650; cursor: pointer; }
+  .test-btn:disabled { opacity: .5; }
+  .advanced-disclosure { margin-top: 8px; }
+  .advanced-disclosure summary { font-size: 13px; color: var(--accent); cursor: pointer; font-weight: 600; }
+  .dialog-foot { display: flex; justify-content: flex-end; gap: 8px; padding: 12px 20px; border-top: 1px solid var(--border); }
+  .btn-secondary { padding: 8px 16px; border: 1px solid var(--border-strong); border-radius: var(--radius-xs); background: var(--surface); color: var(--text); font: inherit; font-size: 13px; font-weight: 600; cursor: pointer; }
+  /* Phone frame */
+  .phone-frame { width: 375px; height: 720px; background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; position: relative; }
+  .phone-frame .dialog { position: absolute; inset: 0; width: 100%; max-height: 100%; border: 0; border-radius: 0; transform: none; top: 0; left: 0; }
+  .phone-frame .dialog-head { padding: calc(12px + env(safe-area-inset-top)) 16px 12px; }
+  .phone-frame .dialog-body { padding: 16px; }
+  .phone-frame .field input { min-height: 44px; }
+  .phone-frame .seg-control button { min-height: 44px; }
+  .phone-frame .test-btn { min-height: 44px; }
+  .phone-frame .dialog-foot { padding: 12px 16px calc(16px + env(safe-area-inset-bottom)); }
+  .phone-frame .btn-secondary { min-height: 44px; }
+  .back-btn { font-size: 15px; color: var(--accent); background: none; border: 0; cursor: pointer; font-weight: 600; }
+</style>
+</head>
+<body>
+<div class="page">
+  <div>
+    <div class="frame-label">Desktop (1280px)</div>
+    <div class="dialog-backdrop">
+      <div class="dialog">
+        <div class="dialog-head">
+          <h2>Add computer</h2>
+          <button class="close-btn">Close</button>
+        </div>
+        <div class="dialog-body">
+          <div class="field">
+            <label for="name">Name <span style="font-weight:400;color:var(--text-faint)">(optional)</span></label>
+            <input id="name" type="text" placeholder="e.g. Work API Dev">
+          </div>
+          <div class="field">
+            <label for="ssh">SSH destination</label>
+            <div class="port-row">
+              <div class="ssh-dest">
+                <input id="ssh" type="text" placeholder="user@host or SSH config alias" value="dev@dev-server">
+              </div>
+              <div class="port">
+                <input type="text" placeholder="Port" value="22">
+              </div>
+            </div>
+            <div class="hint">Pantoken uses your existing SSH config, agent, and keychain. No passwords stored.</div>
+          </div>
+          <div class="field">
+            <label>Execution environment</label>
+            <div class="seg-control">
+              <button>Host</button>
+              <button class="active">Docker container</button>
+            </div>
+            <div class="hint">Run the agent directly on the SSH host, or inside a Docker container on that host.</div>
+          </div>
+          <button class="test-btn">Test SSH &amp; find containers</button>
+          <details class="advanced-disclosure">
+            <summary>Advanced</summary>
+            <div class="field" style="margin-top:12px">
+              <label>Server binary path</label>
+              <input type="text" placeholder="pantoken-server">
+            </div>
+            <div class="field">
+              <label>XDG mode</label>
+              <div class="seg-control">
+                <button class="active">Isolated</button>
+                <button>Shared</button>
+              </div>
+            </div>
+          </details>
+        </div>
+        <div class="dialog-foot">
+          <button class="btn-secondary">Cancel setup</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div>
+    <div class="frame-label">Phone (375px)</div>
+    <div class="phone-frame">
+      <div class="dialog">
+        <div class="dialog-head">
+          <button class="back-btn">‹ Back</button>
+          <h2>Add computer</h2>
+          <span style="width:40px"></span>
+        </div>
+        <div class="dialog-body">
+          <div class="field">
+            <label for="name-p">Name <span style="font-weight:400;color:var(--text-faint)">(optional)</span></label>
+            <input id="name-p" type="text" placeholder="e.g. Work API Dev">
+          </div>
+          <div class="field">
+            <label for="ssh-p">SSH destination</label>
+            <div class="port-row">
+              <div class="ssh-dest">
+                <input id="ssh-p" type="text" placeholder="user@host" value="dev@dev-server">
+              </div>
+              <div class="port">
+                <input type="text" placeholder="Port" value="22">
+              </div>
+            </div>
+            <div class="hint">Pantoken uses your existing SSH config, agent, and keychain.</div>
+          </div>
+          <div class="field">
+            <label>Execution environment</label>
+            <div class="seg-control">
+              <button>Host</button>
+              <button class="active">Docker container</button>
+            </div>
+          </div>
+          <button class="test-btn">Test SSH &amp; find containers</button>
+          <details class="advanced-disclosure">
+            <summary>Advanced</summary>
+          </details>
+        </div>
+        <div class="dialog-foot">
+          <button class="btn-secondary">Cancel setup</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+</body>
+</html>

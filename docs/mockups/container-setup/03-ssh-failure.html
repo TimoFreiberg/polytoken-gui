@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>03 — SSH failure</title>
+<style>
+  :root { --bg: #f4f1e9; --bg-elevated: #fffdf8; --surface: #fbf8f1; --surface-sunken: #ece7dd; --border: #ded8cc; --border-strong: #cbc3b5; --text: #1f1e1d; --text-muted: #686159; --text-faint: #989087; --accent: #6f675e; --accent-soft: #e2dcd1; --accent-text: #fff; --highlight: #cf962b; --highlight-soft: #f6ead2; --highlight-text: #191b25; --progress: #955a24; --danger: #b4413a; --danger-soft: #f6e0de; --warning: #955a24; --warning-soft: #f7e8dc; --ok: #4f7a4a; --radius: 14px; --radius-sm: 9px; --radius-xs: 6px; --font-sans: ui-sans-serif, -apple-system, sans-serif; }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font-family: var(--font-sans); font-size: 15px; line-height: 1.5; }
+  .page { padding: 32px; }
+  .frame-label { font-size: 12px; font-weight: 600; color: var(--text-faint); text-transform: uppercase; letter-spacing: .04em; margin-bottom: 8px; }
+  .dialog-backdrop { position: relative; width: 1280px; height: 720px; background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; }
+  .dialog-backdrop::before { content: ""; position: absolute; inset: 0; background: rgba(31,30,29,.25); }
+  .dialog { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); width: 520px; background: var(--bg-elevated); border: 1px solid var(--border-strong); border-radius: var(--radius); box-shadow: 0 8px 30px rgba(31,30,29,.14); overflow: hidden; }
+  .dialog-head { display: flex; align-items: center; justify-content: space-between; padding: 16px 20px; border-bottom: 1px solid var(--border); }
+  .dialog-head h2 { margin: 0; font-size: 16px; font-weight: 650; }
+  .dialog-head .close-btn { font-size: 13px; color: var(--text-muted); background: none; border: 0; cursor: pointer; }
+  .dialog-body { padding: 20px; }
+  .field { margin-bottom: 16px; }
+  .field label { display: block; font-size: 13px; font-weight: 600; margin-bottom: 4px; }
+  .field .hint { font-size: 12px; color: var(--text-faint); margin-top: 3px; }
+  .field input { width: 100%; padding: 8px 10px; border: 1px solid var(--border-strong); border-radius: var(--radius-xs); font: inherit; font-size: 14px; background: var(--surface); color: var(--text); }
+  .port-row { display: flex; gap: 12px; }
+  .port-row .ssh-dest { flex: 1; }
+  .port-row .port { width: 100px; }
+  .seg-control { display: flex; border: 1px solid var(--border-strong); border-radius: var(--radius-xs); overflow: hidden; }
+  .seg-control button { flex: 1; padding: 8px 12px; font: inherit; font-size: 13px; font-weight: 600; border: 0; background: var(--surface); color: var(--text-muted); cursor: pointer; border-right: 1px solid var(--border-strong); }
+  .seg-control button:last-child { border-right: 0; }
+  .seg-control button.active { background: var(--accent); color: var(--accent-text); }
+  .test-btn { width: 100%; padding: 10px; border: 0; border-radius: var(--radius-xs); background: var(--highlight); color: var(--highlight-text); font: inherit; font-size: 14px; font-weight: 650; cursor: pointer; }
+  .error-box { padding: 12px; border: 1px solid var(--danger); border-radius: var(--radius-xs); background: var(--danger-soft); margin-top: 12px; }
+  .error-box .error-title { font-size: 13px; font-weight: 650; color: var(--danger); margin-bottom: 4px; }
+  .error-box .error-msg { font-size: 13px; color: var(--text); }
+  .error-box .error-actions { display: flex; gap: 8px; margin-top: 8px; }
+  .error-box .error-actions button { padding: 6px 12px; border: 1px solid var(--border-strong); border-radius: var(--radius-xs); background: var(--bg-elevated); color: var(--text); font: inherit; font-size: 12px; font-weight: 600; cursor: pointer; }
+  .error-box .error-actions button.primary { background: var(--accent); color: var(--accent-text); border-color: var(--accent); }
+  .dialog-foot { display: flex; justify-content: flex-end; gap: 8px; padding: 12px 20px; border-top: 1px solid var(--border); }
+  .btn-secondary { padding: 8px 16px; border: 1px solid var(--border-strong); border-radius: var(--radius-xs); background: var(--surface); color: var(--text); font: inherit; font-size: 13px; font-weight: 600; cursor: pointer; }
+</style>
+</head>
+<body>
+<div class="page">
+  <div class="frame-label">Desktop (1280px)</div>
+  <div class="dialog-backdrop">
+    <div class="dialog">
+      <div class="dialog-head">
+        <h2>Add computer</h2>
+        <button class="close-btn">Close</button>
+      </div>
+      <div class="dialog-body">
+        <div class="field">
+          <label>Name <span style="font-weight:400;color:var(--text-faint)">(optional)</span></label>
+          <input type="text" placeholder="e.g. Work API Dev">
+        </div>
+        <div class="field">
+          <label>SSH destination</label>
+          <div class="port-row">
+            <div class="ssh-dest"><input type="text" value="dev@dev-server"></div>
+            <div class="port"><input type="text" value="22"></div>
+          </div>
+          <div class="hint">Pantoken uses your existing SSH config, agent, and keychain. No passwords stored.</div>
+        </div>
+        <div class="field">
+          <label>Execution environment</label>
+          <div class="seg-control">
+            <button>Host</button>
+            <button class="active">Docker container</button>
+          </div>
+        </div>
+        <button class="test-btn">Test SSH &amp; find containers</button>
+        <div class="error-box">
+          <div class="error-title">SSH authentication failed</div>
+          <div class="error-msg">Check your SSH key is loaded in the agent, or that the key/passphrase is correct.</div>
+          <div class="error-actions">
+            <button class="primary">Retry</button>
+            <button>Edit</button>
+          </div>
+        </div>
+      </div>
+      <div class="dialog-foot">
+        <button class="btn-secondary">Cancel setup</button>
+      </div>
+    </div>
+  </div>
+</div>
+</body>
+</html>

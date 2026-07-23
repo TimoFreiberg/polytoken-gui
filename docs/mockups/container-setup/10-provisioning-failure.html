@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>10 — Provisioning failure, Container phase</title>
+<style>
+  :root { --bg: #f4f1e9; --bg-elevated: #fffdf8; --surface: #fbf8f1; --surface-sunken: #ece7dd; --border: #ded8cc; --border-strong: #cbc3b5; --text: #1f1e1d; --text-muted: #686159; --text-faint: #989087; --accent: #6f675e; --accent-soft: #e2dcd1; --accent-text: #fff; --highlight: #cf962b; --highlight-soft: #f6ead2; --highlight-text: #191b25; --progress: #955a24; --danger: #b4413a; --danger-soft: #f6e0de; --warning: #955a24; --warning-soft: #f7e8dc; --ok: #4f7a4a; --radius: 14px; --radius-sm: 9px; --radius-xs: 6px; --font-sans: ui-sans-serif, -apple-system, sans-serif; --font-mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace; }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font-family: var(--font-sans); font-size: 15px; line-height: 1.5; }
+  .page { padding: 32px; }
+  .frame-label { font-size: 12px; font-weight: 600; color: var(--text-faint); text-transform: uppercase; letter-spacing: .04em; margin-bottom: 8px; }
+  .dialog-backdrop { position: relative; width: 1280px; height: 760px; background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; }
+  .dialog-backdrop::before { content: ""; position: absolute; inset: 0; background: rgba(31,30,29,.25); }
+  .dialog { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); width: 520px; background: var(--bg-elevated); border: 1px solid var(--border-strong); border-radius: var(--radius); box-shadow: 0 8px 30px rgba(31,30,29,.14); overflow: hidden; }
+  .dialog-head { display: flex; align-items: center; justify-content: space-between; padding: 16px 20px; border-bottom: 1px solid var(--border); }
+  .dialog-head h2 { margin: 0; font-size: 16px; font-weight: 650; }
+  .dialog-head .close-btn { font-size: 13px; color: var(--text-muted); background: none; border: 0; cursor: pointer; }
+  .dialog-body { padding: 20px; }
+  .prov-title { font-size: 15px; font-weight: 650; margin: 0 0 4px; }
+  .prov-sub { font-size: 13px; color: var(--text-muted); margin: 0 0 20px; }
+  .phase-list { display: grid; gap: 0; margin-bottom: 16px; }
+  .phase { display: flex; align-items: flex-start; gap: 12px; padding: 12px 0; border-bottom: 1px solid var(--border); }
+  .phase:last-child { border-bottom: 0; }
+  .phase .marker { width: 24px; height: 24px; border-radius: 50%; flex-shrink: 0; display: flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 700; }
+  .phase.done .marker { background: var(--ok); color: #fff; }
+  .phase.failed .marker { background: var(--danger); color: #fff; }
+  .phase.pending .marker { background: var(--surface-sunken); color: var(--text-faint); border: 1px solid var(--border); }
+  .phase .info { flex: 1; }
+  .phase .label { font-size: 14px; font-weight: 600; }
+  .phase .detail { font-size: 12px; color: var(--text-muted); margin-top: 2px; }
+  .phase.failed .label { color: var(--danger); }
+  .phase.pending .label { color: var(--text-faint); }
+  .error-box { padding: 14px; border: 1px solid var(--danger); border-radius: var(--radius-xs); background: var(--danger-soft); margin-top: 8px; }
+  .error-box .error-title { font-size: 14px; font-weight: 650; color: var(--danger); margin-bottom: 4px; }
+  .error-box .error-msg { font-size: 13px; color: var(--text); }
+  .error-box .error-actions { display: flex; gap: 8px; margin-top: 10px; }
+  .error-box .error-actions button { padding: 8px 14px; border: 1px solid var(--border-strong); border-radius: var(--radius-xs); background: var(--bg-elevated); color: var(--text); font: inherit; font-size: 13px; font-weight: 600; cursor: pointer; }
+  .error-box .error-actions button.primary { background: var(--accent); color: var(--accent-text); border-color: var(--accent); }
+  .error-detail-disclosure { margin-top: 8px; }
+  .error-detail-disclosure summary { font-size: 12px; color: var(--text-faint); cursor: pointer; }
+  .error-detail-disclosure pre { font-family: var(--font-mono); font-size: 11px; color: var(--text-muted); background: var(--surface-sunken); padding: 8px; border-radius: var(--radius-xs); margin-top: 6px; white-space: pre-wrap; max-height: 120px; overflow-y: auto; }
+  .dialog-foot { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 12px 20px; border-top: 1px solid var(--border); }
+  .btn-secondary { padding: 8px 16px; border: 1px solid var(--border-strong); border-radius: var(--radius-xs); background: var(--surface); color: var(--text); font: inherit; font-size: 13px; font-weight: 600; cursor: pointer; }
+</style>
+</head>
+<body>
+<div class="page">
+  <div class="frame-label">Desktop (1280px)</div>
+  <div class="dialog-backdrop">
+    <div class="dialog">
+      <div class="dialog-head">
+        <h2>Connecting to Work API Dev</h2>
+        <button class="close-btn">Run in background</button>
+      </div>
+      <div class="dialog-body">
+        <p class="prov-title">Setting up Docker target</p>
+        <p class="prov-sub">work-api-dev via dev-server</p>
+        <div class="phase-list">
+          <div class="phase done">
+            <div class="marker">✓</div>
+            <div class="info">
+              <div class="label">SSH &amp; Docker</div>
+              <div class="detail">SSH connected · Docker CLI available · permission granted</div>
+            </div>
+          </div>
+          <div class="phase failed">
+            <div class="marker">✕</div>
+            <div class="info">
+              <div class="label">Container</div>
+              <div class="detail">work-api-dev · dev (UID 1000) · linux/arm64 · persistent volume</div>
+            </div>
+          </div>
+          <div class="phase pending">
+            <div class="marker">3</div>
+            <div class="info"><div class="label">Polytoken</div></div>
+          </div>
+          <div class="phase pending">
+            <div class="marker">4</div>
+            <div class="info"><div class="label">Pantoken runtime</div></div>
+          </div>
+        </div>
+        <div class="error-box">
+          <div class="error-title">Configured container user missing</div>
+          <div class="error-msg">The user <strong>dev</strong> does not exist in container <strong>work-api-dev</strong>. Update the container user in the profile to match a user that exists in the container.</div>
+          <div class="error-actions">
+            <button class="primary">Edit container user</button>
+            <button>Retry</button>
+          </div>
+          <details class="error-detail-disclosure">
+            <summary>Show technical details</summary>
+            <pre>container identity probe returned malformed output
+uid=1000(dev) gid=1000(dev) groups=1000(dev)
+docker exec -i --user dev sha256:a1b2c3… id -u
+exit code: 1</pre>
+          </details>
+        </div>
+      </div>
+      <div class="dialog-foot">
+        <button class="btn-secondary">Cancel setup</button>
+        <span style="font-size:12px;color:var(--text-faint)">Failed at phase 2 of 4 · Container</span>
+      </div>
+    </div>
+  </div>
+</div>
+</body>
+</html>

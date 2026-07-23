@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>14 — Edit dialog, read-only execution environment</title>
+<style>
+  :root { --bg: #f4f1e9; --bg-elevated: #fffdf8; --surface: #fbf8f1; --surface-sunken: #ece7dd; --border: #ded8cc; --border-strong: #cbc3b5; --text: #1f1e1d; --text-muted: #686159; --text-faint: #989087; --accent: #6f675e; --accent-soft: #e2dcd1; --accent-text: #fff; --highlight: #cf962b; --highlight-soft: #f6ead2; --highlight-text: #191b25; --progress: #955a24; --danger: #b4413a; --danger-soft: #f6e0de; --warning: #955a24; --warning-soft: #f7e8dc; --ok: #4f7a4a; --radius: 14px; --radius-sm: 9px; --radius-xs: 6px; --font-sans: ui-sans-serif, -apple-system, sans-serif; --font-mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace; }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font-family: var(--font-sans); font-size: 15px; line-height: 1.5; }
+  .page { padding: 32px; }
+  .frame-label { font-size: 12px; font-weight: 600; color: var(--text-faint); text-transform: uppercase; letter-spacing: .04em; margin-bottom: 8px; }
+  .dialog-backdrop { position: relative; width: 1280px; height: 760px; background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; }
+  .dialog-backdrop::before { content: ""; position: absolute; inset: 0; background: rgba(31,30,29,.25); }
+  .dialog { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); width: 520px; max-height: 90%; background: var(--bg-elevated); border: 1px solid var(--border-strong); border-radius: var(--radius); box-shadow: 0 8px 30px rgba(31,30,29,.14); overflow: hidden; display: flex; flex-direction: column; }
+  .dialog-head { display: flex; align-items: center; justify-content: space-between; padding: 16px 20px; border-bottom: 1px solid var(--border); flex-shrink: 0; }
+  .dialog-head h2 { margin: 0; font-size: 16px; font-weight: 650; }
+  .dialog-head .close-btn { font-size: 13px; color: var(--text-muted); background: none; border: 0; cursor: pointer; }
+  .dialog-body { padding: 20px; overflow-y: auto; flex: 1; }
+  .field { margin-bottom: 16px; }
+  .field label { display: block; font-size: 13px; font-weight: 600; margin-bottom: 4px; }
+  .field .hint { font-size: 12px; color: var(--text-faint); margin-top: 3px; }
+  .field input { width: 100%; padding: 8px 10px; border: 1px solid var(--border-strong); border-radius: var(--radius-xs); font: inherit; font-size: 14px; background: var(--surface); color: var(--text); }
+  .port-row { display: flex; gap: 12px; }
+  .port-row .ssh-dest { flex: 1; }
+  .port-row .port { width: 100px; }
+  .readonly-field { padding: 8px 10px; border: 1px solid var(--border); border-radius: var(--radius-xs); background: var(--surface-sunken); font-size: 13px; color: var(--text-muted); display: flex; align-items: center; gap: 8px; }
+  .readonly-field .lock { font-size: 12px; opacity: .5; }
+  .readonly-field strong { color: var(--text); }
+  .readonly-hint { font-size: 12px; color: var(--text-faint); margin-top: 4px; }
+  .docker-fields { border: 1px solid var(--border); border-radius: var(--radius-xs); padding: 14px; background: var(--surface); margin-top: 8px; }
+  .docker-fields .field { margin-bottom: 12px; }
+  .docker-fields .field:last-child { margin-bottom: 0; }
+  .docker-fields .resolved { font-size: 12px; color: var(--ok); margin-top: 4px; font-weight: 600; }
+  .advanced-disclosure { margin-top: 8px; }
+  .advanced-disclosure summary { font-size: 13px; color: var(--accent); cursor: pointer; font-weight: 600; }
+  .reconnect-notice { padding: 10px 12px; border: 1px solid var(--warning); border-radius: var(--radius-xs); background: var(--warning-soft); margin-top: 12px; font-size: 13px; color: var(--text); }
+  .reconnect-notice strong { color: var(--warning); }
+  .dialog-foot { display: flex; justify-content: flex-end; gap: 8px; padding: 12px 20px; border-top: 1px solid var(--border); flex-shrink: 0; }
+  .btn-secondary { padding: 8px 16px; border: 1px solid var(--border-strong); border-radius: var(--radius-xs); background: var(--surface); color: var(--text); font: inherit; font-size: 13px; font-weight: 600; cursor: pointer; }
+  .btn-primary { padding: 8px 16px; border: 0; border-radius: var(--radius-xs); background: var(--highlight); color: var(--highlight-text); font: inherit; font-size: 13px; font-weight: 650; cursor: pointer; }
+</style>
+</head>
+<body>
+<div class="page">
+  <div class="frame-label">Desktop (1280px)</div>
+  <div class="dialog-backdrop">
+    <div class="dialog">
+      <div class="dialog-head">
+        <h2>Edit computer</h2>
+        <button class="close-btn">Close</button>
+      </div>
+      <div class="dialog-body">
+        <div class="field">
+          <label>Name</label>
+          <input type="text" value="Work API Dev">
+        </div>
+        <div class="field">
+          <label>SSH destination</label>
+          <div class="port-row">
+            <div class="ssh-dest"><input type="text" value="dev@dev-server"></div>
+            <div class="port"><input type="text" value="22"></div>
+          </div>
+        </div>
+        <div class="field">
+          <label>Execution environment</label>
+          <div class="readonly-field">
+            <span class="lock">🔒</span>
+            <span><strong>Docker container</strong> — immutable after creation</span>
+          </div>
+          <div class="readonly-hint">To switch to Host execution, add a new computer profile.</div>
+        </div>
+        <div class="docker-fields">
+          <div class="field">
+            <label>Container name</label>
+            <input type="text" value="work-api-dev" style="font-family:var(--font-mono);font-size:13px">
+          </div>
+          <div class="field">
+            <label>Container user</label>
+            <input type="text" value="dev" style="font-family:var(--font-mono);font-size:13px">
+            <div class="resolved">dev · UID 1000</div>
+          </div>
+          <div class="field">
+            <label>Pantoken root</label>
+            <input type="text" value="/home/dev/.local/share/pantoken" style="font-family:var(--font-mono);font-size:13px">
+            <div class="resolved">Persistent · volume pantoken-data</div>
+          </div>
+        </div>
+        <details class="advanced-disclosure">
+          <summary>Advanced</summary>
+        </details>
+        <div class="reconnect-notice">
+          <strong>Reconnection required.</strong> Changing container selection, user, or root saves a new profile and keeps the old connection live until you reconnect.
+        </div>
+      </div>
+      <div class="dialog-foot">
+        <button class="btn-secondary">Reconnect later</button>
+        <button class="btn-primary">Reconnect now</button>
+      </div>
+    </div>
+  </div>
+</div>
+</body>
+</html>

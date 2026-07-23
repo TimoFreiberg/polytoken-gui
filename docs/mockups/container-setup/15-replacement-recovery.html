@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>15 — Replacement & recovery</title>
+<style>
+  :root { --bg: #f4f1e9; --bg-elevated: #fffdf8; --surface: #fbf8f1; --surface-sunken: #ece7dd; --border: #ded8cc; --border-strong: #cbc3b5; --text: #1f1e1d; --text-muted: #686159; --text-faint: #989087; --accent: #6f675e; --accent-soft: #e2dcd1; --accent-text: #fff; --highlight: #cf962b; --highlight-soft: #f6ead2; --highlight-text: #191b25; --progress: #955a24; --danger: #b4413a; --danger-soft: #f6e0de; --warning: #955a24; --warning-soft: #f7e8dc; --ok: #4f7a4a; --radius: 14px; --radius-sm: 9px; --radius-xs: 6px; --font-sans: ui-sans-serif, -apple-system, sans-serif; }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font-family: var(--font-sans); font-size: 15px; line-height: 1.5; }
+  .page { padding: 32px; display: flex; gap: 32px; flex-wrap: wrap; }
+  .frame-label { font-size: 12px; font-weight: 600; color: var(--text-faint); text-transform: uppercase; letter-spacing: .04em; margin-bottom: 8px; }
+  /* Switcher panel showing transient replacement status */
+  .switcher-panel { width: 320px; background: var(--bg-elevated); border: 1px solid var(--border-strong); border-radius: var(--radius); box-shadow: 0 8px 30px rgba(31,30,29,.14); overflow: hidden; }
+  .switcher-head { padding: 12px 14px 8px; font-size: 12px; color: var(--text-muted); font-weight: 600; display: flex; justify-content: space-between; }
+  .switcher-row { display: flex; align-items: center; gap: 8px; padding: 10px 12px; border-radius: var(--radius-xs); margin: 0 6px; }
+  .switcher-row.selected { background: var(--accent-soft); box-shadow: inset 3px 0 var(--accent); }
+  .switcher-row .icon { font-size: 18px; color: var(--accent); flex-shrink: 0; }
+  .switcher-row .copy { flex: 1; min-width: 0; }
+  .switcher-row .copy strong { display: block; font-size: 12px; font-weight: 650; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .switcher-row .copy span { display: block; font-size: 11px; color: var(--text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .switcher-row .indicator { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+  .switcher-row .indicator.reconnecting { background: var(--accent); }
+  .switcher-row .indicator.failed { background: var(--danger); }
+  .switcher-row .status-text { font-size: 10px; color: var(--text-muted); white-space: nowrap; }
+  .transient-badge { display: inline-block; font-size: 10px; color: var(--accent); background: var(--accent-soft); padding: 2px 6px; border-radius: var(--radius-xs); margin-top: 2px; font-weight: 600; }
+  /* Settings card showing Container not running */
+  .settings-card { width: 480px; }
+  .computer-card { display: flex; align-items: flex-start; gap: 12px; padding: 14px; border: 1px solid var(--border); border-radius: var(--radius-xs); background: var(--surface); margin-bottom: 8px; }
+  .computer-card .icon { font-size: 20px; color: var(--accent); flex-shrink: 0; margin-top: 1px; }
+  .computer-card .info { flex: 1; min-width: 0; }
+  .computer-card .name { font-size: 14px; font-weight: 600; }
+  .computer-card .sub { font-size: 12px; color: var(--text-muted); margin-top: 2px; }
+  .computer-card .env-tag { display: inline-block; font-size: 11px; color: var(--text-faint); background: var(--surface-sunken); padding: 2px 6px; border-radius: var(--radius-xs); margin-top: 4px; }
+  .computer-card .state { font-size: 12px; font-weight: 600; flex-shrink: 0; color: var(--danger); }
+  .computer-card .actions { display: flex; gap: 6px; flex-shrink: 0; }
+  .computer-card .actions button { padding: 4px 10px; border: 1px solid var(--border-strong); border-radius: var(--radius-xs); background: var(--bg-elevated); color: var(--text); font: inherit; font-size: 12px; font-weight: 600; cursor: pointer; }
+  .recovery-guidance { padding: 10px 12px; border: 1px solid var(--border); border-radius: var(--radius-xs); background: var(--surface-sunken); margin-top: 8px; font-size: 12px; color: var(--text-muted); }
+  .recovery-guidance strong { color: var(--text); }
+</style>
+</head>
+<body>
+<div class="page">
+  <div>
+    <div class="frame-label">Switcher — Container replaced · Reconnecting</div>
+    <div class="switcher-panel">
+      <div class="switcher-head"><span>Computers</span><span style="color:var(--accent);cursor:pointer">Close</span></div>
+      <div class="switcher-row">
+        <span class="icon">⌂</span>
+        <div class="copy"><strong>This computer</strong><span>Dev computer</span></div>
+        <span class="indicator" style="background:var(--text-faint)"></span>
+        <span class="status-text">Ready</span>
+      </div>
+      <div class="switcher-row selected">
+        <span class="icon">▣</span>
+        <div class="copy">
+          <strong>Work API Dev</strong>
+          <span>work-api-dev via dev-server</span>
+          <span class="transient-badge">Container replaced · Reconnecting</span>
+        </div>
+        <span class="indicator reconnecting"></span>
+        <span class="status-text">Reconnecting…</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="settings-card">
+    <div class="frame-label">Settings — Container not running row</div>
+    <div class="computer-card">
+      <span class="icon">▣</span>
+      <div class="info">
+        <div class="name">Nightly Build Runner</div>
+        <div class="sub">dev@dev-server:22</div>
+        <span class="env-tag">Docker container · nightly-runner</span>
+      </div>
+      <span class="state">Container not running</span>
+      <div class="actions">
+        <button>Retry</button>
+        <button>Choose another</button>
+      </div>
+    </div>
+    <div class="recovery-guidance">
+      <strong>Container not running.</strong> Start or recreate the container <code>nightly-runner</code> outside Pantoken, then click Retry. Pantoken does not manage container lifecycle.
+    </div>
+  </div>
+</div>
+</body>
+</html>

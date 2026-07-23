@@ -85,6 +85,11 @@ discussion before becoming a gate (or being rejected).
       have no live-driver test (mock e2e covers wire agreement, not the polytoken
       PermissionMonitorMode/McpAction mappings or the error-surfacing notice).
 
+- [ ] **Implement the Docker container remote-connection UI.** See
+      `docs/container-connection-ui-task.md` for the complete brief and
+      `docs/mockups/container-setup/` for mockups. Layers on the host-scoped
+      connection brief (`docs/remote-connection-ui-task.md`).
+
 ## 🎨 UI explorations
 
 - [ ] **Implement exploration 2a: composer chrome and status row.** Add the facet

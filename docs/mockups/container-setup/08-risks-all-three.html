@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>08 — Review risks, all three</title>
+<style>
+  :root { --bg: #f4f1e9; --bg-elevated: #fffdf8; --surface: #fbf8f1; --surface-sunken: #ece7dd; --border: #ded8cc; --border-strong: #cbc3b5; --text: #1f1e1d; --text-muted: #686159; --text-faint: #989087; --accent: #6f675e; --accent-soft: #e2dcd1; --accent-text: #fff; --highlight: #cf962b; --highlight-soft: #f6ead2; --highlight-text: #191b25; --progress: #955a24; --danger: #b4413a; --danger-soft: #f6e0de; --warning: #955a24; --warning-soft: #f7e8dc; --ok: #4f7a4a; --radius: 14px; --radius-sm: 9px; --radius-xs: 6px; --font-sans: ui-sans-serif, -apple-system, sans-serif; }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font-family: var(--font-sans); font-size: 15px; line-height: 1.5; }
+  .page { padding: 32px; }
+  .frame-label { font-size: 12px; font-weight: 600; color: var(--text-faint); text-transform: uppercase; letter-spacing: .04em; margin-bottom: 8px; }
+  .dialog-backdrop { position: relative; width: 1280px; height: 820px; background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; }
+  .dialog-backdrop::before { content: ""; position: absolute; inset: 0; background: rgba(31,30,29,.25); }
+  .dialog { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); width: 560px; max-height: 90%; background: var(--bg-elevated); border: 1px solid var(--border-strong); border-radius: var(--radius); box-shadow: 0 8px 30px rgba(31,30,29,.14); overflow: hidden; display: flex; flex-direction: column; }
+  .dialog-head { display: flex; align-items: center; justify-content: space-between; padding: 16px 20px; border-bottom: 1px solid var(--border); flex-shrink: 0; }
+  .dialog-head h2 { margin: 0; font-size: 16px; font-weight: 650; }
+  .dialog-head .close-btn { font-size: 13px; color: var(--text-muted); background: none; border: 0; cursor: pointer; }
+  .dialog-body { padding: 20px; overflow-y: auto; flex: 1; }
+  .risk-panel-title { font-size: 15px; font-weight: 650; margin: 0 0 4px; }
+  .risk-panel-sub { font-size: 13px; color: var(--text-muted); margin: 0 0 16px; }
+  .risk-item { padding: 14px; border: 1px solid var(--warning); border-radius: var(--radius-xs); background: var(--warning-soft); margin-bottom: 12px; }
+  .risk-item .risk-title { font-size: 14px; font-weight: 650; color: var(--warning); margin-bottom: 6px; display: flex; align-items: center; gap: 6px; }
+  .risk-item .risk-title::before { content: "⚠"; font-size: 16px; }
+  .risk-item .risk-body { font-size: 13px; color: var(--text); line-height: 1.5; }
+  .accept-btn { width: 100%; padding: 12px; border: 0; border-radius: var(--radius-xs); background: var(--highlight); color: var(--highlight-text); font: inherit; font-size: 15px; font-weight: 650; cursor: pointer; margin-top: 8px; }
+  .dialog-foot { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 12px 20px; border-top: 1px solid var(--border); flex-shrink: 0; }
+  .btn-secondary { padding: 8px 16px; border: 1px solid var(--border-strong); border-radius: var(--radius-xs); background: var(--surface); color: var(--text); font: inherit; font-size: 13px; font-weight: 600; cursor: pointer; }
+</style>
+</head>
+<body>
+<div class="page">
+  <div class="frame-label">Desktop (1280px)</div>
+  <div class="dialog-backdrop">
+    <div class="dialog">
+      <div class="dialog-head">
+        <h2>Review risks</h2>
+        <button class="close-btn">Run in background</button>
+      </div>
+      <div class="dialog-body">
+        <p class="risk-panel-title">Review risks before connecting</p>
+        <p class="risk-panel-sub">The following risks were detected for <strong>work-api-dev via dev-server</strong>. Review each item, then accept to continue.</p>
+
+        <div class="risk-item">
+          <div class="risk-title">Agent runs as root</div>
+          <div class="risk-body">Agent commands will run as root. Files in bind-mounted workspaces may become root-owned. Mounted host paths or a Docker socket can expose broader host access; container root is not necessarily isolated from the host.</div>
+        </div>
+
+        <div class="risk-item">
+          <div class="risk-title">Ephemeral Pantoken root</div>
+          <div class="risk-body">Pantoken data will be lost when this container is replaced. Sessions, runtime files, and Pantoken-managed agent data stored here exist only in this container's writable layer.</div>
+        </div>
+
+        <div class="risk-item">
+          <div class="risk-title">Docker socket exposed</div>
+          <div class="risk-body">This container can control Docker on the host. The mounted Docker socket may let agent commands create privileged containers, mount host paths, or otherwise gain host-level access.</div>
+        </div>
+
+        <button class="accept-btn">Accept risks &amp; continue</button>
+      </div>
+      <div class="dialog-foot">
+        <button class="btn-secondary">Cancel setup</button>
+        <span style="font-size:12px;color:var(--text-faint)">3 risks detected · one click to accept all</span>
+      </div>
+    </div>
+  </div>
+</div>
+</body>
+</html>

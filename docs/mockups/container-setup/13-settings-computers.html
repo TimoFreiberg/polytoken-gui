@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>13 — Settings → Computers</title>
+<style>
+  :root { --bg: #f4f1e9; --bg-elevated: #fffdf8; --surface: #fbf8f1; --surface-sunken: #ece7dd; --border: #ded8cc; --border-strong: #cbc3b5; --text: #1f1e1d; --text-muted: #686159; --text-faint: #989087; --accent: #6f675e; --accent-soft: #e2dcd1; --accent-text: #fff; --highlight: #cf962b; --highlight-soft: #f6ead2; --highlight-text: #191b25; --progress: #955a24; --danger: #b4413a; --danger-soft: #f6e0de; --warning: #955a24; --warning-soft: #f7e8dc; --ok: #4f7a4a; --radius: 14px; --radius-sm: 9px; --radius-xs: 6px; --font-sans: ui-sans-serif, -apple-system, sans-serif; --font-mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace; }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font-family: var(--font-sans); font-size: 15px; line-height: 1.5; }
+  .page { padding: 32px; }
+  .frame-label { font-size: 12px; font-weight: 600; color: var(--text-faint); text-transform: uppercase; letter-spacing: .04em; margin-bottom: 8px; }
+  .settings-panel { width: 640px; background: var(--bg-elevated); border: 1px solid var(--border-strong); border-radius: var(--radius); box-shadow: 0 8px 30px rgba(31,30,29,.14); overflow: hidden; }
+  .settings-head { display: flex; align-items: center; justify-content: space-between; padding: 16px 20px; border-bottom: 1px solid var(--border); }
+  .settings-head h2 { margin: 0; font-size: 16px; font-weight: 650; }
+  .settings-head .close-btn { font-size: 13px; color: var(--text-muted); background: none; border: 0; cursor: pointer; }
+  .settings-body { padding: 20px; }
+  .section-label { font-size: 12px; font-weight: 600; color: var(--text-faint); text-transform: uppercase; letter-spacing: .04em; margin: 0 0 8px; }
+  .computer-card { display: flex; align-items: flex-start; gap: 12px; padding: 14px; border: 1px solid var(--border); border-radius: var(--radius-xs); background: var(--surface); margin-bottom: 8px; }
+  .computer-card .icon { font-size: 20px; color: var(--accent); flex-shrink: 0; margin-top: 1px; }
+  .computer-card .info { flex: 1; min-width: 0; }
+  .computer-card .name { font-size: 14px; font-weight: 600; }
+  .computer-card .sub { font-size: 12px; color: var(--text-muted); margin-top: 2px; }
+  .computer-card .env-tag { display: inline-block; font-size: 11px; color: var(--text-faint); background: var(--surface-sunken); padding: 2px 6px; border-radius: var(--radius-xs); margin-top: 4px; }
+  .computer-card .state { font-size: 12px; font-weight: 600; flex-shrink: 0; }
+  .computer-card .state.ready { color: var(--ok); }
+  .computer-card .state.provisioning { color: var(--progress); }
+  .computer-card .state.disconnected { color: var(--text-faint); }
+  .computer-card .actions { display: flex; gap: 6px; flex-shrink: 0; }
+  .computer-card .actions button { padding: 4px 10px; border: 1px solid var(--border-strong); border-radius: var(--radius-xs); background: var(--bg-elevated); color: var(--text); font: inherit; font-size: 12px; font-weight: 600; cursor: pointer; }
+  .computer-card.local { background: var(--surface-sunken); }
+  .computer-card.local .actions { display: none; }
+  .add-btn { width: 100%; padding: 10px; border: 1px dashed var(--border-strong); border-radius: var(--radius-xs); background: var(--surface); color: var(--accent); font: inherit; font-size: 14px; font-weight: 600; cursor: pointer; margin-top: 8px; }
+</style>
+</head>
+<body>
+<div class="page">
+  <div class="frame-label">Settings → Computers (desktop)</div>
+  <div class="settings-panel">
+    <div class="settings-head">
+      <h2>Computers</h2>
+      <button class="close-btn">Close</button>
+    </div>
+    <div class="settings-body">
+      <div class="section-label">This computer</div>
+      <div class="computer-card local">
+        <span class="icon">⌂</span>
+        <div class="info">
+          <div class="name">Timo's MacBook</div>
+          <div class="sub">This computer</div>
+        </div>
+        <span class="state ready">Ready</span>
+      </div>
+
+      <div class="section-label" style="margin-top:16px">Remote computers</div>
+      <div class="computer-card">
+        <span class="icon">▣</span>
+        <div class="info">
+          <div class="name">Work API Dev</div>
+          <div class="sub">dev@dev-server:22</div>
+          <span class="env-tag">Docker container · work-api-dev</span>
+        </div>
+        <span class="state ready">Ready</span>
+        <div class="actions">
+          <button>Edit</button>
+          <button>Disconnect</button>
+        </div>
+      </div>
+      <div class="computer-card">
+        <span class="icon">⌂</span>
+        <div class="info">
+          <div class="name">Build Server</div>
+          <div class="sub">ci@build-server</div>
+          <span class="env-tag">Host</span>
+        </div>
+        <span class="state disconnected">Disconnected</span>
+        <div class="actions">
+          <button>Connect</button>
+          <button>Edit</button>
+        </div>
+      </div>
+      <div class="computer-card">
+        <span class="icon">▣</span>
+        <div class="info">
+          <div class="name">Nightly Build Runner</div>
+          <div class="sub">dev@dev-server:22</div>
+          <span class="env-tag">Docker container · nightly-runner</span>
+        </div>
+        <span class="state disconnected">Container not running</span>
+        <div class="actions">
+          <button>Retry</button>
+          <button>Edit</button>
+        </div>
+      </div>
+      <button class="add-btn">+ Add computer</button>
+    </div>
+  </div>
+</div>
+</body>
+</html>

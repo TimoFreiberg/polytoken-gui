@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>05 — Container picker, many containers</title>
+<style>
+  :root { --bg: #f4f1e9; --bg-elevated: #fffdf8; --surface: #fbf8f1; --surface-sunken: #ece7dd; --border: #ded8cc; --border-strong: #cbc3b5; --text: #1f1e1d; --text-muted: #686159; --text-faint: #989087; --accent: #6f675e; --accent-soft: #e2dcd1; --accent-text: #fff; --highlight: #cf962b; --highlight-soft: #f6ead2; --highlight-text: #191b25; --progress: #955a24; --danger: #b4413a; --danger-soft: #f6e0de; --warning: #955a24; --warning-soft: #f7e8dc; --ok: #4f7a4a; --radius: 14px; --radius-sm: 9px; --radius-xs: 6px; --font-sans: ui-sans-serif, -apple-system, sans-serif; --font-mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace; }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font-family: var(--font-sans); font-size: 15px; line-height: 1.5; }
+  .page { padding: 32px; }
+  .frame-label { font-size: 12px; font-weight: 600; color: var(--text-faint); text-transform: uppercase; letter-spacing: .04em; margin-bottom: 8px; }
+  .dialog-backdrop { position: relative; width: 1280px; height: 820px; background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; }
+  .dialog-backdrop::before { content: ""; position: absolute; inset: 0; background: rgba(31,30,29,.25); }
+  .dialog { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); width: 560px; max-height: 90%; background: var(--bg-elevated); border: 1px solid var(--border-strong); border-radius: var(--radius); box-shadow: 0 8px 30px rgba(31,30,29,.14); overflow: hidden; display: flex; flex-direction: column; }
+  .dialog-head { display: flex; align-items: center; justify-content: space-between; padding: 16px 20px; border-bottom: 1px solid var(--border); flex-shrink: 0; }
+  .dialog-head h2 { margin: 0; font-size: 16px; font-weight: 650; }
+  .dialog-head .close-btn { font-size: 13px; color: var(--text-muted); background: none; border: 0; cursor: pointer; }
+  .dialog-body { padding: 20px; overflow-y: auto; flex: 1; }
+  .ssh-summary { padding: 10px 12px; border: 1px solid var(--border); border-radius: var(--radius-xs); background: var(--surface); margin-bottom: 16px; font-size: 13px; color: var(--text-muted); display: flex; align-items: center; gap: 8px; }
+  .ssh-summary .ok-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--ok); flex-shrink: 0; }
+  .ssh-summary strong { color: var(--text); }
+  .field { margin-bottom: 16px; }
+  .field label { display: block; font-size: 13px; font-weight: 600; margin-bottom: 4px; }
+  .field input { width: 100%; padding: 8px 10px; border: 1px solid var(--border-strong); border-radius: var(--radius-xs); font: inherit; font-size: 14px; background: var(--surface); color: var(--text); }
+  .search-field { position: relative; margin-bottom: 8px; }
+  .search-field input { width: 100%; padding: 8px 10px 8px 32px; border: 1px solid var(--border-strong); border-radius: var(--radius-xs); font: inherit; font-size: 13px; background: var(--surface); color: var(--text); }
+  .search-field::before { content: "🔍"; position: absolute; left: 10px; top: 50%; transform: translateY(-50%); font-size: 12px; opacity: .5; }
+  .section-label { font-size: 12px; font-weight: 600; color: var(--text-faint); text-transform: uppercase; letter-spacing: .04em; margin: 0 0 8px; }
+  .container-list { display: grid; gap: 4px; margin-bottom: 12px; max-height: 280px; overflow-y: auto; }
+  .container-row { display: flex; align-items: flex-start; gap: 10px; padding: 10px 12px; border: 1px solid var(--border); border-radius: var(--radius-xs); background: var(--surface); cursor: pointer; }
+  .container-row:hover { border-color: var(--accent); }
+  .container-row.selected { border-color: var(--accent); background: var(--accent-soft); box-shadow: inset 3px 0 var(--accent); }
+  .container-row .glyph { font-size: 18px; color: var(--accent); flex-shrink: 0; margin-top: 1px; }
+  .container-row .info { flex: 1; min-width: 0; }
+  .container-row .name { font-size: 14px; font-weight: 600; }
+  .container-row .meta { font-size: 12px; color: var(--text-muted); margin-top: 2px; }
+  .container-row .meta .image { font-family: var(--font-mono); font-size: 11px; }
+  .container-row .meta .compose { color: var(--text-faint); font-size: 11px; }
+  .container-row .status { font-size: 11px; color: var(--ok); font-weight: 600; flex-shrink: 0; }
+  .container-row .user { font-size: 11px; color: var(--text-faint); }
+  .exact-name-link { font-size: 13px; color: var(--accent); cursor: pointer; font-weight: 600; display: block; padding: 4px 0; }
+  .use-btn { width: 100%; padding: 10px; border: 0; border-radius: var(--radius-xs); background: var(--highlight); color: var(--highlight-text); font: inherit; font-size: 14px; font-weight: 650; cursor: pointer; margin-top: 8px; }
+  .dialog-foot { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 12px 20px; border-top: 1px solid var(--border); flex-shrink: 0; }
+  .btn-secondary { padding: 8px 16px; border: 1px solid var(--border-strong); border-radius: var(--radius-xs); background: var(--surface); color: var(--text); font: inherit; font-size: 13px; font-weight: 600; cursor: pointer; }
+</style>
+</head>
+<body>
+<div class="page">
+  <div class="frame-label">Desktop (1280px)</div>
+  <div class="dialog-backdrop">
+    <div class="dialog">
+      <div class="dialog-head">
+        <h2>Add computer</h2>
+        <button class="close-btn">Close</button>
+      </div>
+      <div class="dialog-body">
+        <div class="ssh-summary">
+          <span class="ok-dot"></span>
+          <span>SSH connected to <strong>dev-server</strong> · Docker permission: <strong>granted</strong></span>
+        </div>
+        <div class="field">
+          <label>Name <span style="font-weight:400;color:var(--text-faint)">(optional)</span></label>
+          <input type="text" value="Work API Dev">
+        </div>
+        <div class="section-label">Running containers (8)</div>
+        <div class="search-field">
+          <input type="text" placeholder="Search containers…" value="api">
+        </div>
+        <div class="container-list">
+          <div class="container-row selected">
+            <span class="glyph">▣</span>
+            <div class="info">
+              <div class="name">work-api-dev</div>
+              <div class="meta"><span class="image">node:20-alpine</span> · <span class="user">dev</span> · <span class="compose">compose: api/dev</span></div>
+            </div>
+            <span class="status">running</span>
+          </div>
+          <div class="container-row">
+            <span class="glyph">▣</span>
+            <div class="info">
+              <div class="name">api-tests</div>
+              <div class="meta"><span class="image">node:20-alpine</span> · <span class="user">Image default</span></div>
+            </div>
+            <span class="status">running</span>
+          </div>
+          <div class="container-row">
+            <span class="glyph">▣</span>
+            <div class="info">
+              <div class="name">api-migrations</div>
+              <div class="meta"><span class="image">node:20-alpine</span> · <span class="user">migrator</span></div>
+            </div>
+            <span class="status">running</span>
+          </div>
+          <div class="container-row">
+            <span class="glyph">▣</span>
+            <div class="info">
+              <div class="name">staging-api</div>
+              <div class="meta"><span class="image">node:20-alpine</span> · <span class="user">node</span> · <span class="compose">compose: staging/api</span></div>
+            </div>
+            <span class="status">running</span>
+          </div>
+        </div>
+        <a class="exact-name-link">Enter exact container name instead</a>
+        <button class="use-btn">Use this container</button>
+      </div>
+      <div class="dialog-foot">
+        <button class="btn-secondary">Cancel setup</button>
+        <span style="font-size:12px;color:var(--text-faint)">SSH: dev@dev-server:22 · Docker container</span>
+      </div>
+    </div>
+  </div>
+</div>
+</body>
+</html>

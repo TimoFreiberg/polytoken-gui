@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>12 — Host switcher, Docker computer row</title>
+<style>
+  :root { --bg: #f4f1e9; --bg-elevated: #fffdf8; --surface: #fbf8f1; --surface-sunken: #ece7dd; --border: #ded8cc; --border-strong: #cbc3b5; --text: #1f1e1d; --text-muted: #686159; --text-faint: #989087; --accent: #6f675e; --accent-soft: #e2dcd1; --accent-text: #fff; --highlight: #cf962b; --highlight-soft: #f6ead2; --highlight-text: #191b25; --progress: #955a24; --danger: #b4413a; --danger-soft: #f6e0de; --warning: #955a24; --warning-soft: #f7e8dc; --ok: #4f7a4a; --radius: 14px; --radius-sm: 9px; --radius-xs: 6px; --font-sans: ui-sans-serif, -apple-system, sans-serif; }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font-family: var(--font-sans); font-size: 15px; line-height: 1.5; }
+  .page { padding: 32px; }
+  .frame-label { font-size: 12px; font-weight: 600; color: var(--text-faint); text-transform: uppercase; letter-spacing: .04em; margin-bottom: 8px; }
+  .sidebar { width: 280px; background: var(--surface-sunken); border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; padding: 8px; }
+  .switcher-trigger { display: flex; align-items: center; gap: 9px; padding: 8px 10px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--bg-elevated); cursor: pointer; }
+  .switcher-trigger .icon { color: var(--accent); display: inline-flex; }
+  .switcher-trigger .copy { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+  .switcher-trigger .copy strong { font-size: 12px; font-weight: 650; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .switcher-trigger .copy span { font-size: 11px; color: var(--text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .switcher-trigger .indicator { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+  .switcher-trigger .indicator.running { background: var(--progress); }
+  .switcher-trigger .chevron { font-size: 10px; color: var(--text-faint); }
+  .switcher-panel { margin-top: 4px; border: 1px solid var(--border-strong); border-radius: var(--radius-sm); background: var(--bg-elevated); box-shadow: 0 12px 32px rgba(31,30,29,.10); padding: 8px; }
+  .panel-head { display: flex; align-items: center; justify-content: space-between; padding: 5px 8px 8px; color: var(--text-muted); font-size: 12px; }
+  .panel-head .close { color: var(--accent); background: none; border: 0; cursor: pointer; font: inherit; font-size: 12px; }
+  .host-list { display: grid; gap: 2px; }
+  .host-option { display: flex; align-items: center; gap: 8px; padding: 8px; border-radius: var(--radius-xs); text-align: left; border: 0; background: none; cursor: pointer; width: 100%; font: inherit; color: inherit; }
+  .host-option:hover { background: var(--surface); }
+  .host-option.selected { background: var(--accent-soft); box-shadow: inset 3px 0 var(--accent); }
+  .host-option .opt-icon { width: 24px; font-size: 18px; color: var(--accent); flex: 0 0 auto; text-align: center; }
+  .host-option .copy { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+  .host-option .copy strong { font-size: 12px; font-weight: 650; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .host-option .copy span { font-size: 11px; color: var(--text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .host-option .opt-status { display: inline-flex; align-items: center; gap: 5px; color: var(--text-muted); font-size: 10px; white-space: nowrap; }
+  .host-option .opt-status .indicator { width: 8px; height: 8px; border-radius: 50%; }
+  .host-option .opt-status .indicator.running { background: var(--progress); }
+  .host-option .opt-status .indicator.offline { background: var(--text-faint); }
+  .host-option .opt-status .indicator.unseen { background: var(--highlight); }
+  .management { display: grid; gap: 2px; margin-top: 6px; padding-top: 6px; border-top: 1px solid var(--border); }
+  .management button { min-height: 40px; text-align: left; padding: 0 8px; color: var(--text-muted); font-size: 12px; border: 0; background: none; cursor: pointer; font: inherit; }
+  .management button:disabled { opacity: .65; cursor: default; }
+  .new-session { margin-top: 8px; padding: 10px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--bg-elevated); text-align: center; font-size: 13px; color: var(--text-muted); }
+</style>
+</head>
+<body>
+<div class="page">
+  <div class="frame-label">Host switcher — expanded, Docker computer row</div>
+  <div class="sidebar">
+    <div class="switcher-trigger">
+      <span class="icon">▣</span>
+      <div class="copy"><strong>Work API Dev</strong><span>work-api-dev via dev-server</span></div>
+      <span class="indicator running"></span>
+      <span class="chevron">▾</span>
+    </div>
+    <div class="switcher-panel">
+      <div class="panel-head"><strong>Computers</strong><button class="close">Close</button></div>
+      <div class="host-list">
+        <button class="host-option">
+          <span class="opt-icon">⌂</span>
+          <div class="copy"><strong>This computer</strong><span>Dev computer</span></div>
+          <span class="opt-status"><span class="indicator offline"></span>Ready</span>
+        </button>
+        <button class="host-option selected">
+          <span class="opt-icon">▣</span>
+          <div class="copy"><strong>Work API Dev</strong><span>work-api-dev via dev-server</span></div>
+          <span class="opt-status"><span class="indicator running"></span>Running</span>
+        </button>
+        <button class="host-option">
+          <span class="opt-icon">▣</span>
+          <div class="copy"><strong>Build Server</strong><span>build-server</span></div>
+          <span class="opt-status"><span class="indicator unseen"></span>Unseen</span>
+        </button>
+      </div>
+      <div class="management">
+        <button disabled>Add computer</button>
+        <button disabled>Manage computers</button>
+      </div>
+    </div>
+    <div class="new-session">+ New session</div>
+  </div>
+</div>
+</body>
+</html>
