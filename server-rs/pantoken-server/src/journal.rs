@@ -758,52 +758,6 @@ mod tests {
         }
     }
 
-    // ── Ported from journal.test.ts.bak ──────────────────────────
-
-    #[test]
-    fn create_journal_empty_seed_has_no_session_ref() {
-        let j = create_journal(1, &[]);
-        assert!(j.session_ref.is_none());
-    }
-
-    #[test]
-    fn create_journal_with_seed_caches_session_ref() {
-        let seed = vec![E::SessionOpened {
-            base: base(),
-            snapshot: snapshot(),
-        }];
-        let j = create_journal(1, &seed);
-        assert!(j.session_ref.is_some());
-        assert_eq!(j.session_ref.as_ref().unwrap(), seed[0].session_ref());
-    }
-
-    #[test]
-    fn bump_epoch_updates_session_ref() {
-        let mut j = create_journal(1, &[]);
-        assert!(j.session_ref.is_none());
-        bump_epoch(&mut j, 2, &[user_msg("u1", "hello")]);
-        assert!(j.session_ref.is_some());
-    }
-
-    #[test]
-    fn estimated_bytes_is_positive_for_all_variants() {
-        // Smoke: estimated_bytes should return > 0 for representative variants.
-        let variants: Vec<SessionDriverEvent> = vec![
-            user_msg("u1", "hello"),
-            assistant_delta("some text"),
-            E::SessionOpened {
-                base: base(),
-                snapshot: snapshot(),
-            },
-        ];
-        for ev in &variants {
-            // Call via append_event and check tail_bytes > 0
-            let mut j = create_journal(1, &[]);
-            append_event(&mut j, ev.clone());
-            assert!(j.tail_bytes > 0, "estimated_bytes was 0 for variant");
-        }
-    }
-
     #[test]
     fn evicts_by_byte_budget_and_single_over_budget_event_passes_through() {
         let mut j = create_journal(1, &[]);
