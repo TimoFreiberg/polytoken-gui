@@ -268,8 +268,18 @@ test("narrowing open desktop Settings creates one phone history entry", async ({
   const panel = page.getByTestId("settings-panel");
   await expect(panel.getByRole("tab", { name: "Appearance" })).toBeVisible();
 
+  // Desktop Settings opens without touching browser history (the panel is
+  // docked, not a phone overlay). Narrowing to 859px reflows via CSS
+  // synchronously — settings-index appears at once — but the matchMedia
+  // `change` event that pushes the phone overlay history entry fires
+  // asynchronously. Wait for that entry to land before Back, else goBack runs
+  // before any overlay entry exists and exits the app to about:blank.
+  const lenBeforeNarrow = await page.evaluate(() => history.length);
   await page.setViewportSize({ width: 859, height: 600 });
   await expect(panel.getByTestId("settings-index")).toBeVisible();
+  await expect
+    .poll(() => page.evaluate(() => history.length))
+    .toBe(lenBeforeNarrow + 1);
   await page.goBack();
   await expect(panel).toHaveCount(0);
   expect(page.url()).toBe(url);

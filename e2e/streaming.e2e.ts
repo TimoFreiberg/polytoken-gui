@@ -18,14 +18,18 @@ test("a streamed reply renders user text, a working block, and the final answer"
   await expect(
     page.getByText("Show me the streamed reply script."),
   ).toBeVisible();
-  // The turn settles with its final answer visible…
+  // Wait for the reply's turn to fully settle before asserting on its final
+  // answer text. The reply script's deltas arrive over ~1s of scripted delays,
+  // but under load the mock's tokio task + WS delivery can lag; a bare
+  // toBeVisible("That confirms it") races the 5s window against streaming that
+  // hasn't begun yet (the error-context shows no reply assistant content at
+  // all when this trips). Waiting for the settled work block proves the turn
+  // ran end-to-end — the same gate gotoFresh and the thinking-hidden test use.
+  await waitForSettledWorkBlocks(page, 2);
   await expect(
     page.getByText("That confirms it", { exact: false }),
   ).toBeVisible();
-  // Wait for the turn to actually settle before expanding: "That confirms it" is the
-  // reply's final text, but `runCompleted` lands ~80ms later. Until the turn ends it
-  // isn't collapsible, so `expandWork`'s "last toggle" would target the greeting's
-  // block instead (the greeting never goes running, so the indicator is the reply's).
+  // No live indicator lingers once the turn settled.
   await expect(page.getByTestId("working-indicator")).toHaveCount(0);
   // …and its narration + tool collapse into the "Worked for Ns" block — reveal them.
   await expandWork(page);
