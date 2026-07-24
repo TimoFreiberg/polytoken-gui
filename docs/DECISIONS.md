@@ -461,3 +461,27 @@ daemon split.
 **Rationale:** keeping everything inside the container simplifies the trust
 model and avoids a host-side process that could outlive or conflict with the
 container. The SSH host is merely the transport and Docker discovery layer.
+
+## Scroll pin: input-gated, not movement-inferred
+
+The transcript's "pinned to the bottom" state (follow the live tail while
+streaming) is turned OFF only by **explicit user-input events**: wheel,
+touch drag, keyboard scroll keys, and scrollbar drag. The prompt-nav ↑
+button also explicitly sets `pinned = false` (it's a programmatic scroll
+that un-pins directly). Find-in-transcript navigation un-pins via a store
+signal. Programmatic scrolls (ResizeObserver re-asserts, settleScroll,
+content-shrink clamps) structurally cannot false-un-pin because they never
+fire user-input events.
+
+This replaced the old movement-inference logic, which tried to distinguish
+user scrolls from programmatic scrolls by reading `scrollTop` direction +
+`scrollHeight` changes. That was fundamentally ambiguous — a collapsing
+"Worked for Ns" block anchor-adjusts `scrollTop` downward, reading exactly
+like a genuine user scroll-up. The input gate eliminates the entire class
+of false-un-pin bugs.
+
+The drift-detection machinery (`scroll-watch.ts`, the 250ms sampling
+watcher, sticky notices, the trace buffer, `formatTrace`/`copyTrace`) is
+removed entirely — it existed to catch and diagnose the false-un-pin class
+that input-gating eliminates structurally.
+

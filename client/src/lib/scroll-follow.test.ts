@@ -2,120 +2,117 @@ import { describe, expect, test } from "bun:test";
 import { nextPinned } from "./scroll-follow.js";
 
 // The pin decision for the transcript scroller. Extracted from Transcript.svelte's
-// onScroll so the rule is unit-testable in isolation — the failure it guards (a
-// programmatic snap chase landing short → scroll event at gap ≥ 80 → unpin → streaming-pin
-// stops following → "New messages ↓" pill, never recovers) can't be staged in headless
-// Chromium (Chrome's overflow-anchor keeps gap near 0 on growth), so the decision is the
-// testable surface. See scroll-follow.ts for the full rationale.
+// onScroll so the rule is unit-testable in isolation. Input-gating ensures only
+// user-input events (wheel, touch, keyboard, scrollbar drag) can un-pin, so
+// programmatic scrolls structurally cannot false-un-pin. See scroll-follow.ts
+// for the full rationale.
 
 const BOTTOM = 30; // gap < 80: at the bottom zone
 const SHORT = 200; // gap ≥ 80: short of the bottom
+
+/** A convenience default so each test only spells the fields it cares about. */
+const BASE = {
+  prevPinned: true,
+  prevTop: 1000,
+  top: 1000,
+  gap: SHORT,
+  userScrolling: false,
+  pointerDownOnScroller: false,
+} as const;
 
 describe("nextPinned", () => {
   test("reaches the bottom zone from any direction → pinned", () => {
     // Scroll DOWN to the bottom (common: a reader scrolling back down).
     expect(
-      nextPinned({
-        prevPinned: false,
-        prevTop: 400,
-        top: 1000,
-        gap: BOTTOM,
-        prevScrollHeight: 2000,
-        scrollHeight: 2000,
-      }),
+      nextPinned({ ...BASE, prevPinned: false, prevTop: 400, top: 1000, gap: BOTTOM }),
     ).toBe(true);
     // Already pinned, a chase frame re-asserts the bottom.
     expect(
-      nextPinned({
-        prevPinned: true,
-        prevTop: 1000,
-        top: 1000,
-        gap: BOTTOM,
-        prevScrollHeight: 2000,
-        scrollHeight: 2000,
-      }),
+      nextPinned({ ...BASE, prevPinned: true, prevTop: 1000, top: 1000, gap: BOTTOM }),
     ).toBe(true);
     // Even an upward move that lands back in the bottom zone re-pins.
     expect(
-      nextPinned({
-        prevPinned: false,
-        prevTop: 1050,
-        top: 1010,
-        gap: BOTTOM,
-        prevScrollHeight: 2000,
-        scrollHeight: 2000,
-      }),
+      nextPinned({ ...BASE, prevPinned: false, prevTop: 1050, top: 1010, gap: BOTTOM }),
     ).toBe(true);
   });
 
   test("content grew under a pinned viewport (gap opens, scrollTop unchanged) → STAYS pinned", () => {
-    // THE BUG: a snapToBottom chase frame landed, then scrollHeight grew (a collapsing
-    // work block / streaming delta settled), so gap is now ≥ 80 while scrollTop is
-    // unchanged. The old `pinned = gap < 80` rule un-pinned here, which stopped the
-    // streaming follow and surfaced a sticky "New messages ↓" pill. Direction-based
-    // pinning holds: no upward move, so no unpin.
-    expect(
-      nextPinned({
-        prevPinned: true,
-        prevTop: 1000,
-        top: 1000,
-        gap: SHORT,
-        prevScrollHeight: 2000,
-        scrollHeight: 2000,
-      }),
-    ).toBe(true);
+    // A snapToBottom chase frame landed, then scrollHeight grew (a collapsing work
+    // block / streaming delta settled), so gap is now ≥ 80 while scrollTop is
+    // unchanged. No user-input event fired → userScrolling is false → the input gate
+    // holds the pin.
+    expect(nextPinned({ ...BASE, top: 1000, gap: SHORT })).toBe(true);
   });
 
   test("content grew and the chase nudged scrollTop up slightly → STAYS pinned", () => {
-    // Same race, but the chase frame's re-assertion moved scrollTop up a hair (still short
-    // of the new bottom). An upward move that hasn't left the bottom zone is not an unpin.
-    expect(
-      nextPinned({
-        prevPinned: true,
-        prevTop: 1000,
-        top: 1005,
-        gap: SHORT,
-        prevScrollHeight: 2000,
-        scrollHeight: 2000,
-      }),
-    ).toBe(true);
+    // Same race, but the chase frame's re-assertion moved scrollTop up a hair (still
+    // short of the new bottom). No user input → the input gate holds the pin.
+    expect(nextPinned({ ...BASE, prevTop: 1000, top: 1005, gap: SHORT })).toBe(true);
   });
 
-  test("a genuine user scroll-up that leaves the bottom zone → un-pins", () => {
+  test("a genuine user scroll-up (userScrolling) that leaves the bottom zone → un-pins", () => {
+    // THE CORE NEW BEHAVIOR: userScrolling is true (a wheel/touch/keyboard event
+    // fired), scrollTop decreased, gap ≥ 80 → un-pin.
     expect(
-      nextPinned({
-        prevPinned: true,
-        prevTop: 1000,
-        top: 400,
-        gap: SHORT,
-        prevScrollHeight: 2000,
-        scrollHeight: 2000,
-      }),
+      nextPinned({ ...BASE, userScrolling: true, prevTop: 1000, top: 400, gap: SHORT }),
     ).toBe(false);
     // Even from an un-pinned state, keep it un-pinned (no re-pin short of the bottom).
     expect(
       nextPinned({
+        ...BASE,
         prevPinned: false,
+        userScrolling: true,
         prevTop: 400,
         top: 300,
         gap: SHORT,
-        prevScrollHeight: 2000,
-        scrollHeight: 2000,
+      }),
+    ).toBe(false);
+  });
+
+  test("userScrolling: false (programmatic scroll) + top < prevTop + gap ≥ 80 → STAYS pinned", () => {
+    // AC.2: a programmatic scroll (ResizeObserver re-assert, content-shrink clamp,
+    // settleScroll) lowers scrollTop but never sets userScrolling → the input gate
+    // holds the pin. This is the structural guarantee that replaces the old
+    // scrollHeight discriminator.
+    expect(
+      nextPinned({ ...BASE, userScrolling: false, prevTop: 1000, top: 400, gap: SHORT }),
+    ).toBe(true);
+  });
+
+  test("userScrolling: true but scrolled DOWN (top ≥ prevTop) → STAYS pinned", () => {
+    // The user scrolled down, not up — no un-pin (they're heading toward the bottom,
+    // not away from it).
+    expect(
+      nextPinned({ ...BASE, userScrolling: true, prevTop: 400, top: 1000, gap: SHORT }),
+    ).toBe(true);
+  });
+
+  test("pointerDownOnScroller: true (scrollbar drag) + top < prevTop + gap ≥ 80 → un-pins", () => {
+    // Scrollbar drag: no wheel/touch event fires, but the pointer is down on the
+    // scroller and a scroll followed. Treated as user-initiated → un-pin.
+    expect(
+      nextPinned({
+        ...BASE,
+        userScrolling: false,
+        pointerDownOnScroller: true,
+        prevTop: 1000,
+        top: 400,
+        gap: SHORT,
       }),
     ).toBe(false);
   });
 
   test("a jitter within the 80px bottom zone does NOT un-pin", () => {
-    // A 10px upward nudge while still in the bottom zone: the `&& gap >= 80` guard on the
-    // unpin keeps us pinned. Without it, a bare `top < prevTop` rule would twitch off.
+    // A 10px upward nudge while still in the bottom zone: the `&& gap >= 80` guard on
+    // the unpin keeps us pinned. Without it, a bare `top < prevTop` rule would twitch
+    // off.
     expect(
       nextPinned({
-        prevPinned: true,
+        ...BASE,
+        userScrolling: true,
         prevTop: 1000,
         top: 990,
         gap: BOTTOM,
-        prevScrollHeight: 2000,
-        scrollHeight: 2000,
       }),
     ).toBe(true);
   });
@@ -123,59 +120,28 @@ describe("nextPinned", () => {
   test("session switch to a shorter live session (scrollTop clamps down to the bottom) → STAYS pinned", () => {
     // prevTop is component-scoped, so a switch from a tall scrolled-down session
     // (prevTop ≈ 5000) to a shorter live session whose bottom sits at top ≈ 700 fires a
-    // scroll event with top < prevTop. But the DOM swap clamps scrollTop to the new max, so
-    // the viewport landed AT the new bottom (gap < 80) — this must re-pin, not un-pin,
-    // otherwise a session you're sitting at the bottom of would spuriously flag unread the
-    // moment a stream starts. (Transcript.svelte's restore effect ALSO resets lastScrollTop
-    // to 0 at the switch — see the taller-session case below for why — so prevTop would
+    // scroll event with top < prevTop. But the DOM swap clamps scrollTop to the new max,
+    // so the viewport landed AT the new bottom (gap < 80) → re-pin. (Transcript.svelte's
+    // restore effect ALSO resets lastScrollTop to 0 at the switch — so prevTop would
     // actually be 0 here; this case still passes with the stale value thanks to gap < 80.)
     expect(
-      nextPinned({
-        prevPinned: true,
-        prevTop: 5000,
-        top: 700,
-        gap: BOTTOM,
-        prevScrollHeight: 2000,
-        scrollHeight: 2000,
-      }),
+      nextPinned({ ...BASE, prevTop: 5000, top: 700, gap: BOTTOM }),
     ).toBe(true);
   });
 
   test("session switch to a TALLER live session, first chase frame lands short → STAYS pinned", () => {
-    // The case the `&& gap >= 80` guard does NOT close: switching to a taller live session
-    // whose first chase frame lands short (scrollHeight grows under it on first render —
-    // exactly what the 4-frame chase exists to absorb), with a stale-higher prevTop carried
-    // from the prior (taller-scrolled-down) session. `top < prevTop && gap >= 80` would
-    // spuriously un-pin a LIVE tail — reproducing the exact stuck-pill symptom. The fix is
-    // in the WIRING: Transcript.svelte's restore effect resets lastScrollTop = 0 at the
-    // switch, so the real code feeds prevTop = 0 here, and `top < 0` is impossible → the
-    // frame holds pinned (returns prevPinned=true) and later chase frames close the gap.
-    // This test pins the wiring invariant by asserting the reset-fed shape stays pinned.
+    // The case the `&& gap >= 80` guard does NOT close: switching to a taller live
+    // session whose first chase frame lands short, with a stale-higher prevTop carried
+    // from the prior session. The fix is in the WIRING: Transcript.svelte's restore
+    // effect resets lastScrollTop = 0 at the switch, so prevTop = 0 here, and
+    // `top < 0` is impossible → the frame holds pinned. This test pins the wiring
+    // invariant by asserting the reset-fed shape stays pinned.
+    expect(nextPinned({ ...BASE, prevTop: 0, top: 2500, gap: 400 })).toBe(true);
+    // And the stale-prevTop shape (higher prevTop, but no user-input signal)
+    // also holds pinned — the input gate doesn't fire without userScrolling.
     expect(
-      nextPinned({
-        prevPinned: true,
-        prevTop: 0,
-        top: 2500,
-        gap: 400,
-        prevScrollHeight: 2000,
-        scrollHeight: 2000,
-      }),
+      nextPinned({ ...BASE, prevTop: 5000, top: 2500, gap: 400 }),
     ).toBe(true);
-    // And the buggy shape (stale higher prevTop, what the code would feed WITHOUT the
-    // reset) DOES un-pin — documenting why the reset is load-bearing. If someone removes
-    // the reset, this assertion still passes (it's the nextPinned contract), but the taller-
-    // session-switch e2e path would regress; the wiring reset is guarded by the restore
-    // effect's own behavior, not by this unit.
-    expect(
-      nextPinned({
-        prevPinned: true,
-        prevTop: 5000,
-        top: 2500,
-        gap: 400,
-        prevScrollHeight: 2000,
-        scrollHeight: 2000,
-      }),
-    ).toBe(false);
   });
 
   test("session switch restoring a scrolled-up reading spot → un-pins", () => {
@@ -183,70 +149,39 @@ describe("nextPinned", () => {
     // spot, then resets lastScrollTop = 0; the chase frames then fire onScroll. With
     // prevTop = 0 the unpin branch can't fire (top < 0 is impossible), but the rule still
     // returns the explicit prevPinned=false via the third arm — so the restore STAYS
-    // un-pinned as intended. (This is why the scrolled-up restore path doesn't depend on
-    // the unpin branch: the restore effect sets the pin state directly.)
+    // un-pinned as intended.
     expect(
-      nextPinned({
-        prevPinned: false,
-        prevTop: 0,
-        top: 200,
-        gap: SHORT,
-        prevScrollHeight: 2000,
-        scrollHeight: 2000,
-      }),
+      nextPinned({ ...BASE, prevPinned: false, prevTop: 0, top: 200, gap: SHORT }),
     ).toBe(false);
   });
 
-  // ── #86: content-shrink discriminator ────────────────────────────────────────────────
+  // ── Content-shrink: input-gating replaces the scrollHeight discriminator ──────────
 
-  test("content shrank (scrollHeight decreased) with scrollTop clamp-down → STAYS pinned", () => {
-    // THE #86 BUG: a thinking block unmounts after its text arrives, scrollHeight drops.
-    // The ResizeObserver re-asserts to the new (shorter) bottom, the browser clamps
-    // scrollTop down, gap briefly ≥ 80 → must NOT un-pin. Without the scrollHeight
-    // discriminator this would spuriously un-pin, stranding the viewport.
+  test("content shrank with scrollTop clamp-down and NO user input → STAYS pinned", () => {
+    // The old #86 bug: a thinking block unmounts after its text arrives, scrollHeight
+    // drops. The ResizeObserver re-asserts to the new (shorter) bottom, the browser
+    // clamps scrollTop down, gap briefly ≥ 80. Under input-gating, userScrolling is
+    // false (no user-input event fired) → the input gate holds the pin. No
+    // scrollHeight discriminator needed.
     expect(
-      nextPinned({
-        prevPinned: true,
-        prevTop: 1000,
-        top: 800,
-        gap: SHORT,
-        prevScrollHeight: 2000,
-        scrollHeight: 1500, // content shrank by 500px
-      }),
+      nextPinned({ ...BASE, prevTop: 1000, top: 800, gap: SHORT }),
     ).toBe(true);
   });
 
-  test("content shrank and gap is large → STAYS pinned", () => {
+  test("content shrank and gap is large with NO user input → STAYS pinned", () => {
     // The nothingness case: scrollTop is past the new bottom (gap calculated as
-    // negative/large while content settles). Content shrank, so this must not un-pin.
+    // negative/large while content settles). No user input → stays pinned.
     expect(
-      nextPinned({
-        prevPinned: true,
-        prevTop: 1000,
-        top: 950,
-        gap: 500, // large gap while content settles
-        prevScrollHeight: 2000,
-        scrollHeight: 1200, // content shrank dramatically
-      }),
+      nextPinned({ ...BASE, prevTop: 1000, top: 950, gap: 500 }),
     ).toBe(true);
   });
 
-  test("content grew (scrollHeight increased) with gap ≥ 80 → STAYS pinned", () => {
+  test("content grew (gap ≥ 80) with NO user input → STAYS pinned", () => {
     // The user-prompt-sent case: new content grew below the fold, gap opens because
-    // scrollHeight increased while scrollTop is unchanged. We're still following — this
-    // must hold pinned so the streaming-pin effect keeps chasing the new bottom.
-    // (scrollTop unchanged → `top < prevTop` is false → the un-pin branch isn't reached;
-    // the pin holds via `return prevPinned`. The scrollHeight discriminator guards the
-    // SHRINK case — AC.1 — where scrollTop decreases alongside a scrollHeight decrease.)
+    // scrollHeight increased while scrollTop is unchanged. No user input → holds
+    // pinned so the streaming-pin effect keeps chasing the new bottom.
     expect(
-      nextPinned({
-        prevPinned: true,
-        prevTop: 1000,
-        top: 1000,
-        gap: SHORT,
-        prevScrollHeight: 2000,
-        scrollHeight: 2500, // content grew by 500px
-      }),
+      nextPinned({ ...BASE, prevTop: 1000, top: 1000, gap: SHORT }),
     ).toBe(true);
   });
 });

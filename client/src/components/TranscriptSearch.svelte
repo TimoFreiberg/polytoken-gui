@@ -127,6 +127,11 @@
   function scrollToCurrent(): void {
     const r = matches[current];
     if (!r) return;
+    // Signal the transcript to un-pin BEFORE scrollIntoView: the searchScrollN effect
+    // sets pinned=false + marks a prog scroll window so the smooth scrollIntoView's
+    // animation (which passes through the bottom zone where gap < 80 would re-pin) holds
+    // the un-pinned state.
+    store.searchScrollN++;
     const node = r.startContainer;
     const el =
       node.nodeType === Node.TEXT_NODE

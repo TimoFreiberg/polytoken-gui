@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { drive, gotoFresh, waitForSettledWorkBlocks } from "./helpers.js";
+import { drive, gotoFresh, waitForSettledWorkBlocks, wheelUp } from "./helpers.js";
 
 // Regression guard for #64: when the user types in the composer and the textarea grows
 // (wraps to a new line), the transcript's last paragraph must not jump below the viewport.
@@ -119,10 +119,9 @@ test("AC.4 — a reader scrolled up is not yanked down when the composer grows",
   // Start pinned at the bottom.
   await expect.poll(() => gapFn(scroller)).toBeLessThan(5);
 
-  // Scroll up — a reader reading scrollback.
-  await scroller.evaluate((el) => {
-    (el as HTMLElement).scrollTop = Math.max(0, (el as HTMLElement).scrollTop - 400);
-  });
+  // Scroll up — a reader reading scrollback. Via real wheel input so the
+  // input-gated pin registers it as a user action and un-pins.
+  await wheelUp(page, 400);
   // Confirm we're genuinely scrolled up (pinned should be false now).
   await expect.poll(() => gapFn(scroller)).toBeGreaterThan(80);
 

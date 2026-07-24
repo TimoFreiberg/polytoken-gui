@@ -465,6 +465,10 @@ class PantokenStore {
   // bumps so a repeated ⌘F re-focuses + selects the existing query, mirroring native find.
   searchOpen = $state(false);
   searchFocusN = $state(0);
+  // Bump when find-in-transcript jumps to a match (scrollToCurrent), so the transcript
+  // can un-pin the viewport — the user is reading a search match, not following the
+  // live tail. Mirrors composerResizeN / promptSentN (counter-driven $effect).
+  searchScrollN = $state(0);
   // Sidebar session search (⌘K). Unlike the in-transcript find (⌘F), this works
   // while drafting — you may want to switch sessions mid-composition. The Sidebar
   // watches this counter and focuses its search input on each bump.
@@ -1692,6 +1696,7 @@ class PantokenStore {
     // Transient UI state (reset to defaults).
     this.searchOpen = false;
     this.searchFocusN = 0;
+    this.searchScrollN = 0;
     this.sidebarSearchFocusN = 0;
     this.hotkeyAction = null;
     this.focusComposerN = 0;

@@ -4,6 +4,7 @@ import {
   gotoFresh,
   openSidebar,
   waitForSettledWorkBlocks,
+  wheelUp,
 } from "./helpers.js";
 
 // The active (focused) session is normally "read", but should flag unread when the agent
@@ -35,12 +36,19 @@ test("scrolling up while the agent appends content flags the active session unre
   // The active session starts read.
   await expect(status).toHaveAttribute("data-state", "read");
 
-  // Scroll to the top so we're no longer pinned to the bottom.
+  // Scroll up so we're no longer pinned to the bottom — via real wheel input
+  // (not programmatic scrollTop) so the input-gated pin registers it as user
+  // action and un-pins.
   const scroller = page.locator(".scroller");
-  await scroller.evaluate((el) => ((el as HTMLElement).scrollTop = 0));
-  await expect
-    .poll(() => scroller.evaluate((el) => (el as HTMLElement).scrollTop))
-    .toBe(0);
+  const gap = () =>
+    scroller.evaluate(
+      (el) =>
+        (el as HTMLElement).scrollHeight -
+        (el as HTMLElement).scrollTop -
+        (el as HTMLElement).clientHeight,
+    );
+  await wheelUp(page, 600);
+  await expect.poll(gap).toBeGreaterThan(80); // genuinely scrolled up off the bottom
 
   // The agent appends a new turn while we're scrolled up — it lands below the viewport.
   await drive(page, "reply");

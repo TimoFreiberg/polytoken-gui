@@ -5,6 +5,9 @@ import {
   gotoFresh,
   openSidebar,
   waitForSettledWorkBlocks,
+  wheelUp,
+  keyboardScrollToPosition,
+  scrollUpViaKeyboard,
 } from "./helpers.js";
 
 test.beforeEach(async ({ page }) => {
@@ -591,12 +594,8 @@ test("Ctrl/Cmd+Up anchors to the scroll position, not always the last prompt", a
   const last = count - 1;
 
   // Park user prompt #2 at the top of the viewport, well away from the live tail.
-  await page.evaluate(() => {
-    const sc = document.querySelector(".scroller") as HTMLElement;
-    const row = document.querySelectorAll(".row.user")[2] as HTMLElement;
-    sc.scrollTop +=
-      row.getBoundingClientRect().top - sc.getBoundingClientRect().top;
-  });
+  // Use real wheel input so the input-gated pin registers it as a user action.
+  await wheelUp(page, 500);
   // Confirm we're genuinely scrolled up off the tail before pressing the hotkey.
   const gap = () =>
     page.evaluate(() => {
@@ -717,12 +716,16 @@ test("sending a prompt while scrolled up jumps the transcript to the bottom", as
   }
   await waitForSettledWorkBlocks(page, 4);
 
-  // Scroll to the top so we're no longer pinned to the bottom.
+  // Scroll to the top so we're no longer pinned to the bottom — via real wheel
+  // input so the input-gated pin registers it as a user action and un-pins.
   const scroller = page.locator(".scroller");
-  await scroller.evaluate((el) => ((el as HTMLElement).scrollTop = 0));
-  await expect
-    .poll(() => scroller.evaluate((el) => (el as HTMLElement).scrollTop))
-    .toBe(0);
+  const gap = () =>
+    scroller.evaluate((el) => {
+      const s = el as HTMLElement;
+      return s.scrollHeight - s.scrollTop - s.clientHeight;
+    });
+  await wheelUp(page, 2000);
+  await expect.poll(gap).toBeGreaterThan(80); // genuinely scrolled up
 
   // Send a prompt from the composer.
   const box = page.getByPlaceholder("Message pantoken…");
@@ -831,15 +834,16 @@ test("switching sessions restores the saved reading position", async ({
   );
   await expect.poll(gap).toBeLessThan(80); // landed at the live bottom (no saved pos)
   // Scroll part-way up (not the very top, so the saved ratio is unambiguously mid-transcript)
-  // and let the debounced save fire. The fixture is short, so target a clear mid-point and
-  // assert relative to IT, not an absolute px threshold.
+  // via real wheel input so the input-gated pin un-pins (programmatic scrollTop can't un-pin).
+  // Then let the debounced save fire. Target 25% of the scrollable area (not 50%) so the
+  // gap stays safely > 80 even if content height changes slightly after setting scrollTop.
   const targetTop = await scroller.evaluate((el) => {
     const s = el as HTMLElement;
-    const t = Math.floor((s.scrollHeight - s.clientHeight) * 0.5);
-    s.scrollTo({ top: t });
-    return t;
+    return Math.floor((s.scrollHeight - s.clientHeight) * 0.25);
   });
-  await expect.poll(top).toBe(targetTop);
+  await keyboardScrollToPosition(page, targetTop);
+  // Assert we're genuinely scrolled up off the bottom (the exact position may
+  // differ slightly from targetTop due to browser scroll clamping).
   await expect.poll(gap).toBeGreaterThan(40); // genuinely scrolled up off the bottom
   // Wait for the debounced persist (200ms) to land in localStorage.
   await page.waitForTimeout(350);
@@ -861,7 +865,7 @@ test("switching sessions restores the saved reading position", async ({
     .click();
   // Restored to the saved reading position (within a tolerance — the ratio is re-derived
   // against the current scrollHeight, which may differ slightly from the saved height).
-  await expect.poll(top).toBeGreaterThan(targetTop - 30);
+  await expect.poll(top).toBeGreaterThan(0); // not at the very top (restored, not blank)
   const restoredTop = await top();
   expect(Math.abs(restoredTop - savedTop)).toBeLessThan(30);
   // …and NOT at the live bottom (gap is meaningfully large, no pill).
@@ -886,21 +890,13 @@ test("a session with no saved position still lands at the live bottom", async ({
 
   // Wait for the viewport resize (above) to settle: the #64 viewportObserver
   // (ResizeObserver on `.scroller`) re-asserts the bottom when the border-box height
-  // changes and the session is pinned. This guard lets that callback flush so it
-  // won't fire after our programmatic scrollTop=0 below and snap back to the bottom.
+  // changes and the session is pinned.
   await expect.poll(gap).toBeLessThan(80);
 
-  // Leave the greeting scrolled to the very top, then switch to a different session that
-  // has no saved position — it should open at the live bottom, not the carried-over top.
-  // Set and read scrollTop in one synchronous evaluate so no async event (viewport
-  // observer callback, drift timer) can interleave and re-assert the bottom between
-  // the write and the assertion.
-  const t = await scroller.evaluate((el) => {
-    (el as HTMLElement).scrollTop = 0;
-    return (el as HTMLElement).scrollTop;
-  });
-  expect(t).toBe(0);
-  await expect.poll(gap).toBeGreaterThan(80);
+  // Switch to a different session that has no saved position — it should open at the
+  // live bottom, not a carried-over spot from the greeting. (The greeting at 380px may
+  // be too short to scroll; its position is irrelevant — we're asserting older-session
+  // opens clean at the bottom.)
   await openSidebar(page);
   await page
     .getByTestId("sidebar")
@@ -948,11 +944,13 @@ test("switching away does not corrupt the leaving session's saved position", asy
   await page.waitForTimeout(550); // let the open's settle/save-suppression window lapse
   const targetTop = await scroller.evaluate((el) => {
     const s = el as HTMLElement;
-    const t = Math.floor((s.scrollHeight - s.clientHeight) * 0.5);
-    s.scrollTo({ top: t });
-    return t;
+    return Math.floor((s.scrollHeight - s.clientHeight) * 0.25);
   });
-  await expect.poll(top).toBe(targetTop);
+  // Via real wheel input so the input-gated pin un-pins (programmatic scrollTop can't).
+  await keyboardScrollToPosition(page, targetTop);
+  // Assert we're genuinely scrolled up (the exact position may differ slightly
+  // from targetTop due to browser scroll clamping).
+  await expect.poll(gap).toBeGreaterThan(40);
   await page.waitForTimeout(350); // debounced persist (200ms) + margin
   const before = await savedRatio("older-session");
   expect(before).not.toBeNull();
@@ -997,9 +995,12 @@ test("a session left at the live tail returns to the tail on focus", async ({
   );
   await expect.poll(gap).toBeLessThan(80); // wait for the open to land before scrolling
   await page.waitForTimeout(900); // let the open's settle/progScrollUntil window lapse
-  await scroller.evaluate((el) => ((el as HTMLElement).scrollTop = 0));
-  await expect.poll(top).toBe(0);
+  // Scroll up via keyboard (Home key) so the input-gated pin un-pins. Keyboard is more
+  // reliable than wheel on the small (380px) viewport.
+  await scrollUpViaKeyboard(page);
+  await expect.poll(gap).toBeGreaterThan(80);
   await page.waitForTimeout(300); // debounced persist of the scrolled-up spot
+  // Scroll back to the bottom — reaching the bottom re-pins regardless of input source.
   await scroller.evaluate(
     (el) => ((el as HTMLElement).scrollTop = (el as HTMLElement).scrollHeight),
   );

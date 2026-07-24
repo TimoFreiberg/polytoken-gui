@@ -1,55 +1,37 @@
 // The pinned-to-bottom decision for the transcript scroller, extracted pure so the
 // rule is unit-testable in isolation (no DOM, no store, no Svelte effect timing).
 //
-// WHY DIRECTION, NOT GAP ALONE: a programmatic `snapToBottom` chase frame can land short
-// of the true bottom — `scrollHeight` grows AFTER the chase's `scrollTo` as a collapsing
-// "Worked for Ns" block animates / streaming content settles (see commit uttrywkuwpns),
-// and the resulting `scroll` event would, under the old `pinned = gap < 80` rule, read
-// `gap >= 80` and un-pin us. Once un-pinned, the streaming-pin effect stops following (it
-// only scrolls while pinned), the next content delta hits its `else if (grew)` branch,
-// marks the active session unread, and the "New messages ↓" pill appears — and the view
-// never recovers until the next send/switch. (This reproduces on iOS Safari, whose
-// `overflow-anchor` is unreliable; desktop Chrome's anchoring masks it by keeping `gap`
-// near 0 on growth.)
+// INPUT-GATING: the pin is turned OFF only by explicit user-input events — wheel,
+// touch drag, keyboard scroll keys, prompt-nav buttons, and scrollbar drag.
+// Programmatic scrolls (ResizeObserver re-asserts, settleScroll, find-in-transcript,
+// content-shrink clamps) structurally cannot false-un-pin because they never fire
+// user-input events.
 //
-// The discriminator: a programmatic snap only ever moves the viewport DOWN — `scrollTop`
-// rises toward the max or holds. A user scrolling UP lowers `scrollTop`. Content growth
-// (the iOS failure) opens a gap WITHOUT lowering `scrollTop`. So a `scrollTop` DECREASE
-// that leaves the bottom zone is the one reliable signal the user moved away; a gap alone
-// is ambiguous (could be our own short-landing chase racing a late reflow).
+// THE GATE: `userScrolling` is set true by blessed-input event handlers on `.scroller`
+// (onwheel, ontouchstart, onkeydown for scroll keys) and cleared after scrolling
+// settles (~150ms). `pointerDownOnScroller` covers the scrollbar-drag case (no
+// wheel/touch event fires, but the pointer is down on the scrollbar and a
+// scroll follows). It's gated on `e.target === scroller` so content clicks
+// (which target child elements) don't set it. Both are OR'd: either is a
+// user-initiated scroll. The un-pin decision then requires BOTH a
+// user-input signal AND a genuine upward move that has left the 80px bottom zone.
 //
-// WHY `&& gap >= 80` ON THE UNPIN (not just `top < prevTop`): two holes a bare direction
-// rule opens, both closed by also requiring the viewport to have actually left the 80px
-// bottom zone —
+// WHY `&& top < prevTop && gap >= 80` ON THE UNPIN (not just `userScrolling`): two
+// guards —
 //   1. Jitter: a 10px upward nudge that stays within the bottom zone would otherwise
 //      un-pin, twitchy against the gap-only rule's deliberate 80px tolerance.
 //   2. Session switch: `prevTop` is component-scoped (not per-session), so it's stale
 //      across a switch. The `&& gap >= 80` guard closes the switch-to-a-SHORTER-live-
 //      session case (landing at its bottom clamps `gap < 80` → re-pin regardless of the
-//      stale prevTop). It does NOT close the switch-to-a-TALLER-live-session case: a stale
-//      higher prevTop with a first chase frame that lands short (`gap >= 80`) would trip
-//      `top < prevTop` and spuriously un-pin a live tail — the same stuck-pill symptom.
-//      That's closed in the WIRING instead: Transcript.svelte's session-restore effect
-//      resets `lastScrollTop = 0` at the switch, so the cross-session comparison can only
-//      re-pin or hold, never spuriously un-pin. (A scrolled-up restore relies on `pinned`
-//      being set false explicitly by that effect, not on this unpin branch.)
+//      stale prevTop). The switch-to-a-TALLER-live-session case is closed in the WIRING
+//      instead: Transcript.svelte's session-restore effect resets `lastScrollTop = 0` at
+//      the switch, so the cross-session comparison can only re-pin or hold, never
+//      spuriously un-pin.
 //
-// WHY `&& scrollHeight >= prevScrollHeight` ON THE UNPIN (#86): when content SHRINKS — a
-// thinking block unmounts after its text arrives, a work block collapses, or a late
-// reflow settles — `scrollHeight` decreases. The ResizeObserver re-asserts
-// `scrollTo({top: scrollHeight})` to the new (shorter) bottom, the browser fires a scroll
-// event with a lower `scrollTop`, and `top < prevTop && gap >= 80` would spuriously
-// un-pin — stranding the viewport. A `scrollTop` decrease accompanied by a `scrollHeight`
-// decrease is the browser clamping or our own re-assert to the new bottom, NOT a user
-// scrolling up. Only a `scrollTop` decrease with UNCHANGED `scrollHeight` is a genuine
-// user scroll-up. The `prevScrollHeight` discriminator excludes content-shrink events
-// from the un-pin condition, holding the pin so the ResizeObserver / streaming-pin effect
-// keeps following to the new bottom. (Like `prevTop`, `prevScrollHeight` is component-
-// scoped and reset to 0 at the session switch.)
-//
-// This rule needs no time window (a `progScrollUntil` gate would also suppress a real
-// reader scroll-up during streaming, since that window is always in the future while
-// pinned — breaking the scroll-up-to-read-scrollback affordance).
+// Re-pin is movement-based and unambiguous: reaching the bottom zone (`gap < 80`) via
+// any cause → re-pin. Programmatic scrolls that reach the bottom (snapToBottom,
+// ResizeObserver re-assert) correctly re-pin; user scrolls that return to the bottom
+// correctly re-pin.
 
 export type PinnedInput = {
   /** Whether the viewport was pinned before this scroll event. */
@@ -60,30 +42,28 @@ export type PinnedInput = {
   top: number;
   /** `scrollHeight - scrollTop - clientHeight` for THIS scroll event. */
   gap: number;
-  /** `scrollHeight` seen by the PREVIOUS onScroll call (component-scoped, like prevTop). */
-  prevScrollHeight: number;
-  /** `scrollHeight` for THIS scroll event. */
-  scrollHeight: number;
+  /** Whether a user-input event (wheel/touch/keyboard) marked scrolling recently. */
+  userScrolling: boolean;
+  /** Whether the pointer is down on the scroller (scrollbar drag — no wheel/touch fires). */
+  pointerDownOnScroller: boolean;
 };
 
 /** Whether the transcript should stay stuck to the live bottom after a scroll event.
  *
- *  - Un-pin only on a genuine upward move that has left the 80px bottom zone AND whose
- *    `scrollHeight` did NOT decrease (content-shrink-induced `scrollTop` clamp-down is
- *    not a user scroll-up — see #86 comment above).
- *  - Re-pin whenever the viewport reaches the bottom zone (from any direction).
- *  - Otherwise (moved down or held, but still short of the bottom — e.g. a programmatic
- *    chase frame that landed short while content grew under it) hold the prior pin so the
- *    streaming-pin effect keeps following. */
+ *  - Re-pin whenever the viewport reaches the bottom zone (from any direction, any cause).
+ *  - Un-pin only on a genuine user-input scroll-up that has left the 80px bottom zone
+ *    (`userScrolling || pointerDownOnScroller`) AND moved scrollTop upward.
+ *  - Otherwise (programmatic scroll, content-shrink, moved down or held but still short
+ *    of the bottom) hold the prior pin so the streaming-pin effect keeps following. */
 export function nextPinned({
   prevPinned,
   prevTop,
   top,
   gap,
-  prevScrollHeight,
-  scrollHeight,
+  userScrolling,
+  pointerDownOnScroller,
 }: PinnedInput): boolean {
-  if (top < prevTop && gap >= 80 && scrollHeight >= prevScrollHeight) return false;
   if (gap < 80) return true;
+  if ((userScrolling || pointerDownOnScroller) && top < prevTop && gap >= 80) return false;
   return prevPinned;
 }

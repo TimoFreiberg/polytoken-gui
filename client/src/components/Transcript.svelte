@@ -31,15 +31,6 @@
     planRestore,
   } from "../lib/scroll-position.js";
   import { nextPinned } from "../lib/scroll-follow.js";
-  import {
-    DRIFT_THRESHOLD,
-    isPinnedDrift,
-    isUnpinnedDuringStreaming,
-    nextDriftState,
-    pushSample,
-    formatTrace,
-    type DriftSample,
-  } from "../lib/scroll-watch.js";
 
   const items = $derived(store.transcriptItems);
 
@@ -303,183 +294,60 @@
     progScrollUntil = Date.now() + ms;
   }
 
-  // ── Pinned-scroll drift watcher: self-heal + diagnostics ──────────────────────
+  // ── Input-gated pin: `userScrolling` flag ──────────────────────────────────────
   //
-  // A watcher that continuously checks the pinned invariant: a pinned scroller SHOULD sit
-  // at the bottom (gap ≈ 0). When the viewport has drifted far from it (gap > DRIFT_THRESHOLD),
-  // the watcher (a) self-heals by re-asserting scrollTo(bottom) and (b) raises a sticky
-  // in-app notice offering a "Copy trace" of the recent scroll geometry. The notice is
-  // ALWAYS ON (no longer ?dev-gated) — the single-user release build needs this diagnostic
-  // visible (the real Pantoken.app loads no ?dev). A second, notice-only condition catches
-  // the suspected false-un-pin: un-pinned while streaming with content below the fold.
+  // The pin is turned OFF only by explicit user-input events, never by programmatic
+  // scrolls. This flag is set true by blessed-input handlers on `.scroller` (onwheel,
+  // ontouchstart, onkeydown for scroll keys) and by `pointerDownOnScroller` (scrollbar
+  // drag — no wheel/touch fires, but the pointer is down and a scroll follows). It's
+  // cleared after scrolling settles (~150ms for wheel/touch, ~300ms for keyboard which
+  // animates). Programmatic scrolls (settleScroll, ResizeObserver re-asserts,
+  // scrollToBottom) structurally never set this flag, so they can't false-un-pin.
   //
-  // WHY THIS EXISTS (the gap in the follow logic this closes):
-  //  - The streaming-pin $effect (below) only re-asserts the bottom when `contentSize`
-  //    changes, and `contentSize` tracks only item count + the LAST item's streaming length.
-  //    It does NOT tick on: a "Worked for Ns" block collapsing (animated reveal slide), an
-  //    image decode, a markstream block reflow when final/fade flips, or growth in a non-last
-  //    item.
-  //  - The only other re-assert path is the ResizeObserver → applySettle(). For the
-  //    ratio-based restore (a saved reading spot) it is gated on
-  //    `Date.now() < settleUntil` — a ~500ms window opened only by settleScroll() on
-  //    send/switch/restore. The live-bottom follow (settleRatio === undefined) now
-  //    re-asserts on EVERY content height change while pinned (#57), closing the gap
-  //    that previously stranded a pinned viewport past/short of the content end.
-  //  - So OUTSIDE that window, a height change while `pinned` only strands the viewport
-  //    in the ratio-restore (scrolled-up reading) case; the pinned live-bottom case is
-  //    now handled by the ResizeObserver. The watcher remains as a safety net for
-  //    large/catastrophic drift and any future regression.
-  //
-  // The watcher closes the gap directly: it checks the invariant on a sampling interval AND
-  // on each onScroll, regardless of which height-churn event caused the stranding. The
-  // self-heal is a no-regret fix (a pinned scroller should be at the bottom); the notices
-  // are always-on diagnostics for the root-cause fix. The pure decisions live in
-  // scroll-watch.ts (unit-tested). See scroll-follow.ts for the related pin decision.
-  let traceBuffer: DriftSample[] = [];
-  // Frozen copy of the ring buffer at the instant a drift episode was first
-  // detected. The live `traceBuffer` keeps rolling every 250ms tick + onScroll,
-  // so by the time a sticky notice's "Copy trace" action runs (which can be
-  // minutes later — the notice is sticky, durationMs: 0), the live buffer has
-  // moved far past the actual drift and would emit whatever happened most
-  // recently (e.g. the user's own jump-to-bottom), not the drift. The snapshot
-  // freezes the evidence at detection so the trace is self-consistent with
-  // `lastDetectedAt`. See scroll-watch.test.ts "snapshot" describe block.
-  let traceSnapshot: DriftSample[] = [];
-  let driftReported = false;
-  // A separate latch for the un-pinned-during-streaming notice (the false-un-pin suspect).
-  // Distinct from `driftReported` because the two conditions are mutually exclusive (pinned
-  // vs !pinned) and a single shared latch would suppress one notice type after the other
-  // fired during a transitional tick. Re-arms when `gap` returns to 0 (back at the bottom).
-  let unpinnedReported = false;
-  // The detection instant of the current/last drift episode — captured for the trace header
-  // so the root-cause analysis knows when the drift was first observed. Shared across both
-  // notice types: whichever episode fired most recently owns the header's `detectedAt`. The
-  // ring-buffer samples themselves are correct regardless (they always capture), so only the
-  // header's instant reflects the most recent episode — acceptable for a diagnostics-only
-  // feature (per-notice attribution isn't worth a second variable).
-  let lastDetectedAt = 0;
-
-  /** Capture a scroll-geometry sample, push it to the ring buffer, evaluate drift, and (if
-   *  drifting) self-heal + raise the debug notice. Called on the 250ms sampling interval and
-   *  on each onScroll (so user scrolls land in the trace too). Pure decisions are delegated
-   *  to scroll-watch.ts. */
-  function sampleGeometry(): void {
-    if (!scroller) return;
-    const scrollTop = scroller.scrollTop;
-    const scrollHeight = scroller.scrollHeight;
-    const clientHeight = scroller.clientHeight;
-    const gap = scrollHeight - scrollTop - clientHeight;
-    const s: DriftSample = {
-      t: Date.now(),
-      scrollTop,
-      scrollHeight,
-      clientHeight,
-      gap,
-      pinned,
-      turnActive: store.turnActive,
-    };
-    traceBuffer = pushSample(traceBuffer, s, 40);
-
-    // Two mutually-exclusive drift detectors run here, each with its OWN episode latch so a
-    // notice of one type can't suppress the other on a transitional tick:
-    //
-    //  1. isPinnedDrift (pinned && gap > DRIFT_THRESHOLD): the pinned scroller has drifted far
-    //     from the bottom after a height-churn event the follow logic missed. Self-heals
-    //     (re-asserts scrollTo(bottom)) AND raises a sticky notice. Notice was previously
-    //     ?dev-gated; it's now ALWAYS ON — the single-user release build needs this
-    //     diagnostic visible (the real Pantoken.app loads no ?dev). The self-heal was always
-    //     un-gated and stays so.
-    //
-    //  2. isUnpinnedDuringStreaming (!pinned && turnActive && gap > 0): the viewport is
-    //     un-pinned while the agent is actively streaming, with content below the fold — the
-    //     suspected false-un-pin recurrence (a "Worked for Ns" collapse anchor-adjusts
-    //     scrollTop, which nextPinned reads as a genuine scroll-up and un-pins). Once
-    //     un-pinned, every re-assert path bails, stranding the viewport. Notice-ONLY: the
-    //     self-heal NEVER fires here (never yank a reader who deliberately scrolled up). The
-    //     latch re-arms when gap returns to 0 (back at the bottom).
-    //
-    // When neither fires, both latches re-arm for the next episode.
-    if (isPinnedDrift({ pinned, gap })) {
-      const latch = nextDriftState(driftReported, gap, DRIFT_THRESHOLD);
-      driftReported = latch.reported;
-
-      // SELF-HEAL (always on, not dev-gated): re-assert the bottom. Mark it as ours via
-      // markProgScroll(300) — the window must span the 250ms sample interval plus scroll-event-
-      // dispatch slack, since markProgScroll's default 120ms would lapse before the next tick
-      // and let the heal's own scroll event run onScroll ungated (persisting the corrected
-      // position and dropping any in-flight nav cursor). 300ms covers the next tick's potential
-      // re-heal. Leave `pinned` true — we're correcting a pinned scroller back to where it
-      // should be, not un-pinning it.
-      markProgScroll(300);
-      scroller.scrollTo({ top: scrollHeight });
-
-      // NOTICE (always on — no longer ?dev-gated): sticky, with a "Copy trace" action. Fires
-      // only on the first detection of an episode (the latch above); sustained drift holds.
-      // console.warn is belt-and-suspenders: the WKWebView inspector is not visible by
-      // default in the release build, so the sticky notice is the primary surface; the warn
-      // surfaces if the inspector is ever opened.
-      if (latch.shouldNotify) {
-        lastDetectedAt = s.t;
-        // Freeze the evidence at detection — the live buffer keeps rolling and
-        // would otherwise emit post-episode samples by the time the sticky
-        // notice's "Copy trace" runs.
-        traceSnapshot = [...traceBuffer];
-        console.warn("[pantoken] scroll drift (pinned, self-healed)", {
-          gap,
-          pinned,
-          turnActive: s.turnActive,
-        });
-        store.chatNotice(
-          `Scroll drift self-corrected (gap was ${Math.round(gap)}px)`,
-          {
-            durationMs: 0, // sticky — don't miss it
-            action: { label: "Copy trace", run: copyTrace },
-          },
-        );
-      }
-    } else if (
-      isUnpinnedDuringStreaming({ pinned, turnActive: store.turnActive, gap })
-    ) {
-      // Un-pinned-during-streaming notice — NO self-heal (never yank a reader who scrolled up).
-      const unpinnedLatch = nextDriftState(unpinnedReported, gap, 0);
-      unpinnedReported = unpinnedLatch.reported;
-      if (unpinnedLatch.shouldNotify) {
-        lastDetectedAt = s.t;
-        traceSnapshot = [...traceBuffer];
-        console.warn("[pantoken] viewport unpinned during streaming", {
-          gap,
-          pinned,
-          turnActive: s.turnActive,
-        });
-        store.chatNotice(
-          `Viewport not following — unpinned during streaming (gap ${Math.round(gap)}px)`,
-          {
-            durationMs: 0, // sticky — don't miss it
-            action: { label: "Copy trace", run: copyTrace },
-          },
-        );
-      }
-    } else {
-      // Neither condition holds: re-arm both latches for the next episode.
-      driftReported = false;
-      unpinnedReported = false;
-    }
+  // ORTHOGONAL to `progScrollUntil`/`markProgScroll`: that gates nav-cursor dropping and
+  // save-position suppression; this gates the un-pin decision. They don't interact. If
+  // both are true (user wheel during a programmatic settle window), the user wins —
+  // `userScrolling` un-pins, which is correct.
+  let userScrolling = false;
+  let userScrollClearTimer: ReturnType<typeof setTimeout> | undefined;
+  function markUserScroll(ms = 150): void {
+    userScrolling = true;
+    clearTimeout(userScrollClearTimer);
+    userScrollClearTimer = setTimeout(() => {
+      userScrolling = false;
+    }, ms);
   }
 
-  /** Format the ring buffer as a paste-able JSON trace and copy it to the clipboard via the
-   *  store helper (which surfaces clipboard errors). Called by the notice's "Copy trace"
-   *  action button (NoticeItem runs action.run() then onDismiss, so each episode yields
-   *  exactly one trace copy). */
-  async function copyTrace(): Promise<void> {
-    const trace = formatTrace(traceSnapshot, {
-      detectedAt: lastDetectedAt,
-      ua: typeof navigator !== "undefined" ? navigator.userAgent : "",
-      viewport:
-        typeof window !== "undefined"
-          ? { w: window.innerWidth, h: window.innerHeight }
-          : { w: 0, h: 0 },
-    });
-    await store.copyToClipboard(trace);
+  // Scrollbar drag: `onpointerdown` on `.scroller` fires for clicks on content
+  // too (buttons, links). We gate on `e.target === scroller` so only scrollbar
+  // drags (which target the scroller element itself, not a child) set the flag.
+  // Without this gate, a content click held during a content-shrink clamp-down
+  // (#86 scenario) would false-un-pin — the shrink produces `top < prevTop &&
+  // gap >= 80`, and `pointerDownOnScroller` being true would satisfy the un-pin
+  // condition even though no user scroll occurred. Cleared on pointerup (window,
+  // to catch release outside the scroller), pointerleave, and pointercancel.
+  let pointerDownOnScroller = false;
+  function onScrollerPointerDown(e: PointerEvent): void {
+    if (e.target === scroller) pointerDownOnScroller = true;
+  }
+  function onScrollerPointerUp(): void {
+    pointerDownOnScroller = false;
+  }
+
+  /** Mark scrolling for keyboard scroll keys (PgUp, ↑, Home, Space, etc.).
+   *  Bubbles from any focused child of `.scroller` too (e.g. prompt-expand
+   *  buttons), but not from the composer textarea (a sibling, outside the
+   *  scroller). The `top < prevTop && gap >= 80` geometry guard in nextPinned
+   *  prevents false un-pins from non-scrolling keypresses (e.g. Space on a
+   *  button that doesn't cause an upward scroll). */
+  function onScrollerKey(e: KeyboardEvent): void {
+    if (
+      ["PageUp", "PageDown", "ArrowUp", "ArrowDown", "Home", "End", " "].includes(
+        e.key,
+      )
+    ) {
+      markUserScroll(300); // keyboard scroll is animated; give it a longer window
+    }
   }
 
   // Per-session reading position, persisted so switching back to a warmed session
@@ -530,37 +398,47 @@
   // switch (a stale cross-session prevTop could spuriously un-pin a taller live session —
   // see scroll-follow.ts). Within a session it tracks the live scroll position.
   let lastScrollTop = 0;
-  // The scrollHeight the last onScroll saw — fed to nextPinned as prevScrollHeight.
-  // Component-scoped like lastScrollTop (reset at session switch — #86).
-  let lastScrollHeight = 0;
   function onScroll() {
     if (!scroller) return;
     const top = scroller.scrollTop;
     const h = scroller.scrollHeight;
     const gap = h - top - scroller.clientHeight;
-    // Direction-based pin (extracted, unit-tested in scroll-follow.test.ts): a programmatic
-    // snap can land short (scrollHeight grows after its scrollTo as a collapsing work block /
-    // streaming content settles), and the resulting scroll event would, under a gap-only
-    // `pinned = gap < 80` rule, un-pin us — at which point the streaming-pin effect stops
-    // following (it only scrolls while pinned), the next delta hits its `else if (grew)`
-    // branch, marks the active session unread, and the "New messages ↓" pill appears. The
-    // view never recovers until the next send/switch. Re-pinning only on a genuine upward
-    // move that has left the bottom zone holds the pin through our own short-landing events
-    // without a time window (which would also suppress a real reader scroll-up during
-    // streaming, since progScrollUntil is always in the future while pinned).
+    // Input-gated pin (extracted, unit-tested in scroll-follow.test.ts): the viewport
+    // un-pins ONLY when a user-input event (wheel, touch, keyboard, scrollbar drag) set
+    // `userScrolling`/`pointerDownOnScroller` AND the scroll moved scrollTop upward past
+    // the 80px bottom zone. Programmatic scrolls (ResizeObserver re-asserts, settleScroll,
+    // content-shrink clamps) never set these flags, so they structurally can't false-un-pin.
+    // Re-pin is movement-based and unambiguous: reaching the bottom zone (gap < 80) via any
+    // cause → re-pin. See scroll-follow.ts for the full rationale.
     //
-    // The `prevScrollHeight`/`scrollHeight` fields exclude content-shrink events from
-    // the un-pin condition (#86) — see scroll-follow.ts for the full rationale.
+    // During a programmatic scroll window (progScrollUntil), hold the current pin state —
+    // don't call nextPinned. This covers find-in-transcript's scrollIntoView (which sets
+    // searchScrollN → pinned=false, then animates through the bottom zone where gap < 80
+    // would re-pin) and settleScroll's multi-frame chase. The only exception: a user-input
+    // scroll during the window (userScrolling/pointerDownOnScroller) still evaluates
+    // nextPinned — the user always wins over programmatic scrolls.
+    if (
+      Date.now() < progScrollUntil &&
+      !userScrolling &&
+      !pointerDownOnScroller
+    ) {
+      // Programmatic scroll window: hold the current pin state (don't call nextPinned).
+      // nav-cursor drop and save-position are intentionally skipped here — programmatic
+      // scrolls shouldn't persist transient positions or drop the cursor. They run in the
+      // post-nextPinned path below, but only when progScrollUntil has lapsed.
+      lastScrollTop = top;
+      if (pinned) store.clearActiveUnread();
+      return;
+    }
     pinned = nextPinned({
       prevPinned: pinned,
       prevTop: lastScrollTop,
       top,
       gap,
-      prevScrollHeight: lastScrollHeight,
-      scrollHeight: h,
+      userScrolling,
+      pointerDownOnScroller,
     });
     lastScrollTop = top;
-    lastScrollHeight = h;
     // Reaching the bottom clears the active-session unread flag (you've seen it all).
     if (pinned) store.clearActiveUnread();
     // A user scroll (not one of ours) abandons prompt-stepping, so the next ↑ button press re-anchors.
@@ -569,10 +447,6 @@
     // scrolls (prompt-stepping / settleScroll) — those set progScrollUntil, and saving a
     // transient mid-scroll position would restore to a spot the user never chose.
     if (Date.now() >= progScrollUntil) scheduleSavePosition();
-    // Capture a scroll-geometry sample for the drift watcher (self-heal + trace). Called
-    // AFTER the pin decision so the sample reflects the updated `pinned` state. User scrolls
-    // land in the trace too, so the evidence shows the geometry leading up to a drift.
-    sampleGeometry();
   }
 
   // Re-assert a scroll position as late layout changes the content height — images decode,
@@ -652,9 +526,11 @@
     // `top < prevTop && gap >= 80` — un-pinning the live tail, the same stuck-pill symptom
     // this fix targets. With prevTop=0 the comparison can only re-pin or hold. (A scrolled-
     // up restore relies on `pinned` being set false explicitly below, not on this branch.)
-    // `lastScrollHeight` is reset for the same reason (#86).
+    // Also reset `userScrolling` — a user-input flag from the prior session shouldn't carry
+    // over, and a pending clear-timer could re-set it after the reset.
     lastScrollTop = 0;
-    lastScrollHeight = 0;
+    userScrolling = false;
+    clearTimeout(userScrollClearTimer);
     navIndex = null;
     const plan = id ? planRestore(scrollPositions, id) : null;
     if (plan && plan !== "bottom") {
@@ -743,6 +619,21 @@
     });
   });
 
+  // Find-in-transcript un-pin: when the user jumps to a search match (⌘F → Enter),
+  // TranscriptSearch bumps `store.searchScrollN` before scrollIntoView. The user is now
+  // reading a match, not following the live tail — un-pin so the streaming-pin effect
+  // doesn't yank back to the bottom on the next content delta. Also mark a programmatic
+  // scroll window so the scrollIntoView's animation (which passes through the bottom zone
+  // where gap < 80 would re-pin) holds the un-pinned state.
+  let lastSearchScrollN = store.searchScrollN;
+  $effect(() => {
+    const n = store.searchScrollN;
+    if (n === lastSearchScrollN) return;
+    lastSearchScrollN = n;
+    pinned = false;
+    markProgScroll(900); // cover the smooth scrollIntoView animation
+  });
+
   /** Jump to the newest content and clear the unread flag (the "new messages ↓" pill). */
   function scrollToBottom(): void {
     if (!scroller) return;
@@ -813,6 +704,10 @@
       max,
     );
     markProgScroll();
+    // The ↑ button scrolls away from the live tail — explicitly un-pin so the
+    // streaming-pin effect doesn't yank back to the bottom. markProgScroll sets
+    // progScrollUntil which makes onScroll's early-return guard hold this state.
+    pinned = false;
     scroller.scrollTo({ top });
     flashPromptRow(target);
   }
@@ -894,17 +789,17 @@
       });
       viewportObserver.observe(scroller);
     }
-    // Drift watcher sampling interval: checks the pinned invariant on a steady cadence so a
-    // drift is caught within a beat even without a scroll event (the gap in the follow logic
-    // strands the viewport silently — see the watcher comment above). ~250ms is frequent
-    // enough to catch a drift promptly, cheap (4 property reads). onScroll also samples, so
-    // user scrolls land in the trace; this interval covers the no-input case.
-    const driftTimer = setInterval(sampleGeometry, 250);
+    // Clear the userScrolling flag's settle timer on unmount so a pending timer doesn't
+    // fire after the component is gone. The window-level pointerup listener (for scrollbar
+    // drag release outside the scroller) is also cleaned up here.
+    const onWindowPointerUp = () => (pointerDownOnScroller = false);
+    window.addEventListener("pointerup", onWindowPointerUp);
     return () => {
       window.removeEventListener("pagehide", onPageHide);
       settleObserver?.disconnect();
       viewportObserver?.disconnect();
-      clearInterval(driftTimer);
+      window.removeEventListener("pointerup", onWindowPointerUp);
+      clearTimeout(userScrollClearTimer);
     };
   });
 </script>
@@ -929,7 +824,15 @@
   class="scroller"
   class:touch={isTouch}
   bind:this={scroller}
+  tabindex="0"
   onscroll={onScroll}
+  onwheel={() => markUserScroll()}
+  ontouchstart={() => markUserScroll()}
+  onkeydown={onScrollerKey}
+  onpointerdown={onScrollerPointerDown}
+  onpointerup={onScrollerPointerUp}
+  onpointerleave={onScrollerPointerUp}
+  onpointercancel={onScrollerPointerUp}
   use:pullToRefresh={{
     enabled: isTouch && !pull.refreshing,
     onRefresh: pull.trigger,
@@ -1387,12 +1290,16 @@
     flex: 1;
     overflow-y: auto;
     overscroll-behavior: contain;
-    /* The JS follow logic (streaming-pin effect, ResizeObserver, drift watcher) is the
+    /* The JS follow logic (streaming-pin effect, ResizeObserver, input-gated pin) is the
        sole authority for scroll position. Browser `overflow-anchor: auto` is unreliable on
        WKWebView (acknowledged in scroll-follow.ts) and can adjust scrollTop after our
        programmatic scrollTo, fighting the follow. Disabling it makes behavior consistent
        across browsers (#86). */
     overflow-anchor: none;
+  }
+  .scroller:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: -2px;
   }
   /* "New messages ↓" pill — floats over the transcript when content lands below the
      fold while scrolled up. Centered near the bottom, above the composer. */
