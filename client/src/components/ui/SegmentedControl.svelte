@@ -18,6 +18,7 @@
     title?: string; // tooltip; falls back to the label
     icon?: Snippet; // optional leading glyph / inline SVG
     testid?: string; // optional data-testid hook for e2e
+    disabled?: boolean; // optional: disable this option (e.g. unsupported Docker)
   };
 
   interface Props {
@@ -120,6 +121,7 @@
       aria-checked={shown === opt.value}
       data-testid={opt.testid}
       title={opt.title ?? opt.label}
+      disabled={opt.disabled}
       onclick={() => select(opt.value)}
     >
       {#if opt.icon}<span class="seg-ico">{@render opt.icon()}</span>{/if}

@@ -6,8 +6,8 @@ test.beforeEach(async ({ page }) => {
   await openSidebar(page);
 });
 
-test("settings → computers: container profile row with environment tag + state + actions", async ({ page }) => {
-  // First add a docker profile via the setup dialog.
+/** Helper: add a docker profile and return the profile id. */
+async function addDockerProfile(page: import("@playwright/test").Page): Promise<string | null> {
   const trigger = page.getByTestId("host-switcher-trigger");
   await trigger.click();
   await page.getByTestId("host-switcher-add").click();
@@ -16,81 +16,81 @@ test("settings → computers: container profile row with environment tag + state
   await expect(page.getByTestId("cs-ssh-summary")).toBeVisible({ timeout: 5000 });
   await page.getByTestId("cs-container-work-api-dev").click();
   await page.getByTestId("cs-use-container").click();
+  await page.waitForTimeout(1000);
   await page.getByTestId("computer-setup-close").click().catch(() => {});
   await page.waitForTimeout(500);
+  const profiles = await page.evaluate(() => {
+    const hosts = (window as unknown as { __pantokenHosts?: { listProfiles: () => Promise<{ id: string; executionTarget: { kind: string } }[]> } }).__pantokenHosts;
+    return hosts?.listProfiles();
+  });
+  if (profiles && profiles.length > 0) {
+    const docker = profiles.find((p) => p.executionTarget?.kind === "dockerContainer");
+    return docker?.id ?? null;
+  }
+  return null;
+}
 
-  // Open Settings → Computers.
+test("settings → computers: container profile row with environment tag", async ({ page }) => {
+  await addDockerProfile(page);
+
   await openSettings(page, "computers");
   await expect(page.getByTestId("computers-section")).toBeVisible();
-  // The local computer should be shown.
   await expect(page.getByText("THIS COMPUTER")).toBeVisible();
-  // Remote computer section should appear if a profile was saved.
-  if (await page.getByText("REMOTE COMPUTERS").isVisible().catch(() => false)) {
-    // Check for environment tag.
-    await expect(page.getByText("Docker container · work-api-dev")).toBeVisible();
-  }
+  await expect(page.getByText("REMOTE COMPUTERS")).toBeVisible();
+  await expect(page.getByText("Docker container · work-api-dev")).toBeVisible();
 });
 
-test("edit dialog: read-only execution environment", async ({ page }) => {
-  // Add a docker profile first.
-  const trigger = page.getByTestId("host-switcher-trigger");
-  await trigger.click();
-  await page.getByTestId("host-switcher-add").click();
-  await page.getByTestId("cs-ssh-input").fill("dev@dev-server");
-  await page.getByTestId("cs-test-ssh").click();
-  await expect(page.getByTestId("cs-ssh-summary")).toBeVisible({ timeout: 5000 });
-  await page.getByTestId("cs-container-work-api-dev").click();
-  await page.getByTestId("cs-use-container").click();
-  await page.getByTestId("computer-setup-close").click().catch(() => {});
-  await page.waitForTimeout(500);
+test("edit dialog: read-only execution environment; Reconnect now / Later", async ({ page }) => {
+  await addDockerProfile(page);
 
-  // Open Settings → Computers.
   await openSettings(page, "computers");
   await expect(page.getByTestId("computers-section")).toBeVisible();
-
-  // If remote profiles exist, click Edit on the first one.
-  const editBtns = page.locator('[data-testid^="computer-card-"] .mcp-btn').filter({ hasText: "Edit" });
-  if (await editBtns.first().isVisible().catch(() => false)) {
-    await editBtns.first().click();
-    await expect(page.getByTestId("computer-setup-panel")).toBeVisible();
-    // Verify the read-only execution environment field.
-    await expect(page.getByTestId("cs-edit-exec-env")).toContainText("Docker container");
-    await expect(page.getByTestId("cs-edit-exec-env")).toContainText("immutable after creation");
-    // Verify Reconnect now / Later buttons.
-    await expect(page.getByTestId("cs-reconnect-now")).toBeVisible();
-    await expect(page.getByTestId("cs-reconnect-later")).toBeVisible();
-  }
+  // Click Edit on the first docker profile.
+  const editBtn = page.locator('[data-testid^="computer-card-"] .mcp-btn').filter({ hasText: "Edit" }).first();
+  await expect(editBtn).toBeVisible();
+  await editBtn.click();
+  await expect(page.getByTestId("computer-setup-panel")).toBeVisible();
+  await expect(page.getByTestId("cs-edit-exec-env")).toContainText("Docker container");
+  await expect(page.getByTestId("cs-edit-exec-env")).toContainText("immutable after creation");
+  await expect(page.getByTestId("cs-reconnect-now")).toBeVisible();
+  await expect(page.getByTestId("cs-reconnect-later")).toBeVisible();
 });
 
 test("container not running: Retry + guidance", async ({ page }) => {
-  // Add a docker profile, then drive it to failed with "Container not running".
+  // Add a docker profile via exact name (non-running container).
   const trigger = page.getByTestId("host-switcher-trigger");
   await trigger.click();
   await page.getByTestId("host-switcher-add").click();
   await page.getByTestId("cs-ssh-input").fill("dev@dev-server");
   await page.getByTestId("cs-test-ssh").click();
   await expect(page.getByTestId("cs-ssh-summary")).toBeVisible({ timeout: 5000 });
-  // Use exact name for a non-running container.
   await page.getByTestId("cs-exact-name-link").click();
   await page.getByTestId("cs-exact-input").fill("nightly-runner");
   await page.getByTestId("cs-save-later").click();
   await page.waitForTimeout(500);
 
-  // Drive the host to failed with "Container not running".
-  await page.evaluate(() => {
-    const hosts = (window as unknown as { __pantokenHosts?: { setState: (id: string, state: string) => void } }).__pantokenHosts;
-    // Find the docker profile host and set it to failed.
-    hosts?.setState("docker-test", "failed");
+  // Get the profile id and drive it to failed.
+  const profileId = await page.evaluate(() => {
+    const hosts = (window as unknown as { __pantokenHosts?: { listProfiles: () => Promise<{ id: string; executionTarget: { kind: string; containerName?: string } }[]>; setState: (id: string, state: string) => void } }).__pantokenHosts;
+    return hosts?.listProfiles().then((ps) => {
+      const docker = ps.find((p) => p.executionTarget?.kind === "dockerContainer" && p.executionTarget?.containerName === "nightly-runner");
+      if (docker) {
+        hosts?.setState(docker.id, "failed");
+        return docker.id;
+      }
+      return null;
+    });
   });
+
+  await page.waitForTimeout(300);
 
   // Open Settings → Computers.
   await openSettings(page, "computers");
   await expect(page.getByTestId("computers-section")).toBeVisible();
 
-  // If the guidance text appears, verify it.
-  const guidance = page.locator('[data-testid^="computer-guidance-"]');
-  if (await guidance.first().isVisible({ timeout: 2000 }).catch(() => false)) {
-    await expect(guidance.first()).toContainText("Container not running");
-    await expect(guidance.first()).toContainText("Pantoken does not manage container lifecycle");
-  }
+  // Verify the guidance text.
+  const guidance = page.getByTestId(`computer-guidance-${profileId}`);
+  await expect(guidance).toBeVisible({ timeout: 3000 });
+  await expect(guidance).toContainText("Container not running");
+  await expect(guidance).toContainText("Pantoken does not manage container lifecycle");
 });

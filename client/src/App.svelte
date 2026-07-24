@@ -170,6 +170,7 @@
           acknowledgeRisk: provider.acknowledgeRisk,
           testSshAndListContainers: provider.testSshAndListContainers,
           inspectContainer: provider.inspectContainer,
+          listProfiles: provider.listProfiles,
         };
         return () => delete (window as unknown as { __pantokenHosts?: unknown }).__pantokenHosts;
       });

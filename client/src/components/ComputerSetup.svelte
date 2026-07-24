@@ -19,10 +19,11 @@
     formatBacking,
     findSocketMount,
     RISK_BODIES,
+    computeRiskKeys,
+    risksNeedingAcknowledgement,
   } from "../lib/hosts/docker-format.js";
   import { redactSshDestination } from "../lib/hosts/types.js";
   import Button from "./ui/Button.svelte";
-  import IconButton from "./ui/IconButton.svelte";
   import SegmentedControl from "./ui/SegmentedControl.svelte";
   import Chevron from "./ui/Chevron.svelte";
 
@@ -262,6 +263,30 @@
     }, 400);
 
     try {
+      if (execEnv === "host") {
+        // Host mode: verify SSH connectivity only, then go to provisioning.
+        // We use testSshAndListContainers for the SSH test, but don't need
+        // the container list.
+        const result = await provider.testSshAndListContainers(sshDestination, port);
+        clearInterval(stepTimer);
+        if (!result.sshOk) {
+          stage = "sshFailed";
+          testError = {
+            title: "Can't reach the host",
+            message: "Check the SSH destination and try again.",
+          };
+          return;
+        }
+        // Suggest name if untouched.
+        if (!nameTouched) {
+          name = humanizeSshHost(sshDestination);
+        }
+        // For host targets, go directly to provisioning (save profile + connect).
+        const profile = buildHostProfile();
+        await saveAndStore(profile, true);
+        return;
+      }
+      // Docker mode: list containers.
       const result = await provider.testSshAndListContainers(sshDestination, port);
       clearInterval(stepTimer);
       testResult = result;
@@ -275,11 +300,7 @@
       }
       // Suggest name if untouched.
       if (!nameTouched) {
-        if (execEnv === "docker") {
-          // Will be set after container selection.
-        } else {
-          name = humanizeSshHost(sshDestination);
-        }
+        // Will be set after container selection.
       }
       stage = "containerPicker";
     } catch (err) {
@@ -382,6 +403,21 @@
     };
   }
 
+  function buildHostProfile(): RemoteProfile {
+    const id = editProfile?.id ?? `host-${Date.now()}`;
+    return {
+      id,
+      label: name || humanizeSshHost(sshDestination),
+      sshDestination,
+      port: port || 22,
+      polytokenPolicy: "requireExisting",
+      serverPath: serverPath || undefined,
+      xdgMode,
+      executionTarget: { kind: "host" },
+      riskAcknowledgements: editProfile?.riskAcknowledgements ?? {},
+    };
+  }
+
   async function saveAndStore(profile: RemoteProfile, startProvisioning: boolean): Promise<void> {
     const saved = await provider.addProfile(profile);
     savedProfileId = saved.id;
@@ -397,8 +433,52 @@
         const hosts = await provider.listHosts();
         const host = hosts.find((h) => h.id === saved.id);
         if (host?.state === "awaitingAcknowledgement" && host.pendingRisks) {
-          pendingRisks = host.pendingRisks;
-          stage = "reviewRisks";
+          // Filter to only risks that need re-acknowledgement (not previously
+          // acknowledged with a valid fingerprint). Socket acks are persisted
+          // client-side in localStorage; root/ephemeral acks come from the profile.
+          const socketAckKey = getSocketAck(savedProfileId);
+          const envKeys = computeRiskKeys({
+            containerId: inspection?.containerId ?? "",
+            pantokenRoot,
+            backingKey: backingLine,
+            hasSocketMount,
+            socketMountKey: inspection ? findSocketMount(inspection.mounts)?.source : undefined,
+          });
+          // Only re-prompt risks that are invalidated or new.
+          const allRisks = host.pendingRisks;
+          const neededKinds = new Set(
+            risksNeedingAcknowledgement(
+              editProfile?.riskAcknowledgements ?? saved.riskAcknowledgements ?? {},
+              socketAckKey,
+              {
+                containerId: inspection?.containerId ?? "",
+                pantokenRoot,
+                backingKey: backingLine,
+                hasSocketMount,
+                socketMountKey: inspection ? findSocketMount(inspection.mounts)?.source : undefined,
+              },
+            ),
+          );
+          pendingRisks = allRisks.filter((r) => neededKinds.has(r.kind));
+          if (pendingRisks.length > 0) {
+            stage = "reviewRisks";
+          } else {
+            // All risks already acknowledged — auto-accept and continue.
+            for (const risk of allRisks) {
+              await provider.acknowledgeRisk(savedProfileId, risk.id, risk.fingerprint);
+            }
+            await provider.resumeConnection(savedProfileId);
+            await coordinator.refreshHosts();
+            const hosts2 = await provider.listHosts();
+            const host2 = hosts2.find((h) => h.id === savedProfileId);
+            if (host2?.state === "ready") {
+              provisioningPhase = 4;
+              onComplete();
+            } else {
+              stage = "provisioning";
+              provisioningPhase = 2;
+            }
+          }
         } else if (host?.state === "failed") {
           provisioningFailed = {
             title: host.failureLabel ?? "Connection failed",
@@ -428,12 +508,17 @@
   // ── Risk acknowledgement ──────────────────────────────────────────────────
   async function acceptRisks(): Promise<void> {
     riskError = null;
+    if (!savedProfileId) return;
     try {
       for (const risk of pendingRisks) {
-        await provider.acknowledgeRisk(savedProfileId!, risk.id, risk.fingerprint);
+        await provider.acknowledgeRisk(savedProfileId, risk.id, risk.fingerprint);
+        // Persist socket acks client-side in localStorage (gap c).
+        if (risk.kind === "dockerSocket") {
+          setSocketAck(savedProfileId, risk.fingerprint);
+        }
       }
       // All risks acknowledged — resume the connection.
-      await provider.resumeConnection(savedProfileId!);
+      await provider.resumeConnection(savedProfileId);
       await coordinator.refreshHosts();
       const hosts = await provider.listHosts();
       const host = hosts.find((h) => h.id === savedProfileId);
@@ -538,6 +623,21 @@
   }
 
   // ── Helpers ────────────────────────────────────────────────────────────────
+
+  const SOCKET_ACK_PREFIX = "pantoken.socketAck.";
+
+  /** Get the stored socket ack fingerprint for a profile. */
+  function getSocketAck(profileId: string): string | undefined {
+    if (typeof localStorage === "undefined") return undefined;
+    return localStorage.getItem(SOCKET_ACK_PREFIX + profileId) ?? undefined;
+  }
+
+  /** Persist the socket ack fingerprint for a profile (client-side only). */
+  function setSocketAck(profileId: string, fingerprint: string): void {
+    if (typeof localStorage === "undefined") return;
+    localStorage.setItem(SOCKET_ACK_PREFIX + profileId, fingerprint);
+  }
+
   function onNameInput(e: Event): void {
     name = (e.target as HTMLInputElement).value;
     nameTouched = true;
@@ -691,7 +791,7 @@
             onchange={(v: "host" | "docker") => execEnv = v}
             options={[
               { value: "host", label: "Host", testid: "cs-env-host" },
-              { value: "docker", label: "Docker container", testid: "cs-env-docker", title: supportsDocker ? "Docker container" : "Docker targets require the Pantoken desktop app" },
+              { value: "docker", label: "Docker container", testid: "cs-env-docker", title: supportsDocker ? "Docker container" : "Docker targets require the Pantoken desktop app", disabled: !supportsDocker },
             ]}
           />
           {#if !supportsDocker && execEnv === "docker"}
@@ -724,7 +824,7 @@
             onclick={() => void runTest()}
             data-testid="cs-test-ssh"
           >
-            {stage === "sshFailed" ? "Test SSH & find containers" : "Test SSH & find containers"}
+            Test SSH & find containers
           </Button>
         {/if}
 
