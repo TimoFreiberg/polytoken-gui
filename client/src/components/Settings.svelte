@@ -1,6 +1,9 @@
 <script lang="ts">
   import { store } from "../lib/store.svelte.js";
   import type { ThemeMode } from "../lib/theme.js";
+  import type { HostCoordinator } from "../lib/hosts.svelte.js";
+  import type { RemoteProfile } from "../lib/hosts/types.js";
+  import { redactSshDestination } from "../lib/hosts/types.js";
   import Button from "./ui/Button.svelte";
   import IconButton from "./ui/IconButton.svelte";
   import SegmentedControl from "./ui/SegmentedControl.svelte";
@@ -14,6 +17,62 @@
   // default model/thinking, favorites) which travels the WS and persists in the agent.
 
   const open = $derived(store.settingsOpen);
+
+  const { coordinator }: { coordinator?: HostCoordinator } = $props();
+
+  // Load remote profiles when the Computers section is active.
+  let remoteProfiles = $state<RemoteProfile[]>([]);
+  $effect(() => {
+    if (open && coordinator && activeSection === "computers") {
+      void coordinator.hostProvider.listProfiles().then((p) => { remoteProfiles = p; });
+    }
+  });
+
+  function refreshProfiles(): void {
+    if (coordinator) {
+      void coordinator.hostProvider.listProfiles().then((p) => { remoteProfiles = p; });
+    }
+  }
+
+  function envTag(profile: RemoteProfile): string {
+    if (profile.executionTarget.kind === "dockerContainer") {
+      return `Docker container · ${profile.executionTarget.containerName}`;
+    }
+    return "Host";
+  }
+
+  function sshDisplay(profile: RemoteProfile): string {
+    const host = redactSshDestination(profile.sshDestination).host;
+    return `${profile.sshDestination.includes("@") ? profile.sshDestination : host}`;
+  }
+
+  function hostState(profile: RemoteProfile): string {
+    if (!coordinator) return "Disconnected";
+    const summary = coordinator.summaries.find((s) => s.descriptor.id === profile.id);
+    if (!summary) return "Disconnected";
+    return summary.statusText;
+  }
+
+  function hostDescriptor(profile: RemoteProfile) {
+    if (!coordinator) return undefined;
+    return coordinator.summaries.find((s) => s.descriptor.id === profile.id)?.descriptor;
+  }
+
+  async function connectProfile(profile: RemoteProfile): Promise<void> {
+    if (!coordinator) return;
+    await coordinator.connectHost(profile.id);
+    refreshProfiles();
+  }
+
+  async function disconnectProfile(profile: RemoteProfile): Promise<void> {
+    if (!coordinator) return;
+    await coordinator.disconnectHost(profile.id);
+    refreshProfiles();
+  }
+
+  function editProfile(profile: RemoteProfile): void {
+    store.openComputerSetup("edit", profile.id);
+  }
 
   // Desktop uses a left rail of section tabs and one scrollable content pane. Phone
   // Settings opens on a full-screen section index; choosing a row drills into one
@@ -30,7 +89,8 @@
     | "models"
     | "environment"
     | "mcp"
-    | "token";
+    | "token"
+    | "computers";
   const SECTIONS: { id: SectionId; label: string }[] = [
     { id: "appearance", label: "Appearance" },
     { id: "notifications", label: "Notifications" },
@@ -38,6 +98,7 @@
     { id: "environment", label: "Environment" },
     { id: "mcp", label: "MCP" },
     { id: "token", label: "Access token" },
+    { id: "computers", label: "Computers" },
   ];
   const ACTIVE_SECTION_KEY = "pantoken.settingsSection";
   function initialSection(): SectionId {
@@ -48,6 +109,15 @@
       : "appearance";
   }
   let activeSection = $state<SectionId>(initialSection());
+  // Pick up a requested section from openSettings(section).
+  $effect(() => {
+    void store._settingsSectionN;
+    const requested = store.requestedSettingsSection;
+    if (requested) {
+      activeSection = requested as SectionId;
+      store.requestedSettingsSection = null;
+    }
+  });
   let phone = $state(false);
   let mobileDetail = $state<SectionId | null>(null);
   let panelEl = $state<HTMLDivElement>();
@@ -215,7 +285,7 @@
     // makes SECTIONS[idx] `T | undefined`; the guard narrows it at runtime but not to
     // TS, so capture the element after the bound check.
     if (open && !phone && e.altKey && !e.ctrlKey && !e.metaKey && !e.shiftKey) {
-      const m = /^Digit([1-6])$/.exec(e.code);
+      const m = /^Digit([1-7])$/.exec(e.code);
       const target = m ? SECTIONS[Number(m[1]) - 1] : undefined;
       if (target) {
         e.preventDefault();
@@ -654,6 +724,72 @@
             </div>
           {/if}
         </div>
+      </section>
+      {/if}
+
+      <!-- Computers -->
+      {#if activeSection === "computers"}
+      <section class="group" data-testid="computers-section">
+        <div class="gtitle">THIS COMPUTER</div>
+        <div class="computer-card local">
+          <span class="ctr-glyph-small">⌂</span>
+          <div class="ctr-info">
+            <span class="ctr-label">{store.serverLabel || "This computer"}</span>
+            <span class="ctr-sub">This computer</span>
+          </div>
+          <span class="ctr-state-tag">Ready</span>
+        </div>
+
+        {#if remoteProfiles.length > 0}
+          <div class="gtitle" style="margin-top: 16px;">REMOTE COMPUTERS</div>
+          {#each remoteProfiles as profile (profile.id)}
+            {@const desc = hostDescriptor(profile)}
+            {@const stateLabel = hostState(profile)}
+            {@const isFailed = desc?.state === "failed"}
+            {@const isReady = desc?.state === "ready"}
+            {@const isDisconnected = desc?.state === "disconnected"}
+            {@const isContainerNotRunning = isFailed && desc?.failureLabel === "Container not running"}
+            <div class="computer-card" data-testid={`computer-card-${profile.id}`}>
+              <span class="ctr-glyph-small">{profile.executionTarget.kind === "dockerContainer" ? "▣" : "⌂"}</span>
+              <div class="ctr-info">
+                <span class="ctr-label">{profile.label}</span>
+                <span class="ctr-sub">{sshDisplay(profile)}</span>
+                <span class="ctr-env-tag">{envTag(profile)}</span>
+              </div>
+              <div class="ctr-actions-col">
+                <span class="ctr-state-tag" class:failed={isFailed} class:ready={isReady}>{stateLabel}</span>
+                <div class="ctr-actions">
+                  {#if isReady}
+                    <button class="mcp-btn" onclick={() => void disconnectProfile(profile)}>Disconnect</button>
+                    <button class="mcp-btn" onclick={() => editProfile(profile)}>Edit</button>
+                  {:else if isContainerNotRunning}
+                    <button class="mcp-btn" data-testid={`computer-retry-${profile.id}`} onclick={() => void connectProfile(profile)}>Retry</button>
+                    <button class="mcp-btn" onclick={() => editProfile(profile)}>Edit</button>
+                  {:else if isDisconnected}
+                    <button class="mcp-btn" data-testid={`computer-connect-${profile.id}`} onclick={() => void connectProfile(profile)}>Connect</button>
+                    <button class="mcp-btn" onclick={() => editProfile(profile)}>Edit</button>
+                  {:else if isFailed && desc?.failureLabel === "Container support unavailable on this device"}
+                    <!-- No destructive action for degradation -->
+                  {:else}
+                    <button class="mcp-btn" onclick={() => void connectProfile(profile)}>Retry</button>
+                    <button class="mcp-btn" onclick={() => editProfile(profile)}>Edit</button>
+                  {/if}
+                </div>
+                {#if isContainerNotRunning}
+                  <p class="ctr-guidance" data-testid={`computer-guidance-${profile.id}`}>
+                    Container not running. Start or recreate the container
+                    {profile.executionTarget.kind === "dockerContainer" ? profile.executionTarget.containerName : ""}
+                    outside Pantoken, then click Retry. Pantoken does not manage container lifecycle.
+                  </p>
+                {/if}
+              </div>
+            </div>
+          {/each}
+        {/if}
+
+        <Button variant="primary" block onclick={() => store.openComputerSetup("add")} data-testid="settings-add-computer" style="margin-top: 12px;">
+          + Add computer
+        </Button>
       </section>
       {/if}
       </div>
@@ -1464,5 +1600,38 @@
     .oauth-dialog {
       animation: none;
     }
+  }
+  /* Computers section */
+  .computer-card {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    padding: 10px 0;
+    border-bottom: 1px solid var(--border);
+  }
+  .computer-card:last-child { border-bottom: none; }
+  .computer-card.local { padding-bottom: 12px; }
+  .ctr-glyph-small {
+    color: var(--accent);
+    font-size: 16px;
+    flex-shrink: 0;
+    width: 24px;
+    text-align: center;
+  }
+  .ctr-info { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+  .ctr-label { font-weight: 600; font-size: 13px; color: var(--text); }
+  .ctr-sub { font-size: 11px; color: var(--text-muted); }
+  .ctr-env-tag { font-size: 11px; color: var(--text-faint); }
+  .ctr-actions-col { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; }
+  .ctr-state-tag {
+    font-size: 11px; color: var(--text-muted); padding: 2px 8px;
+    background: var(--surface-sunken); border-radius: 999px;
+  }
+  .ctr-state-tag.ready { color: var(--ok); }
+  .ctr-state-tag.failed { color: var(--danger); background: var(--danger-soft); }
+  .ctr-actions { display: flex; gap: 6px; }
+  .ctr-guidance { font-size: 11px; color: var(--text-muted); line-height: 1.4; max-width: 220px; text-align: right; }
+  @media (pointer: coarse) {
+    .ctr-actions .mcp-btn { min-height: 44px; }
   }
 </style>

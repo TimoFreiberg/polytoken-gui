@@ -527,4 +527,108 @@ describe("TauriHostProvider", () => {
     // Must resolve (not throw) so UI can act on the new pending risk.
     await expect(provider.resumeConnection("docker-1")).resolves.toBeUndefined();
   });
+
+  test("supportsContainerTargets returns true", () => {
+    installWindow(makeInvokeSpy().invoke);
+    const provider = createTauriHostProvider(() => "");
+    expect(provider.supportsContainerTargets()).toBe(true);
+  });
+
+  test("testSshAndListContainers delegates to command", async () => {
+    const { invoke, calls } = makeInvokeSpy({
+      test_ssh_and_list_containers: [
+        () => ({
+          sshOk: true,
+          dockerPermission: "granted",
+          containers: [
+            { name: "test-ctr", image: "alpine", state: "running", configuredUser: "root" },
+          ],
+        }),
+      ],
+    });
+    installWindow(invoke);
+
+    const provider = createTauriHostProvider(() => "");
+    const result = await provider.testSshAndListContainers("user@host", 2222);
+
+    const call = calls.find((c) => c.cmd === "test_ssh_and_list_containers");
+    expect(call).toBeDefined();
+    expect(call?.args).toEqual({ sshDestination: "user@host", port: 2222 });
+    expect(result.containers[0].name).toBe("test-ctr");
+  });
+
+  test("inspectContainer delegates to command", async () => {
+    const { invoke, calls } = makeInvokeSpy({
+      inspect_container: [
+        () => ({
+          name: "test-ctr",
+          containerId: "id-1",
+          image: "alpine",
+          running: true,
+          configuredUser: "dev",
+          resolvedUser: "dev",
+          resolvedUid: 1000,
+          resolvedGid: 1000,
+          resolvedHome: "/home/dev",
+          pantokenRootSuggestion: "/home/dev/.local/share/pantoken",
+          mounts: [],
+        }),
+      ],
+    });
+    installWindow(invoke);
+
+    const provider = createTauriHostProvider(() => "");
+    const insp = await provider.inspectContainer("user@host", 22, "test-ctr");
+
+    const call = calls.find((c) => c.cmd === "inspect_container");
+    expect(call).toBeDefined();
+    expect(call?.args).toEqual({ sshDestination: "user@host", port: 22, containerName: "test-ctr" });
+    expect(insp.resolvedUser).toBe("dev");
+  });
+
+  test("dockerSocket risk kind round-trips through dtoToPendingRisk", async () => {
+    const risk: PendingRiskDto = {
+      id: "socket-1",
+      kind: "dockerSocket",
+      fingerprint: "fp-socket",
+      title: "Docker socket exposed",
+      explanation: "Container can control Docker.",
+      consequences: "Host-level access possible.",
+      continueLabel: "Accept socket risk",
+    };
+    const { invoke } = makeInvokeSpy({
+      ensure_remote_host: [() => snapshot({ state: "preflight" })],
+      host_state: [
+        () =>
+          snapshot({
+            state: "awaitingAcknowledgement",
+            preflightPhase: "checkingPersistence",
+            pendingRisks: [risk],
+            containerName: "work-api",
+            redactedSshHost: "dev-server",
+          }),
+      ],
+      list_hosts: [
+        () => [
+          snapshot({
+            id: "docker-1",
+            state: "awaitingAcknowledgement",
+            preflightPhase: "checkingPersistence",
+            pendingRisks: [risk],
+            containerName: "work-api",
+            redactedSshHost: "dev-server",
+          }),
+        ],
+      ],
+    });
+    installWindow(invoke);
+
+    const provider = createTauriHostProvider(() => "");
+    await expect(provider.connectHost("docker-1")).resolves.toBeUndefined();
+
+    const hosts = await provider.listHosts();
+    const dockerHost = hosts.find((h) => h.id === "docker-1");
+    expect(dockerHost?.pendingRisks?.[0].kind).toBe("dockerSocket");
+    expect(dockerHost?.isDockerTarget).toBe(true);
+  });
 });

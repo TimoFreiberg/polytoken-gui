@@ -107,6 +107,21 @@ describe("SingleHostProvider", () => {
     await expect(provider.cancelConnection("x")).resolves.toBeUndefined();
     await expect(provider.resumeConnection("x")).resolves.toBeUndefined();
   });
+
+  test("supportsContainerTargets returns false", () => {
+    const provider = createSingleHostProvider("ws://127.0.0.1:8787/ws");
+    expect(provider.supportsContainerTargets()).toBe(false);
+  });
+
+  test("testSshAndListContainers throws", async () => {
+    const provider = createSingleHostProvider("ws://127.0.0.1:8787/ws");
+    await expect(provider.testSshAndListContainers("host", 22)).rejects.toThrow(/Docker targets require/);
+  });
+
+  test("inspectContainer throws", async () => {
+    const provider = createSingleHostProvider("ws://127.0.0.1:8787/ws");
+    await expect(provider.inspectContainer("host", 22, "name")).rejects.toThrow(/Docker targets require/);
+  });
 });
 
 describe("FakeHostProvider", () => {
@@ -374,6 +389,43 @@ describe("FakeHostProvider", () => {
       expect(profile.executionTarget.pantokenRoot).toBe("/srv/pantoken");
     }
   });
+
+  test("supportsContainerTargets returns true", () => {
+    const { provider } = createFakeHostProvider([descriptor("local")]);
+    expect(provider.supportsContainerTargets()).toBe(true);
+  });
+
+  test("testSshAndListContainers returns injected data", async () => {
+    const { provider, setContainerPicker } = createFakeHostProvider([descriptor("local")]);
+    setContainerPicker("test", [
+      { name: "my-container", image: "alpine", state: "running", configuredUser: "root" },
+    ]);
+    const result = await provider.testSshAndListContainers("user@host", 22);
+    expect(result.sshOk).toBe(true);
+    expect(result.dockerPermission).toBe("granted");
+    expect(result.containers).toHaveLength(1);
+    expect(result.containers[0].name).toBe("my-container");
+  });
+
+  test("inspectContainer returns canned inspection", async () => {
+    const { provider, setInspection } = createFakeHostProvider([descriptor("local")]);
+    setInspection("custom", {
+      name: "custom",
+      containerId: "id-custom",
+      image: "alpine",
+      running: true,
+      configuredUser: "root",
+      resolvedUser: "root",
+      resolvedUid: 0,
+      resolvedGid: 0,
+      resolvedHome: "/root",
+      pantokenRootSuggestion: "/root/.local/share/pantoken",
+      mounts: [],
+    });
+    const insp = await provider.inspectContainer("user@host", 22, "custom");
+    expect(insp.resolvedUser).toBe("root");
+    expect(insp.resolvedUid).toBe(0);
+  });
 });
 
 describe("DevHostProvider", () => {
@@ -388,5 +440,140 @@ describe("DevHostProvider", () => {
     provider.setActivity("dev-remote", { running: true, unseen: false, waiting: false, failed: false });
     expect(messages.at(-1)?.id).toBe("dev-remote");
     expect((messages.at(-1)?.message as { type: string }).type).toBe("sessionStatus");
+  });
+
+  test("supportsContainerTargets returns true", () => {
+    const provider = createDevHostProvider("ws://127.0.0.1:9000/ws");
+    expect(provider.supportsContainerTargets()).toBe(true);
+  });
+
+  test("testSshAndListContainers returns injected containers", async () => {
+    const provider = createDevHostProvider("ws://127.0.0.1:9000/ws");
+    const result = await provider.testSshAndListContainers("dev@host", 22);
+    expect(result.sshOk).toBe(true);
+    expect(result.dockerPermission).toBe("granted");
+    expect(result.containers.length).toBeGreaterThan(0);
+    expect(result.containers[0].name).toBe("work-api-dev");
+  });
+
+  test("testSshAndListContainers returns injected container list", async () => {
+    const provider = createDevHostProvider("ws://127.0.0.1:9000/ws");
+    provider.setContainerPicker("test", [
+      { name: "custom-container", image: "alpine", state: "running", configuredUser: "root" },
+    ]);
+    const result = await provider.testSshAndListContainers("dev@host", 22);
+    expect(result.containers).toHaveLength(1);
+    expect(result.containers[0].name).toBe("custom-container");
+  });
+
+  test("inspectContainer returns canned inspection", async () => {
+    const provider = createDevHostProvider("ws://127.0.0.1:9000/ws");
+    const insp = await provider.inspectContainer("dev@host", 22, "work-api-dev");
+    expect(insp.name).toBe("work-api-dev");
+    expect(insp.resolvedUser).toBe("dev");
+    expect(insp.resolvedUid).toBe(1000);
+  });
+
+  test("inspectContainer returns injected inspection", async () => {
+    const provider = createDevHostProvider("ws://127.0.0.1:9000/ws");
+    provider.setInspection("custom", {
+      name: "custom",
+      containerId: "custom-id",
+      image: "alpine",
+      running: true,
+      configuredUser: "root",
+      resolvedUser: "root",
+      resolvedUid: 0,
+      resolvedGid: 0,
+      resolvedHome: "/root",
+      pantokenRootSuggestion: "/root/.local/share/pantoken",
+      mounts: [],
+    });
+    const insp = await provider.inspectContainer("dev@host", 22, "custom");
+    expect(insp.resolvedUser).toBe("root");
+    expect(insp.resolvedUid).toBe(0);
+  });
+
+  test("setPendingRisks + acknowledgeRisk drive awaitingAcknowledgement state", async () => {
+    const provider = createDevHostProvider("ws://127.0.0.1:9000/ws");
+    provider.setPendingRisks("dev-remote", [
+      {
+        id: "root-1",
+        kind: "rootExecution",
+        fingerprint: "fp-test",
+        title: "Agent runs as root",
+        explanation: "The container runs as root.",
+        consequences: "Root can affect the host.",
+        continueLabel: "Allow root",
+      },
+    ]);
+    await provider.connectHost("dev-remote");
+    const hosts = await provider.listHosts();
+    expect(hosts.find((h) => h.id === "dev-remote")?.state).toBe("awaitingAcknowledgement");
+
+    await provider.acknowledgeRisk("dev-remote", "root-1", "fp-test");
+    // All risks acknowledged — resumeConnection should transition to provisioning.
+    await provider.resumeConnection("dev-remote");
+    const hosts2 = await provider.listHosts();
+    expect(hosts2.find((h) => h.id === "dev-remote")?.state).toBe("provisioning");
+  });
+
+  test("driveProvisioningPhase transitions to ready at phase 4", async () => {
+    const provider = createDevHostProvider("ws://127.0.0.1:9000/ws");
+    provider.driveProvisioningPhase("dev-remote", 2);
+    let hosts = await provider.listHosts();
+    expect(hosts.find((h) => h.id === "dev-remote")?.state).toBe("provisioning");
+
+    provider.driveProvisioningPhase("dev-remote", 4);
+    hosts = await provider.listHosts();
+    expect(hosts.find((h) => h.id === "dev-remote")?.state).toBe("ready");
+  });
+
+  test("driveReplacement sets reconnecting state", async () => {
+    const provider = createDevHostProvider("ws://127.0.0.1:9000/ws");
+    provider.driveReplacement("dev-remote");
+    const hosts = await provider.listHosts();
+    expect(hosts.find((h) => h.id === "dev-remote")?.state).toBe("reconnecting");
+  });
+
+  test("addProfile for docker creates a docker host descriptor", async () => {
+    const provider = createDevHostProvider("ws://127.0.0.1:9000/ws");
+    await provider.addProfile({
+      id: "docker-test",
+      label: "Test Docker",
+      sshDestination: "dev@dev-server",
+      polytokenPolicy: "requireExisting",
+      xdgMode: "isolated",
+      executionTarget: {
+        kind: "dockerContainer",
+        containerName: "work-api",
+        user: "dev",
+        pantokenRoot: "/home/dev/.local/share/pantoken",
+      },
+      riskAcknowledgements: {},
+    });
+    const hosts = await provider.listHosts();
+    const dockerHost = hosts.find((h) => h.id === "docker-test");
+    expect(dockerHost).toBeDefined();
+    expect(dockerHost?.isDockerTarget).toBe(true);
+    expect(dockerHost?.subtitle).toContain("work-api via");
+  });
+
+  test("acknowledgeRisk throws on fingerprint mismatch", async () => {
+    const provider = createDevHostProvider("ws://127.0.0.1:9000/ws");
+    provider.setPendingRisks("dev-remote", [
+      {
+        id: "root-1",
+        kind: "rootExecution",
+        fingerprint: "fp-original",
+        title: "x",
+        explanation: "y",
+        consequences: "z",
+        continueLabel: "Allow",
+      },
+    ]);
+    await expect(
+      provider.acknowledgeRisk("dev-remote", "root-1", "fp-wrong"),
+    ).rejects.toThrow(/fingerprint mismatch/);
   });
 });

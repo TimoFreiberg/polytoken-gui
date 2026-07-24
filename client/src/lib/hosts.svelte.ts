@@ -100,6 +100,12 @@ export class HostCoordinator {
   private provider: HostProvider;
   private unsubscribeLocal: (() => void) | null = null;
 
+  /** Expose the provider for UI components that need Docker-specific methods
+   *  (supportsContainerTargets, testSshAndListContainers, inspectContainer). */
+  get hostProvider(): HostProvider {
+    return this.provider;
+  }
+
   constructor(provider: HostProvider) {
     this.provider = provider;
     this.multiHostCapable = provider.supportsMultiHost();

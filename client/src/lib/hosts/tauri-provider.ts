@@ -9,11 +9,13 @@
 
 import type { HostProvider } from "./provider.js";
 import type {
+  ContainerInspection,
   HostConnectionState,
   NativeHostDescriptor,
   PendingRisk,
   PreflightPhase,
   RemoteProfile,
+  TestSshResult,
 } from "./types.js";
 
 /** The native HostStateSnapshot, mirroring the Rust struct (camelCase fields).
@@ -112,6 +114,7 @@ function snapshotToDescriptor(
     failureDetail: s.failureDetail ?? undefined,
     preflightPhase: preflightPhase ?? undefined,
     pendingRisks: pendingRisks,
+    isDockerTarget: Boolean(s.containerName),
   };
 }
 
@@ -256,6 +259,44 @@ export function createTauriHostProvider(
       await invoke("resume_connection", { id });
       // After resuming, poll again for ready / failed / next non-terminal state.
       await pollHostState(id);
+    },
+
+    supportsContainerTargets() {
+      return true;
+    },
+
+    async testSshAndListContainers(
+      sshDestination: string,
+      port?: number,
+    ): Promise<TestSshResult> {
+      try {
+        return await invoke<TestSshResult>("test_ssh_and_list_containers", {
+          sshDestination,
+          port: port ?? 22,
+        });
+      } catch {
+        // Gap (a) degradation: the command is not available. The UI shows the
+        // degradation hint and the Docker option is effectively unusable.
+        throw new Error("Container commands are not available in this build");
+      }
+    },
+
+    async inspectContainer(
+      sshDestination: string,
+      port: number | undefined,
+      containerName: string,
+    ): Promise<ContainerInspection> {
+      try {
+        return await invoke<ContainerInspection>("inspect_container", {
+          sshDestination,
+          port: port ?? 22,
+          containerName,
+        });
+      } catch {
+        // Gap (b) degradation: the Customize target disclosure shows an
+        // inspection-unavailable state.
+        throw new Error("Container inspection is not available in this build");
+      }
     },
   };
 }

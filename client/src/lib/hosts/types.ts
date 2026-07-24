@@ -48,7 +48,7 @@ export type ExecutionTargetKind = "host" | "docker";
  * the canonical facts it covers; an acknowledgement is only valid while the
  * fingerprint matches the current resolved target.
  */
-export type RiskKind = "rootExecution" | "ephemeralData";
+export type RiskKind = "rootExecution" | "ephemeralData" | "dockerSocket";
 
 /**
  * A pending risk surfaced during preflight that blocks progression until the
@@ -108,6 +108,9 @@ export interface NativeHostDescriptor {
   preflightPhase?: PreflightPhase;
   /** Present only for awaitingAcknowledgement; the risks the UI must act on. */
   pendingRisks?: PendingRisk[];
+  /** Whether this host is a Docker container target (vs host/local). Used by
+   *  the host switcher to pick the correct glyph (▣ for Docker, ⌂ for host/local). */
+  isDockerTarget?: boolean;
 }
 
 /** Aggregate activity for a host, derived from its sessionStatus messages.
@@ -292,3 +295,91 @@ export function redactSshDestination(sshDestination: string): RedactedSshContext
   }
   return { host: host || trimmed };
 }
+
+// ── Container discovery types (gap a + b + f shapes) ───────────────────────
+//
+// These mirror the shapes the UI needs from the backend commands
+// test_ssh_and_list_containers (gap a) and inspect_container (gap b), plus the
+// resolved-detail exposure (gap f). The Rust implementation of these commands is
+// a non-goal owned by the backend track; the UI degrades gracefully when they
+// are unavailable.
+
+/** A running container discovered via `testSshAndListContainers` (gap a). */
+export interface ContainerSummary {
+  name: string;
+  image: string;
+  /** Docker state string: "running", "exited", etc. */
+  state: string;
+  /** From Config.User, or "" if image default. */
+  configuredUser: string;
+  composeProject?: string;
+  composeService?: string;
+}
+
+/** A mount on a container, from `inspectContainer` (gap b). */
+export interface MountSummary {
+  type: "bind" | "volume" | "tmpfs" | "writableLayer";
+  source?: string;
+  destination: string;
+  readOnly: boolean;
+  /** For named volumes. */
+  name?: string;
+}
+
+/** Full container inspection result from `inspectContainer` (gap b). */
+export interface ContainerInspection {
+  name: string;
+  containerId: string;
+  image: string;
+  running: boolean;
+  configuredUser: string;
+  resolvedUser: string;
+  resolvedUid: number;
+  resolvedGid: number;
+  resolvedHome: string;
+  os?: string;
+  arch?: string;
+  mounts: MountSummary[];
+  pantokenRootSuggestion: string;
+}
+
+/** Resolved Docker details for completed-step display (gap f). */
+export interface ResolvedDockerDetails {
+  containerName: string;
+  containerId: string;
+  resolvedUser: string;
+  resolvedUid: number;
+  os: string;
+  arch: string;
+  persistenceBacking:
+    | "persistentVolume"
+    | "persistentBind"
+    | "ephemeralTmpfs"
+    | "ephemeralWritableLayer";
+  backingName?: string;
+}
+
+/** Result of `testSshAndListContainers` (gap a). */
+export interface TestSshResult {
+  sshOk: boolean;
+  dockerPermission: "granted" | "denied" | "unknown";
+  containers: ContainerSummary[];
+}
+
+// ── Failure families ────────────────────────────────────────────────────────
+//
+// Nine failure families from the task brief's failure-state table. Each maps to
+// a `state: "failed"` descriptor with a specific failureLabel + failureAction.
+
+export type FailureFamily =
+  | "dockerUnavailable"
+  | "containerNotFound"
+  | "containerStopped"
+  | "ambiguousMatch"
+  | "userMissing"
+  | "acknowledgementRequired"
+  | "rootNotWritable"
+  | "rootNotMounted"
+  | "replacementMismatch"
+  | "containerSupportUnavailable"
+  | "containerNotRunning";

@@ -5,10 +5,13 @@
 // No Svelte — this is a pure interface + factory functions.
 
 import type {
+  ContainerInspection,
+  ContainerSummary,
   HostActivity,
   HostConnectionState,
   NativeHostDescriptor,
   RemoteProfile,
+  TestSshResult,
 } from "./types.js";
 
 /** The provider the coordinator depends on. In desktop builds this is backed
@@ -56,6 +59,29 @@ export interface HostProvider {
   cancelConnection(id: string): Promise<void>;
   /** Resume a connection that was paused on preflight/acknowledgement. */
   resumeConnection(id: string): Promise<void>;
+
+  // ── Docker container target methods (gap a/b/e) ──────────────────────────
+
+  /** Whether this provider can test SSH and discover/inspect Docker
+   *  containers. Returns true for the Tauri and dev providers; false for
+   *  the browser single-host provider. The UI uses this to disable the
+   *  Docker container option in the setup dialog's segmented control. */
+  supportsContainerTargets(): boolean;
+  /** Test the SSH destination and list running containers. Called before
+   *  saving a profile (gap a). Throws if the command is unavailable on the
+   *  current platform. */
+  testSshAndListContainers(
+    sshDestination: string,
+    port?: number,
+  ): Promise<TestSshResult>;
+  /** Inspect a single container to get resolved user/UID, home, mounts, and
+   *  the Pantoken root suggestion (gap b). Called from the Customize target
+   *  disclosure. Throws if the command is unavailable. */
+  inspectContainer(
+    sshDestination: string,
+    port: number | undefined,
+    containerName: string,
+  ): Promise<ContainerInspection>;
 }
 
 /** A provider for browser/e2e builds that exposes one current-server descriptor
@@ -110,6 +136,15 @@ export function createSingleHostProvider(wsUrl: string): HostProvider {
     async resumeConnection() {
       // No-op.
     },
+    supportsContainerTargets() {
+      return false;
+    },
+    async testSshAndListContainers() {
+      throw new Error("Docker targets require the Pantoken desktop app");
+    },
+    async inspectContainer() {
+      throw new Error("Docker targets require the Pantoken desktop app");
+    },
   };
 }
 
@@ -141,6 +176,8 @@ export function createFakeHostProvider(
   getProfile: (id: string) => RemoteProfile | null;
   setPendingRisks: (id: string, risks: NativeHostDescriptor["pendingRisks"]) => void;
   setPreflightPhase: (id: string, phase: NativeHostDescriptor["preflightPhase"]) => void;
+  setContainerPicker: (id: string, containers: ContainerSummary[]) => void;
+  setInspection: (containerName: string, inspection: ContainerInspection) => void;
 } {
   // Clone the initial descriptors so the test can't mutate them.
   let hostMap = new Map<string, NativeHostDescriptor>(
@@ -153,6 +190,10 @@ export function createFakeHostProvider(
   );
   // Acknowledgements recorded via acknowledgeRisk, for assertion.
   const acknowledged = new Map<string, { riskId: string; fingerprint: string }>();
+  // Container picker data injected by tests (setContainerPicker).
+  let containerPickers = new Map<string, ContainerSummary[]>();
+  // Container inspection data injected by tests (setInspection).
+  let inspectionMap = new Map<string, ContainerInspection>();
 
   const provider: HostProvider = {
     supportsMultiHost() {
@@ -248,6 +289,30 @@ export function createFakeHostProvider(
         }
       }
     },
+    supportsContainerTargets() {
+      return true;
+    },
+    async testSshAndListContainers(
+      _sshDestination: string,
+      _port?: number,
+    ): Promise<TestSshResult> {
+      const containers =
+        containerPickers.get("__default__") ?? defaultContainerFixtures;
+      return {
+        sshOk: true,
+        dockerPermission: "granted",
+        containers: structuredClone(containers),
+      };
+    },
+    async inspectContainer(
+      _sshDestination: string,
+      _port: number | undefined,
+      containerName: string,
+    ): Promise<ContainerInspection> {
+      const cached = inspectionMap.get(containerName);
+      if (cached) return structuredClone(cached);
+      return structuredClone(defaultInspection(containerName));
+    },
   };
 
   return {
@@ -281,5 +346,61 @@ export function createFakeHostProvider(
         hostMap.set(id, { ...h, preflightPhase: phase ?? undefined });
       }
     },
+    setContainerPicker(_id: string, containers: ContainerSummary[]) {
+      containerPickers.set("__default__", structuredClone(containers));
+    },
+    setInspection(containerName: string, inspection: ContainerInspection) {
+      inspectionMap.set(containerName, structuredClone(inspection));
+    },
+  };
+}
+
+// ── Default fixtures for the fake provider ──────────────────────────────────
+
+const defaultContainerFixtures: ContainerSummary[] = [
+  {
+    name: "work-api-dev",
+    image: "node:20-alpine",
+    state: "running",
+    configuredUser: "dev",
+    composeProject: "work-api",
+    composeService: "api",
+  },
+  {
+    name: "postgres-dev",
+    image: "postgres:16",
+    state: "running",
+    configuredUser: "",
+  },
+  {
+    name: "redis-cache",
+    image: "redis:7-alpine",
+    state: "running",
+    configuredUser: "",
+  },
+];
+
+function defaultInspection(containerName: string): ContainerInspection {
+  return {
+    name: containerName,
+    containerId: `id-${containerName}`,
+    image: "node:20-alpine",
+    running: true,
+    configuredUser: "dev",
+    resolvedUser: "dev",
+    resolvedUid: 1000,
+    resolvedGid: 1000,
+    resolvedHome: "/home/dev",
+    os: "linux",
+    arch: "arm64",
+    pantokenRootSuggestion: "/home/dev/.local/share/pantoken",
+    mounts: [
+      {
+        type: "volume",
+        name: "pantoken-data",
+        destination: "/home/dev/.local/share/pantoken",
+        readOnly: false,
+      },
+    ],
   };
 }

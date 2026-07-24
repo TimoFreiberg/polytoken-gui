@@ -1,6 +1,7 @@
 <script lang="ts">
   import { tick } from "svelte";
   import { overlayHistory } from "../lib/overlay-history.js";
+  import { store } from "../lib/store.svelte.js";
   import type { HostCoordinator } from "../lib/hosts.svelte.js";
   import type { HostSummary } from "../lib/hosts/types.js";
   import Chevron from "./ui/Chevron.svelte";
@@ -154,7 +155,7 @@
             aria-label={`${summary.descriptor.label}, ${summary.descriptor.subtitle || "This computer"}, ${summary.statusText}`}
             onclick={() => void choose(summary)}
           >
-            <span class="option-icon" aria-hidden="true">{summary.descriptor.kind === "local" ? "⌂" : "▣"}</span>
+            <span class="option-icon" aria-hidden="true">{summary.descriptor.isDockerTarget ? "▣" : "⌂"}</span>
             <span class="host-copy"><strong>{summary.descriptor.label}</strong><span>{summary.descriptor.subtitle || "This computer"}</span></span>
             <span class="option-status">
               <span class="indicator {summary.indicator}" aria-hidden="true"></span>
@@ -171,8 +172,8 @@
       </div>
       {#if coordinator.multiHostCapable}
         <div class="management">
-          <button disabled>Add computer</button>
-          <button disabled>Manage computers</button>
+          <button data-testid="host-switcher-add" onclick={() => { close(); store.openComputerSetup("add"); }}>Add computer</button>
+          <button data-testid="host-switcher-manage" onclick={() => { close(); store.openSettings("computers"); }}>Manage computers</button>
         </div>
       {/if}
     </div>

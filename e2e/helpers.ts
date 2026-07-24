@@ -61,7 +61,8 @@ export async function openSettings(
     | "models"
     | "environment"
     | "mcp"
-    | "token",
+    | "token"
+    | "computers",
 ): Promise<void> {
   const settings = page.getByTestId("settings-toggle");
   if (

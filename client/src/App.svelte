@@ -20,6 +20,7 @@
   import AttentionShelf from "./components/AttentionShelf.svelte";
   import TokenGate from "./components/TokenGate.svelte";
   import Settings from "./components/Settings.svelte";
+  import ComputerSetup from "./components/ComputerSetup.svelte";
   import PlanView from "./components/PlanView.svelte";
   import Tooltip from "./components/Tooltip.svelte";
   import ChatNotice from "./components/ChatNotice.svelte";
@@ -523,7 +524,10 @@
     <RightSidebar />
   {/if}
 </div>
-<Settings />
+<Settings coordinator={hostCoordinator} />
+{#if hostCoordinator.multiHostCapable}
+  <ComputerSetup coordinator={hostCoordinator} />
+{/if}
 {#if !store.draft}
   <PlanView />
 {/if}
