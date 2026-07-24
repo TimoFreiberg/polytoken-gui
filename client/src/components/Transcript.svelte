@@ -158,8 +158,9 @@
       if (!turnDone(turn)) continue;
       const buf: string[] = [];
       let lastId: string | null = null;
-      // work → visible → response is chronological order; only assistant items bear text.
-      for (const it of [...turn.work, ...turn.visible, ...turn.response]) {
+      // work → visible → response → postResponse is chronological order; only
+      // assistant items bear text.
+      for (const it of [...turn.work, ...turn.visible, ...turn.response, ...turn.postResponse]) {
         if (it.kind === "assistant" && it.text) {
           buf.push(it.text);
           lastId = it.id;
@@ -1195,6 +1196,9 @@
         {/if}
       {/each}
       {#each turn.response as it (it.id)}
+        {@render itemView(it)}
+      {/each}
+      {#each turn.postResponse as it (it.id)}
         {@render itemView(it)}
       {/each}
     {/each}

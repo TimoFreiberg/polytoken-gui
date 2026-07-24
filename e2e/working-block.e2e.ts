@@ -85,7 +85,7 @@ test("the working block toggles open and closed", async ({
   // Collapsed → disclosure toggle (no tooltip: chevron + label make it obvious).
   await expect(toggle).toHaveAttribute("aria-expanded", "false");
 
-  // Expand: the work body mounts; the narration + one-tool summary appear.
+  // Expand: the work body mounts; the narration + tool cards appear (greeting has 2 tools).
   await toggle.click();
   await expect(toggle).toHaveAttribute("aria-expanded", "true");
   await expect(page.getByTestId("work-body")).toBeVisible();
@@ -93,8 +93,8 @@ test("the working block toggles open and closed", async ({
     page.getByText("I'll add a lightweight health endpoint"),
   ).toBeVisible();
   const tool = page.getByTestId("work-body").locator(":scope > .tool");
-  await expect(tool).toHaveCount(1);
-  await expect(tool.locator(":scope > .head .name")).toHaveText(
+  await expect(tool).toHaveCount(2);
+  await expect(tool.first().locator(":scope > .head .name")).toHaveText(
     "Run shell command",
   );
 

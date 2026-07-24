@@ -236,7 +236,7 @@ describe("groupTurns", () => {
     expect(turns.map((t) => t.id)).toEqual(["u1", "u2"]);
   });
 
-  test("a turn with a tool then a final answer is collapsible; work holds the tool + narration", () => {
+  test("a turn with a single tool then a final answer is not collapsible (≥2 threshold)", () => {
     const turns = groupTurns([
       user("u1"),
       asst("narration"),
@@ -245,8 +245,23 @@ describe("groupTurns", () => {
     ]);
     expect(turns).toHaveLength(1);
     const t = turns[0]!;
-    expect(t.collapsible).toBe(true);
+    expect(t.collapsible).toBe(false);
     expect(t.work.map((i) => i.id)).toEqual(["narration", "b1"]);
+    expect(t.response.map((i) => i.id)).toEqual(["final"]);
+  });
+
+  test("a turn with ≥2 tools then a final answer is collapsible", () => {
+    const turns = groupTurns([
+      user("u1"),
+      asst("narration"),
+      tool("b1", "bash"),
+      tool("b2", "bash"),
+      asst("final"),
+    ]);
+    expect(turns).toHaveLength(1);
+    const t = turns[0]!;
+    expect(t.collapsible).toBe(true);
+    expect(t.work.map((i) => i.id)).toEqual(["narration", "b1", "b2"]);
     expect(t.response.map((i) => i.id)).toEqual(["final"]);
   });
 
@@ -255,6 +270,7 @@ describe("groupTurns", () => {
       user("u1"),
       asst("narration"),
       tool("b1", "bash"),
+      tool("b2", "bash"),
       asst("candidate-final", { streaming: true }),
     ];
 
@@ -334,6 +350,7 @@ describe("groupTurns: cold-restored session (regression)", () => {
         user("u1", "2025-01-01T00:00:01.000Z"),
         asst("narration", { ts: "2025-01-01T00:00:02.000Z", streaming: false }),
         tool("t1", "bash"),
+        tool("t2", "bash"),
         asst("final", {
           ts: "2025-01-01T00:00:04.000Z",
           streaming: false,
@@ -360,6 +377,7 @@ describe("groupTurns: cold-restored session (regression)", () => {
         user("u1", "2025-01-01T00:00:01.000Z"),
         asst("narration", { ts: "2025-01-01T00:00:02.000Z", streaming: false }),
         tool("t1", "bash"),
+        tool("t2", "bash"),
         asst("final", {
           ts: "2025-01-01T00:00:04.000Z",
           streaming: false,
@@ -376,6 +394,7 @@ describe("groupTurns: cold-restored session (regression)", () => {
       [
         user("u1", "2025-01-01T00:00:01.000Z"),
         tool("t1", "bash"),
+        tool("t1b", "bash"),
         asst("final1", {
           ts: "2025-01-01T00:00:02.000Z",
           streaming: false,
@@ -383,6 +402,7 @@ describe("groupTurns: cold-restored session (regression)", () => {
         }),
         user("u2", "2025-01-01T00:00:03.000Z"),
         tool("t2", "bash"),
+        tool("t2b", "bash"),
         asst("final2", {
           ts: "2025-01-01T00:00:04.000Z",
           streaming: false,
@@ -448,11 +468,12 @@ describe("groupTurns: queued follow-up delivery position", () => {
 // notice(s) into pinned lanes so both stay visible in place.
 describe("groupTurns: late notification preserving a settled response", () => {
   test("a settled response trailed by a notice stays visible; the follow-up is the response", () => {
-    // [user, asst(narration), tool, asst(finalA, completedAt), notice, asst(followUp)]
+    // [user, asst(narration), tool, tool, asst(finalA, completedAt), notice, asst(followUp)]
     const turns = groupTurns([
       user("u1"),
       asst("narration"),
       tool("b1", "bash"),
+      tool("b2", "bash"),
       asst("finalA", { completedAt: "9000" }),
       notice("n1"),
       asst("followUp"),
@@ -468,18 +489,18 @@ describe("groupTurns: late notification preserving a settled response", () => {
     // stays visible when the work block is collapsed (the default state).
     expect(t.visible.map((i) => i.id)).toContain("n1");
     expect(t.work.map((i) => i.id)).not.toContain("n1");
-    // The turn is collapsible (tool work exists) but finalA is excluded from the
+    // The turn is collapsible (≥2 tool work exists) but finalA is excluded from the
     // collapsed run.
     expect(t.collapsible).toBe(true);
-    expect(t.work.map((i) => i.id)).toEqual(["narration", "b1"]);
-    // Full lane structure: [work(narration,b1), pinned(finalA), pinned(notice)]
+    expect(t.work.map((i) => i.id)).toEqual(["narration", "b1", "b2"]);
+    // Full lane structure: [work(narration,b1,b2), pinned(finalA), pinned(notice)]
     // with response=[followUp].
     expect(t.lanes.map((l) => l.kind)).toEqual(["work", "pinned", "pinned"]);
     expect(
       t.lanes.map((l) =>
         l.kind === "pinned" ? l.item.id : l.items.map((i) => i.id).join(","),
       ),
-    ).toEqual(["narration,b1", "finalA", "n1"]);
+    ).toEqual(["narration,b1,b2", "finalA", "n1"]);
     // The turnText footer key is followUp, NOT finalA — the promoted settled
     // response doesn't steal the footer (work→visible→response order, last assistant).
     const footerIds: string[] = [];
@@ -494,6 +515,7 @@ describe("groupTurns: late notification preserving a settled response", () => {
       user("u1"),
       asst("narration"),
       tool("b1", "bash"),
+      tool("b2", "bash"),
       asst("final", { completedAt: "9000" }),
     ]);
     expect(turns).toHaveLength(1);
@@ -501,7 +523,7 @@ describe("groupTurns: late notification preserving a settled response", () => {
     // final is the response (the trailing run), not promoted to visible.
     expect(t.response.map((i) => i.id)).toEqual(["final"]);
     expect(t.visible.map((i) => i.id)).toEqual([]);
-    expect(t.work.map((i) => i.id)).toEqual(["narration", "b1"]);
+    expect(t.work.map((i) => i.id)).toEqual(["narration", "b1", "b2"]);
     expect(t.collapsible).toBe(true);
     expect(t.lanes.map((l) => l.kind)).toEqual(["work"]);
   });
@@ -512,6 +534,7 @@ describe("groupTurns: late notification preserving a settled response", () => {
         user("u1", "2025-01-01T00:00:01.000Z"),
         asst("narration", { ts: "2025-01-01T00:00:02.000Z", streaming: false }),
         tool("t1", "bash"),
+        tool("t2", "bash"),
         asst("final", {
           ts: "2025-01-01T00:00:04.000Z",
           streaming: false,
@@ -725,9 +748,10 @@ describe("groupTurns: answer (visible) tools", () => {
     expect(post!.kind === "work" && post.items.map((i) => i.id)).toEqual([
       "b2",
     ]);
-    // Both work runs collapse (each holds a tool + the turn has a response).
-    expect(pre!.kind === "work" && pre.collapsible).toBe(true);
-    expect(post!.kind === "work" && post.collapsible).toBe(true);
+    // Each work run has only 1 tool → under the ≥2 threshold, neither collapses
+    // individually (renders inline). The turn-level collapsible is true (2 tools total).
+    expect(pre!.kind === "work" && pre.collapsible).toBe(false);
+    expect(post!.kind === "work" && post.collapsible).toBe(false);
   });
 
   test("lead-up paragraph before an answer card stays visible, not collapsed", () => {
@@ -1006,7 +1030,7 @@ describe("createTurnGrouper", () => {
 
   test("active-tail collapse suppression does not mutate the cached settled turn", () => {
     const memoGroupTurns = createTurnGrouper();
-    const items = [user("u1"), tool("b1", "bash"), asst("final")];
+    const items = [user("u1"), tool("b1", "bash"), tool("b2", "bash"), asst("final")];
 
     const active = memoGroupTurns(items, true)[0]!;
     expect(active.collapsible).toBe(false);
@@ -1019,6 +1043,198 @@ describe("createTurnGrouper", () => {
     expect(settled.lanes[0]!.kind).toBe("work");
     if (settled.lanes[0]!.kind === "work")
       expect(settled.lanes[0]!.collapsible).toBe(true);
+  });
+});
+
+// Structural markers (context-cleared, compaction injects) and interrupted tools that
+// trail the last assistant response. These must not break the trailing-assistant scan,
+// and they're pinned as visible lanes after the response so the work block can collapse.
+describe("groupTurns: structural markers + interrupted tools (post-response)", () => {
+  // Convenience builders for structural-marker injects.
+  const ctxCleared = (id: string, over: Partial<InjectItem> = {}): TranscriptItem =>
+    inject(id, { customType: "context-cleared", text: "Context cleared", ...over });
+  const compaction = (id: string, over: Partial<InjectItem> = {}): TranscriptItem =>
+    inject(id, { customType: "compaction", text: "Compacted", ...over });
+  const interruptedTool = (id: string, name = "bash"): ToolItem =>
+    tool(id, name, { status: "interrupted" });
+
+  test("AC.1: planning turn with handoff_plan(interrupted) + context-cleared collapses work, keeps summary as response", () => {
+    // [user, tool, tool, asst(summary, completedAt), tool(handoff_plan, interrupted), inject(context-cleared)]
+    const turns = groupTurns([
+      user("u1"),
+      tool("b1", "bash"),
+      tool("b2", "bash"),
+      asst("summary", { completedAt: "9000" }),
+      interruptedTool("hp1", "handoff_plan"),
+      ctxCleared("cc1"),
+    ]);
+    expect(turns).toHaveLength(1);
+    const t = turns[0]!;
+    expect(t.collapsible).toBe(true);
+    // Response is the summary assistant — not the interrupted tool or inject.
+    expect(t.response.map((i) => i.id)).toEqual(["summary"]);
+    // Work holds the tools (not the summary).
+    expect(t.work.map((i) => i.id)).toEqual(["b1", "b2"]);
+    // postResponse holds the interrupted tool + context-cleared inject in order.
+    expect(t.postResponse.map((i) => i.id)).toEqual(["hp1", "cc1"]);
+  });
+
+  test("AC.2: context-cleared inject renders as visible pinned lane (in postResponse), not in work", () => {
+    const turns = groupTurns([
+      user("u1"),
+      tool("b1", "bash"),
+      tool("b2", "bash"),
+      asst("summary", { completedAt: "9000" }),
+      ctxCleared("cc1"),
+    ]);
+    const t = turns[0]!;
+    expect(t.postResponse.map((i) => i.id)).toContain("cc1");
+    expect(t.visible.map((i) => i.id)).toContain("cc1");
+    expect(t.work.map((i) => i.id)).not.toContain("cc1");
+  });
+
+  test("AC.3: compaction inject treated same as context-cleared (pinned visible, skipped in scan)", () => {
+    const turns = groupTurns([
+      user("u1"),
+      tool("b1", "bash"),
+      tool("b2", "bash"),
+      asst("summary", { completedAt: "9000" }),
+      compaction("comp1"),
+    ]);
+    const t = turns[0]!;
+    expect(t.response.map((i) => i.id)).toEqual(["summary"]);
+    expect(t.postResponse.map((i) => i.id)).toEqual(["comp1"]);
+    expect(t.visible.map((i) => i.id)).toContain("comp1");
+  });
+
+  test("AC.4: interrupted tool trailing the last assistant is pinned as visible lane after response", () => {
+    // An interrupted tool with no structural marker after it (e.g. interrupted by a stop).
+    const turns = groupTurns([
+      user("u1"),
+      tool("b1", "bash"),
+      tool("b2", "bash"),
+      asst("summary", { completedAt: "9000" }),
+      interruptedTool("it1"),
+    ]);
+    const t = turns[0]!;
+    expect(t.response.map((i) => i.id)).toEqual(["summary"]);
+    expect(t.postResponse.map((i) => i.id)).toEqual(["it1"]);
+    expect(t.visible.map((i) => i.id)).toContain("it1");
+  });
+
+  test("AC.5: single-tool turn is not collapsible; two-tool turn is", () => {
+    const single = groupTurns([
+      user("u1"),
+      tool("b1", "bash"),
+      asst("final"),
+    ])[0]!;
+    expect(single.collapsible).toBe(false);
+
+    const double = groupTurns([
+      user("u1"),
+      tool("b1", "bash"),
+      tool("b2", "bash"),
+      asst("final"),
+    ])[0]!;
+    expect(double.collapsible).toBe(true);
+  });
+
+  test("split-lane ≥2 interaction: turn collapsible (2 tools total), each lane non-collapsible (1 tool each)", () => {
+    // Two 1-tool work runs split by an answer card: turn-level collapsible is true
+    // (2 tools in pre-peel work), but each lane is false (1 tool each).
+    const turns = groupTurns([
+      user("u1"),
+      tool("b1"),
+      tool("a1", "answer"),
+      tool("b2"),
+      asst("final"),
+    ]);
+    const t = turns[0]!;
+    expect(t.collapsible).toBe(true);
+    const workLanes = t.lanes.filter((l) => l.kind === "work");
+    expect(workLanes).toHaveLength(2);
+    for (const l of workLanes) expect(l.collapsible).toBe(false);
+  });
+
+  test("mid-body structural marker is pinned as a visible lane between work runs", () => {
+    // [user, tool(b1), inject(context-cleared), tool(b2), asst(final)]
+    const turns = groupTurns([
+      user("u1"),
+      tool("b1", "bash"),
+      ctxCleared("cc1"),
+      tool("b2", "bash"),
+      asst("final"),
+    ]);
+    const t = turns[0]!;
+    // Two work lanes + one pinned lane for the marker.
+    expect(t.lanes.map((l) => l.kind)).toEqual(["work", "pinned", "work"]);
+    expect(t.visible.map((i) => i.id)).toContain("cc1");
+    expect(t.work.map((i) => i.id)).not.toContain("cc1");
+    expect(t.work.map((i) => i.id)).toEqual(["b1", "b2"]);
+  });
+
+  test("notice between summary and interrupted tool: response is summary, postResponse holds notice + tool + marker", () => {
+    // [user, tool, tool, asst(summary, completedAt), notice, tool(interrupted), inject(context-cleared)]
+    const turns = groupTurns([
+      user("u1"),
+      tool("b1", "bash"),
+      tool("b2", "bash"),
+      asst("summary", { completedAt: "9000" }),
+      notice("n1"),
+      interruptedTool("it1"),
+      ctxCleared("cc1"),
+    ]);
+    const t = turns[0]!;
+    expect(t.response.map((i) => i.id)).toEqual(["summary"]);
+    // The notice, interrupted tool, and context-cleared are all in postResponse.
+    expect(t.postResponse.map((i) => i.id)).toEqual(["n1", "it1", "cc1"]);
+    expect(t.visible.map((i) => i.id)).toContain("n1");
+  });
+
+  test("endTs reads the last postResponse item's timestamp (turn duration includes trailing items)", () => {
+    const turns = groupTurns([
+      user("u1", "1000"),
+      tool("b1", "bash"),
+      tool("b2", "bash"),
+      asst("summary", { ts: "5000", completedAt: "9000" }),
+      interruptedTool("it1"),
+      ctxCleared("cc1", { ts: "11000" }),
+    ]);
+    const t = turns[0]!;
+    // endTs should be the context-cleared inject's ts (11000), not the response's completedAt (9000).
+    expect(t.endTs).toBe("11000");
+  });
+
+  test("no trailing assistant after skipped items: interrupted tool + marker with no asst → response empty, all in work", () => {
+    // [user, tool, tool(interrupted), inject(context-cleared)] — no assistant at all.
+    const turns = groupTurns([
+      user("u1"),
+      tool("b1", "bash"),
+      interruptedTool("it1"),
+      ctxCleared("cc1"),
+    ]);
+    const t = turns[0]!;
+    expect(t.response).toEqual([]);
+    expect(t.postResponse).toEqual([]);
+    expect(t.collapsible).toBe(false);
+    // The interrupted tool and context-cleared go into work/visible via normal lane flow.
+    // The structural marker is pinned as a visible lane within workItems.
+    expect(t.visible.map((i) => i.id)).toContain("cc1");
+  });
+
+  test("multiple interrupted tools in sequence after the last assistant", () => {
+    const turns = groupTurns([
+      user("u1"),
+      tool("b1", "bash"),
+      tool("b2", "bash"),
+      asst("summary", { completedAt: "9000" }),
+      interruptedTool("it1"),
+      interruptedTool("it2"),
+      ctxCleared("cc1"),
+    ]);
+    const t = turns[0]!;
+    expect(t.response.map((i) => i.id)).toEqual(["summary"]);
+    expect(t.postResponse.map((i) => i.id)).toEqual(["it1", "it2", "cc1"]);
   });
 });
 

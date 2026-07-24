@@ -485,3 +485,25 @@ watcher, sticky notices, the trace buffer, `formatTrace`/`copyTrace`) is
 removed entirely — it existed to catch and diagnose the false-un-pin class
 that input-gating eliminates structurally.
 
+## Work collapse requires ≥2 tools (D-suffix)
+
+A turn must have ≥2 work tools to offer the "Worked for Ns" collapse
+affordance. A single-tool turn renders the tool card inline (collapsed by
+default, click to expand) — no collapse header. This avoids a "Worked for
+Ns" header that hides a single tool card behind it (more clicks for the same
+information). The threshold applies at both the turn level (does this turn
+collapse at all?) and the lane level (does THIS work run collapse?). A turn
+split into two 1-tool runs by a pinned answer card has `collapsible: true`
+at the turn level (2 tools total) but each lane `collapsible: false` (1 tool
+each) — both render inline.
+
+## Structural markers pinned visible
+
+`context-cleared` and `compaction` injects are structural markers, not
+inline work content. They're always pinned as visible lanes (never folded
+into a collapsed work run) and are skipped by the trailing-assistant scan so
+they don't break response detection. Interrupted tools and notices that
+trail the last assistant response are collected into a `postResponse` array
+and rendered after the response, so the work block can collapse behind the
+summary while the trailing items stay visible.
+

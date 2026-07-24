@@ -1115,6 +1115,24 @@ fn greeting_seed() -> Vec<SessionDriverEvent> {
         interrupted: None,
     });
 
+    // Second tool span — a read of the routes file (keeps the default visual
+    // baseline showing a collapsed "Worked for Ns" block under the ≥2 threshold).
+    events.push(SessionDriverEvent::ToolStarted {
+        base: base(),
+        call_id: "t2".into(),
+        tool_name: "read".into(),
+        label: Some("Read file".into()),
+        description: Some("Read the contents of a file".into()),
+        input: Some(serde_json::json!({"path": "server/src/index.ts"})),
+    });
+    advance_ts(260);
+    events.push(SessionDriverEvent::ToolFinished {
+        base: base(), call_id: "t2".into(), success: true,
+        output: Some(serde_json::json!("app.get('/health', (req, res) => { res.json({ ok: true }) })")),
+        images: None,
+        interrupted: None,
+    });
+
     // More assistant deltas
     let text2 = "Routes live in `server/src/index.ts`. I'll register `/health` next to the others and add a Bun test.";
     for chunk in deltas(text2, 3) {
@@ -1214,6 +1232,24 @@ fn restored_session_seed() -> Vec<SessionDriverEvent> {
             success: true,
             output: Some(serde_json::json!(
                 "src/retry.ts:3:export function retry(fn) {"
+            )),
+            images: None,
+            interrupted: None,
+        },
+        SessionDriverEvent::ToolStarted {
+            base: b(),
+            call_id: "restored-t2".into(),
+            tool_name: "read".into(),
+            label: Some("Read file".into()),
+            description: Some("Read the contents of a file".into()),
+            input: Some(serde_json::json!({"path": "src/retry.ts"})),
+        },
+        SessionDriverEvent::ToolFinished {
+            base: b(),
+            call_id: "restored-t2".into(),
+            success: true,
+            output: Some(serde_json::json!(
+                "export function retry(fn) {\n  // exponential backoff\n}"
             )),
             images: None,
             interrupted: None,
@@ -1431,6 +1467,27 @@ fn greeting_script() -> Vec<ScriptStep> {
         interrupted: None,
     }});
 
+    // Second tool span — a read of the routes file (keeps the default visual
+    // baseline showing a collapsed "Worked for Ns" block under the ≥2 threshold).
+    steps.push(ScriptStep {
+        wait_ms: 80,
+        event: SessionDriverEvent::ToolStarted {
+            base: base(),
+            call_id: "t2".into(),
+            tool_name: "read".into(),
+            label: Some("Read file".into()),
+            description: Some("Read the contents of a file".into()),
+            input: Some(serde_json::json!({"path": "server/src/index.ts"})),
+        },
+    });
+    advance_ts(260);
+    steps.push(ScriptStep { wait_ms: 180, event: SessionDriverEvent::ToolFinished {
+        base: base(), call_id: "t2".into(), success: true,
+        output: Some(serde_json::json!("app.get('/health', (req, res) => { res.json({ ok: true }) })")),
+        images: None,
+        interrupted: None,
+    }});
+
     // More deltas
     let text2 = "Routes live in `server/src/index.ts`. I'll register `/health` next to the others and add a Bun test.";
     for chunk in deltas(text2, 3) {
@@ -1551,6 +1608,22 @@ fn prompt_reply_script(
         140,
         260,
         1200,
+    ));
+
+    // Second tool span — a grep for related patterns (keeps the default visual
+    // baseline showing a collapsed "Worked for Ns" block under the ≥2 threshold).
+    let call_id_2 = format!("t2-{}", ts());
+    steps.extend(tool_span(
+        &call_id_2,
+        "grep",
+        "Search",
+        Some("Search for a pattern in files"),
+        serde_json::json!({"pattern": "app.get", "path": "server/src"}),
+        true,
+        serde_json::json!("server/src/index.ts:14:  app.get('/', ...)\nserver/src/index.ts:19:  app.get('/debug/state', ...)"),
+        80,
+        180,
+        800,
     ));
 
     // Final text deltas.
@@ -3696,6 +3769,20 @@ impl PantokenDriver for MockDriver {
                     220,
                     980,
                 ));
+                // Second tool span — a test run (≥2 threshold needs 2 tools to collapse).
+                let call_id_2 = format!("t2-ln-{}", ts());
+                s.extend(tool_span(
+                    &call_id_2,
+                    "bash",
+                    "Run shell command",
+                    Some("Execute a command in the workspace shell"),
+                    serde_json::json!({"command": "cargo test -- --list"}),
+                    true,
+                    serde_json::json!("32 tests found"),
+                    80,
+                    180,
+                    600,
+                ));
                 // finalA — the settled response (RunCompleted stamps completedAt).
                 for chunk in deltas(
                     "Build succeeded with no warnings. The server compiles cleanly and is ready to ship.",
@@ -3996,6 +4083,9 @@ impl PantokenDriver for MockDriver {
                 for chunk in deltas("Let me check what's currently declared first.", 3) {
                     s.push(ScriptStep { wait_ms: 28, event: SessionDriverEvent::AssistantDelta { base: base(), text: chunk, channel: Some(AssistantDeltaChannel::Text), entry_id: None } });
                 }
+                s.extend(tool_span("ac-t0", "read", "Read file", Some("Read a file from the workspace"),
+                    serde_json::json!({"path": "server/package.json"}),
+                    true, serde_json::json!("\"unused-pkg\": \"^1.2.3\""), 80, 180, 600));
                 s.extend(tool_span("ac-t1", "bash", "Run shell command", Some("Execute a command in the workspace shell"),
                     serde_json::json!({"command": "rg -n \"unused-pkg\" server/package.json"}),
                     true, serde_json::json!("\"unused-pkg\": \"^1.2.3\""), 120, 220, 900));
@@ -4010,6 +4100,9 @@ impl PantokenDriver for MockDriver {
                 s.extend(tool_span("ac-t3", "bash", "Run shell command", Some("Execute a command in the workspace shell"),
                     serde_json::json!({"command": "bun install 2>&1 | tail -4"}),
                     true, serde_json::json!("lockfile regenerated, no transitive holdouts ✓"), 120, 220, 830));
+                s.extend(tool_span("ac-t4", "bash", "Run shell command", Some("Execute a command in the workspace shell"),
+                    serde_json::json!({"command": "bun test"}),
+                    true, serde_json::json!("all tests pass"), 80, 180, 600));
                 for chunk in deltas("Done — dep dropped, lockfile regenerated, the gate is green.", 3) {
                     s.push(ScriptStep { wait_ms: 28, event: SessionDriverEvent::AssistantDelta { base: base(), text: chunk, channel: Some(AssistantDeltaChannel::Text), entry_id: None } });
                 }
@@ -4028,6 +4121,9 @@ impl PantokenDriver for MockDriver {
                 s.extend(tool_span("alu-t1", "bash", "Run shell command", Some("Execute a command in the workspace shell"),
                     serde_json::json!({"command": "rg -n \"unused-pkg\" server/package.json"}),
                     true, serde_json::json!("\"unused-pkg\": \"^1.2.3\""), 120, 220, 900));
+                s.extend(tool_span("alu-t1b", "read", "Read file", Some("Read a file from the workspace"),
+                    serde_json::json!({"path": "bunfig.toml"}),
+                    true, serde_json::json!("# bunfig"), 80, 180, 500));
                 for chunk in deltas("The removal is straightforward, but there's one call to make: the dep is also pulled transitively by a dev-only package, so I can either drop the manifest line and let the transitive copy resolve on its own, or pin an explicit override so the transitive copy disappears too. Dropping is faster but leaves the transitive copy; pinning is cleaner but needs a bunfig override. How do you want to proceed?", 3) {
                     s.push(ScriptStep { wait_ms: 28, event: SessionDriverEvent::AssistantDelta { base: base(), text: chunk, channel: Some(AssistantDeltaChannel::Text), entry_id: None } });
                 }
@@ -4042,6 +4138,9 @@ impl PantokenDriver for MockDriver {
                 s.extend(tool_span("alu-t3", "bash", "Run shell command", Some("Execute a command in the workspace shell"),
                     serde_json::json!({"command": "bun install 2>&1 | tail -4"}),
                     true, serde_json::json!("lockfile regenerated, transitive copy resolves ✓"), 120, 220, 830));
+                s.extend(tool_span("alu-t3b", "bash", "Run shell command", Some("Execute a command in the workspace shell"),
+                    serde_json::json!({"command": "bun test"}),
+                    true, serde_json::json!("all tests pass"), 80, 180, 500));
                 for chunk in deltas("Done — dep dropped, lockfile regenerated, the gate is green.", 3) {
                     s.push(ScriptStep { wait_ms: 28, event: SessionDriverEvent::AssistantDelta { base: base(), text: chunk, channel: Some(AssistantDeltaChannel::Text), entry_id: None } });
                 }
@@ -4148,6 +4247,11 @@ impl PantokenDriver for MockDriver {
                     serde_json::json!({"command": "bun test --reporter=verbose"}),
                     true, serde_json::json!(format!("{log}\n\n40 pass, 0 fail")),
                     120, 200, 620));
+                // Second tool span (≥2 threshold needs 2 tools to collapse).
+                s.extend(tool_span("long-2", "bash", "Run shell command", Some("Execute a command in the workspace shell"),
+                    serde_json::json!({"command": "bun run check"}),
+                    true, serde_json::json!("0 errors, 0 warnings"),
+                    80, 180, 500));
                 for chunk in deltas("All 40 cases passed.", 3) {
                     s.push(ScriptStep { wait_ms: 28, event: SessionDriverEvent::AssistantDelta { base: base(), text: chunk, channel: Some(AssistantDeltaChannel::Text), entry_id: None } });
                 }
@@ -4157,7 +4261,7 @@ impl PantokenDriver for MockDriver {
             "longthinking" => {
                 // Long thinking block that overflows ~50% of the viewport when expanded —
                 // exercises the CollapseFooter chevron. Includes a tool call so the turn
-                // is collapsible (groupTurns requires ≥1 work tool). Fewer paragraphs with
+                // is collapsible (groupTurns requires ≥2 work tools). Fewer paragraphs with
                 // larger chunks so the script settles quickly while still overflowing.
                 let thinking: String = (1..=20).map(|i| format!("Paragraph {i}: This is a longer line of thinking reasoning text to ensure the block overflows the viewport height threshold when expanded, covering the analysis of step {i} in the overall plan.\n")).collect::<Vec<_>>().join("");
                 let mut s = vec![
@@ -4170,6 +4274,10 @@ impl PantokenDriver for MockDriver {
                 s.extend(tool_span("lt-1", "bash", "Run shell command", Some("Execute a command in the workspace shell"),
                     serde_json::json!({"command": "echo thinking"}),
                     true, serde_json::json!("ok"), 40, 90, 180));
+                // Second tool span (≥2 threshold needs 2 tools to collapse).
+                s.extend(tool_span("lt-2", "read", "Read file", Some("Read a file from the workspace"),
+                    serde_json::json!({"path": "README.md"}),
+                    true, serde_json::json!("# Project\nA coding agent GUI."), 40, 90, 180));
                 // Stream the thinking in 3 large chunks (fast settle).
                 for chunk in deltas(&thinking, 50) {
                     s.push(ScriptStep { wait_ms: 10, event: SessionDriverEvent::AssistantDelta { base: base(), text: chunk, channel: Some(AssistantDeltaChannel::Thinking), entry_id: None } });

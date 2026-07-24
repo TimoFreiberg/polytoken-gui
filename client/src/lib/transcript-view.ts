@@ -42,6 +42,24 @@ export function startsTurn(i: TranscriptItem): boolean {
   return i.kind === "user" || (i.kind === "inject" && i.turnBoundary === true);
 }
 
+/** Structural marker injects — `context-cleared` and `compaction`. These are
+ *  always-visible boundary events, not inline work content. They're pinned as
+ *  visible lanes (never folded into a collapsed work run) and skipped by the
+ *  trailing-assistant scan so they don't break response detection. */
+const STRUCTURAL_MARKER_TYPES = new Set(["context-cleared", "compaction"]);
+
+function isStructuralMarker(i: TranscriptItem): boolean {
+  return i.kind === "inject" && STRUCTURAL_MARKER_TYPES.has(i.customType);
+}
+
+/** An interrupted tool (status `"interrupted"`). These trail a planning session's
+ *  summary after the agent stops — e.g. a `handoff_plan` whose `tool_result` was
+ *  lost to a `context_cleared`. Skipped by the trailing-assistant scan and pinned
+ *  as a visible lane after the response. */
+function isInterruptedTool(i: TranscriptItem): boolean {
+  return i.kind === "tool" && i.status === "interrupted";
+}
+
 /** A blocking Q&A prompt: the `answer` tool. Scoped to `answer` only — image-bearing
  *  tools are pinned too, but they're not prompts, so their lead-up narration doesn't
  *  get the keep-visible treatment (see keepLeadUp below). HostUi dialogs (confirm/
@@ -104,8 +122,8 @@ export function findPreservedSegments(
     // `.inject-pill`. If this is the last item, or the next item is an assistant
     // (the normal trailing run), a tool (new work), or an inject (folds into work),
     // it's not preserved. Tools/injects are never part of a preserved segment: the
-    // former keeps turn-level `collapsible` stable (keys on `work.some(isWorkTool)`),
-    // the latter must stay inside the collapsed work block.
+    // former keeps turn-level `collapsible` stable (keys on the pre-peel work tool
+    // count), the latter must stay inside the collapsed work block.
     const next = workItems[i + 1];
     if (i + 1 >= workItems.length || next!.kind !== "notice") continue;
     // Extend the segment over the settled response + every immediately-following
@@ -223,13 +241,19 @@ export interface TurnGroup {
   /** The turn-final assistant message(s) — the trailing run of assistant items after the
    *  last tool. Rendered visibly; the work collapses behind the "Worked for Ns" header. */
   response: TranscriptItem[];
+  /** Trailing non-response items pinned after the response: structural markers
+   *  (context-cleared, compaction) and interrupted tools that were skipped by the
+   *  trailing assistant scan. Rendered after the response in chronological order, so
+   *  the visual order is `[work block] [response summary] [interrupted tool card] [context-cleared pill]`. */
+  postResponse: TranscriptItem[];
   /** The body in chronological order: collapsible work runs interleaved with pinned
    *  always-visible items. This is what the transcript renders (the work/visible split
    *  above is kept only for the turn-footer text scan and tests). */
   lanes: TurnLane[];
-  /** Whether to offer the collapse affordance: there's real work (≥1 tool) AND a final
-   *  response to keep showing once it's hidden. Turns still in flight, or that ended on a
-   *  tool / pure narration, render inline instead. */
+  /** Whether to offer the collapse affordance: there's real work (≥2 tools) AND a final
+   *  response to keep showing once it's hidden. A single-tool turn renders inline
+   *  (collapsed ToolCard, click to expand — no "Worked for Ns" header). Turns still in
+   *  flight, or that ended on a tool / pure narration, render inline instead. */
   collapsible: boolean;
   /** Turn start — the user item's timestamp (falls back to the first work item's). */
   startTs?: string;
@@ -257,36 +281,65 @@ function buildTurn(
 ): TurnGroup {
   // The response is the maximal trailing run of assistant items at the very end of the
   // body — i.e. the last full assistant message(s) after the last tool. A tool (or any
-  // non-assistant item) breaks the run, so anything before it stays in `work`.
+  // non-assistant item) breaks the run — EXCEPT structural markers (context-cleared,
+  // compaction injects) and interrupted tools that trail the response. These are pinned
+  // as visible lanes AFTER the response (in `postResponse`), so they don't break the
+  // scan. This handles a planning session that ends with:
+  //   [..., assistant(summary), tool(handoff_plan, interrupted), inject(context-cleared)]
+  // The scan skips the inject + interrupted tool, finds the assistant behind them, and
+  // collects the skipped items into `postResponse`.
   let k = body.length;
+  const trailingPinned: TranscriptItem[] = [];
+  // Phase 1: skip structural markers, interrupted tools, and notices trailing the last
+  // assistant. These are collected into `postResponse` (pinned visible lanes after the
+  // response). Notices that trail a settled response are normally handled by the
+  // preserved-segment machinery — but here the response is the trailing assistant run
+  // (already visible), so the preserved-segment pairing is unnecessary. The notice renders
+  // as a pinned lane in `postResponse` instead.
+  while (k > 0 && body[k - 1]!.kind !== "assistant") {
+    const prev = body[k - 1]!;
+    if (isStructuralMarker(prev) || isInterruptedTool(prev) || prev.kind === "notice") {
+      trailingPinned.unshift(prev);
+      k--;
+      continue;
+    }
+    break;
+  }
+  // Phase 2: scan backward through the trailing assistant run (the response).
   while (k > 0 && body[k - 1]!.kind === "assistant") k--;
-  // Pull always-visible tools (the answer Q&A, plus any image-bearing tool — a
-  // screenshot or rendered mockup) out of the collapsible work so they never hide.
-  // `work`/`visible` are flat splits kept for the footer text scan + tests; `lanes`
-  // (below) is what actually renders, keeping each pinned item in chronological place.
-  // NOTE: the lead-up peel (below) moves assistant paragraphs into pinned lanes too,
-  // so `work`/`visible` are recomputed from `lanes` after the loop — not from these
-  // initial filters. `collapsible` still reads the pre-peel work set, which is fine:
-  // peeling only removes trailing assistant items, so `work.some(isWorkTool)` is stable.
+  // Edge case: the body ends with [notice, interrupted tool, inject(context-cleared)] and
+  // there is NO assistant before them. The scan skipped all trailing items but found no
+  // response. In that case, undo: put everything back into workItems (response=[],
+  // postResponse=[]).
+  if (body[k]?.kind !== "assistant") {
+    k = body.length;
+    trailingPinned.length = 0;
+  }
   const workItems = body.slice(0, k);
-  const response = body.slice(k);
+  const response = body.slice(k, body.length - trailingPinned.length);
+  const postResponse = trailingPinned;
   const turnHasResponse = response.length > 0;
   const prePeelWork = workItems.filter((i) => !isVisibleTool(i));
   // `TranscriptItem[]` (not the narrower `ToolItem[]` the isVisibleTool guard yields) so the
   // lead-up peel can push assistant paragraphs into `visible` too.
   let work: TranscriptItem[] = prePeelWork;
   let visible: TranscriptItem[] = workItems.filter(isVisibleTool);
-  const collapsible = turnHasResponse && work.some(isWorkTool);
+  // ≥2 work tools are required to offer the collapse affordance. A single-tool turn
+  // renders inline (collapsed ToolCard, click to expand — no "Worked for Ns" header).
+  const workToolCount = work.filter(isWorkTool).length;
+  const collapsible = turnHasResponse && workToolCount >= 2;
 
   // Lanes preserve chronological order: a contiguous run of non-visible work folds into
   // one collapsible run; each visible tool stays pinned in place between runs, so it
   // doesn't float to the bottom of the work block as later work streams in. Non-boundary
-  // injects (system reminders, extension nudges, compaction markers, …) fold into the
-  // current work run as inline content rather than being pinned as separate lanes, so a
-  // turn with `edit_plan` → reminder → `edit_plan` → reminder produces one contiguous
-  // "Worked for Ns" block, not one per tool call. The inject pill still renders (when
+  // injects (system reminders, extension nudges, …) fold into the current work run as
+  // inline content rather than being pinned as separate lanes, so a turn with
+  // `edit_plan` → reminder → `edit_plan` → reminder produces one contiguous "Worked for
+  // Ns" block, not one per tool call. The inject pill still renders (when
   // `display:true`) — just inside the collapsed work block. `turnBoundary:true` injects
   // (goal reminders) never reach here: they start a new turn via `startsTurn`.
+  // EXCEPTION: structural markers (context-cleared, compaction) are pinned as visible
+  // lanes, never folded into work — they're always-visible boundary events.
   //
   // Lead-up keep-visible: when a work run is immediately followed by a pinned `answer`
   // card, peel its trailing assistant paragraph(s) into pinned lanes too. Those carry
@@ -304,7 +357,7 @@ function buildTurn(
       kind: "work",
       id: `${turnId}:w${runIndex++}`,
       items,
-      collapsible: turnHasResponse && items.some(isWorkTool),
+      collapsible: turnHasResponse && items.filter(isWorkTool).length >= 2,
       startTs: itemStart(items[0]!),
       endTs: itemEnd(items[items.length - 1]!),
     });
@@ -335,6 +388,13 @@ function buildTurn(
       idx = seg[1];
       continue;
     }
+    // Structural markers (context-cleared, compaction) are pinned as visible lanes,
+    // never folded into a collapsed work run.
+    if (isStructuralMarker(it)) {
+      flushRun();
+      lanes.push({ kind: "pinned", id: it.id, item: it });
+      continue;
+    }
     if (isVisibleTool(it)) {
       // Peel the lead-up paragraph(s) off the run BEFORE pinning the answer card, so
       // they render between the (now shorter) collapsible work run and the Q&A.
@@ -357,13 +417,15 @@ function buildTurn(
   // lead-up peel: assistant paragraphs moved into pinned lanes are visible, not work.
   // Keeps the footer text scan (turnText in Transcript.svelte) + tests in sync with
   // what actually renders. Pinned answer/image tools land in `visible`; pinned
-  // lead-up assistant items land in `visible` too.
+  // lead-up assistant items land in `visible` too. `postResponse` items are all
+  // pinned/visible by definition, so they're added to `visible` as well.
   work = [];
   visible = [];
   for (const lane of lanes) {
     if (lane.kind === "work") work.push(...lane.items);
     else visible.push(lane.item);
   }
+  visible.push(...postResponse);
 
   // Explicit undefined checks, not `||`: a timestamp can be a numeric string like "0",
   // which is falsy — `||` would wrongly skip it.
@@ -374,6 +436,13 @@ function buildTurn(
       : undefined;
   let endTs =
     response.length > 0 ? itemEnd(response[response.length - 1]!) : undefined;
+  // When trailing pinned items (interrupted tools, context-cleared injects) follow
+  // the response, the turn's end is the last trailing item's timestamp — not the
+  // response's. This ensures the "Worked for Ns" duration reads the full turn span.
+  if (postResponse.length > 0) {
+    const trailingEnd = itemEnd(postResponse[postResponse.length - 1]!);
+    if (trailingEnd !== undefined) endTs = trailingEnd;
+  }
   if (endTs === undefined && work.length > 0)
     endTs = itemEnd(work[work.length - 1]!);
 
@@ -393,6 +462,7 @@ function buildTurn(
     work,
     visible,
     response,
+    postResponse,
     lanes,
     collapsible,
     startTs,

@@ -36,14 +36,14 @@ test("renders the greeting conversation: user, collapsed work, final answer", as
   ).toHaveCount(0);
   await expect(page.getByText("Run shell command")).toHaveCount(0);
 
-  // Expanding reveals the narration and the one-tool bash card.
+  // Expanding reveals the narration and the tool cards (greeting has 2 tools).
   await expandWork(page);
   await expect(
     page.getByText("I'll add a lightweight health endpoint"),
   ).toBeVisible();
   const tool = page.getByTestId("work-body").locator(":scope > .tool");
-  await expect(tool).toHaveCount(1);
-  await expect(tool.locator(":scope > .head .name")).toHaveText(
+  await expect(tool).toHaveCount(2);
+  await expect(tool.first().locator(":scope > .head .name")).toHaveText(
     "Run shell command",
   );
 });
@@ -60,7 +60,7 @@ test("the composer footer shows the model; healthy connection chrome stays quiet
 
 test("tool card expands to show output", async ({ page }) => {
   await expandWork(page);
-  const head = page.getByTestId("work-body").locator(":scope > .tool > .head");
+  const head = page.getByTestId("work-body").locator(":scope > .tool > .head").first();
   await expect(head).toBeVisible();
   await head.click();
   await expect(head).toHaveAttribute("aria-expanded", "true");
@@ -69,7 +69,7 @@ test("tool card expands to show output", async ({ page }) => {
 
 test("tool card expands to show the full arguments", async ({ page }) => {
   await expandWork(page);
-  const head = page.getByTestId("work-body").locator(":scope > .tool > .head");
+  const head = page.getByTestId("work-body").locator(":scope > .tool > .head").first();
   await head.click();
   await expect(head).toHaveAttribute("aria-expanded", "true");
   // The args block labels each input key and shows its full value in a <pre> —

@@ -30,7 +30,7 @@ test("tool card shows bottom collapse when tall", async ({ page }) => {
   const head = page
     .getByTestId("work-body")
     .last()
-    .locator(":scope > .tool > .head");
+    .locator(":scope > .tool > .head").first();
   await head.click();
   await expect(head).toHaveAttribute("aria-expanded", "true");
 
@@ -98,7 +98,7 @@ test("worked-for-Ns shows bottom collapse when tall", async ({ page }) => {
   const head = page
     .getByTestId("work-body")
     .last()
-    .locator(":scope > .tool > .head");
+    .locator(":scope > .tool > .head").first();
   await head.click();
   const expandBtn = page
     .getByTestId("work-body")
@@ -132,7 +132,7 @@ test("short content shows no footer", async ({ page }) => {
   const head = page
     .getByTestId("work-body")
     .last()
-    .locator(":scope > .tool > .head");
+    .locator(":scope > .tool > .head").first();
   await head.click();
 
   const body = page
@@ -174,7 +174,7 @@ test("footer is keyboard-accessible", async ({ page }) => {
   const head = page
     .getByTestId("work-body")
     .last()
-    .locator(":scope > .tool > .head");
+    .locator(":scope > .tool > .head").first();
   await head.click();
   const expandBtn = page
     .getByTestId("work-body")
