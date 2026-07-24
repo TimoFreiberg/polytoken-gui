@@ -160,6 +160,16 @@
           },
           setActivity: provider.setActivity,
           emit: provider.emit,
+          setPendingRisks: provider.setPendingRisks,
+          setPreflightPhase: provider.setPreflightPhase,
+          setContainerPicker: provider.setContainerPicker,
+          driveProvisioningPhase: provider.driveProvisioningPhase,
+          driveReplacement: provider.driveReplacement,
+          setInspection: provider.setInspection,
+          getInspection: provider.getInspection,
+          acknowledgeRisk: provider.acknowledgeRisk,
+          testSshAndListContainers: provider.testSshAndListContainers,
+          inspectContainer: provider.inspectContainer,
         };
         return () => delete (window as unknown as { __pantokenHosts?: unknown }).__pantokenHosts;
       });
