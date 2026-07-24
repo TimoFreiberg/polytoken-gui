@@ -44,6 +44,12 @@ test("dock badge shows unread count then clears when session is viewed", async (
               },
             ]);
           }
+          // list_remote_profiles is called by HostCoordinator.init() →
+          // loadProfiles(). Returning [] (not undefined) prevents a TypeError
+          // on .map() that would abort init() before store.start() runs.
+          if (cmd === "list_remote_profiles") {
+            return Promise.resolve([]);
+          }
           return Promise.resolve(undefined);
         },
       },
