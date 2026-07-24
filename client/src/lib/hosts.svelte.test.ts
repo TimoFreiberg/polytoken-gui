@@ -343,9 +343,14 @@ describe("HostCoordinator message routing boundary", () => {
       listHosts: async () => [descriptor("local"), remote],
       connectHost: async () => { throw Object.assign(new Error("SSH unreachable"), { failureAction: "Retry" }); },
       disconnectHost: async () => {},
+      listProfiles: async () => [],
+      getProfile: async () => null,
       addProfile: async (profile: NativeHostDescriptor) => profile,
       updateProfile: async () => {},
       deleteProfile: async () => {},
+      acknowledgeRisk: async () => {},
+      cancelConnection: async () => {},
+      resumeConnection: async () => {},
     };
     const coordinator = new HostCoordinator(provider);
     await coordinator.init();

@@ -427,8 +427,11 @@ Work in these reviewable stages. Keep tests green after each stage.
    - no WebView navigation on host switch.
 5. **Sidebar and header identity**
    - host selector, indicators, keyboard/touch behavior, host-scoped New session.
-6. **Settings and connection sheet**
+6. **Settings and connection sheet** ✅
    - CRUD, advanced options, progress, retry/cancel/failures, redaction.
+   - Implemented: profile editor form, Settings Computers section, ConnectionSheet
+     with 4-step progress, failure UI, Docker risk acknowledgement, reconnect-required
+     detection, dev-provider phase simulation, unit + e2e tests.
 7. **Regression and documentation**
    - e2e scenarios, responsive visual verification, docs/decision updates, full gates.
 

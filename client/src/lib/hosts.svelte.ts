@@ -20,6 +20,7 @@ import type {
   HostActivity,
   HostSummary,
   NativeHostDescriptor,
+  RemoteProfile,
 } from "./hosts/types.js";
 import { deriveIndicator } from "./hosts/activity.js";
 import type { HostProvider } from "./hosts/provider.js";
@@ -58,6 +59,45 @@ const BOOTSTRAP_TYPES = new Set([
   "jobsList",
 ]);
 
+/** States where a connection attempt pauses for UI action (acknowledge or cancel).
+ *  wsUrl is absent in these states; the coordinator returns ok without a WsClient. */
+const NON_TERMINAL_CONNECT_STATES = new Set([
+  "preflight",
+  "awaitingAcknowledgement",
+]);
+
+/** States considered "connecting" for the connection sheet's show logic. */
+const CONNECTING_STATES = new Set([
+  "testingSsh",
+  "connecting",
+  "provisioning",
+  "starting",
+  "preflight",
+  "awaitingAcknowledgement",
+]);
+
+/** Connection-affecting profile fields. If any of these change on a connected
+ *  host, reconnection is required for the change to take effect. */
+function profileAffectsConnection(a: RemoteProfile, b: RemoteProfile): boolean {
+  if (a.sshDestination !== b.sshDestination) return true;
+  if ((a.port ?? 22) !== (b.port ?? 22)) return true;
+  // Execution target kind change always affects connection.
+  if (a.executionTarget.kind !== b.executionTarget.kind) return true;
+  // Docker target field changes affect connection.
+  if (
+    a.executionTarget.kind === "dockerContainer" &&
+    b.executionTarget.kind === "dockerContainer"
+  ) {
+    const ad = a.executionTarget;
+    const bd = b.executionTarget;
+    if (ad.containerName !== bd.containerName) return true;
+    if (ad.user !== bd.user) return true;
+    if ((ad.workdir ?? "") !== (bd.workdir ?? "")) return true;
+    if (ad.pantokenRoot !== bd.pantokenRoot) return true;
+  }
+  return false;
+}
+
 export type ConnectHostResult =
   | { ok: true }
   | {
@@ -90,6 +130,8 @@ export class HostCoordinator {
   hosts = $state<NativeHostDescriptor[]>([]);
   /** UI-facing reactive projection; components do not inspect hostState. */
   summaries = $state<HostSummary[]>([]);
+  /** Saved remote profiles (full editor DTO). Reactive for Settings Computers. */
+  profiles = $state<RemoteProfile[]>([]);
   /** Whether this provider supports native-style host switching. */
   readonly multiHostCapable: boolean;
   /** The selected host id. */
@@ -99,6 +141,10 @@ export class HostCoordinator {
   /** The provider (Tauri in desktop, single-host in browser, fake in tests). */
   private provider: HostProvider;
   private unsubscribeLocal: (() => void) | null = null;
+  /** Hosts that have successfully connected at least once. */
+  private everConnected = new Set<string>();
+  /** Hosts whose profile changed while connected, requiring reconnection. */
+  private reconnectRequired = new Set<string>();
 
   /** Expose the provider for UI components that need Docker-specific methods
    *  (supportsContainerTargets, testSshAndListContainers, inspectContainer). */
@@ -123,11 +169,14 @@ export class HostCoordinator {
       entry.client?.destroy();
       entry.client = null;
     }
+    this.everConnected.clear();
+    this.reconnectRequired.clear();
   }
 
-  /** Initialize: list hosts, select local. */
+  /** Initialize: list hosts, load profiles, select local. */
   async init(): Promise<void> {
     await this.refreshHosts();
+    await this.loadProfiles();
     // Select the local host by default.
     const local = this.hosts.find((h) => h.id === "local");
     if (local) {
@@ -187,7 +236,13 @@ export class HostCoordinator {
   }
 
   /** Connect a remote host (lazy, first selection). Creates a WsClient and
-   *  registers an onMessage listener that routes to the coordinator. */
+   *  registers an onMessage listener that routes to the coordinator.
+   *
+   *  For non-terminal states (preflight, awaitingAcknowledgement) the provider
+   *  resolves without a wsUrl; the coordinator returns ok without creating a
+   *  WsClient. The ConnectionSheet renders the pending state; when the user
+   *  acknowledges/resumes and the host reaches `ready`, `resumeConnection`
+   *  creates the WsClient via `ensureWsClient`. */
   async connectHost(id: string): Promise<ConnectHostResult> {
     const entry = this.hostState.get(id);
     if (!entry) return { ok: false, failure: { label: "Computer not found" } };
@@ -196,21 +251,57 @@ export class HostCoordinator {
     const priorState = entry.descriptor.state;
     entry.descriptor = { ...entry.descriptor, state: "connecting" };
     this.refreshSummaries();
+
+    // Concurrent progress poll: refreshHosts every 200ms while connectHost
+    // is in flight, so the UI sees intermediate phases (testingSsh,
+    // provisioning, starting). Required for the dev provider (whose
+    // connectHost blocks until externally driven); redundant but harmless
+    // for the Tauri provider (which polls internally).
+    const progressInterval = setInterval(() => { void this.refreshHosts(); }, 200);
     try {
       await this.provider.connectHost(id);
-      await this.refreshHosts();
-      const updated = this.hostState.get(id);
-      if (!updated?.descriptor.wsUrl) {
+    } catch (error) {
+      clearInterval(progressInterval);
+      // The progress poll's refreshHosts may have already picked up the
+      // failed state from the provider. If so, keep that descriptor (it has
+      // the provider's failureLabel/Action/Detail) rather than overwriting
+      // with priorState. Only fall back to priorState if the provider didn't
+      // surface a failure.
+      const current = this.hostState.get(id)?.descriptor;
+      if (current && current.state === "failed") {
+        // The provider already surfaced the failure via refreshHosts.
+        this.refreshSummaries();
+        return {
+          ok: false,
+          failure: {
+            label: current.failureLabel ?? "Connection failed",
+            action: current.failureAction,
+            detail: current.failureDetail,
+          },
+        };
+      }
+      // If the progress poll surfaced an intermediate state (testingSsh,
+      // provisioning, etc.), preserve it rather than flickering back to
+      // priorState — the UI was showing progress. But still surface the
+      // failure fields so the summary reflects the error.
+      if (current && CONNECTING_STATES.has(current.state)) {
+        const e = error as { message?: string; failureAction?: string; failureDetail?: string };
         entry.descriptor = {
-          ...entry.descriptor,
-          state: priorState,
-          failureLabel: "Computer did not provide a connection",
+          ...current,
+          failureLabel: e.message ?? "Connection failed",
+          failureAction: e.failureAction,
+          failureDetail: e.failureDetail,
         };
         this.refreshSummaries();
-        return { ok: false, failure: { label: "Computer did not provide a connection" } };
+        return {
+          ok: false,
+          failure: {
+            label: e.message ?? "Connection failed",
+            action: e.failureAction,
+            detail: e.failureDetail,
+          },
+        };
       }
-      entry.descriptor = updated.descriptor;
-    } catch (error) {
       const e = error as { message?: string; failureAction?: string; failureDetail?: string };
       entry.descriptor = {
         ...entry.descriptor,
@@ -229,9 +320,61 @@ export class HostCoordinator {
         },
       };
     }
+    clearInterval(progressInterval);
+    await this.refreshHosts();
 
-    // Create a WsClient for this host.
-    const client = new WsClient(entry.descriptor.wsUrl!);
+    const updated = this.hostState.get(id);
+    if (!updated) {
+      return { ok: false, failure: { label: "Computer not found" } };
+    }
+
+    // Handle non-terminal states: the provider resolved without throwing,
+    // but the host is in preflight/awaitingAcknowledgement (wsUrl absent).
+    // Return ok without creating a WsClient — the ConnectionSheet handles
+    // the pending state, and resumeConnection creates the WsClient later.
+    if (NON_TERMINAL_CONNECT_STATES.has(updated.descriptor.state)) {
+      entry.descriptor = updated.descriptor;
+      this.refreshSummaries();
+      return { ok: true };
+    }
+
+    // Handle failure: wsUrl absent and state is not non-terminal → failure.
+    if (!updated.descriptor.wsUrl) {
+      entry.descriptor = {
+        ...entry.descriptor,
+        state: priorState,
+        failureLabel: updated.descriptor.failureLabel ?? "Computer did not provide a connection",
+        failureAction: updated.descriptor.failureAction,
+        failureDetail: updated.descriptor.failureDetail,
+      };
+      this.refreshSummaries();
+      return {
+        ok: false,
+        failure: {
+          label: entry.descriptor.failureLabel ?? "Computer did not provide a connection",
+          action: entry.descriptor.failureAction,
+          detail: entry.descriptor.failureDetail,
+        },
+      };
+    }
+
+    // State is ready (wsUrl present): update the descriptor + create WsClient.
+    entry.descriptor = updated.descriptor;
+    this.everConnected.add(id);
+    this.ensureWsClient(id);
+    this.refreshSummaries();
+    return { ok: true };
+  }
+
+  /** Create a WsClient for a host if it doesn't have one and the descriptor
+   *  has a wsUrl. Called from both connectHost (after ready check) and
+   *  resumeConnection (after the host transitions to ready). */
+  private ensureWsClient(id: string): void {
+    const entry = this.hostState.get(id);
+    if (!entry || entry.client) return;
+    if (!entry.descriptor.wsUrl) return;
+
+    const client = new WsClient(entry.descriptor.wsUrl);
     entry.client = client;
 
     // Register an onMessage listener that routes to the coordinator.
@@ -246,8 +389,6 @@ export class HostCoordinator {
 
     // Connect the client.
     client.connect();
-    this.refreshSummaries();
-    return { ok: true };
   }
 
   /** Disconnect a remote host. */
@@ -263,10 +404,124 @@ export class HostCoordinator {
       entry.client.destroy();
       entry.client = null;
     }
+    this.reconnectRequired.delete(id);
 
     await this.provider.disconnectHost(id);
     await this.refreshHosts();
     this.refreshSummaries();
+  }
+
+  // ── Profile CRUD ──────────────────────────────────────────────────────
+
+  /** Load saved remote profiles from the provider. */
+  async loadProfiles(): Promise<void> {
+    this.profiles = await this.provider.listProfiles();
+  }
+
+  /** Add a remote profile. Returns the persisted profile. */
+  async addProfile(profile: RemoteProfile): Promise<RemoteProfile> {
+    const saved = await this.provider.addProfile(profile);
+    await this.refreshHosts();
+    await this.loadProfiles();
+    return saved;
+  }
+
+  /** Update an existing remote profile. If connection-affecting fields
+   *  changed on a connected host, marks reconnection as required. */
+  async updateProfile(profile: RemoteProfile): Promise<void> {
+    // Snapshot the old profile to compare connection-affecting fields.
+    const oldProfile = this.profiles.find((p) => p.id === profile.id) ?? null;
+
+    await this.provider.updateProfile(profile);
+    await this.refreshHosts();
+    await this.loadProfiles();
+
+    // Check if reconnection is required: connection-affecting fields changed
+    // AND the host has a live WsClient (i.e. is currently connected).
+    if (oldProfile && profileAffectsConnection(oldProfile, profile)) {
+      const entry = this.hostState.get(profile.id);
+      if (entry?.client) {
+        this.reconnectRequired.add(profile.id);
+        this.refreshSummaries();
+      }
+    }
+  }
+
+  /** Delete a remote profile. If the host is selected, switch to local first. */
+  async deleteProfile(id: string): Promise<void> {
+    if (this.selectedHostId === id) {
+      await this.selectHost("local");
+    }
+    await this.provider.deleteProfile(id);
+    await this.refreshHosts();
+    await this.loadProfiles();
+  }
+
+  // ── everConnected / reconnectRequired accessors ───────────────────────
+
+  /** Whether a host has successfully connected at least once. */
+  hasEverConnected(id: string): boolean {
+    return this.everConnected.has(id);
+  }
+
+  /** Whether a connected host's profile changed, requiring reconnection. */
+  hasReconnectRequired(id: string): boolean {
+    return this.reconnectRequired.has(id);
+  }
+
+  /** Clear the reconnect-required flag for a host (after reconnecting or dismissing). */
+  clearReconnectRequired(id: string): void {
+    this.reconnectRequired.delete(id);
+    this.refreshSummaries();
+  }
+
+  // ── Docker risk / acknowledgement ────────────────────────────────────
+
+  /** Acknowledge a pending risk for a host. */
+  async acknowledgeRisk(id: string, riskId: string, fingerprint: string): Promise<void> {
+    await this.provider.acknowledgeRisk(id, riskId, fingerprint);
+  }
+
+  /** Cancel a pending connection. */
+  async cancelConnection(id: string): Promise<void> {
+    await this.provider.cancelConnection(id);
+    await this.refreshHosts();
+    this.refreshSummaries();
+  }
+
+  /** Resume a connection that was paused on preflight/acknowledgement.
+   *  If the host transitions to ready, creates the WsClient via ensureWsClient. */
+  async resumeConnection(id: string): Promise<void> {
+    await this.provider.resumeConnection(id);
+    await this.refreshHosts();
+    // If the host reached ready, create the WsClient (connectHost returned
+    // early for the non-terminal state; this is where the client is created).
+    const entry = this.hostState.get(id);
+    if (entry && entry.descriptor.state === "ready" && entry.descriptor.wsUrl) {
+      this.everConnected.add(id);
+      this.ensureWsClient(id);
+    }
+    this.refreshSummaries();
+  }
+
+  /** Reconnect a host: disconnect, then connect + select again. Used after
+   *  a profile edit that changed connection-affecting fields. */
+  async reconnectHost(id: string): Promise<ConnectHostResult> {
+    await this.disconnectHost(id);
+    // disconnectHost already clears reconnectRequired; no need to call
+    // clearReconnectRequired again.
+    const result = await this.connectHost(id);
+    if (result.ok) {
+      await this.selectHost(id);
+    }
+    return result;
+  }
+
+  /** Whether a host's state is a "connecting" state (for the connection sheet). */
+  isConnecting(id: string): boolean {
+    const entry = this.hostState.get(id);
+    if (!entry) return false;
+    return CONNECTING_STATES.has(entry.descriptor.state);
   }
 
   /** Get the WsClient for a host (or null if not connected). */

@@ -44,5 +44,8 @@ test("phone picker focus stays within the sheet when tabbing", async ({ page }) 
   const close = dialog.getByRole("button", { name: "Close computer picker" });
   await close.focus();
   await page.keyboard.press("Shift+Tab");
-  await expect(page.locator(".host-option").last()).toBeFocused();
+  // The management buttons (Add computer, Manage computers) are now enabled
+  // and sit after the host options, so Shift+Tab from Close lands on the last
+  // management button.
+  await expect(dialog.getByTestId("manage-computers-btn")).toBeFocused();
 });

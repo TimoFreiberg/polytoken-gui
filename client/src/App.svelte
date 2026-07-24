@@ -20,7 +20,8 @@
   import AttentionShelf from "./components/AttentionShelf.svelte";
   import TokenGate from "./components/TokenGate.svelte";
   import Settings from "./components/Settings.svelte";
-  import ComputerSetup from "./components/ComputerSetup.svelte";
+  import RemoteProfileForm from "./components/RemoteProfileForm.svelte";
+  import ConnectionSheet from "./components/ConnectionSheet.svelte";
   import PlanView from "./components/PlanView.svelte";
   import Tooltip from "./components/Tooltip.svelte";
   import ChatNotice from "./components/ChatNotice.svelte";
@@ -171,6 +172,10 @@
           testSshAndListContainers: provider.testSshAndListContainers,
           inspectContainer: provider.inspectContainer,
           listProfiles: provider.listProfiles,
+          setFailure: (hostId: string, label: string, action?: string, detail?: string) => {
+            provider.setFailure(hostId, label, action, detail);
+            void coordinator.refreshHosts();
+          },
         };
         return () => delete (window as unknown as { __pantokenHosts?: unknown }).__pantokenHosts;
       });
@@ -537,7 +542,8 @@
 </div>
 <Settings coordinator={hostCoordinator} />
 {#if hostCoordinator.multiHostCapable}
-  <ComputerSetup coordinator={hostCoordinator} />
+  <RemoteProfileForm coordinator={hostCoordinator} />
+  <ConnectionSheet coordinator={hostCoordinator} />
 {/if}
 {#if !store.draft}
   <PlanView />

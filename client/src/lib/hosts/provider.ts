@@ -215,7 +215,7 @@ export function createFakeHostProvider(
           h.state === "connecting" ||
           h.state === "reconnecting"
         ) {
-          hostMap.set(id, { ...h, state: "ready" });
+          hostMap.set(id, { ...h, state: "ready", wsUrl: h.wsUrl ?? `ws://127.0.0.1:9000/${id}` });
         }
         // preflight / awaitingAcknowledgement / provisioning / starting /
         // ready / failed are left as-is so tests can assert them.

@@ -2682,6 +2682,11 @@ class PantokenStore {
       this._settingsSectionN++;
     }
   }
+  /** Open Settings and jump straight to a section (e.g. "computers"). */
+  openSettingsTo(section: "appearance" | "notifications" | "models" | "environment" | "mcp" | "token" | "computers"): void {
+    this.requestedSettingsSection = section;
+    this.openSettings();
+  }
   closeSettings(): void {
     this.settingsOpen = false;
   }

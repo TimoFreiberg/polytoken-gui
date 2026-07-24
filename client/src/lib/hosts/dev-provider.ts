@@ -32,6 +32,7 @@ export interface DevHostControls {
   getInspection(containerName: string): ContainerInspection | null;
   /** Set the inspection data for a container name. */
   setInspection(containerName: string, inspection: ContainerInspection): void;
+  setFailure(id: string, label: string, action?: string, detail?: string): void;
 }
 
 export type DevHostProvider = HostProvider & DevHostControls;
@@ -193,6 +194,19 @@ export function createDevHostProvider(wsUrl: string): DevHostProvider {
     inspectionMap.set(containerName, inspection);
   };
 
+  const setFailure = (id: string, label: string, action?: string, detail?: string): void => {
+    const host = hostMap.get(id);
+    if (!host) return;
+    hostMap.set(id, {
+      ...host,
+      state: "failed",
+      failureLabel: label,
+      failureAction: action,
+      failureDetail: detail,
+    });
+  };
+
+
   return {
     supportsMultiHost: () => true,
     listHosts: async () => [...hostMap.values()].map((host) => ({ ...host })),
@@ -200,13 +214,23 @@ export function createDevHostProvider(wsUrl: string): DevHostProvider {
       const host = hostMap.get(id);
       if (!host) throw new Error("Computer not found");
       if (host.state === "failed") throw new Error(host.failureLabel ?? "Connection failed");
-      // If there are pending risks, transition to awaitingAcknowledgement instead of ready.
-      const risks = pendingRisksMap.get(id);
-      if (risks && risks.length > 0 && !allRisksAcknowledged(id, risks)) {
-        setState(id, "awaitingAcknowledgement");
-        return;
-      }
-      setState(id, "ready");
+      setState(id, "testingSsh");
+      // Wait for test to drive the state to a terminal-ish state.
+      // Resolves for non-terminal states (preflight, awaitingAcknowledgement)
+      // so the coordinator's non-terminal handling kicks in, mirroring the
+      // Tauri provider's pollHostState behavior.
+      await new Promise<void>((resolve, reject) => {
+        const check = setInterval(() => {
+          const h = hostMap.get(id);
+          if (!h) { clearInterval(check); reject(new Error("Computer not found")); return; }
+          if (h.state === "ready") { clearInterval(check); resolve(); return; }
+          if (h.state === "failed") { clearInterval(check); reject(new Error(h.failureLabel ?? "Connection failed")); return; }
+          if (h.state === "awaitingAcknowledgement" || h.state === "preflight") {
+            clearInterval(check); resolve(); return;
+          }
+          if (h.state === "disconnected") { clearInterval(check); reject(new Error("Connection cancelled")); return; }
+        }, 50);
+      });
     },
     disconnectHost: async (id) => setState(id, "disconnected"),
     listProfiles: async () => [...profileMap.values()].map((p) => structuredClone(p)),
@@ -323,6 +347,7 @@ export function createDevHostProvider(wsUrl: string): DevHostProvider {
     setState,
     setActivity,
     emit,
+    setFailure,
     setMessageSink: (next) => { sink = next; },
     setPendingRisks,
     setPreflightPhase,

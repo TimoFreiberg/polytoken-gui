@@ -1,6 +1,7 @@
 <script lang="ts">
   import { tick } from "svelte";
   import { overlayHistory } from "../lib/overlay-history.js";
+  import { profileEditor } from "../lib/profile-editor.svelte.js";
   import { store } from "../lib/store.svelte.js";
   import type { HostCoordinator } from "../lib/hosts.svelte.js";
   import type { HostSummary } from "../lib/hosts/types.js";
@@ -172,8 +173,8 @@
       </div>
       {#if coordinator.multiHostCapable}
         <div class="management">
-          <button data-testid="host-switcher-add" onclick={() => { close(); store.openComputerSetup("add"); }}>Add computer</button>
-          <button data-testid="host-switcher-manage" onclick={() => { close(); store.openSettings("computers"); }}>Manage computers</button>
+          <button onclick={() => profileEditor.openNew()} data-testid="add-computer-btn">Add computer</button>
+          <button onclick={() => store.openSettingsTo("computers")} data-testid="manage-computers-btn">Manage computers</button>
         </div>
       {/if}
     </div>
@@ -211,7 +212,6 @@
   .failure button { border: 0; background: none; color: var(--accent); cursor: pointer; font: inherit; font-weight: 650; }
   .management { display: grid; gap: 2px; margin-top: 6px; padding-top: 6px; border-top: 1px solid var(--border); }
   .management button { min-height: 40px; text-align: left; padding: 0 8px; color: var(--text-muted); font-size: 12px; }
-  .management button:disabled { opacity: .65; cursor: default; }
   @media (max-width: 859px) {
     .host-switcher { padding: 0 0 8px; }
     .host-trigger { min-height: 52px; }
